@@ -1,4 +1,3 @@
-#backend/app.py
 from typing import Optional
 from flask import Flask, request, jsonify, session, render_template
 from flask_sqlalchemy import SQLAlchemy
@@ -30,7 +29,6 @@ from services.upcoming import UpcomingContentService, ContentType, LanguagePrior
 import asyncio
 from services.auth import auth_bp, init_auth
 from services.admin import admin_bp, init_admin
-from services.users import users_bp, init_users
 from services.support import support_bp, init_support
 from services.critics_choice import critics_choice_bp, init_critics_choice_service
 from services.algorithms import (
@@ -44,11 +42,11 @@ from services.algorithms import (
     HybridRecommendationEngine,
     UltraPowerfulSimilarityEngine
 )
-from services.user_avatar import avatar_bp, init_user_avatar
 from services.personalized import init_personalized
 from services.details import init_details_service, SlugManager, ContentService
 from services.new_releases import init_cinebrain_new_releases_service
 from services.review import init_review_service
+from user.routes import user_bp, init_user_routes
 import re
 from dotenv import load_dotenv
 load_dotenv()
@@ -691,13 +689,6 @@ content_service = None
 cinebrain_new_releases_service = None
 
 try:
-    init_user_avatar(app, db, models)
-    app.register_blueprint(avatar_bp)
-    logger.info("CineBrain avatar service initialized successfully")
-except Exception as e:
-    logger.error(f"Failed to initialize CineBrain avatar service: {e}")
-
-try:
     with app.app_context():
         details_service = init_details_service(app, db, models, cache)
         content_service = ContentService(db, models)
@@ -762,11 +753,11 @@ except Exception as e:
     logger.error(f"Failed to initialize CineBrain admin service: {e}")
 
 try:
-    init_users(app, db, models, {**services, 'cache': cache})
-    app.register_blueprint(users_bp)
-    logger.info("CineBrain users service with personalized recommendations initialized successfully")
+    init_user_routes(app, db, models, {**services, 'cache': cache})
+    app.register_blueprint(user_bp)
+    logger.info("CineBrain user module initialized successfully")
 except Exception as e:
-    logger.error(f"Failed to initialize CineBrain users service: {e}")
+    logger.error(f"Failed to initialize CineBrain user module: {e}")
 
 try:
     critics_choice_service = init_critics_choice_service(app, db, models, services, cache)
@@ -1953,12 +1944,10 @@ def get_content_reviews_by_slug(slug):
             except:
                 pass
         
-        # Get content first
         content = Content.query.filter_by(slug=slug).first()
         if not content:
             return jsonify({'error': 'Content not found'}), 404
         
-        # Use review service to get reviews
         if 'review_service' in globals() and review_service:
             result = review_service.get_content_reviews(slug, 
                 page=int(request.args.get('page', 1)),
@@ -2256,7 +2245,7 @@ def health_check():
             'admin_notifications': 'cinebrain_enabled',
             'monitoring': 'cinebrain_active',
             'auth_service': 'enabled' if 'auth_bp' in app.blueprints else 'disabled',
-            'users_service': 'enabled' if 'users_bp' in app.blueprints else 'disabled'
+            'user_service': 'enabled' if 'user_bp' in app.blueprints else 'disabled'
         }
         
         try:
@@ -2313,7 +2302,7 @@ def health_check():
                 'cinebrain_admin_notification_system',
                 'cinebrain_real_time_monitoring',
                 'cinebrain_auth_service_enhanced',
-                'cinebrain_users_service_personalized',
+                'cinebrain_user_service_modular',
                 'cinebrain_new_releases_service',
                 'cinebrain_enhanced_critics_choice_service'
             ],
@@ -2439,7 +2428,6 @@ def create_tables():
         with app.app_context():
             db.create_all()
             
-            # Check if admin exists
             admin = User.query.filter_by(username='admin').first()
             if not admin:
                 print("Creating CineBrain admin user...")
@@ -2461,7 +2449,6 @@ def create_tables():
                 print(f"Admin email: {admin.email}")
                 print(f"Password hash exists: {bool(admin.password_hash)}")
             
-            # Test password verification
             test_check = check_password_hash(admin.password_hash, 'admin123')
             print(f"Password verification test: {test_check}")
             
@@ -2474,12 +2461,12 @@ def create_tables():
 create_tables()
 
 if __name__ == '__main__':
-    print("=== Running CineBrain Flask in development mode with Enhanced Critics Choice ===")
+    print("=== Running CineBrain Flask in development mode with Modular User System ===")
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('FLASK_ENV') == 'development'
     app.run(host='0.0.0.0', port=port, debug=debug)
 else:
-    print("=== CineBrain Flask app imported by Gunicorn - ENHANCED CRITICS CHOICE VERSION ===")
+    print("=== CineBrain Flask app imported by Gunicorn - MODULAR USER SYSTEM ===")
     print(f"App name: {app.name}")
     print(f"Python version: 3.13.4")
     print(f"CineBrain brand: CineBrain Entertainment Platform")
@@ -2491,19 +2478,19 @@ else:
     print(f"CineBrain critics choice service status: {'Integrated' if 'critics_choice_service' in services else 'Failed to initialize'}")
     print(f"CineBrain support service status: {'Integrated' if 'support_bp' in app.blueprints else 'Not integrated'}")
     print(f"CineBrain auth service status: {'Integrated' if 'auth_bp' in app.blueprints else 'Not integrated'}")
-    print(f"CineBrain users service status: {'Integrated' if 'users_bp' in app.blueprints else 'Not integrated'}")
+    print(f"CineBrain user service status: {'Integrated' if 'user_bp' in app.blueprints else 'Not integrated'}")
     
-    print("\n=== CineBrain Enhanced Critics Choice Features ===")
-    print("✅ Multi-source critics aggregation (TMDB, OMDb, Jikan)")
-    print("✅ Advanced scoring algorithm with weighted factors")
-    print("✅ Support for movies, TV shows, and anime")
-    print("✅ Genre, language, and time period filtering")
-    print("✅ Telugu content prioritization")
-    print("✅ Diversity enforcement for balanced recommendations")
-    print("✅ Metacritic, IMDB, and Rotten Tomatoes integration")
-    print("✅ Award recognition and bonus scoring")
-    print("✅ Comprehensive metadata and analytics")
-    print("✅ Performance caching and error handling")
+    print("\n=== CineBrain Modular User System Features ===")
+    print("✅ Modular architecture with separate files")
+    print("✅ Avatar upload with Cloudinary integration")
+    print("✅ Profile management and analytics")
+    print("✅ Watchlist and favorites functionality")
+    print("✅ User ratings and activity tracking")
+    print("✅ Personalized recommendations")
+    print("✅ Settings and account management")
+    print("✅ Public profile support")
+    print("✅ Health monitoring")
+    print("✅ CORS and authentication handling")
     
     print(f"\n=== CineBrain Registered Routes ===")
     for rule in app.url_map.iter_rules():
