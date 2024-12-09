@@ -38,5 +38,4 @@ spacy
 cloudinary
 Pillow
 lightgbm
-pickle
 annoy
