@@ -39,3 +39,4 @@ cloudinary
 Pillow
 lightgbm
 annoy
+flask-jwt-extended

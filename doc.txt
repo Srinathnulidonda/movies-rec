@@ -6,6 +6,7 @@ cinebrain-backend/
 │   ├── extensions.py                 # SQLAlchemy, JWT, Cache, Mail, Redis
 │   ├── utils/                        # Shared utility functions
 │   │   ├── decorators.py
+│   │   ├── slug.py
 │   │   ├── helpers.py
 │   │   ├── cache_keys.py
 │   │   └── constants.py
@@ -96,15 +97,7 @@ cinebrain-backend/
 │       ├── sync_trending.py
 │       └── update_recommendations.py
 │
-├── migrations/
-├── tests/                            # Unit & integration tests
-│   ├── __init__.py
-│   ├── test_auth.py
-│   ├── test_recommendations.py
-│   └── test_user_profile.py 
-│
 ├── run.py                            # App entrypoint
 ├── requirements.txt
 ├── README.md
-├── .env
-└── Dockerfile
+└── .env
