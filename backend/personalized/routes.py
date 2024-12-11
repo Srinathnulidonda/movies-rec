@@ -1,18 +1,15 @@
 # backend/personalized/routes.py
-
-
 """
 CineBrain Personalization API Routes
 Flask blueprint for advanced recommendation endpoints
 """
 
 from flask import Blueprint, request, jsonify, current_app
-from flask_jwt_extended import jwt_required, get_jwt_identity
 from datetime import datetime, timedelta
 import json
 import logging
 from typing import Dict, List, Any
-
+import jwt
 from . import get_recommendation_engine
 from .metrics import PerformanceTracker
 from .feedback import FeedbackProcessor
@@ -22,8 +19,42 @@ logger = logging.getLogger(__name__)
 
 personalized_bp = Blueprint('personalized', __name__, url_prefix='/api/personalized')
 
+def auth_required(f):
+    """Custom auth decorator matching the main app's auth system"""
+    from functools import wraps
+    
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({'error': 'CineBrain authentication required'}), 401
+        
+        token = auth_header.split(' ')[1]
+        try:
+            payload = jwt.decode(token, current_app.config['SECRET_KEY'], algorithms=['HS256'])
+            request.user_id = payload.get('user_id')
+            return f(*args, **kwargs)
+        except jwt.ExpiredSignatureError:
+            return jsonify({'error': 'CineBrain token expired'}), 401
+        except jwt.InvalidTokenError:
+            return jsonify({'error': 'Invalid CineBrain token'}), 401
+    
+    return decorated_function
+
+def get_user_id():
+    """Get user ID from token, return None if no valid token"""
+    auth_header = request.headers.get('Authorization')
+    if not auth_header or not auth_header.startswith('Bearer '):
+        return None
+    
+    token = auth_header.split(' ')[1]
+    try:
+        payload = jwt.decode(token, current_app.config['SECRET_KEY'], algorithms=['HS256'])
+        return payload.get('user_id')
+    except:
+        return None
+
 @personalized_bp.route('/recommendations', methods=['GET'])
-@jwt_required()
 def get_recommendations():
     """
     Get personalized recommendations for authenticated user
@@ -36,7 +67,12 @@ def get_recommendations():
     - diversity_factor: Control recommendation diversity 0.0-1.0 (default: 0.3)
     """
     try:
-        user_id = get_jwt_identity()
+        user_id = get_user_id()
+        
+        # Allow anonymous users with fallback recommendations
+        if not user_id:
+            logger.info("Anonymous user requesting personalized recommendations")
+            return get_anonymous_recommendations_fallback()
         
         # Parse request parameters
         categories = request.args.get('categories')
@@ -89,14 +125,86 @@ def get_recommendations():
         return jsonify(recommendations), 200
         
     except Exception as e:
-        logger.error(f"Error generating recommendations for user {user_id}: {e}")
+        logger.error(f"Error generating recommendations: {e}")
         return jsonify({
             'error': 'Failed to generate CineBrain recommendations',
             'message': str(e)
         }), 500
 
+def get_anonymous_recommendations_fallback():
+    """Fallback recommendations for anonymous users"""
+    try:
+        # Import here to avoid circular imports
+        from services.algorithms import RecommendationOrchestrator
+        
+        orchestrator = RecommendationOrchestrator()
+        
+        # Get some basic trending content
+        recommendations = {
+            'trending_movies': [
+                {
+                    'id': 1,
+                    'title': 'RRR',
+                    'content_type': 'movie',
+                    'genres': ['Action', 'Drama'],
+                    'languages': ['Telugu', 'Hindi'],
+                    'rating': 8.5,
+                    'poster_path': 'https://image.tmdb.org/t/p/w300/placeholder.jpg',
+                    'recommendation_reason': 'Popular Telugu blockbuster',
+                    'recommendation_score': 0.9
+                },
+                {
+                    'id': 2,
+                    'title': 'Baahubali 2',
+                    'content_type': 'movie',
+                    'genres': ['Action', 'Adventure'],
+                    'languages': ['Telugu', 'Tamil'],
+                    'rating': 8.7,
+                    'poster_path': 'https://image.tmdb.org/t/p/w300/placeholder.jpg',
+                    'recommendation_reason': 'Epic Telugu cinema',
+                    'recommendation_score': 0.95
+                }
+            ],
+            'popular_content': [
+                {
+                    'id': 3,
+                    'title': 'Pushpa',
+                    'content_type': 'movie',
+                    'genres': ['Action', 'Crime'],
+                    'languages': ['Telugu'],
+                    'rating': 7.6,
+                    'poster_path': 'https://image.tmdb.org/t/p/w300/placeholder.jpg',
+                    'recommendation_reason': 'Trending Telugu film',
+                    'recommendation_score': 0.8
+                }
+            ]
+        }
+        
+        return jsonify({
+            'user_id': None,
+            'recommendations': recommendations,
+            'profile_insights': {
+                'status': 'anonymous_user',
+                'message': 'Sign in to get personalized CineBrain recommendations!'
+            },
+            'recommendation_metadata': {
+                'type': 'anonymous_fallback',
+                'algorithm_version': '2.0.0',
+                'language_priority_applied': True,
+                'generated_at': datetime.utcnow().isoformat()
+            }
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error generating anonymous recommendations: {e}")
+        return jsonify({
+            'error': 'Failed to generate recommendations',
+            'recommendations': {},
+            'message': 'Please try again later'
+        }), 500
+
 @personalized_bp.route('/feedback', methods=['POST'])
-@jwt_required()
+@auth_required
 def record_feedback():
     """
     Record user feedback for real-time learning
@@ -115,7 +223,7 @@ def record_feedback():
     }
     """
     try:
-        user_id = get_jwt_identity()
+        user_id = request.user_id
         feedback_data = request.get_json()
         
         if not feedback_data:
@@ -169,11 +277,11 @@ def record_feedback():
         }), 500
 
 @personalized_bp.route('/profile', methods=['GET'])
-@jwt_required()
+@auth_required
 def get_user_profile():
     """Get comprehensive user profile and insights"""
     try:
-        user_id = get_jwt_identity()
+        user_id = request.user_id
         
         engine = get_recommendation_engine()
         if not engine:
@@ -215,12 +323,10 @@ def get_user_profile():
         }), 500
 
 @personalized_bp.route('/similar/<int:content_id>', methods=['GET'])
-@jwt_required()
-def get_similar_content():
+def get_similar_content(content_id):
     """Get ultra-similar content using cinematic DNA analysis"""
     try:
-        user_id = get_jwt_identity()
-        content_id = int(content_id)
+        user_id = get_user_id()  # Optional authentication
         
         # Parse parameters
         limit = min(int(request.args.get('limit', 15)), 30)
@@ -241,9 +347,10 @@ def get_similar_content():
             include_explanations=include_explanations
         )
         
-        # Track similarity request
-        tracker = PerformanceTracker()
-        tracker.log_similarity_request(user_id, content_id, len(similar_content))
+        # Track similarity request if user is authenticated
+        if user_id:
+            tracker = PerformanceTracker()
+            tracker.log_similarity_request(user_id, content_id, len(similar_content))
         
         return jsonify({
             'base_content_id': content_id,
@@ -265,22 +372,25 @@ def get_similar_content():
         }), 500
 
 @personalized_bp.route('/trending-for-you', methods=['GET'])
-@jwt_required()
 def get_trending_for_you():
     """Get personalized trending content"""
     try:
-        user_id = get_jwt_identity()
+        user_id = get_user_id()
         limit = min(int(request.args.get('limit', 25)), 50)
         
         engine = get_recommendation_engine()
         if not engine:
             return jsonify({'error': 'CineBrain engine not available'}), 503
         
-        trending_recs = engine.generate_category_recommendations(
-            user_id=user_id,
-            category='trending_for_you',
-            limit=limit
-        )
+        if user_id:
+            trending_recs = engine.generate_category_recommendations(
+                user_id=user_id,
+                category='trending_for_you',
+                limit=limit
+            )
+        else:
+            # Anonymous trending recommendations
+            trending_recs = get_anonymous_trending()
         
         return jsonify({
             'category': 'trending_for_you',
@@ -298,12 +408,27 @@ def get_trending_for_you():
             'message': str(e)
         }), 500
 
+def get_anonymous_trending():
+    """Get trending content for anonymous users"""
+    return [
+        {
+            'id': 1,
+            'title': 'Popular Telugu Movie',
+            'content_type': 'movie',
+            'genres': ['Action', 'Drama'],
+            'languages': ['Telugu'],
+            'rating': 8.0,
+            'poster_path': 'https://image.tmdb.org/t/p/w300/placeholder.jpg',
+            'recommendation_reason': 'Trending now'
+        }
+    ]
+
 @personalized_bp.route('/metrics', methods=['GET'])
-@jwt_required()
+@auth_required
 def get_recommendation_metrics():
     """Get user's recommendation performance metrics"""
     try:
-        user_id = get_jwt_identity()
+        user_id = request.user_id
         
         engine = get_recommendation_engine()
         if not engine:
@@ -351,7 +476,8 @@ def health_check():
                 'ultra_similarity_engine': True,
                 'hybrid_recommendation': True,
                 'behavioral_analytics': True,
-                'performance_tracking': True
+                'performance_tracking': True,
+                'anonymous_support': True
             }
         }
         
