@@ -1,725 +1,628 @@
 # backend/personalized/routes.py
 
-"""
-CineBrain Personalized Recommendation Routes
-==========================================
-
-Flask blueprint providing REST API endpoints for personalized recommendations
-with modern feed-like behavior and real-time learning capabilities.
-"""
-
 from flask import Blueprint, request, jsonify, current_app
-from datetime import datetime, timedelta
+from datetime import datetime
 import json
 import logging
-import asyncio
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any
 import jwt
 from functools import wraps
-import time
 
-from .recommendation_engine import (
-    ModernPersonalizationEngine,
-    RecommendationOrchestrator,
-    RecommendationResponse
+from . import (
+    get_profile_analyzer,
+    get_embedding_manager,
+    get_similarity_engine,
+    get_cache_manager
 )
-from .profile_analyzer import (
-    UserProfileAnalyzer,
-    UserInteractionEvent
-)
-from .utils import (
-    EmbeddingManager,
-    SimilarityCalculator,
-    CacheManager,
-    PerformanceOptimizer,
-    create_cache_key
-)
+from .recommendation_engine import HybridRecommendationEngine
+from .utils import TeluguPriorityManager, safe_json_loads
 
-# Create blueprint
-personalized_bp = Blueprint('personalized', __name__)
+personalized_bp = Blueprint('personalized', __name__, url_prefix='/api/personalized')
 
 logger = logging.getLogger(__name__)
 
-# Global variables for dependency injection
-personalization_engine: Optional[ModernPersonalizationEngine] = None
-profile_analyzer: Optional[UserProfileAnalyzer] = None
-cache_manager: Optional[CacheManager] = None
-performance_optimizer = PerformanceOptimizer()
+_recommendation_engine = None
+_models = None
+_db = None
+_cache_backend = None
 
-def require_auth(f):
-    """Authentication decorator for personalized routes"""
+def init_personalized_routes(models, db, cache_backend):
+    global _models, _db, _cache_backend
+    _models = models
+    _db = db
+    _cache_backend = cache_backend
+    logger.info("✅ CineBrain personalized routes initialized with models and services")
+
+def get_recommendation_engine():
+    global _recommendation_engine, _models, _db, _cache_backend
+    
+    if _recommendation_engine is None:
+        if not _models or not _db:
+            from flask import current_app
+            from app import User, Content, UserInteraction
+            _models = {
+                'User': User,
+                'Content': Content,
+                'UserInteraction': UserInteraction
+            }
+            _db = current_app.extensions.get('sqlalchemy').db
+        
+        cache_manager = get_cache_manager()
+        if not cache_manager.cache_backend and _cache_backend:
+            cache_manager.cache_backend = _cache_backend
+        
+        _recommendation_engine = HybridRecommendationEngine(
+            db=_db,
+            models=_models,
+            cache_manager=cache_manager
+        )
+        
+        logger.info("🚀 CineBrain recommendation engine initialized")
+    
+    return _recommendation_engine
+
+def auth_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        if request.method == 'OPTIONS':
-            return '', 200
-        
         auth_header = request.headers.get('Authorization')
+        
         if not auth_header or not auth_header.startswith('Bearer '):
             return jsonify({
-                'success': False,
-                'error': 'CineBrain authentication required',
-                'code': 'AUTH_REQUIRED'
+                'status': 'error',
+                'message': 'Authentication required',
+                'error_code': 'AUTH_REQUIRED'
             }), 401
         
         token = auth_header.split(' ')[1]
+        
         try:
-            payload = jwt.decode(token, current_app.config['SECRET_KEY'], algorithms=['HS256'])
+            payload = jwt.decode(
+                token,
+                current_app.config['SECRET_KEY'],
+                algorithms=['HS256']
+            )
             request.user_id = payload.get('user_id')
-            
-            if not request.user_id:
-                raise jwt.InvalidTokenError("User ID not found in token")
-            
             return f(*args, **kwargs)
             
         except jwt.ExpiredSignatureError:
             return jsonify({
-                'success': False,
-                'error': 'CineBrain token expired',
-                'code': 'TOKEN_EXPIRED'
+                'status': 'error',
+                'message': 'Token expired',
+                'error_code': 'TOKEN_EXPIRED'
             }), 401
-        except jwt.InvalidTokenError as e:
+        except jwt.InvalidTokenError:
             return jsonify({
-                'success': False,
-                'error': 'Invalid CineBrain token',
-                'code': 'TOKEN_INVALID',
-                'details': str(e)
-            }), 401
-        except Exception as e:
-            logger.error(f"Authentication error: {e}")
-            return jsonify({
-                'success': False,
-                'error': 'Authentication failed',
-                'code': 'AUTH_FAILED'
+                'status': 'error',
+                'message': 'Invalid token',
+                'error_code': 'INVALID_TOKEN'
             }), 401
     
     return decorated_function
 
-def validate_request_params(required_params: List[str] = None, optional_params: Dict[str, Any] = None):
-    """Decorator to validate request parameters"""
-    def decorator(f):
-        @wraps(f)
-        def decorated_function(*args, **kwargs):
-            try:
-                # Get request data
-                if request.is_json:
-                    data = request.get_json() or {}
-                else:
-                    data = request.args.to_dict()
-                
-                # Validate required parameters
-                if required_params:
-                    missing_params = [param for param in required_params if param not in data]
-                    if missing_params:
-                        return jsonify({
-                            'success': False,
-                            'error': f'Missing required parameters: {", ".join(missing_params)}',
-                            'code': 'MISSING_PARAMS'
-                        }), 400
-                
-                # Apply default values for optional parameters
-                if optional_params:
-                    for param, default_value in optional_params.items():
-                        if param not in data:
-                            data[param] = default_value
-                
-                # Add validated data to request
-                request.validated_data = data
-                
-                return f(*args, **kwargs)
-                
-            except Exception as e:
-                logger.error(f"Parameter validation error: {e}")
-                return jsonify({
-                    'success': False,
-                    'error': 'Invalid request parameters',
-                    'code': 'INVALID_PARAMS'
-                }), 400
-        
-        return decorated_function
-    return decorator
-
-@personalized_bp.route('/health', methods=['GET'])
-def health_check():
-    """Health check endpoint for personalization service"""
+@personalized_bp.route('/recommendations', methods=['GET'])
+@auth_required
+def get_recommendations():
     try:
-        health_info = {
-            'status': 'healthy',
-            'service': 'cinebrain_personalization',
-            'version': '2.0.0',
-            'timestamp': datetime.utcnow().isoformat(),
-            'components': {
-                'personalization_engine': personalization_engine is not None,
-                'profile_analyzer': profile_analyzer is not None,
-                'cache_manager': cache_manager is not None,
-                'performance_optimizer': True
+        user_id = request.user_id
+        
+        limit = min(int(request.args.get('limit', 20)), 100)
+        page = int(request.args.get('page', 1))
+        
+        context = {}
+        context_param = request.args.get('context')
+        if context_param:
+            try:
+                context = json.loads(context_param)
+            except json.JSONDecodeError:
+                pass
+        
+        context.update({
+            'device': request.headers.get('X-Device-Type', 'unknown'),
+            'ip': request.remote_addr,
+            'user_agent': request.headers.get('User-Agent', ''),
+            'timestamp': datetime.utcnow().isoformat()
+        })
+        
+        cache_manager = get_cache_manager()
+        cache_key = f"recommendations:{user_id}:{limit}:{page}"
+        cached_result = cache_manager.get(cache_key)
+        
+        if cached_result and not request.args.get('force_refresh'):
+            logger.debug(f"Returning cached recommendations for user {user_id}")
+            return jsonify(cached_result), 200
+        
+        engine = get_recommendation_engine()
+        result = engine.generate_recommendations(
+            user_id=user_id,
+            limit=limit,
+            context=context
+        )
+        
+        recommendations = result.get('recommendations', [])
+        start_idx = (page - 1) * limit
+        end_idx = start_idx + limit
+        
+        paginated_result = {
+            **result,
+            'recommendations': recommendations[start_idx:end_idx],
+            'pagination': {
+                'page': page,
+                'limit': limit,
+                'total_items': len(recommendations),
+                'total_pages': (len(recommendations) + limit - 1) // limit,
+                'has_next': end_idx < len(recommendations),
+                'has_prev': page > 1
             }
         }
         
-        # Add performance statistics
-        if performance_optimizer:
-            health_info['performance'] = performance_optimizer.get_performance_stats()
+        cache_manager.set(cache_key, paginated_result, ttl=300)
         
-        # Add cache statistics
-        if cache_manager:
-            health_info['cache'] = cache_manager.get_cache_stats()
-        
-        return jsonify(health_info), 200
+        return jsonify(paginated_result), 200
         
     except Exception as e:
-        logger.error(f"Health check error: {e}")
+        logger.error(f"Error getting recommendations for user {request.user_id}: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': 'Failed to generate recommendations',
+            'error': str(e),
+            'timestamp': datetime.utcnow().isoformat()
+        }), 500
+
+@personalized_bp.route('/recommendations/feed', methods=['GET'])
+@auth_required
+def get_recommendation_feed():
+    try:
+        user_id = request.user_id
+        batch_size = min(int(request.args.get('batch_size', 10)), 50)
+        session_id = request.args.get('session_id', 'default')
+        
+        context = {
+            'feed_mode': True,
+            'session_id': session_id,
+            'device': request.headers.get('X-Device-Type', 'unknown'),
+            'timestamp': datetime.utcnow().isoformat()
+        }
+        
+        engine = get_recommendation_engine()
+        result = engine.generate_recommendations(
+            user_id=user_id,
+            limit=batch_size * 3,
+            context=context
+        )
+        
+        recommendations = result.get('recommendations', [])
+        
+        if len(recommendations) > batch_size:
+            import random
+            
+            top_items = recommendations[:batch_size//2]
+            other_items = recommendations[batch_size//2:]
+            random.shuffle(other_items)
+            
+            batch = top_items + other_items[:batch_size - len(top_items)]
+        else:
+            batch = recommendations[:batch_size]
+        
+        feed_response = {
+            'status': 'success',
+            'feed': batch,
+            'session': {
+                'session_id': session_id,
+                'batch_size': batch_size,
+                'has_more': len(recommendations) > batch_size,
+                'timestamp': datetime.utcnow().isoformat()
+            },
+            'metadata': result.get('metadata', {})
+        }
+        
+        return jsonify(feed_response), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting recommendation feed: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': 'Failed to generate feed',
+            'error': str(e)
+        }), 500
+
+@personalized_bp.route('/recommendations/similar/<int:content_id>', methods=['GET'])
+def get_similar_content(content_id):
+    try:
+        limit = min(int(request.args.get('limit', 10)), 50)
+        
+        cache_manager = get_cache_manager()
+        cache_key = f"similar:{content_id}:{limit}"
+        cached_result = cache_manager.get(cache_key)
+        
+        if cached_result:
+            return jsonify(cached_result), 200
+        
+        engine = get_recommendation_engine()
+        similar_content = engine.get_similar_content(
+            content_id=content_id,
+            limit=limit
+        )
+        
+        response = {
+            'status': 'success',
+            'base_content_id': content_id,
+            'similar_content': similar_content,
+            'total_results': len(similar_content),
+            'timestamp': datetime.utcnow().isoformat()
+        }
+        
+        cache_manager.set(cache_key, response, ttl=3600)
+        
+        return jsonify(response), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting similar content for {content_id}: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': 'Failed to find similar content',
+            'error': str(e)
+        }), 500
+
+@personalized_bp.route('/profile', methods=['GET'])
+@auth_required
+def get_user_profile():
+    try:
+        user_id = request.user_id
+        include_stats = request.args.get('include_stats', 'false').lower() == 'true'
+        
+        profile_analyzer = get_profile_analyzer()
+        
+        profile = profile_analyzer.build_user_profile(user_id)
+        
+        response = {
+            'status': 'success',
+            'profile': {
+                'user_id': user_id,
+                'segment': profile.get('user_segment', 'unknown'),
+                'preferences': {
+                    'languages': profile.get('explicit_preferences', {}).get('preferred_languages', []),
+                    'genres': profile.get('implicit_preferences', {}).get('genre_preferences', {}).get('top_genres', []),
+                    'content_types': profile.get('implicit_preferences', {}).get('content_type_preferences', {})
+                },
+                'cinematic_dna': {
+                    'themes': profile.get('cinematic_dna', {}).get('themes', {}),
+                    'sophistication': profile.get('cinematic_dna', {}).get('sophistication', 0),
+                    'telugu_affinity': profile.get('cinematic_dna', {}).get('telugu_content_ratio', 0)
+                },
+                'engagement': profile.get('engagement_metrics', {}),
+                'profile_strength': {
+                    'completeness': profile.get('profile_completeness', 0),
+                    'confidence': profile.get('confidence_score', 0),
+                    'diversity': profile.get('diversity_score', 0)
+                },
+                'last_updated': profile.get('last_updated')
+            }
+        }
+        
+        if include_stats:
+            response['profile']['detailed_stats'] = {
+                'behavioral_patterns': profile.get('behavioral_patterns', {}),
+                'temporal_patterns': profile.get('temporal_patterns', {}),
+                'preference_clusters': profile.get('preference_clusters', {}),
+                'recommendation_context': profile.get('recommendation_context', {})
+            }
+        
+        return jsonify(response), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting profile for user {request.user_id}: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': 'Failed to retrieve profile',
+            'error': str(e)
+        }), 500
+
+@personalized_bp.route('/feedback', methods=['POST'])
+@auth_required
+def submit_feedback():
+    try:
+        user_id = request.user_id
+        data = request.get_json()
+        
+        if not data or 'content_id' not in data or 'feedback_type' not in data:
+            return jsonify({
+                'status': 'error',
+                'message': 'Missing required fields: content_id, feedback_type'
+            }), 400
+        
+        content_id = data['content_id']
+        feedback_type = data['feedback_type']
+        feedback_value = data.get('feedback_value')
+        context = data.get('context', {})
+        
+        valid_types = ['like', 'dislike', 'view', 'skip', 'rating', 'favorite', 'share']
+        if feedback_type not in valid_types:
+            return jsonify({
+                'status': 'error',
+                'message': f'Invalid feedback type. Must be one of: {", ".join(valid_types)}'
+            }), 400
+        
+        if feedback_type == 'rating':
+            if not feedback_value or not isinstance(feedback_value, (int, float)):
+                return jsonify({
+                    'status': 'error',
+                    'message': 'Rating feedback requires feedback_value (1-10)'
+                }), 400
+            
+            if feedback_value < 1 or feedback_value > 10:
+                return jsonify({
+                    'status': 'error',
+                    'message': 'Rating must be between 1 and 10'
+                }), 400
+        
+        engine = get_recommendation_engine()
+        engine.update_user_feedback(
+            user_id=user_id,
+            content_id=content_id,
+            feedback_type=feedback_type,
+            feedback_value=feedback_value
+        )
+        
+        logger.info(f"User {user_id} submitted {feedback_type} feedback for content {content_id}")
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Feedback processed successfully',
+            'feedback': {
+                'content_id': content_id,
+                'feedback_type': feedback_type,
+                'feedback_value': feedback_value,
+                'timestamp': datetime.utcnow().isoformat()
+            }
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error processing feedback: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': 'Failed to process feedback',
+            'error': str(e)
+        }), 500
+
+@personalized_bp.route('/preferences', methods=['PUT'])
+@auth_required
+def update_preferences():
+    try:
+        user_id = request.user_id
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({
+                'status': 'error',
+                'message': 'No preferences provided'
+            }), 400
+        
+        from flask import current_app
+        db = current_app.extensions.get('sqlalchemy').db
+        
+        if _models and 'User' in _models:
+            User = _models['User']
+        else:
+            from app import User
+        
+        user = User.query.get(user_id)
+        if not user:
+            return jsonify({
+                'status': 'error',
+                'message': 'User not found'
+            }), 404
+        
+        if 'languages' in data:
+            user.preferred_languages = json.dumps(data['languages'])
+        
+        if 'genres' in data:
+            user.preferred_genres = json.dumps(data['genres'])
+        
+        db.session.commit()
+        
+        cache_manager = get_cache_manager()
+        cache_key = cache_manager.get_user_cache_key(user_id, "profile")
+        cache_manager.delete(cache_key)
+        
+        profile_analyzer = get_profile_analyzer()
+        updated_profile = profile_analyzer.build_user_profile(user_id, force_refresh=True)
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Preferences updated successfully',
+            'preferences': {
+                'languages': data.get('languages', safe_json_loads(user.preferred_languages)),
+                'genres': data.get('genres', safe_json_loads(user.preferred_genres))
+            },
+            'profile_confidence': updated_profile.get('confidence_score', 0)
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error updating preferences: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': 'Failed to update preferences',
+            'error': str(e)
+        }), 500
+
+@personalized_bp.route('/trending', methods=['GET'])
+def get_trending_personalized():
+    try:
+        limit = min(int(request.args.get('limit', 20)), 50)
+        category = request.args.get('category', 'all')
+        
+        user_id = None
+        auth_header = request.headers.get('Authorization')
+        if auth_header and auth_header.startswith('Bearer '):
+            try:
+                token = auth_header.split(' ')[1]
+                payload = jwt.decode(
+                    token,
+                    current_app.config['SECRET_KEY'],
+                    algorithms=['HS256']
+                )
+                user_id = payload.get('user_id')
+            except:
+                pass
+        
+        from flask import current_app
+        db = current_app.extensions.get('sqlalchemy').db
+        
+        if _models and 'Content' in _models:
+            Content = _models['Content']
+        else:
+            from app import Content
+        
+        query = Content.query.filter(
+            Content.is_trending == True,
+            Content.title.isnot(None)
+        )
+        
+        if category != 'all':
+            query = query.filter(Content.content_type == category)
+        
+        trending_content = query.order_by(
+            Content.popularity.desc()
+        ).limit(limit * 2).all()
+        
+        user_languages = []
+        if user_id:
+            profile_analyzer = get_profile_analyzer()
+            user_profile = profile_analyzer.build_user_profile(user_id)
+            user_languages = user_profile.get('explicit_preferences', {}).get('preferred_languages', [])
+        
+        sorted_content = TeluguPriorityManager.sort_by_language_priority(
+            trending_content,
+            user_languages
+        )[:limit]
+        
+        response_items = []
+        for rank, content in enumerate(sorted_content):
+            response_items.append({
+                'rank': rank + 1,
+                'content': {
+                    'id': content.id,
+                    'title': content.title,
+                    'content_type': content.content_type,
+                    'genres': safe_json_loads(content.genres or '[]'),
+                    'languages': safe_json_loads(content.languages or '[]'),
+                    'rating': content.rating,
+                    'poster_path': f"https://image.tmdb.org/t/p/w500{content.poster_path}" if content.poster_path else None
+                },
+                'trending_score': content.popularity,
+                'personalized': user_id is not None
+            })
+        
+        return jsonify({
+            'status': 'success',
+            'trending': response_items,
+            'metadata': {
+                'total_results': len(response_items),
+                'personalized': user_id is not None,
+                'category': category,
+                'timestamp': datetime.utcnow().isoformat()
+            }
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting trending content: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': 'Failed to get trending content',
+            'error': str(e)
+        }), 500
+
+@personalized_bp.route('/health', methods=['GET'])
+def health_check():
+    try:
+        health_status = {
+            'status': 'healthy',
+            'service': 'cinebrain_personalization',
+            'version': '3.0.0',
+            'timestamp': datetime.utcnow().isoformat(),
+            'components': {}
+        }
+        
+        try:
+            profile_analyzer = get_profile_analyzer()
+            health_status['components']['profile_analyzer'] = 'healthy' if profile_analyzer else 'unavailable'
+        except:
+            health_status['components']['profile_analyzer'] = 'error'
+        
+        try:
+            embedding_manager = get_embedding_manager()
+            health_status['components']['embedding_manager'] = 'healthy' if embedding_manager else 'unavailable'
+        except:
+            health_status['components']['embedding_manager'] = 'error'
+        
+        try:
+            engine = get_recommendation_engine()
+            health_status['components']['recommendation_engine'] = 'healthy' if engine else 'unavailable'
+        except:
+            health_status['components']['recommendation_engine'] = 'error'
+        
+        try:
+            cache_manager = get_cache_manager()
+            test_key = 'health_check_test'
+            cache_manager.set(test_key, 'ok', ttl=5)
+            cache_value = cache_manager.get(test_key)
+            health_status['components']['cache'] = 'healthy' if cache_value == 'ok' else 'degraded'
+        except:
+            health_status['components']['cache'] = 'error'
+        
+        component_statuses = health_status['components'].values()
+        if all(s == 'healthy' for s in component_statuses):
+            health_status['status'] = 'healthy'
+        elif any(s == 'error' for s in component_statuses):
+            health_status['status'] = 'unhealthy'
+        else:
+            health_status['status'] = 'degraded'
+        
+        status_code = 200 if health_status['status'] == 'healthy' else 503
+        
+        return jsonify(health_status), status_code
+        
+    except Exception as e:
         return jsonify({
             'status': 'unhealthy',
             'service': 'cinebrain_personalization',
             'error': str(e),
             'timestamp': datetime.utcnow().isoformat()
-        }), 500
+        }), 503
 
-@personalized_bp.route('/recommendations', methods=['GET', 'OPTIONS'])
-@require_auth
-@validate_request_params(
-    optional_params={
-        'limit': 50,
-        'category': 'feed',
-        'include_metadata': True,
-        'force_refresh': False
-    }
-)
-@performance_optimizer.time_function('get_personalized_recommendations')
-def get_personalized_recommendations():
-    """
-    Get personalized recommendations for the authenticated user
-    
-    Query Parameters:
-    - limit (int): Maximum number of recommendations (default: 50, max: 100)
-    - category (str): Recommendation category ('feed', 'discover', 'trending')
-    - include_metadata (bool): Include algorithm metadata (default: True)
-    - force_refresh (bool): Force cache refresh (default: False)
-    
-    Returns:
-    - JSON response with personalized recommendations
-    """
-    try:
-        if not personalization_engine:
-            return jsonify({
-                'success': False,
-                'error': 'CineBrain personalization engine not available',
-                'code': 'SERVICE_UNAVAILABLE'
-            }), 503
-        
-        user_id = request.user_id
-        data = request.validated_data
-        
-        # Validate and sanitize parameters
-        limit = min(int(data.get('limit', 50)), 100)  # Cap at 100
-        category = data.get('category', 'feed')
-        include_metadata = data.get('include_metadata', True)
-        force_refresh = data.get('force_refresh', False)
-        
-        # Check cache if not forcing refresh
-        if not force_refresh and cache_manager:
-            cache_key = create_cache_key('user_recommendations', user_id, category, limit)
-            cached_result = cache_manager.cache.get(cache_key) if cache_manager.cache else None
-            
-            if cached_result:
-                try:
-                    cached_data = json.loads(cached_result)
-                    logger.info(f"Returning cached recommendations for user {user_id}")
-                    return jsonify(cached_data), 200
-                except Exception as e:
-                    logger.warning(f"Error loading cached data: {e}")
-        
-        # Generate fresh recommendations
-        start_time = time.time()
-        
-        recommendation_response = personalization_engine.generate_personalized_feed(
-            user_id=user_id,
-            limit=limit
-        )
-        
-        generation_time = time.time() - start_time
-        
-        # Format response
-        response_data = {
-            'success': True,
-            'user_id': user_id,
-            'category': category,
-            'recommendations': [
-                {
-                    'id': rec.content_id,
-                    'title': rec.title,
-                    'content_type': rec.content_type,
-                    'genres': rec.genres,
-                    'languages': rec.languages,
-                    'rating': rec.rating,
-                    'release_date': rec.release_date,
-                    'poster_path': rec.poster_path,
-                    'overview': rec.overview,
-                    'youtube_trailer_id': rec.youtube_trailer_id,
-                    'score': rec.recommendation_score,
-                    'reasons': rec.recommendation_reasons,
-                    'confidence': rec.confidence_level,
-                    'source_algorithm': rec.algorithm_source
-                } | (
-                    {'personalization_factors': rec.personalization_factors} if include_metadata else {}
-                )
-                for rec in recommendation_response.recommendations
-            ],
-            'total_count': recommendation_response.total_count,
-            'generated_at': recommendation_response.generated_at.isoformat(),
-            'generation_time_ms': round(generation_time * 1000, 2)
-        }
-        
-        # Add metadata if requested
-        if include_metadata:
-            response_data['metadata'] = {
-                'algorithm_breakdown': recommendation_response.algorithm_breakdown,
-                'personalization_strength': round(recommendation_response.personalization_strength, 3),
-                'freshness_score': round(recommendation_response.freshness_score, 3),
-                'diversity_score': round(recommendation_response.diversity_score, 3),
-                'cache_duration': recommendation_response.cache_duration,
-                'next_refresh': recommendation_response.next_refresh.isoformat(),
-                'telugu_priority_applied': True,
-                'engine_version': '2.0.0'
-            }
-        
-        # Cache the response
-        if cache_manager and cache_manager.cache:
-            try:
-                cache_key = create_cache_key('user_recommendations', user_id, category, limit)
-                cache_manager.cache.set(
-                    cache_key, 
-                    json.dumps(response_data), 
-                    timeout=recommendation_response.cache_duration
-                )
-            except Exception as e:
-                logger.warning(f"Error caching recommendations: {e}")
-        
-        logger.info(f"Generated {len(recommendation_response.recommendations)} recommendations for user {user_id} in {generation_time:.2f}s")
-        
-        return jsonify(response_data), 200
-        
-    except Exception as e:
-        logger.error(f"Error generating recommendations for user {request.user_id}: {e}")
-        return jsonify({
-            'success': False,
-            'error': 'Failed to generate CineBrain recommendations',
-            'code': 'GENERATION_FAILED',
-            'details': str(e) if current_app.debug else None
-        }), 500
-
-@personalized_bp.route('/interaction', methods=['POST', 'OPTIONS'])
-@require_auth
-@validate_request_params(
-    required_params=['content_id', 'interaction_type'],
-    optional_params={
-        'rating': None,
-        'session_id': None,
-        'context': {}
-    }
-)
-@performance_optimizer.time_function('record_user_interaction')
-def record_user_interaction():
-    """
-    Record user interaction for real-time learning
-    
-    Request Body:
-    - content_id (int): ID of the content interacted with
-    - interaction_type (str): Type of interaction ('view', 'like', 'favorite', 'rating', etc.)
-    - rating (float, optional): User rating (1-10)
-    - session_id (str, optional): Session identifier
-    - context (dict, optional): Additional context information
-    
-    Returns:
-    - JSON response with success status
-    """
-    try:
-        if not profile_analyzer:
-            return jsonify({
-                'success': False,
-                'error': 'CineBrain profile analyzer not available',
-                'code': 'SERVICE_UNAVAILABLE'
-            }), 503
-        
-        user_id = request.user_id
-        data = request.validated_data
-        
-        # Validate interaction type
-        valid_interactions = ['view', 'like', 'favorite', 'rating', 'share', 'watchlist', 'search']
-        interaction_type = data['interaction_type']
-        
-        if interaction_type not in valid_interactions:
-            return jsonify({
-                'success': False,
-                'error': f'Invalid interaction type. Valid types: {", ".join(valid_interactions)}',
-                'code': 'INVALID_INTERACTION_TYPE'
-            }), 400
-        
-        # Validate rating if provided
-        rating = data.get('rating')
-        if rating is not None:
-            try:
-                rating = float(rating)
-                if not (1 <= rating <= 10):
-                    return jsonify({
-                        'success': False,
-                        'error': 'Rating must be between 1 and 10',
-                        'code': 'INVALID_RATING'
-                    }), 400
-            except (ValueError, TypeError):
-                return jsonify({
-                    'success': False,
-                    'error': 'Rating must be a valid number',
-                    'code': 'INVALID_RATING_FORMAT'
-                }), 400
-        
-        # Create interaction event
-        interaction_event = UserInteractionEvent(
-            user_id=user_id,
-            content_id=int(data['content_id']),
-            interaction_type=interaction_type,
-            timestamp=datetime.utcnow(),
-            rating=rating,
-            session_id=data.get('session_id'),
-            metadata=data.get('metadata', {}),
-            context=data.get('context', {})
-        )
-        
-        # Update user profile in real-time
-        success = profile_analyzer.update_profile_realtime(user_id, interaction_event)
-        
-        if success:
-            # Invalidate recommendation cache for this user
-            if cache_manager:
-                cache_manager.invalidate_user_cache(user_id)
-            
-            logger.info(f"Recorded {interaction_type} interaction for user {user_id} on content {data['content_id']}")
-            
-            return jsonify({
-                'success': True,
-                'message': 'Interaction recorded successfully',
-                'user_id': user_id,
-                'content_id': data['content_id'],
-                'interaction_type': interaction_type,
-                'timestamp': interaction_event.timestamp.isoformat(),
-                'profile_updated': True,
-                'cache_invalidated': True
-            }), 200
-        else:
-            logger.error(f"Failed to record interaction for user {user_id}")
-            return jsonify({
-                'success': False,
-                'error': 'Failed to record interaction',
-                'code': 'INTERACTION_FAILED'
-            }), 500
-            
-    except Exception as e:
-        logger.error(f"Error recording interaction for user {request.user_id}: {e}")
-        return jsonify({
-            'success': False,
-            'error': 'Failed to record CineBrain interaction',
-            'code': 'INTERACTION_ERROR',
-            'details': str(e) if current_app.debug else None
-        }), 500
-
-@personalized_bp.route('/profile', methods=['GET', 'OPTIONS'])
-@require_auth
-@performance_optimizer.time_function('get_user_profile')
-def get_user_profile():
-    """
-    Get comprehensive user profile and preferences
-    
-    Returns:
-    - JSON response with user preference profile
-    """
-    try:
-        if not profile_analyzer:
-            return jsonify({
-                'success': False,
-                'error': 'CineBrain profile analyzer not available',
-                'code': 'SERVICE_UNAVAILABLE'
-            }), 503
-        
-        user_id = request.user_id
-        
-        # Build comprehensive user profile
-        user_profile = profile_analyzer.build_comprehensive_user_profile(user_id)
-        
-        if not user_profile:
-            return jsonify({
-                'success': False,
-                'error': 'Could not build user profile',
-                'code': 'PROFILE_BUILD_FAILED',
-                'suggestion': 'Interact with more CineBrain content to build your profile'
-            }), 404
-        
-        # Format profile for API response
-        profile_data = {
-            'success': True,
-            'user_id': user_profile.user_id,
-            'profile': {
-                'genre_preferences': user_profile.genre_preferences,
-                'language_preferences': user_profile.language_preferences,
-                'content_type_preferences': user_profile.content_type_preferences,
-                'quality_threshold': user_profile.quality_threshold,
-                'sophistication_score': round(user_profile.sophistication_score, 3),
-                'engagement_level': user_profile.engagement_level,
-                'confidence_score': round(user_profile.confidence_score, 3),
-                'last_updated': user_profile.last_updated.isoformat()
-            },
-            'insights': {
-                'temporal_patterns': user_profile.temporal_patterns,
-                'cinematic_dna': user_profile.cinematic_dna,
-                'telugu_affinity': user_profile.cinematic_dna.get('telugu_cinema_affinity', 0),
-                'personalization_level': 'high' if user_profile.confidence_score > 0.7 else 'moderate' if user_profile.confidence_score > 0.4 else 'developing'
-            },
-            'recommendations_info': {
-                'accuracy_estimate': min(user_profile.confidence_score * 100, 95),
-                'improvement_tip': _get_improvement_tip(user_profile),
-                'next_optimization': (datetime.utcnow() + timedelta(days=7)).isoformat()
-            },
-            'generated_at': datetime.utcnow().isoformat()
-        }
-        
-        logger.info(f"Retrieved profile for user {user_id} with confidence {user_profile.confidence_score}")
-        
-        return jsonify(profile_data), 200
-        
-    except Exception as e:
-        logger.error(f"Error getting profile for user {request.user_id}: {e}")
-        return jsonify({
-            'success': False,
-            'error': 'Failed to get CineBrain user profile',
-            'code': 'PROFILE_ERROR',
-            'details': str(e) if current_app.debug else None
-        }), 500
-
-@personalized_bp.route('/similar-users', methods=['GET', 'OPTIONS'])
-@require_auth
-@validate_request_params(
-    optional_params={'limit': 10}
-)
-@performance_optimizer.time_function('get_similar_users')
-def get_similar_users():
-    """
-    Get users with similar preferences
-    
-    Query Parameters:
-    - limit (int): Maximum number of similar users (default: 10, max: 20)
-    
-    Returns:
-    - JSON response with similar users
-    """
-    try:
-        if not personalization_engine:
-            return jsonify({
-                'success': False,
-                'error': 'CineBrain personalization engine not available',
-                'code': 'SERVICE_UNAVAILABLE'
-            }), 503
-        
-        user_id = request.user_id
-        limit = min(int(request.validated_data.get('limit', 10)), 20)
-        
-        # Get user embedding
-        user_embedding = personalization_engine.embedding_manager.get_user_embedding(user_id)
-        
-        if user_embedding is None:
-            return jsonify({
-                'success': False,
-                'error': 'User profile not found',
-                'code': 'PROFILE_NOT_FOUND',
-                'suggestion': 'Interact with more CineBrain content to build your profile'
-            }), 404
-        
-        # This would typically involve getting other user embeddings
-        # For demo purposes, we'll return a simplified response
-        
-        similar_users_data = {
-            'success': True,
-            'user_id': user_id,
-            'similar_users': [],  # Would be populated with actual similar users
-            'total_count': 0,
-            'message': 'Similar user functionality available in advanced mode',
-            'generated_at': datetime.utcnow().isoformat()
-        }
-        
-        return jsonify(similar_users_data), 200
-        
-    except Exception as e:
-        logger.error(f"Error getting similar users for user {request.user_id}: {e}")
-        return jsonify({
-            'success': False,
-            'error': 'Failed to get similar CineBrain users',
-            'code': 'SIMILAR_USERS_ERROR'
-        }), 500
-
-@personalized_bp.route('/refresh', methods=['POST', 'OPTIONS'])
-@require_auth
-@performance_optimizer.time_function('refresh_user_profile')
-def refresh_user_profile():
-    """
-    Force refresh user profile and recommendations
-    
-    Returns:
-    - JSON response with refresh status
-    """
-    try:
-        if not profile_analyzer or not cache_manager:
-            return jsonify({
-                'success': False,
-                'error': 'CineBrain services not available',
-                'code': 'SERVICE_UNAVAILABLE'
-            }), 503
-        
-        user_id = request.user_id
-        
-        # Invalidate all user caches
-        cache_manager.invalidate_user_cache(user_id)
-        
-        # Force rebuild user profile
-        user_profile = profile_analyzer.build_comprehensive_user_profile(user_id, force_refresh=True)
-        
-        if user_profile:
-            refresh_data = {
-                'success': True,
-                'message': 'User profile refreshed successfully',
-                'user_id': user_id,
-                'profile_confidence': round(user_profile.confidence_score, 3),
-                'last_updated': user_profile.last_updated.isoformat(),
-                'cache_cleared': True,
-                'recommendations_will_refresh': True,
-                'refresh_timestamp': datetime.utcnow().isoformat()
-            }
-            
-            logger.info(f"Refreshed profile for user {user_id}")
-            return jsonify(refresh_data), 200
-        else:
-            return jsonify({
-                'success': False,
-                'error': 'Failed to refresh user profile',
-                'code': 'REFRESH_FAILED'
-            }), 500
-            
-    except Exception as e:
-        logger.error(f"Error refreshing profile for user {request.user_id}: {e}")
-        return jsonify({
-            'success': False,
-            'error': 'Failed to refresh CineBrain profile',
-            'code': 'REFRESH_ERROR'
-        }), 500
-
-@personalized_bp.route('/stats', methods=['GET', 'OPTIONS'])
-@require_auth
-def get_personalization_stats():
-    """
-    Get personalization service statistics
-    
-    Returns:
-    - JSON response with service statistics
-    """
-    try:
-        stats_data = {
-            'success': True,
-            'service': 'cinebrain_personalization',
-            'version': '2.0.0',
-            'user_id': request.user_id,
-            'timestamp': datetime.utcnow().isoformat()
-        }
-        
-        # Add performance statistics
-        if performance_optimizer:
-            stats_data['performance'] = performance_optimizer.get_performance_stats()
-        
-        # Add cache statistics
-        if cache_manager:
-            stats_data['cache'] = cache_manager.get_cache_stats()
-        
-        # Add profile analyzer statistics
-        if profile_analyzer:
-            stats_data['profile_analyzer'] = profile_analyzer.get_performance_stats()
-        
-        return jsonify(stats_data), 200
-        
-    except Exception as e:
-        logger.error(f"Error getting personalization stats: {e}")
-        return jsonify({
-            'success': False,
-            'error': 'Failed to get personalization stats',
-            'code': 'STATS_ERROR'
-        }), 500
-
-# Error handlers
 @personalized_bp.errorhandler(404)
 def not_found(error):
-    """Handle 404 errors"""
     return jsonify({
-        'success': False,
-        'error': 'CineBrain personalization endpoint not found',
-        'code': 'ENDPOINT_NOT_FOUND'
+        'status': 'error',
+        'message': 'Endpoint not found',
+        'error_code': 'NOT_FOUND'
     }), 404
-
-@personalized_bp.errorhandler(405)
-def method_not_allowed(error):
-    """Handle 405 errors"""
-    return jsonify({
-        'success': False,
-        'error': 'Method not allowed for this CineBrain endpoint',
-        'code': 'METHOD_NOT_ALLOWED'
-    }), 405
 
 @personalized_bp.errorhandler(500)
 def internal_error(error):
-    """Handle 500 errors"""
-    logger.error(f"Internal server error: {error}")
     return jsonify({
-        'success': False,
-        'error': 'CineBrain personalization service error',
-        'code': 'INTERNAL_ERROR'
+        'status': 'error',
+        'message': 'Internal server error',
+        'error_code': 'INTERNAL_ERROR'
     }), 500
 
-# CORS handling
+@personalized_bp.before_request
+def log_request():
+    logger.debug(f"Request: {request.method} {request.path} from {request.remote_addr}")
+
 @personalized_bp.after_request
-def after_request(response):
-    """Add CORS headers to all responses"""
+def add_cors_headers(response):
     origin = request.headers.get('Origin')
     allowed_origins = [
-        'https://cinebrain.vercel.app',
-        'http://127.0.0.1:5500',
-        'http://127.0.0.1:5501',
         'http://localhost:3000',
-        'http://localhost:5173'
+        'http://localhost:5000',
+        'https://cinebrain.vercel.app'
     ]
     
     if origin in allowed_origins:
         response.headers['Access-Control-Allow-Origin'] = origin
-        response.headers['Access-Control-Allow-Headers'] = 'Content-Type,Authorization'
-        response.headers['Access-Control-Allow-Methods'] = 'GET,PUT,POST,DELETE,OPTIONS'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
         response.headers['Access-Control-Allow-Credentials'] = 'true'
     
     return response
-
-# Helper functions
-def _get_improvement_tip(user_profile) -> str:
-    """Get personalized improvement tip for user"""
-    if user_profile.confidence_score < 0.3:
-        return 'Interact with more CineBrain content (like, favorite, rate) to improve recommendations'
-    elif user_profile.confidence_score < 0.6:
-        return 'Rate more CineBrain content to help our AI understand your preferences better'
-    elif user_profile.confidence_score < 0.8:
-        return 'Explore different genres on CineBrain to get more diverse recommendations'
-    else:
-        return 'Your CineBrain recommendations are highly optimized! Keep discovering new content'
-
-# Initialize function to be called from main app
-def init_personalized_routes(personalization_system):
-    """Initialize routes with personalization system components"""
-    global personalization_engine, profile_analyzer, cache_manager
-    
-    personalization_engine = personalization_system.get('recommendation_engine')
-    profile_analyzer = personalization_system.get('profile_analyzer')
-    cache_manager = personalization_system.get('cache_manager')
-    
-    logger.info("CineBrain personalized routes initialized with system components")
-
-# Export blueprint
-__all__ = ['personalized_bp', 'init_personalized_routes']

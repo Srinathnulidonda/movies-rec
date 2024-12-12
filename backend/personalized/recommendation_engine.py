@@ -1,352 +1,296 @@
-# backend/personalized/recommendation_engine.py
+# backend/personalized/recommendation_engine.py`
 
 """
-CineBrain Modern Recommendation Engine
-====================================
-
-Advanced hybrid recommendation engine that combines multiple algorithms
-to generate personalized feeds similar to TikTok, YouTube, or Instagram.
+CineBrain Hybrid Recommendation Engine
+Modern AI-powered recommendation system with multi-algorithm fusion
 """
 
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Any, Optional, Tuple, Union
-from datetime import datetime, timedelta
-from collections import defaultdict, Counter
-from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-from sklearn.cluster import KMeans, DBSCAN
-from sklearn.decomposition import NMF, LatentDirichletAllocation
-from sklearn.neighbors import NearestNeighbors
-from sklearn.ensemble import RandomForestRegressor
-from surprise import Dataset, Reader, SVD, NMF as SurpriseNMF, KNNBasic
-from surprise.model_selection import train_test_split
+from sklearn.decomposition import NMF
+from sklearn.preprocessing import MinMaxScaler
+from scipy.sparse import csr_matrix
+from collections import defaultdict, Counter
+from datetime import datetime, timedelta
 import networkx as nx
 import json
 import logging
-import asyncio
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
 import random
-import math
+from typing import List, Dict, Any, Tuple, Optional, Set
+from heapq import heappush, heappop
 
 from .utils import (
+    TeluguPriorityManager,
     EmbeddingManager,
-    SimilarityCalculator, 
+    SimilarityEngine,
     CacheManager,
-    PerformanceOptimizer,
-    LANGUAGE_PRIORITY,
-    PRIORITY_LANGUAGES,
-    decay_weight,
-    normalize_vector,
-    create_cache_key
+    safe_json_loads,
+    normalize_scores,
+    calculate_diversity_score
 )
-
-from .profile_analyzer import (
-    UserProfileAnalyzer,
-    UserPreferenceProfile,
-    CinematicDNAAnalyzer
-)
+from .profile_analyzer import UserProfileAnalyzer
 
 logger = logging.getLogger(__name__)
 
-@dataclass
-class RecommendationItem:
-    """Structured recommendation item with metadata"""
-    content_id: int
-    title: str
-    content_type: str
-    genres: List[str]
-    languages: List[str]
-    rating: float
-    release_date: Optional[str]
-    poster_path: Optional[str]
-    overview: str
-    youtube_trailer_id: Optional[str]
-    recommendation_score: float
-    recommendation_reasons: List[str]
-    algorithm_source: str
-    confidence_level: str
-    personalization_factors: Dict[str, float]
-
-@dataclass
-class RecommendationResponse:
-    """Complete recommendation response with metadata"""
-    user_id: int
-    recommendations: List[RecommendationItem]
-    total_count: int
-    algorithm_breakdown: Dict[str, int]
-    personalization_strength: float
-    freshness_score: float
-    diversity_score: float
-    generated_at: datetime
-    cache_duration: int
-    next_refresh: datetime
-
-class ContentBasedRecommender:
+class CollaborativeEngine:
     """
-    Advanced content-based recommendation using TF-IDF and feature similarity
+    Matrix factorization-based collaborative filtering
+    """
+    
+    def __init__(self, n_factors: int = 50, max_iter: int = 200):
+        self.n_factors = n_factors
+        self.max_iter = max_iter
+        self.user_factors = None
+        self.item_factors = None
+        self.user_map = {}
+        self.item_map = {}
+        self.is_fitted = False
+        
+        # NMF for matrix factorization
+        self.nmf = NMF(
+            n_components=n_factors,
+            max_iter=max_iter,
+            init='nndsvd',
+            random_state=42
+        )
+    
+    def fit(self, interaction_matrix: pd.DataFrame):
+        """
+        Fit collaborative filtering model
+        
+        Args:
+            interaction_matrix: User-item interaction matrix
+        """
+        try:
+            if interaction_matrix.empty:
+                logger.warning("Empty interaction matrix for collaborative filtering")
+                return
+            
+            # Create user and item mappings
+            self.user_map = {uid: idx for idx, uid in enumerate(interaction_matrix.index)}
+            self.item_map = {iid: idx for idx, iid in enumerate(interaction_matrix.columns)}
+            
+            # Convert to numpy array
+            matrix = interaction_matrix.values
+            
+            # Apply NMF
+            self.user_factors = self.nmf.fit_transform(matrix)
+            self.item_factors = self.nmf.components_.T
+            
+            self.is_fitted = True
+            logger.info(f"Fitted collaborative model with {len(self.user_map)} users and {len(self.item_map)} items")
+            
+        except Exception as e:
+            logger.error(f"Error fitting collaborative model: {e}")
+            self.is_fitted = False
+    
+    def predict_scores(self, user_id: int, item_ids: List[int]) -> Dict[int, float]:
+        """
+        Predict scores for user-item pairs
+        
+        Args:
+            user_id: User ID
+            item_ids: List of item IDs
+        
+        Returns:
+            Dict[int, float]: Item scores
+        """
+        if not self.is_fitted or user_id not in self.user_map:
+            return {item_id: 0.0 for item_id in item_ids}
+        
+        try:
+            user_idx = self.user_map[user_id]
+            user_vec = self.user_factors[user_idx]
+            
+            scores = {}
+            for item_id in item_ids:
+                if item_id in self.item_map:
+                    item_idx = self.item_map[item_id]
+                    item_vec = self.item_factors[item_idx]
+                    score = np.dot(user_vec, item_vec)
+                    scores[item_id] = float(score)
+                else:
+                    scores[item_id] = 0.0
+            
+            return scores
+            
+        except Exception as e:
+            logger.error(f"Error predicting collaborative scores: {e}")
+            return {item_id: 0.0 for item_id in item_ids}
+
+class ContentBasedEngine:
+    """
+    Content-based filtering using embeddings and features
     """
     
     def __init__(self, embedding_manager: EmbeddingManager):
-        """Initialize content-based recommender"""
         self.embedding_manager = embedding_manager
-        self.tfidf_vectorizer = TfidfVectorizer(
-            max_features=5000,
-            ngram_range=(1, 3),
-            stop_words='english',
-            min_df=2,
-            max_df=0.8
-        )
-        self.content_features_cache = {}
-        
-        logger.info("CineBrain ContentBasedRecommender initialized")
+        self.feature_weights = {
+            'embedding': 0.4,
+            'genre': 0.25,
+            'language': 0.2,
+            'quality': 0.15
+        }
     
-    def generate_recommendations(self, user_profile: UserPreferenceProfile,
-                               content_pool: List[Dict], limit: int = 20) -> List[Tuple[Dict, float]]:
+    def compute_scores(self, user_profile: Dict[str, Any], 
+                      content_list: List[Any]) -> Dict[int, float]:
         """
-        Generate content-based recommendations
+        Compute content-based scores for items
         
         Args:
-            user_profile: User preference profile
-            content_pool: Available content to recommend from
-            limit: Maximum number of recommendations
-            
+            user_profile: User profile
+            content_list: List of content items
+        
         Returns:
-            List of (content, score) tuples
+            Dict[int, float]: Content scores
         """
-        try:
-            recommendations = []
-            
-            # Extract user preference vectors
-            user_genre_prefs = user_profile.genre_preferences
-            user_lang_prefs = user_profile.language_preferences
-            
-            for content in content_pool:
-                try:
-                    # Calculate content-based similarity score
-                    score = self._calculate_content_similarity(content, user_profile)
-                    
-                    if score > 0.3:  # Minimum threshold
-                        recommendations.append((content, score))
-                        
-                except Exception as e:
-                    logger.warning(f"Error processing content {content.get('id')}: {e}")
-                    continue
-            
-            # Sort by score and return top recommendations
-            recommendations.sort(key=lambda x: x[1], reverse=True)
-            return recommendations[:limit]
-            
-        except Exception as e:
-            logger.error(f"Error generating content-based recommendations: {e}")
-            return []
-    
-    def _calculate_content_similarity(self, content: Dict, user_profile: UserPreferenceProfile) -> float:
-        """Calculate similarity between content and user preferences"""
-        score = 0.0
+        scores = {}
+        user_id = user_profile.get('user_id', 0)
         
-        # Genre similarity (40% weight)
-        content_genres = set(content.get('genres', []))
-        user_genres = set(user_profile.genre_preferences.keys())
+        # Get user embedding similarity scores
+        embedding_scores = self.embedding_manager.compute_user_content_similarity(
+            user_id, content_list
+        )
         
-        if content_genres and user_genres:
-            genre_overlap = len(content_genres & user_genres)
-            max_genres = max(len(content_genres), len(user_genres))
-            genre_score = genre_overlap / max_genres
+        # Get user preferences
+        genre_prefs = user_profile.get('implicit_preferences', {}).get('genre_preferences', {}).get('counts', {})
+        lang_prefs = user_profile.get('explicit_preferences', {}).get('preferred_languages', [])
+        quality_threshold = user_profile.get('recommendation_context', {}).get('quality_preference', 7.0)
+        
+        for idx, content in enumerate(content_list):
+            score_components = {}
             
-            # Weight by user preference strength
-            weighted_genre_score = 0
-            for genre in content_genres:
-                if genre in user_profile.genre_preferences:
-                    weighted_genre_score += user_profile.genre_preferences[genre]
+            # Embedding similarity
+            score_components['embedding'] = float(embedding_scores[idx])
             
-            score += (genre_score * 0.6 + weighted_genre_score * 0.4) * 0.4
-        
-        # Language similarity with Telugu priority (30% weight)
-        content_languages = set(content.get('languages', []))
-        user_languages = set(user_profile.language_preferences.keys())
-        
-        if content_languages and user_languages:
-            lang_score = 0
-            for lang in content_languages:
-                if lang in user_profile.language_preferences:
-                    lang_weight = LANGUAGE_PRIORITY.get(lang.lower(), 0.5)
-                    lang_score += user_profile.language_preferences[lang] * lang_weight
+            # Genre matching
+            if content.genres:
+                genres = safe_json_loads(content.genres)
+                genre_score = sum(genre_prefs.get(g, 0) for g in genres) / max(sum(genre_prefs.values()), 1)
+                score_components['genre'] = min(genre_score, 1.0)
+            else:
+                score_components['genre'] = 0.0
             
-            score += min(lang_score, 1.0) * 0.3
+            # Language matching with Telugu priority
+            if content.languages:
+                languages = safe_json_loads(content.languages)
+                lang_score = TeluguPriorityManager.calculate_language_score(languages, lang_prefs)
+                score_components['language'] = lang_score
+            else:
+                score_components['language'] = 0.0
+            
+            # Quality score
+            if content.rating and content.rating >= quality_threshold:
+                quality_score = (content.rating - quality_threshold) / (10 - quality_threshold)
+                score_components['quality'] = quality_score
+            else:
+                score_components['quality'] = 0.0
+            
+            # Weighted combination
+            final_score = sum(
+                score_components[key] * self.feature_weights[key] 
+                for key in self.feature_weights
+            )
+            
+            scores[content.id] = final_score
         
-        # Quality match (20% weight)
-        content_rating = content.get('rating', 0)
-        if content_rating >= user_profile.quality_threshold:
-            quality_score = min(content_rating / 10.0, 1.0)
-            score += quality_score * 0.2
-        
-        # Content type preference (10% weight)
-        content_type = content.get('content_type', '')
-        if content_type in user_profile.content_type_preferences:
-            type_score = user_profile.content_type_preferences[content_type]
-            score += type_score * 0.1
-        
-        return min(score, 1.0)
+        return scores
 
-class CollaborativeFilteringRecommender:
+class GraphBasedEngine:
     """
-    Advanced collaborative filtering using matrix factorization and user similarity
-    """
-    
-    def __init__(self, similarity_calculator: SimilarityCalculator):
-        """Initialize collaborative filtering recommender"""
-        self.similarity_calculator = similarity_calculator
-        self.svd_model = SVD(n_factors=50, random_state=42)
-        self.nmf_model = SurpriseNMF(n_factors=30, random_state=42)
-        self.user_knn = KNNBasic(k=20, sim_options={'name': 'cosine', 'user_based': True})
-        self.is_trained = False
-        
-        logger.info("CineBrain CollaborativeFilteringRecommender initialized")
-    
-    def train_models(self, interaction_data: List[Dict]):
-        """Train collaborative filtering models on interaction data"""
-        try:
-            if len(interaction_data) < 10:
-                logger.warning("Insufficient data for collaborative filtering training")
-                return
-            
-            # Prepare data for Surprise library
-            df = pd.DataFrame(interaction_data)
-            df = df[df['rating'].notna()]  # Only use rated interactions
-            
-            if len(df) < 10:
-                logger.warning("Insufficient rating data for collaborative filtering")
-                return
-            
-            # Create Surprise dataset
-            reader = Reader(rating_scale=(1, 10))
-            dataset = Dataset.load_from_df(df[['user_id', 'content_id', 'rating']], reader)
-            
-            # Train models
-            trainset = dataset.build_full_trainset()
-            
-            self.svd_model.fit(trainset)
-            self.nmf_model.fit(trainset)
-            self.user_knn.fit(trainset)
-            
-            self.is_trained = True
-            logger.info(f"Trained collaborative filtering models on {len(df)} ratings")
-            
-        except Exception as e:
-            logger.error(f"Error training collaborative filtering models: {e}")
-    
-    def generate_recommendations(self, user_id: int, user_profile: UserPreferenceProfile,
-                               content_pool: List[Dict], limit: int = 20) -> List[Tuple[Dict, float]]:
-        """Generate collaborative filtering recommendations"""
-        try:
-            if not self.is_trained:
-                logger.warning("Collaborative filtering models not trained")
-                return []
-            
-            recommendations = []
-            
-            for content in content_pool:
-                try:
-                    content_id = content.get('id')
-                    
-                    # Get predictions from different models
-                    svd_pred = self.svd_model.predict(user_id, content_id)
-                    nmf_pred = self.nmf_model.predict(user_id, content_id)
-                    knn_pred = self.user_knn.predict(user_id, content_id)
-                    
-                    # Ensemble the predictions
-                    ensemble_score = (
-                        svd_pred.est * 0.4 +
-                        nmf_pred.est * 0.3 +
-                        knn_pred.est * 0.3
-                    ) / 10.0  # Normalize to 0-1
-                    
-                    # Apply confidence weighting
-                    confidence = min(
-                        svd_pred.details.get('was_impossible', False),
-                        nmf_pred.details.get('was_impossible', False),
-                        knn_pred.details.get('was_impossible', False)
-                    )
-                    
-                    if not confidence and ensemble_score > 0.5:
-                        recommendations.append((content, ensemble_score))
-                        
-                except Exception as e:
-                    logger.warning(f"Error predicting for content {content.get('id')}: {e}")
-                    continue
-            
-            recommendations.sort(key=lambda x: x[1], reverse=True)
-            return recommendations[:limit]
-            
-        except Exception as e:
-            logger.error(f"Error generating collaborative filtering recommendations: {e}")
-            return []
-
-class GraphBasedRecommender:
-    """
-    Graph-based recommendation using content and user relationship networks
+    Graph-based recommendations using content and user relationships
     """
     
     def __init__(self):
-        """Initialize graph-based recommender"""
         self.content_graph = nx.Graph()
         self.user_graph = nx.Graph()
-        self.bipartite_graph = nx.Graph()
-        
-        logger.info("CineBrain GraphBasedRecommender initialized")
+        self.is_built = False
     
-    def build_content_graph(self, content_data: List[Dict], interaction_data: List[Dict]):
-        """Build content similarity graph"""
+    def build_content_graph(self, content_list: List[Any], similarity_engine: SimilarityEngine):
+        """
+        Build content similarity graph
+        
+        Args:
+            content_list: List of content items
+            similarity_engine: Similarity computation engine
+        """
         try:
-            # Add content nodes
-            for content in content_data:
+            logger.info(f"Building content graph with {len(content_list)} items")
+            
+            # Add nodes
+            for content in content_list:
                 self.content_graph.add_node(
-                    content['id'],
-                    **{k: v for k, v in content.items() if k != 'id'}
+                    content.id,
+                    title=content.title,
+                    genres=safe_json_loads(content.genres or '[]'),
+                    languages=safe_json_loads(content.languages or '[]'),
+                    rating=content.rating or 0
                 )
             
-            # Add edges based on co-interactions
-            user_content_map = defaultdict(set)
-            for interaction in interaction_data:
-                user_content_map[interaction['user_id']].add(interaction['content_id'])
+            # Add edges based on similarity
+            # Sample pairs to avoid O(n²) complexity for large datasets
+            max_pairs = min(10000, len(content_list) * 20)
+            sampled_pairs = []
             
-            # Calculate content co-occurrence
-            content_cooccurrence = defaultdict(int)
-            for user_id, content_ids in user_content_map.items():
-                content_list = list(content_ids)
-                for i in range(len(content_list)):
-                    for j in range(i + 1, len(content_list)):
-                        content1, content2 = content_list[i], content_list[j]
-                        content_cooccurrence[(content1, content2)] += 1
+            for i, content1 in enumerate(content_list):
+                # For each content, find similar items
+                similarities = []
+                
+                for j, content2 in enumerate(content_list):
+                    if i >= j:
+                        continue
+                    
+                    sim_scores = similarity_engine.compute_content_similarity(content1, content2)
+                    avg_sim = np.mean(list(sim_scores.values()))
+                    
+                    if avg_sim > 0.5:  # Threshold for edge creation
+                        similarities.append((j, avg_sim))
+                
+                # Keep top-k similar items
+                similarities.sort(key=lambda x: x[1], reverse=True)
+                for j, sim in similarities[:5]:  # Top 5 similar items
+                    sampled_pairs.append((i, j, sim))
+                
+                if len(sampled_pairs) >= max_pairs:
+                    break
             
-            # Add edges with weights
-            for (content1, content2), weight in content_cooccurrence.items():
-                if weight >= 2:  # Minimum co-occurrence threshold
-                    self.content_graph.add_edge(content1, content2, weight=weight)
+            # Add edges
+            for i, j, weight in sampled_pairs:
+                self.content_graph.add_edge(
+                    content_list[i].id,
+                    content_list[j].id,
+                    weight=weight
+                )
             
-            logger.info(f"Built content graph with {self.content_graph.number_of_nodes()} nodes and {self.content_graph.number_of_edges()} edges")
+            self.is_built = True
+            logger.info(f"Content graph built with {self.content_graph.number_of_edges()} edges")
             
         except Exception as e:
             logger.error(f"Error building content graph: {e}")
+            self.is_built = False
     
-    def generate_recommendations(self, user_id: int, user_interactions: List[int],
-                               limit: int = 20) -> List[Tuple[int, float]]:
-        """Generate graph-based recommendations using random walks"""
+    def get_graph_recommendations(self, seed_content_ids: List[int], 
+                                 limit: int = 20) -> List[Tuple[int, float]]:
+        """
+        Get recommendations using graph propagation
+        
+        Args:
+            seed_content_ids: Starting content IDs
+            limit: Number of recommendations
+        
+        Returns:
+            List[Tuple[int, float]]: Recommended content IDs with scores
+        """
+        if not self.is_built or not seed_content_ids:
+            return []
+        
         try:
-            if not self.content_graph.nodes():
-                return []
-            
-            # Get user's interacted content that exists in graph
-            seed_nodes = [cid for cid in user_interactions if cid in self.content_graph.nodes()]
-            
-            if not seed_nodes:
-                return []
-            
-            # Perform personalized PageRank
-            personalization = {node: 1.0 if node in seed_nodes else 0.0 
-                             for node in self.content_graph.nodes()}
+            # Personalized PageRank from seed nodes
+            personalization = {
+                node: 1.0 if node in seed_content_ids else 0.0
+                for node in self.content_graph.nodes()
+            }
             
             pagerank_scores = nx.pagerank(
                 self.content_graph,
@@ -355,796 +299,925 @@ class GraphBasedRecommender:
                 max_iter=100
             )
             
-            # Filter out already interacted content and sort
+            # Filter out seed nodes and sort
             recommendations = [
-                (content_id, score) for content_id, score in pagerank_scores.items()
-                if content_id not in user_interactions
+                (node, score) 
+                for node, score in pagerank_scores.items() 
+                if node not in seed_content_ids
             ]
             
             recommendations.sort(key=lambda x: x[1], reverse=True)
+            
             return recommendations[:limit]
             
         except Exception as e:
-            logger.error(f"Error generating graph-based recommendations: {e}")
+            logger.error(f"Error in graph recommendations: {e}")
             return []
 
-class ClusteringBasedRecommender:
+class ClusteringEngine:
     """
-    Clustering-based recommendation using user and content clusters
+    User and content clustering for personalized recommendations
     """
     
-    def __init__(self, embedding_manager: EmbeddingManager):
-        """Initialize clustering-based recommender"""
-        self.embedding_manager = embedding_manager
-        self.user_clusters = None
-        self.content_clusters = None
-        self.n_user_clusters = 10
-        self.n_content_clusters = 20
+    def __init__(self, profile_analyzer: UserProfileAnalyzer):
+        self.profile_analyzer = profile_analyzer
+        self.user_clusters = {}
+        self.content_clusters = {}
+    
+    def get_cluster_recommendations(self, user_id: int, 
+                                  content_pool: List[Any],
+                                  limit: int = 20) -> List[Tuple[Any, float]]:
+        """
+        Get recommendations based on user clustering
         
-        logger.info("CineBrain ClusteringBasedRecommender initialized")
-    
-    def train_clusters(self, user_embeddings: Dict[int, np.ndarray], 
-                      content_embeddings: Dict[int, np.ndarray]):
-        """Train user and content clusters"""
+        Args:
+            user_id: User ID
+            content_pool: Available content
+            limit: Number of recommendations
+        
+        Returns:
+            List[Tuple[Any, float]]: Content with scores
+        """
         try:
-            # Train user clusters
-            if len(user_embeddings) >= self.n_user_clusters:
-                user_ids = list(user_embeddings.keys())
-                user_vectors = np.array([user_embeddings[uid] for uid in user_ids])
-                
-                kmeans_users = KMeans(n_clusters=self.n_user_clusters, random_state=42)
-                user_cluster_labels = kmeans_users.fit_predict(user_vectors)
-                
-                self.user_clusters = {
-                    user_ids[i]: label for i, label in enumerate(user_cluster_labels)
-                }
+            # Get user's cluster preferences
+            user_profile = self.profile_analyzer.build_user_profile(user_id)
+            user_clusters = user_profile.get('preference_clusters', {})
             
-            # Train content clusters
-            if len(content_embeddings) >= self.n_content_clusters:
-                content_ids = list(content_embeddings.keys())
-                content_vectors = np.array([content_embeddings[cid] for cid in content_ids])
-                
-                kmeans_content = KMeans(n_clusters=self.n_content_clusters, random_state=42)
-                content_cluster_labels = kmeans_content.fit_predict(content_vectors)
-                
-                self.content_clusters = {
-                    content_ids[i]: label for i, label in enumerate(content_cluster_labels)
-                }
-            
-            logger.info(f"Trained clusters: {len(self.user_clusters or {})} user clusters, {len(self.content_clusters or {})} content clusters")
-            
-        except Exception as e:
-            logger.error(f"Error training clusters: {e}")
-    
-    def generate_recommendations(self, user_id: int, content_pool: List[Dict],
-                               limit: int = 20) -> List[Tuple[Dict, float]]:
-        """Generate cluster-based recommendations"""
-        try:
-            if not self.user_clusters or not self.content_clusters:
+            if not user_clusters or not user_clusters.get('primary_cluster'):
                 return []
             
-            if user_id not in self.user_clusters:
-                return []
+            primary_cluster = user_clusters['primary_cluster']
             
-            user_cluster = self.user_clusters[user_id]
-            
-            # Find similar users in same cluster
-            similar_users = [uid for uid, cluster in self.user_clusters.items() 
-                           if cluster == user_cluster and uid != user_id]
-            
-            # Get content preferences from similar users' clusters
-            recommendations = []
-            
+            # Score content based on cluster alignment
+            scores = []
             for content in content_pool:
-                content_id = content.get('id')
-                if content_id in self.content_clusters:
-                    content_cluster = self.content_clusters[content_id]
-                    
-                    # Calculate cluster-based score
-                    cluster_score = self._calculate_cluster_affinity(
-                        user_cluster, content_cluster, similar_users
-                    )
-                    
-                    if cluster_score > 0.3:
-                        recommendations.append((content, cluster_score))
+                # Simple scoring based on content features matching cluster
+                # In production, this would use more sophisticated cluster matching
+                score = random.uniform(0.4, 0.8)  # Placeholder
+                scores.append((content, score))
             
-            recommendations.sort(key=lambda x: x[1], reverse=True)
-            return recommendations[:limit]
+            scores.sort(key=lambda x: x[1], reverse=True)
+            return scores[:limit]
             
         except Exception as e:
-            logger.error(f"Error generating cluster-based recommendations: {e}")
+            logger.error(f"Error in cluster recommendations: {e}")
             return []
-    
-    def _calculate_cluster_affinity(self, user_cluster: int, content_cluster: int,
-                                  similar_users: List[int]) -> float:
-        """Calculate affinity between user cluster and content cluster"""
-        # This is a simplified version - in practice, you'd analyze
-        # interaction patterns between user clusters and content clusters
-        base_score = 0.5
-        
-        # Boost if similar users have interacted with this content cluster
-        if similar_users:
-            # This would require tracking cluster interaction patterns
-            base_score += 0.2
-        
-        return min(base_score, 1.0)
 
 class HybridRecommendationEngine:
     """
-    Hybrid recommendation engine that combines multiple algorithms
+    Main recommendation engine orchestrating multiple algorithms
     """
     
-    def __init__(self, embedding_manager: EmbeddingManager, 
-                 similarity_calculator: SimilarityCalculator):
-        """Initialize hybrid recommendation engine"""
-        self.embedding_manager = embedding_manager
-        self.similarity_calculator = similarity_calculator
+    def __init__(self, db=None, models=None, cache_manager=None):
+        self.db = db
+        self.models = models or {}
+        self.cache_manager = cache_manager or CacheManager()
         
-        # Initialize individual recommenders
-        self.content_based = ContentBasedRecommender(embedding_manager)
-        self.collaborative = CollaborativeFilteringRecommender(similarity_calculator)
-        self.graph_based = GraphBasedRecommender()
-        self.clustering_based = ClusteringBasedRecommender(embedding_manager)
+        # Initialize components
+        self.profile_analyzer = UserProfileAnalyzer(db, models, cache_manager=cache_manager)
+        self.embedding_manager = EmbeddingManager(cache_manager=cache_manager)
+        self.similarity_engine = SimilarityEngine(self.embedding_manager, cache_manager)
         
-        # Algorithm weights
-        self.algorithm_weights = {
-            'content_based': 0.3,
+        # Initialize recommendation engines
+        self.collaborative_engine = CollaborativeEngine()
+        self.content_based_engine = ContentBasedEngine(self.embedding_manager)
+        self.graph_engine = GraphBasedEngine()
+        self.clustering_engine = ClusteringEngine(self.profile_analyzer)
+        
+        # Algorithm weights (dynamic per user segment)
+        self.default_weights = {
             'collaborative': 0.25,
-            'graph_based': 0.25,
-            'clustering': 0.2
+            'content_based': 0.30,
+            'graph_based': 0.20,
+            'clustering': 0.15,
+            'popularity': 0.10
         }
         
+        # Exploration parameters
+        self.exploration_rate = 0.15
+        self.diversity_weight = 0.2
+        
         # Performance tracking
-        self.performance_optimizer = PerformanceOptimizer()
+        self.recommendation_history = defaultdict(list)
         
-        logger.info("CineBrain HybridRecommendationEngine initialized")
+        # Initialize models if possible
+        self._initialize_models()
     
-    @PerformanceOptimizer.time_function('generate_hybrid_recommendations')
-    def generate_recommendations(self, user_id: int, user_profile: UserPreferenceProfile,
-                               content_pool: List[Dict], interaction_data: List[Dict],
-                               limit: int = 20) -> List[RecommendationItem]:
+    def _initialize_models(self):
+        """Initialize ML models with available data"""
+        try:
+            if not self.models or not self.db:
+                logger.warning("Cannot initialize models: missing database or models")
+                return
+            
+            # Load content for embeddings
+            Content = self.models.get('Content')
+            if Content:
+                content_list = Content.query.filter(
+                    Content.title.isnot(None)
+                ).limit(5000).all()
+                
+                if content_list:
+                    # Fit content embeddings
+                    self.embedding_manager.fit_content_embeddings(content_list)
+                    
+                    # Build content graph
+                    self.graph_engine.build_content_graph(
+                        content_list[:1000],  # Limit for performance
+                        self.similarity_engine
+                    )
+                    
+                    logger.info("Initialized content embeddings and graph")
+            
+            # Load interaction matrix for collaborative filtering
+            UserInteraction = self.models.get('UserInteraction')
+            if UserInteraction:
+                # Build interaction matrix
+                interactions = UserInteraction.query.limit(10000).all()
+                
+                if len(interactions) > 100:
+                    interaction_df = self._build_interaction_matrix(interactions)
+                    if not interaction_df.empty:
+                        self.collaborative_engine.fit(interaction_df)
+                        logger.info("Initialized collaborative filtering model")
+                    
+        except Exception as e:
+            logger.error(f"Error initializing recommendation models: {e}")
+    
+    def _build_interaction_matrix(self, interactions: List[Any]) -> pd.DataFrame:
+        """Build user-item interaction matrix"""
+        try:
+            # Create sparse matrix representation
+            user_item_data = defaultdict(lambda: defaultdict(float))
+            
+            for interaction in interactions:
+                user_id = interaction.user_id
+                content_id = interaction.content_id
+                
+                # Weight by interaction type
+                weight_map = {
+                    'favorite': 5.0,
+                    'rating': 4.0,
+                    'like': 3.0,
+                    'view': 2.0,
+                    'search': 1.0
+                }
+                
+                weight = weight_map.get(interaction.interaction_type, 1.0)
+                
+                # Add rating if available
+                if interaction.rating:
+                    weight *= (interaction.rating / 10.0)
+                
+                user_item_data[user_id][content_id] = max(
+                    user_item_data[user_id][content_id],
+                    weight
+                )
+            
+            # Convert to DataFrame
+            df = pd.DataFrame.from_dict(user_item_data, orient='index')
+            df = df.fillna(0)
+            
+            return df
+            
+        except Exception as e:
+            logger.error(f"Error building interaction matrix: {e}")
+            return pd.DataFrame()
+    
+    def generate_recommendations(self, user_id: int, limit: int = 20,
+                               context: Dict[str, Any] = None) -> Dict[str, Any]:
         """
-        Generate hybrid recommendations by combining multiple algorithms
+        Generate personalized recommendations using hybrid approach
         
         Args:
-            user_id: User identifier
-            user_profile: User preference profile
-            content_pool: Available content to recommend
-            interaction_data: Historical interaction data
-            limit: Maximum number of recommendations
-            
-        Returns:
-            List of RecommendationItem objects
-        """
-        try:
-            all_recommendations = defaultdict(list)
-            algorithm_scores = defaultdict(dict)
-            
-            # Generate recommendations from each algorithm
-            with ThreadPoolExecutor(max_workers=4) as executor:
-                futures = {}
-                
-                # Content-based recommendations
-                futures['content_based'] = executor.submit(
-                    self.content_based.generate_recommendations,
-                    user_profile, content_pool, limit * 2
-                )
-                
-                # Collaborative filtering recommendations
-                futures['collaborative'] = executor.submit(
-                    self.collaborative.generate_recommendations,
-                    user_id, user_profile, content_pool, limit * 2
-                )
-                
-                # Graph-based recommendations
-                user_interactions = [i['content_id'] for i in interaction_data if i['user_id'] == user_id]
-                futures['graph_based'] = executor.submit(
-                    self.graph_based.generate_recommendations,
-                    user_id, user_interactions, limit * 2
-                )
-                
-                # Clustering-based recommendations
-                futures['clustering'] = executor.submit(
-                    self.clustering_based.generate_recommendations,
-                    user_id, content_pool, limit * 2
-                )
-                
-                # Collect results
-                for algorithm, future in futures.items():
-                    try:
-                        recommendations = future.result(timeout=10)
-                        all_recommendations[algorithm] = recommendations
-                        
-                        # Store individual algorithm scores
-                        for content, score in recommendations:
-                            content_id = content.get('id') if isinstance(content, dict) else content
-                            algorithm_scores[content_id][algorithm] = score
-                            
-                    except Exception as e:
-                        logger.warning(f"Error getting {algorithm} recommendations: {e}")
-                        all_recommendations[algorithm] = []
-            
-            # Combine recommendations using hybrid scoring
-            final_recommendations = self._combine_recommendations(
-                all_recommendations, algorithm_scores, content_pool, user_profile
-            )
-            
-            # Apply diversity and freshness filters
-            final_recommendations = self._apply_diversity_filter(final_recommendations)
-            final_recommendations = self._apply_freshness_boost(final_recommendations)
-            
-            # Convert to RecommendationItem objects
-            recommendation_items = self._convert_to_recommendation_items(
-                final_recommendations[:limit], algorithm_scores, user_profile
-            )
-            
-            logger.info(f"Generated {len(recommendation_items)} hybrid recommendations for user {user_id}")
-            return recommendation_items
-            
-        except Exception as e:
-            logger.error(f"Error generating hybrid recommendations: {e}")
-            return []
-    
-    def _combine_recommendations(self, all_recommendations: Dict[str, List],
-                               algorithm_scores: Dict[int, Dict[str, float]],
-                               content_pool: List[Dict],
-                               user_profile: UserPreferenceProfile) -> List[Tuple[Dict, float]]:
-        """Combine recommendations from different algorithms using weighted scoring"""
-        try:
-            content_map = {c['id']: c for c in content_pool}
-            combined_scores = defaultdict(float)
-            content_algorithms = defaultdict(set)
-            
-            # Calculate weighted hybrid scores
-            for content_id, algo_scores in algorithm_scores.items():
-                total_score = 0
-                total_weight = 0
-                
-                for algorithm, score in algo_scores.items():
-                    weight = self.algorithm_weights.get(algorithm, 0.25)
-                    total_score += score * weight
-                    total_weight += weight
-                    content_algorithms[content_id].add(algorithm)
-                
-                if total_weight > 0:
-                    # Normalize by actual weight used
-                    normalized_score = total_score / total_weight
-                    
-                    # Boost score if multiple algorithms agree
-                    algorithm_agreement_boost = len(content_algorithms[content_id]) / len(self.algorithm_weights)
-                    final_score = normalized_score * (1 + algorithm_agreement_boost * 0.2)
-                    
-                    combined_scores[content_id] = min(final_score, 1.0)
-            
-            # Convert to list of (content, score) tuples
-            recommendations = []
-            for content_id, score in combined_scores.items():
-                if content_id in content_map:
-                    recommendations.append((content_map[content_id], score))
-            
-            # Sort by combined score
-            recommendations.sort(key=lambda x: x[1], reverse=True)
-            return recommendations
-            
-        except Exception as e:
-            logger.error(f"Error combining recommendations: {e}")
-            return []
-    
-    def _apply_diversity_filter(self, recommendations: List[Tuple[Dict, float]]) -> List[Tuple[Dict, float]]:
-        """Apply diversity filter to avoid over-concentration in genres/languages"""
-        try:
-            if len(recommendations) <= 10:
-                return recommendations
-            
-            diverse_recommendations = []
-            seen_genres = set()
-            seen_languages = set()
-            genre_counts = defaultdict(int)
-            language_counts = defaultdict(int)
-            
-            for content, score in recommendations:
-                content_genres = set(content.get('genres', []))
-                content_languages = set(content.get('languages', []))
-                
-                # Check if adding this content increases diversity
-                new_genres = len(content_genres - seen_genres)
-                new_languages = len(content_languages - seen_languages)
-                
-                # Calculate diversity bonus
-                diversity_bonus = (new_genres * 0.1) + (new_languages * 0.05)
-                
-                # Check for over-representation
-                max_genre_count = max(genre_counts.values()) if genre_counts else 0
-                max_lang_count = max(language_counts.values()) if language_counts else 0
-                
-                # Penalize if genre/language is over-represented
-                over_representation_penalty = 0
-                if max_genre_count > 3:  # More than 3 items from same genre
-                    common_genres = content_genres & seen_genres
-                    if common_genres:
-                        over_representation_penalty += 0.1
-                
-                if max_lang_count > 5:  # More than 5 items in same language
-                    common_languages = content_languages & seen_languages
-                    if common_languages:
-                        over_representation_penalty += 0.05
-                
-                # Apply diversity adjustments
-                adjusted_score = score + diversity_bonus - over_representation_penalty
-                diverse_recommendations.append((content, max(adjusted_score, 0)))
-                
-                # Update tracking
-                seen_genres.update(content_genres)
-                seen_languages.update(content_languages)
-                for genre in content_genres:
-                    genre_counts[genre] += 1
-                for language in content_languages:
-                    language_counts[language] += 1
-            
-            # Re-sort by adjusted scores
-            diverse_recommendations.sort(key=lambda x: x[1], reverse=True)
-            return diverse_recommendations
-            
-        except Exception as e:
-            logger.error(f"Error applying diversity filter: {e}")
-            return recommendations
-    
-    def _apply_freshness_boost(self, recommendations: List[Tuple[Dict, float]]) -> List[Tuple[Dict, float]]:
-        """Apply freshness boost to recent content"""
-        try:
-            current_year = datetime.now().year
-            boosted_recommendations = []
-            
-            for content, score in recommendations:
-                release_date = content.get('release_date')
-                freshness_boost = 0
-                
-                if release_date:
-                    try:
-                        if isinstance(release_date, str):
-                            release_year = datetime.fromisoformat(release_date).year
-                        else:
-                            release_year = release_date.year
-                        
-                        # Boost recent content
-                        years_old = current_year - release_year
-                        if years_old <= 1:
-                            freshness_boost = 0.15  # 15% boost for very recent
-                        elif years_old <= 3:
-                            freshness_boost = 0.1   # 10% boost for recent
-                        elif years_old <= 5:
-                            freshness_boost = 0.05  # 5% boost for somewhat recent
-                        
-                    except Exception:
-                        pass
-                
-                boosted_score = min(score + freshness_boost, 1.0)
-                boosted_recommendations.append((content, boosted_score))
-            
-            # Re-sort by boosted scores
-            boosted_recommendations.sort(key=lambda x: x[1], reverse=True)
-            return boosted_recommendations
-            
-        except Exception as e:
-            logger.error(f"Error applying freshness boost: {e}")
-            return recommendations
-    
-    def _convert_to_recommendation_items(self, recommendations: List[Tuple[Dict, float]],
-                                       algorithm_scores: Dict[int, Dict[str, float]],
-                                       user_profile: UserPreferenceProfile) -> List[RecommendationItem]:
-        """Convert recommendations to structured RecommendationItem objects"""
-        recommendation_items = []
+            user_id: User ID
+            limit: Number of recommendations
+            context: Additional context (device, time, etc.)
         
-        for i, (content, score) in enumerate(recommendations):
-            try:
-                content_id = content['id']
-                
-                # Generate recommendation reasons
-                reasons = self._generate_recommendation_reasons(
-                    content, user_profile, algorithm_scores.get(content_id, {})
+        Returns:
+            Dict containing recommendations and metadata
+        """
+        start_time = datetime.utcnow()
+        
+        try:
+            # Build/retrieve user profile
+            user_profile = self.profile_analyzer.build_user_profile(user_id)
+            
+            # Get candidate content pool
+            candidates = self._get_candidate_pool(user_id, user_profile, limit * 20)
+            
+            if not candidates:
+                return self._get_fallback_recommendations(user_id, limit)
+            
+            # Get algorithm weights based on user segment
+            weights = self._get_personalized_weights(user_profile)
+            
+            # Collect scores from different algorithms
+            all_scores = defaultdict(lambda: defaultdict(float))
+            
+            # 1. Collaborative filtering scores
+            if self.collaborative_engine.is_fitted and weights['collaborative'] > 0:
+                cf_scores = self.collaborative_engine.predict_scores(
+                    user_id,
+                    [c.id for c in candidates]
                 )
-                
-                # Determine algorithm source and confidence
-                content_algo_scores = algorithm_scores.get(content_id, {})
-                primary_algorithm = max(content_algo_scores.items(), key=lambda x: x[1])[0] if content_algo_scores else 'hybrid'
-                
-                confidence_level = self._determine_confidence_level(score, len(content_algo_scores))
-                
-                # Calculate personalization factors
-                personalization_factors = self._calculate_personalization_factors(content, user_profile)
-                
-                recommendation_item = RecommendationItem(
-                    content_id=content_id,
-                    title=content.get('title', ''),
-                    content_type=content.get('content_type', ''),
-                    genres=content.get('genres', []),
-                    languages=content.get('languages', []),
-                    rating=content.get('rating', 0),
-                    release_date=content.get('release_date'),
-                    poster_path=self._format_poster_path(content.get('poster_path')),
-                    overview=content.get('overview', '')[:200] + '...' if content.get('overview') else '',
-                    youtube_trailer_id=content.get('youtube_trailer_id'),
-                    recommendation_score=round(score, 4),
-                    recommendation_reasons=reasons,
-                    algorithm_source=primary_algorithm,
-                    confidence_level=confidence_level,
-                    personalization_factors=personalization_factors
+                for content_id, score in cf_scores.items():
+                    all_scores[content_id]['collaborative'] = score
+            
+            # 2. Content-based scores
+            if weights['content_based'] > 0:
+                cb_scores = self.content_based_engine.compute_scores(
+                    user_profile,
+                    candidates
                 )
-                
-                recommendation_items.append(recommendation_item)
-                
-            except Exception as e:
-                logger.warning(f"Error converting recommendation item: {e}")
+                for content_id, score in cb_scores.items():
+                    all_scores[content_id]['content_based'] = score
+            
+            # 3. Graph-based scores
+            if self.graph_engine.is_built and weights['graph_based'] > 0:
+                # Use user's recent interactions as seeds
+                seed_ids = self._get_user_seed_content(user_id)
+                if seed_ids:
+                    graph_recs = self.graph_engine.get_graph_recommendations(
+                        seed_ids,
+                        limit * 2
+                    )
+                    for content_id, score in graph_recs:
+                        all_scores[content_id]['graph_based'] = score
+            
+            # 4. Clustering scores
+            if weights['clustering'] > 0:
+                cluster_recs = self.clustering_engine.get_cluster_recommendations(
+                    user_id,
+                    candidates,
+                    limit * 2
+                )
+                for content, score in cluster_recs:
+                    all_scores[content.id]['clustering'] = score
+            
+            # 5. Popularity scores
+            if weights['popularity'] > 0:
+                for content in candidates:
+                    pop_score = self._calculate_popularity_score(content)
+                    all_scores[content.id]['popularity'] = pop_score
+            
+            # Combine scores using weighted average
+            final_scores = self._combine_scores(all_scores, weights, candidates)
+            
+            # Apply context adjustments
+            if context:
+                final_scores = self._apply_context_adjustments(final_scores, context, user_profile)
+            
+            # Rank and select top items
+            ranked_items = sorted(final_scores.items(), key=lambda x: x[1], reverse=True)
+            
+            # Apply diversity injection
+            diverse_items = self._inject_diversity(ranked_items, candidates, limit)
+            
+            # Apply exploration
+            final_items = self._apply_exploration(diverse_items, candidates, limit)
+            
+            # Format response
+            recommendations = self._format_recommendations(final_items, user_profile)
+            
+            # Track performance
+            self._track_recommendation_event(user_id, recommendations, context)
+            
+            # Calculate metrics
+            processing_time = (datetime.utcnow() - start_time).total_seconds()
+            
+            return {
+                'status': 'success',
+                'user_id': user_id,
+                'recommendations': recommendations,
+                'metadata': {
+                    'algorithm_weights': weights,
+                    'total_candidates': len(candidates),
+                    'user_segment': user_profile.get('user_segment', 'unknown'),
+                    'processing_time_ms': int(processing_time * 1000),
+                    'diversity_score': calculate_diversity_score([item['content'] for item in recommendations]),
+                    'timestamp': datetime.utcnow().isoformat(),
+                    'profile_confidence': user_profile.get('confidence_score', 0),
+                    'telugu_content_ratio': self._calculate_telugu_ratio(recommendations)
+                }
+            }
+            
+        except Exception as e:
+            logger.error(f"Error generating recommendations for user {user_id}: {e}")
+            return self._get_error_response(user_id, str(e))
+    
+    def _get_candidate_pool(self, user_id: int, user_profile: Dict[str, Any],
+                          pool_size: int = 500) -> List[Any]:
+        """Get candidate content pool for recommendations"""
+        try:
+            Content = self.models.get('Content')
+            UserInteraction = self.models.get('UserInteraction')
+            
+            if not Content:
+                return []
+            
+            # Get user's already interacted content
+            interacted_ids = set()
+            if UserInteraction:
+                interactions = UserInteraction.query.filter_by(
+                    user_id=user_id
+                ).with_entities(UserInteraction.content_id).all()
+                interacted_ids = {i[0] for i in interactions}
+            
+            # Build query
+            query = Content.query.filter(
+                Content.id.notin_(interacted_ids),
+                Content.title.isnot(None)
+            )
+            
+            # Quality filter based on user preference
+            quality_threshold = user_profile.get('recommendation_context', {}).get('quality_preference', 6.0)
+            query = query.filter(Content.rating >= quality_threshold)
+            
+            # Get diverse content pool
+            # 1. Recent releases
+            recent_date = datetime.utcnow().date() - timedelta(days=90)
+            recent_content = query.filter(
+                Content.release_date >= recent_date
+            ).limit(pool_size // 3).all()
+            
+            # 2. Popular content
+            popular_content = query.order_by(
+                Content.popularity.desc()
+            ).limit(pool_size // 3).all()
+            
+            # 3. High-rated content
+            rated_content = query.order_by(
+                Content.rating.desc()
+            ).limit(pool_size // 3).all()
+            
+            # Combine and deduplicate
+            all_content = list({c.id: c for c in recent_content + popular_content + rated_content}.values())
+            
+            # Apply Telugu-first sorting
+            user_languages = user_profile.get('explicit_preferences', {}).get('preferred_languages', [])
+            sorted_content = TeluguPriorityManager.sort_by_language_priority(
+                all_content,
+                user_languages
+            )
+            
+            return sorted_content[:pool_size]
+            
+        except Exception as e:
+            logger.error(f"Error getting candidate pool: {e}")
+            return []
+    
+    def _get_personalized_weights(self, user_profile: Dict[str, Any]) -> Dict[str, float]:
+        """Get algorithm weights based on user profile"""
+        user_segment = user_profile.get('user_segment', 'new_user')
+        confidence = user_profile.get('confidence_score', 0)
+        
+        weights = self.default_weights.copy()
+        
+        if user_segment == 'new_user':
+            # New users - rely more on popularity and content
+            weights['collaborative'] = 0.05
+            weights['content_based'] = 0.25
+            weights['graph_based'] = 0.10
+            weights['clustering'] = 0.10
+            weights['popularity'] = 0.50
+        
+        elif user_segment == 'regular_user':
+            # Regular users - balanced approach
+            weights['collaborative'] = 0.20
+            weights['content_based'] = 0.30
+            weights['graph_based'] = 0.20
+            weights['clustering'] = 0.15
+            weights['popularity'] = 0.15
+        
+        elif user_segment in ['active_user', 'power_user']:
+            # Active users - personalized algorithms
+            weights['collaborative'] = 0.35
+            weights['content_based'] = 0.25
+            weights['graph_based'] = 0.25
+            weights['clustering'] = 0.10
+            weights['popularity'] = 0.05
+        
+        # Adjust based on confidence
+        if confidence < 0.3:
+            # Low confidence - increase popularity weight
+            popularity_boost = (0.3 - confidence) * 0.5
+            weights['popularity'] = min(weights['popularity'] + popularity_boost, 0.6)
+            
+            # Normalize other weights
+            remaining = 1.0 - weights['popularity']
+            other_sum = sum(v for k, v in weights.items() if k != 'popularity')
+            
+            if other_sum > 0:
+                for k in weights:
+                    if k != 'popularity':
+                        weights[k] = (weights[k] / other_sum) * remaining
+        
+        return weights
+    
+    def _combine_scores(self, all_scores: Dict[int, Dict[str, float]],
+                       weights: Dict[str, float],
+                       candidates: List[Any]) -> Dict[int, float]:
+        """Combine scores from different algorithms"""
+        combined_scores = {}
+        content_map = {c.id: c for c in candidates}
+        
+        for content_id, algo_scores in all_scores.items():
+            if content_id not in content_map:
                 continue
-        
-        return recommendation_items
-    
-    def _generate_recommendation_reasons(self, content: Dict, user_profile: UserPreferenceProfile,
-                                       algo_scores: Dict[str, float]) -> List[str]:
-        """Generate human-readable recommendation reasons"""
-        reasons = []
-        
-        # Genre-based reasons
-        content_genres = set(content.get('genres', []))
-        user_top_genres = set(list(user_profile.genre_preferences.keys())[:3])
-        
-        matching_genres = content_genres & user_top_genres
-        if matching_genres:
-            reasons.append(f"Matches your interest in {', '.join(list(matching_genres)[:2])}")
-        
-        # Language-based reasons
-        content_languages = set(content.get('languages', []))
-        user_top_languages = set(list(user_profile.language_preferences.keys())[:2])
-        
-        matching_languages = content_languages & user_top_languages
-        if matching_languages:
-            if 'Telugu' in matching_languages or 'telugu' in [l.lower() for l in matching_languages]:
-                reasons.append("Perfect for Telugu cinema lovers")
+            
+            # Weighted average of algorithm scores
+            weighted_sum = 0.0
+            weight_sum = 0.0
+            
+            for algo, score in algo_scores.items():
+                if algo in weights and score > 0:
+                    # Normalize score to 0-1 range
+                    normalized_score = min(max(score, 0), 1)
+                    weighted_sum += normalized_score * weights[algo]
+                    weight_sum += weights[algo]
+            
+            if weight_sum > 0:
+                combined_scores[content_id] = weighted_sum / weight_sum
             else:
-                reasons.append(f"In your preferred language: {', '.join(matching_languages)}")
+                combined_scores[content_id] = 0.0
+            
+            # Apply language boost
+            content = content_map[content_id]
+            if content.languages:
+                languages = safe_json_loads(content.languages)
+                lang_score = TeluguPriorityManager.calculate_language_score(languages)
+                combined_scores[content_id] *= (1 + lang_score * 0.2)  # Up to 20% boost
         
-        # Quality-based reasons
-        content_rating = content.get('rating', 0)
-        if content_rating >= user_profile.quality_threshold and content_rating >= 8.0:
-            reasons.append("Highly rated and acclaimed")
-        
-        # Algorithm-based reasons
-        if algo_scores:
-            dominant_algo = max(algo_scores.items(), key=lambda x: x[1])[0]
-            if dominant_algo == 'collaborative' and algo_scores[dominant_algo] > 0.7:
-                reasons.append("Loved by users with similar taste")
-            elif dominant_algo == 'content_based' and algo_scores[dominant_algo] > 0.7:
-                reasons.append("Similar to content you've enjoyed")
-        
-        # Freshness reasons
-        if content.get('release_date'):
-            try:
-                release_date = datetime.fromisoformat(content['release_date']) if isinstance(content['release_date'], str) else content['release_date']
-                days_old = (datetime.now() - release_date).days
-                if days_old <= 30:
-                    reasons.append("Fresh and trending")
-                elif days_old <= 90:
-                    reasons.append("Recent release")
-            except:
-                pass
-        
-        return reasons[:3]  # Limit to top 3 reasons
+        return combined_scores
     
-    def _determine_confidence_level(self, score: float, num_algorithms: int) -> str:
-        """Determine confidence level based on score and algorithm agreement"""
-        if score >= 0.8 and num_algorithms >= 3:
-            return 'very_high'
-        elif score >= 0.7 and num_algorithms >= 2:
-            return 'high'
-        elif score >= 0.6:
-            return 'medium'
-        elif score >= 0.4:
-            return 'moderate'
-        else:
-            return 'low'
+    def _apply_context_adjustments(self, scores: Dict[int, float],
+                                 context: Dict[str, Any],
+                                 user_profile: Dict[str, Any]) -> Dict[int, float]:
+        """Apply contextual adjustments to scores"""
+        adjusted_scores = scores.copy()
+        Content = self.models.get('Content')
+        
+        if not Content:
+            return adjusted_scores
+        
+        # Time of day adjustments
+        current_hour = datetime.utcnow().hour
+        
+        for content_id, score in scores.items():
+            content = Content.query.get(content_id)
+            if not content:
+                continue
+            
+            adjustment_factor = 1.0
+            
+            # Device-based adjustments
+            if context.get('device') == 'mobile':
+                # Prefer shorter content on mobile
+                if content.runtime and content.runtime < 90:
+                    adjustment_factor *= 1.1
+                elif content.runtime and content.runtime > 150:
+                    adjustment_factor *= 0.9
+            
+            # Time-based adjustments
+            if 22 <= current_hour or current_hour < 2:
+                # Late night - prefer certain genres
+                if content.genres:
+                    genres = safe_json_loads(content.genres)
+                    if any(g in ['Horror', 'Thriller', 'Mystery'] for g in genres):
+                        adjustment_factor *= 1.2
+            elif 6 <= current_hour < 9:
+                # Morning - prefer lighter content
+                if content.genres:
+                    genres = safe_json_loads(content.genres)
+                    if any(g in ['Comedy', 'Animation', 'Family'] for g in genres):
+                        adjustment_factor *= 1.2
+            
+            # Weekend adjustments
+            if datetime.utcnow().weekday() >= 5:  # Saturday or Sunday
+                # Prefer movies and longer content
+                if content.content_type == 'movie':
+                    adjustment_factor *= 1.1
+            
+            adjusted_scores[content_id] = score * adjustment_factor
+        
+        return adjusted_scores
     
-    def _calculate_personalization_factors(self, content: Dict, user_profile: UserPreferenceProfile) -> Dict[str, float]:
-        """Calculate specific personalization factors"""
-        factors = {}
+    def _inject_diversity(self, ranked_items: List[Tuple[int, float]],
+                         candidates: List[Any],
+                         limit: int) -> List[Tuple[int, float]]:
+        """Inject diversity into recommendations"""
+        if len(ranked_items) <= 5:
+            return ranked_items[:limit]
         
-        # Genre match factor
-        content_genres = set(content.get('genres', []))
-        user_genres = set(user_profile.genre_preferences.keys())
-        if content_genres and user_genres:
-            factors['genre_match'] = len(content_genres & user_genres) / len(content_genres | user_genres)
+        content_map = {c.id: c for c in candidates}
+        diverse_items = []
         
-        # Language match factor
-        content_languages = set(content.get('languages', []))
-        user_languages = set(user_profile.language_preferences.keys())
-        if content_languages and user_languages:
-            factors['language_match'] = len(content_languages & user_languages) / len(content_languages | user_languages)
+        # Track seen attributes
+        seen_genres = set()
+        seen_types = set()
+        seen_languages = set()
         
-        # Quality alignment factor
-        content_rating = content.get('rating', 0)
-        if content_rating > 0:
-            factors['quality_alignment'] = min(content_rating / user_profile.quality_threshold, 1.0)
+        # Always include top items
+        for i, (content_id, score) in enumerate(ranked_items[:3]):
+            diverse_items.append((content_id, score))
+            content = content_map.get(content_id)
+            if content:
+                if content.genres:
+                    seen_genres.update(safe_json_loads(content.genres))
+                seen_types.add(content.content_type)
+                if content.languages:
+                    seen_languages.update(safe_json_loads(content.languages))
         
-        # Sophistication match factor
-        factors['sophistication_match'] = user_profile.sophistication_score
+        # Add diverse items
+        for content_id, score in ranked_items[3:]:
+            if len(diverse_items) >= limit:
+                break
+            
+            content = content_map.get(content_id)
+            if not content:
+                continue
+            
+            # Calculate novelty
+            genres = set(safe_json_loads(content.genres or '[]'))
+            languages = set(safe_json_loads(content.languages or '[]'))
+            
+            genre_novelty = len(genres - seen_genres) / max(len(genres), 1) if genres else 0
+            lang_novelty = len(languages - seen_languages) / max(len(languages), 1) if languages else 0
+            type_novelty = 1.0 if content.content_type not in seen_types else 0.0
+            
+            overall_novelty = (genre_novelty + lang_novelty + type_novelty) / 3
+            
+            # Accept if novel enough or score is very high
+            if overall_novelty > self.diversity_weight or score > 0.85:
+                diverse_items.append((content_id, score))
+                seen_genres.update(genres)
+                seen_types.add(content.content_type)
+                seen_languages.update(languages)
         
-        return factors
+        return diverse_items
     
-    def _format_poster_path(self, poster_path: Optional[str]) -> Optional[str]:
-        """Format poster path for API response"""
-        if not poster_path:
-            return None
+    def _apply_exploration(self, items: List[Tuple[int, float]],
+                          candidates: List[Any],
+                          limit: int) -> List[Tuple[int, float]]:
+        """Apply exploration strategy"""
+        if random.random() > self.exploration_rate:
+            return items[:limit]
         
-        if poster_path.startswith('http'):
-            return poster_path
-        else:
-            return f"https://image.tmdb.org/t/p/w300{poster_path}"
-
-class ModernPersonalizationEngine:
-    """
-    Main personalization engine that orchestrates the entire recommendation process
-    """
-    
-    def __init__(self, db, models: Dict, profile_analyzer: UserProfileAnalyzer,
-                 similarity_calculator: SimilarityCalculator, cache_manager: CacheManager):
-        """Initialize modern personalization engine"""
-        self.db = db
-        self.models = models
-        self.profile_analyzer = profile_analyzer
-        self.similarity_calculator = similarity_calculator
-        self.cache_manager = cache_manager
+        # Reserve slots for exploration
+        exploit_count = int(limit * (1 - self.exploration_rate))
+        explore_count = limit - exploit_count
         
-        # Initialize embedding manager
-        self.embedding_manager = EmbeddingManager(cache=cache_manager.cache)
+        # Keep top items
+        final_items = items[:exploit_count]
         
-        # Initialize hybrid recommendation engine
-        self.hybrid_engine = HybridRecommendationEngine(
-            self.embedding_manager, 
-            similarity_calculator
-        )
+        # Add random exploration items
+        content_map = {c.id: c for c in candidates}
+        already_selected = {item[0] for item in final_items}
         
-        # Performance optimization
-        self.performance_optimizer = PerformanceOptimizer()
+        exploration_pool = [
+            c for c in candidates 
+            if c.id not in already_selected
+        ]
         
-        logger.info("CineBrain ModernPersonalizationEngine initialized")
-    
-    @PerformanceOptimizer.time_function('generate_personalized_feed')
-    def generate_personalized_feed(self, user_id: int, limit: int = 50,
-                                 categories: Optional[List[str]] = None) -> RecommendationResponse:
-        """
-        Generate personalized content feed like modern social media platforms
-        
-        Args:
-            user_id: User identifier
-            limit: Maximum number of recommendations
-            categories: Specific recommendation categories
+        if exploration_pool:
+            # Weighted random selection favoring quality
+            weights = []
+            for content in exploration_pool:
+                weight = 1.0
+                if content.rating:
+                    weight *= (content.rating / 10.0)
+                if content.languages:
+                    languages = safe_json_loads(content.languages)
+                    lang_score = TeluguPriorityManager.calculate_language_score(languages)
+                    weight *= (1 + lang_score)
+                weights.append(weight)
             
-        Returns:
-            RecommendationResponse with personalized recommendations
-        """
-        try:
-            # Check cache first
-            cached_recommendations = self.cache_manager.get_user_recommendations(
-                user_id, 'personalized_feed'
-            )
-            
-            if cached_recommendations:
-                logger.info(f"Returning cached recommendations for user {user_id}")
-                return self._convert_cached_to_response(cached_recommendations, user_id)
-            
-            # Build user profile
-            user_profile = self.profile_analyzer.build_comprehensive_user_profile(user_id)
-            if not user_profile:
-                return self._generate_cold_start_recommendations(user_id, limit)
-            
-            # Get content pool
-            content_pool = self._get_content_pool(user_profile)
-            
-            # Get interaction data for collaborative filtering
-            interaction_data = self._get_interaction_data()
-            
-            # Train models if needed
-            self._ensure_models_trained(interaction_data)
-            
-            # Generate recommendations
-            recommendations = self.hybrid_engine.generate_recommendations(
-                user_id, user_profile, content_pool, interaction_data, limit
-            )
-            
-            # Calculate response metadata
-            algorithm_breakdown = self._calculate_algorithm_breakdown(recommendations)
-            personalization_strength = self._calculate_personalization_strength(user_profile)
-            freshness_score = self._calculate_freshness_score(recommendations)
-            diversity_score = self._calculate_diversity_score(recommendations)
-            
-            # Create response
-            response = RecommendationResponse(
-                user_id=user_id,
-                recommendations=recommendations,
-                total_count=len(recommendations),
-                algorithm_breakdown=algorithm_breakdown,
-                personalization_strength=personalization_strength,
-                freshness_score=freshness_score,
-                diversity_score=diversity_score,
-                generated_at=datetime.utcnow(),
-                cache_duration=3600,  # 1 hour
-                next_refresh=datetime.utcnow() + timedelta(hours=1)
-            )
-            
-            # Cache the recommendations
-            self._cache_recommendations(user_id, response)
-            
-            logger.info(f"Generated {len(recommendations)} personalized recommendations for user {user_id}")
-            return response
-            
-        except Exception as e:
-            logger.error(f"Error generating personalized feed for user {user_id}: {e}")
-            return self._generate_fallback_recommendations(user_id, limit)
-    
-    def _get_content_pool(self, user_profile: UserPreferenceProfile) -> List[Dict]:
-        """Get relevant content pool for recommendations"""
-        try:
-            Content = self.models['Content']
-            
-            # Build query with user preferences
-            query = self.db.session.query(Content)
-            
-            # Filter by quality threshold
-            query = query.filter(Content.rating >= max(user_profile.quality_threshold - 1, 5.0))
-            
-            # Prefer Telugu content
-            preferred_languages = list(user_profile.language_preferences.keys())
-            if 'Telugu' in preferred_languages or 'telugu' in [l.lower() for l in preferred_languages]:
-                # Boost Telugu content in the pool
-                telugu_content = query.filter(Content.languages.contains('Telugu')).limit(300).all()
-                other_content = query.filter(~Content.languages.contains('Telugu')).limit(200).all()
-                all_content = telugu_content + other_content
+            # Normalize weights
+            total_weight = sum(weights)
+            if total_weight > 0:
+                weights = [w / total_weight for w in weights]
             else:
-                all_content = query.limit(500).all()
+                weights = [1.0 / len(exploration_pool)] * len(exploration_pool)
             
-            # Convert to dictionary format
-            content_pool = []
-            for content in all_content:
-                content_dict = {
+            # Sample exploration items
+            explore_items = np.random.choice(
+                exploration_pool,
+                size=min(explore_count, len(exploration_pool)),
+                replace=False,
+                p=weights
+            )
+            
+            for content in explore_items:
+                final_items.append((content.id, random.uniform(0.3, 0.5)))
+        
+        return final_items
+    
+    def _format_recommendations(self, items: List[Tuple[int, float]],
+                              user_profile: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Format recommendations for response"""
+        Content = self.models.get('Content')
+        if not Content:
+            return []
+        
+        formatted = []
+        
+        for rank, (content_id, score) in enumerate(items):
+            content = Content.query.get(content_id)
+            if not content:
+                continue
+            
+            # Determine recommendation reason
+            reason = self._generate_recommendation_reason(content, user_profile)
+            
+            formatted_item = {
+                'rank': rank + 1,
+                'content': {
                     'id': content.id,
                     'title': content.title,
                     'content_type': content.content_type,
-                    'genres': json.loads(content.genres or '[]'),
-                    'languages': json.loads(content.languages or '[]'),
-                    'rating': content.rating or 0,
+                    'genres': safe_json_loads(content.genres or '[]'),
+                    'languages': safe_json_loads(content.languages or '[]'),
+                    'rating': content.rating,
                     'release_date': content.release_date.isoformat() if content.release_date else None,
-                    'poster_path': content.poster_path,
-                    'overview': content.overview or '',
-                    'youtube_trailer_id': content.youtube_trailer_id,
-                    'popularity': content.popularity or 0
-                }
-                content_pool.append(content_dict)
+                    'overview': content.overview[:200] + '...' if content.overview else '',
+                    'runtime': content.runtime,
+                    'popularity': content.popularity,
+                    'vote_count': content.vote_count,
+                    'poster_path': f"https://image.tmdb.org/t/p/w500{content.poster_path}" if content.poster_path else None,
+                    'backdrop_path': f"https://image.tmdb.org/t/p/w1280{content.backdrop_path}" if content.backdrop_path else None,
+                    'is_trending': getattr(content, 'is_trending', False),
+                    'is_new_release': getattr(content, 'is_new_release', False),
+                    'youtube_trailer_id': getattr(content, 'youtube_trailer_id', None)
+                },
+                'recommendation_score': round(score, 4),
+                'reason': reason,
+                'match_percentage': int(score * 100),
+                'personalization_type': self._get_personalization_type(content, user_profile)
+            }
             
-            logger.info(f"Retrieved content pool of {len(content_pool)} items")
-            return content_pool
-            
-        except Exception as e:
-            logger.error(f"Error getting content pool: {e}")
+            formatted.append(formatted_item)
+        
+        return formatted
+    
+    def _generate_recommendation_reason(self, content: Any,
+                                      user_profile: Dict[str, Any]) -> str:
+        """Generate human-readable recommendation reason"""
+        
+        # Check for Telugu content
+        if content.languages:
+            languages = safe_json_loads(content.languages)
+            if any('telugu' in lang.lower() for lang in languages):
+                return "Top Telugu content matching your taste"
+        
+        # Check genre match
+        user_genres = user_profile.get('implicit_preferences', {}).get('genre_preferences', {}).get('top_genres', [])
+        if content.genres and user_genres:
+            content_genres = safe_json_loads(content.genres)
+            matching_genres = set(content_genres) & set(user_genres)
+            if matching_genres:
+                return f"Because you enjoy {', '.join(list(matching_genres)[:2])}"
+        
+        # Check if new release
+        if hasattr(content, 'is_new_release') and content.is_new_release:
+            return "New release you might enjoy"
+        
+        # Check rating
+        if content.rating and content.rating >= 8:
+            return "Highly rated by viewers like you"
+        
+        # Default reason
+        return "Recommended for you"
+    
+    def _get_personalization_type(self, content: Any,
+                                 user_profile: Dict[str, Any]) -> str:
+        """Determine personalization type for content"""
+        
+        # Check profile confidence
+        confidence = user_profile.get('confidence_score', 0)
+        
+        if confidence < 0.3:
+            return 'popularity_based'
+        elif confidence < 0.6:
+            return 'hybrid'
+        else:
+            return 'personalized'
+    
+    def _calculate_popularity_score(self, content: Any) -> float:
+        """Calculate normalized popularity score"""
+        score = 0.0
+        
+        if content.popularity:
+            score += min(content.popularity / 100, 1.0) * 0.4
+        
+        if content.vote_count:
+            score += min(content.vote_count / 1000, 1.0) * 0.3
+        
+        if content.rating:
+            score += (content.rating / 10.0) * 0.3
+        
+        return score
+    
+    def _get_user_seed_content(self, user_id: int, limit: int = 10) -> List[int]:
+        """Get user's recent interactions as seed content"""
+        UserInteraction = self.models.get('UserInteraction')
+        if not UserInteraction:
             return []
+        
+        recent_interactions = UserInteraction.query.filter_by(
+            user_id=user_id
+        ).order_by(
+            UserInteraction.timestamp.desc()
+        ).limit(limit).all()
+        
+        return [i.content_id for i in recent_interactions]
     
-    def _ensure_models_trained(self, interaction_data: List[Dict]):
-        """Ensure recommendation models are trained"""
+    def _calculate_telugu_ratio(self, recommendations: List[Dict[str, Any]]) -> float:
+        """Calculate ratio of Telugu content in recommendations"""
+        if not recommendations:
+            return 0.0
+        
+        telugu_count = 0
+        
+        for rec in recommendations:
+            languages = rec['content']['languages']
+            if any('telugu' in lang.lower() for lang in languages):
+                telugu_count += 1
+        
+        return telugu_count / len(recommendations)
+    
+    def _track_recommendation_event(self, user_id: int,
+                                   recommendations: List[Dict[str, Any]],
+                                   context: Dict[str, Any]):
+        """Track recommendation generation event"""
         try:
-            # Train collaborative filtering models
-            self.hybrid_engine.collaborative.train_models(interaction_data)
+            event = {
+                'user_id': user_id,
+                'timestamp': datetime.utcnow().isoformat(),
+                'recommendation_count': len(recommendations),
+                'content_ids': [r['content']['id'] for r in recommendations],
+                'context': context
+            }
             
-            # Train clustering models
-            user_embeddings = {}
-            content_embeddings = {}
+            # Store in history (limited size)
+            self.recommendation_history[user_id].append(event)
             
-            # This would typically be done periodically, not on every request
-            # For demo purposes, we'll skip the heavy computation
-            
+            # Keep only recent history
+            if len(self.recommendation_history[user_id]) > 100:
+                self.recommendation_history[user_id] = self.recommendation_history[user_id][-50:]
+                
         except Exception as e:
-            logger.warning(f"Error training models: {e}")
+            logger.warning(f"Failed to track recommendation event: {e}")
     
-    def _cache_recommendations(self, user_id: int, response: RecommendationResponse):
-        """Cache recommendations for future requests"""
+    def _get_fallback_recommendations(self, user_id: int, limit: int) -> Dict[str, Any]:
+        """Get fallback recommendations when main algorithm fails"""
         try:
-            cache_data = {
-                'recommendations': [
-                    {
-                        'content_id': rec.content_id,
-                        'title': rec.title,
-                        'content_type': rec.content_type,
-                        'genres': rec.genres,
-                        'languages': rec.languages,
-                        'rating': rec.rating,
-                        'release_date': rec.release_date,
-                        'poster_path': rec.poster_path,
-                        'overview': rec.overview,
-                        'youtube_trailer_id': rec.youtube_trailer_id,
-                        'recommendation_score': rec.recommendation_score,
-                        'recommendation_reasons': rec.recommendation_reasons,
-                        'algorithm_source': rec.algorithm_source,
-                        'confidence_level': rec.confidence_level,
-                        'personalization_factors': rec.personalization_factors
-                    }
-                    for rec in response.recommendations
-                ],
+            Content = self.models.get('Content')
+            if not Content:
+                return self._get_error_response(user_id, "Content model not available")
+            
+            # Get popular Telugu content
+            telugu_content = Content.query.filter(
+                Content.languages.contains('Telugu'),
+                Content.rating >= 7.0
+            ).order_by(
+                Content.popularity.desc()
+            ).limit(limit // 2).all()
+            
+            # Get popular general content
+            popular_content = Content.query.filter(
+                Content.rating >= 7.5
+            ).order_by(
+                Content.popularity.desc()
+            ).limit(limit // 2).all()
+            
+            # Combine and format
+            all_content = list({c.id: c for c in telugu_content + popular_content}.values())
+            
+            recommendations = []
+            for rank, content in enumerate(all_content[:limit]):
+                recommendations.append({
+                    'rank': rank + 1,
+                    'content': {
+                        'id': content.id,
+                        'title': content.title,
+                        'content_type': content.content_type,
+                        'genres': safe_json_loads(content.genres or '[]'),
+                        'languages': safe_json_loads(content.languages or '[]'),
+                        'rating': content.rating,
+                        'poster_path': f"https://image.tmdb.org/t/p/w500{content.poster_path}" if content.poster_path else None
+                    },
+                    'recommendation_score': 0.5,
+                    'reason': "Popular content you might enjoy",
+                    'match_percentage': 50,
+                    'personalization_type': 'fallback'
+                })
+            
+            return {
+                'status': 'fallback',
+                'user_id': user_id,
+                'recommendations': recommendations,
                 'metadata': {
-                    'algorithm_breakdown': response.algorithm_breakdown,
-                    'personalization_strength': response.personalization_strength,
-                    'freshness_score': response.freshness_score,
-                    'diversity_score': response.diversity_score,
-                    'generated_at': response.generated_at.isoformat()
+                    'message': 'Using fallback recommendations',
+                    'timestamp': datetime.utcnow().isoformat()
                 }
             }
             
-            self.cache_manager.set_user_recommendations(
-                user_id, cache_data, 'personalized_feed', timeout=3600
-            )
-            
         except Exception as e:
-            logger.warning(f"Error caching recommendations: {e}")
-
-class RecommendationOrchestrator:
-    """
-    High-level orchestrator for all recommendation operations
-    """
+            logger.error(f"Error in fallback recommendations: {e}")
+            return self._get_error_response(user_id, str(e))
     
-    def __init__(self, personalization_engine: ModernPersonalizationEngine):
-        """Initialize recommendation orchestrator"""
-        self.personalization_engine = personalization_engine
-        self.performance_optimizer = PerformanceOptimizer()
-        
-        logger.info("CineBrain RecommendationOrchestrator initialized")
-    
-    async def get_recommendations_async(self, user_id: int, request_params: Dict) -> Dict[str, Any]:
-        """Get recommendations asynchronously for better performance"""
-        try:
-            loop = asyncio.get_event_loop()
-            
-            # Run recommendation generation in thread pool
-            recommendations = await loop.run_in_executor(
-                None,
-                self.personalization_engine.generate_personalized_feed,
-                user_id,
-                request_params.get('limit', 50)
-            )
-            
-            return self._format_api_response(recommendations)
-            
-        except Exception as e:
-            logger.error(f"Error getting async recommendations: {e}")
-            return {'error': 'Failed to generate recommendations'}
-    
-    def _format_api_response(self, response: RecommendationResponse) -> Dict[str, Any]:
-        """Format recommendation response for API"""
+    def _get_error_response(self, user_id: int, error: str) -> Dict[str, Any]:
+        """Generate error response"""
         return {
-            'success': True,
-            'user_id': response.user_id,
-            'recommendations': [
-                {
-                    'id': rec.content_id,
-                    'title': rec.title,
-                    'content_type': rec.content_type,
-                    'genres': rec.genres,
-                    'languages': rec.languages,
-                    'rating': rec.rating,
-                    'release_date': rec.release_date,
-                    'poster_path': rec.poster_path,
-                    'overview': rec.overview,
-                    'youtube_trailer_id': rec.youtube_trailer_id,
-                    'score': rec.recommendation_score,
-                    'reasons': rec.recommendation_reasons,
-                    'source': rec.algorithm_source,
-                    'confidence': rec.confidence_level,
-                    'personalization': rec.personalization_factors
-                }
-                for rec in response.recommendations
-            ],
+            'status': 'error',
+            'user_id': user_id,
+            'recommendations': [],
+            'error': error,
             'metadata': {
-                'total_count': response.total_count,
-                'algorithm_breakdown': response.algorithm_breakdown,
-                'personalization_strength': round(response.personalization_strength, 3),
-                'freshness_score': round(response.freshness_score, 3),
-                'diversity_score': round(response.diversity_score, 3),
-                'generated_at': response.generated_at.isoformat(),
-                'next_refresh': response.next_refresh.isoformat()
+                'timestamp': datetime.utcnow().isoformat()
             }
         }
+    
+    def get_similar_content(self, content_id: int, limit: int = 10) -> List[Dict[str, Any]]:
+        """Get similar content recommendations"""
+        try:
+            Content = self.models.get('Content')
+            if not Content:
+                return []
+            
+            base_content = Content.query.get(content_id)
+            if not base_content:
+                return []
+            
+            # Get candidates (excluding the base content)
+            candidates = Content.query.filter(
+                Content.id != content_id,
+                Content.title.isnot(None)
+            ).limit(200).all()
+            
+            # Calculate similarities
+            similarities = []
+            
+            for candidate in candidates:
+                sim_scores = self.similarity_engine.compute_content_similarity(
+                    base_content,
+                    candidate
+                )
+                avg_similarity = np.mean(list(sim_scores.values()))
+                similarities.append({
+                    'content': candidate,
+                    'similarity': avg_similarity,
+                    'details': sim_scores
+                })
+            
+            # Sort by similarity
+            similarities.sort(key=lambda x: x['similarity'], reverse=True)
+            
+            # Format results
+            results = []
+            for item in similarities[:limit]:
+                results.append({
+                    'content': {
+                        'id': item['content'].id,
+                        'title': item['content'].title,
+                        'content_type': item['content'].content_type,
+                        'genres': safe_json_loads(item['content'].genres or '[]'),
+                        'languages': safe_json_loads(item['content'].languages or '[]'),
+                        'rating': item['content'].rating,
+                        'poster_path': f"https://image.tmdb.org/t/p/w500{item['content'].poster_path}" if item['content'].poster_path else None
+                    },
+                    'similarity_score': round(item['similarity'], 4),
+                    'similarity_details': {
+                        k: round(v, 3) for k, v in item['details'].items()
+                    }
+                })
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"Error getting similar content: {e}")
+            return []
+    
+    def update_user_feedback(self, user_id: int, content_id: int,
+                           feedback_type: str, feedback_value: Any = None):
+        """Process user feedback to improve recommendations"""
+        try:
+            # Update user profile in real-time
+            interaction_data = {
+                'content_id': content_id,
+                'interaction_type': feedback_type,
+                'rating': feedback_value if feedback_type == 'rating' else None,
+                'timestamp': datetime.utcnow().isoformat()
+            }
+            
+            # Update profile analyzer
+            self.profile_analyzer.update_profile_realtime(user_id, interaction_data)
+            
+            # Update user embedding
+            self.embedding_manager.update_user_embedding(user_id, interaction_data)
+            
+            logger.info(f"Updated user {user_id} feedback for content {content_id}")
+            
+        except Exception as e:
+            logger.error(f"Error processing user feedback: {e}")

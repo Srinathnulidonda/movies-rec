@@ -2,627 +2,896 @@
 
 """
 CineBrain User Profile Analyzer
-==============================
-
-Continuously learns and updates user preference models through real-time
-interaction monitoring and sophisticated behavioral analysis.
+Real-time user profiling with continuous learning and cinematic DNA analysis
 """
 
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Any, Optional, Tuple
-from datetime import datetime, timedelta
-from collections import defaultdict, Counter
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
+from collections import defaultdict, Counter
+from datetime import datetime, timedelta
 import json
 import logging
-import networkx as nx
-from dataclasses import dataclass
-import asyncio
-from concurrent.futures import ThreadPoolExecutor
-import time
+from typing import List, Dict, Any, Tuple, Optional
+import math
 
 from .utils import (
-    EmbeddingManager, 
-    SimilarityCalculator, 
+    TeluguPriorityManager,
+    EmbeddingManager,
+    SimilarityEngine,
     CacheManager,
-    PerformanceOptimizer,
-    LANGUAGE_PRIORITY,
-    PRIORITY_LANGUAGES,
-    decay_weight,
-    normalize_vector
+    safe_json_loads,
+    normalize_scores
 )
 
 logger = logging.getLogger(__name__)
 
-@dataclass
-class UserInteractionEvent:
-    """Structured representation of a user interaction event"""
-    user_id: int
-    content_id: int
-    interaction_type: str
-    timestamp: datetime
-    rating: Optional[float] = None
-    session_id: Optional[str] = None
-    metadata: Optional[Dict] = None
-    context: Optional[Dict] = None
-
-@dataclass 
-class UserPreferenceProfile:
-    """Comprehensive user preference profile"""
-    user_id: int
-    embedding: np.ndarray
-    genre_preferences: Dict[str, float]
-    language_preferences: Dict[str, float]
-    content_type_preferences: Dict[str, float]
-    quality_threshold: float
-    sophistication_score: float
-    engagement_level: str
-    last_updated: datetime
-    confidence_score: float
-    temporal_patterns: Dict[str, Any]
-    cinematic_dna: Dict[str, Any]
-
-class CinematicDNAAnalyzer:
+class UserProfileAnalyzer:
     """
-    Advanced cinematic DNA analyzer that identifies deep narrative and stylistic preferences
+    Advanced user profile analyzer with real-time learning capabilities
     """
     
-    def __init__(self):
-        """Initialize cinematic DNA analyzer with thematic patterns"""
+    def __init__(self, db=None, models=None, embedding_manager=None, 
+                 similarity_engine=None, cache_manager=None):
+        self.db = db
+        self.models = models or {}
+        self.embedding_manager = embedding_manager or EmbeddingManager()
+        self.similarity_engine = similarity_engine or SimilarityEngine()
+        self.cache_manager = cache_manager or CacheManager()
         
-        # Define cinematic themes with Telugu cinema emphasis
+        # User clustering for personalization
+        self.user_clusterer = KMeans(n_clusters=8, random_state=42)
+        self.scaler = StandardScaler()
+        
+        # Profile update parameters
+        self.min_interactions_for_profile = 5
+        self.profile_decay_rate = 0.95  # Daily decay for temporal relevance
+        self.learning_rate = 0.1
+        
+        # Cinematic DNA components
         self.cinematic_themes = {
-            'heroic_journey': {
-                'keywords': ['hero', 'journey', 'destiny', 'courage', 'sacrifice', 'honor'],
-                'telugu_emphasis': ['veera', 'yodha', 'dharma', 'karma'],
-                'weight': 1.0
-            },
-            'family_values': {
-                'keywords': ['family', 'tradition', 'values', 'legacy', 'generation', 'respect'],
-                'telugu_emphasis': ['kutumbam', 'parampara', 'aadarsha'],
-                'weight': 0.9
-            },
-            'romance_emotion': {
-                'keywords': ['love', 'romance', 'passion', 'emotion', 'heart', 'relationship'],
-                'telugu_emphasis': ['prema', 'ishq', 'mohabbat'],
-                'weight': 0.8
-            },
-            'action_spectacle': {
-                'keywords': ['action', 'fight', 'battle', 'war', 'combat', 'intense'],
-                'telugu_emphasis': ['yuddham', 'samaaram', 'shakti'],
-                'weight': 0.85
-            },
-            'social_message': {
-                'keywords': ['social', 'message', 'society', 'change', 'awareness', 'justice'],
-                'telugu_emphasis': ['nyayam', 'samaj', 'badlaav'],
-                'weight': 0.7
-            },
-            'comedy_entertainment': {
-                'keywords': ['comedy', 'humor', 'entertainment', 'fun', 'laughter', 'joy'],
-                'telugu_emphasis': ['vinoda', 'hasya', 'maja'],
-                'weight': 0.6
-            }
+            'action_adventure': ['action', 'adventure', 'thriller', 'chase', 'fight'],
+            'romance_drama': ['romance', 'love', 'drama', 'emotional', 'relationship'],
+            'comedy_entertainment': ['comedy', 'funny', 'humor', 'entertainment', 'lighthearted'],
+            'mystery_crime': ['mystery', 'crime', 'detective', 'investigation', 'thriller'],
+            'fantasy_scifi': ['fantasy', 'science fiction', 'sci-fi', 'supernatural', 'magic'],
+            'family_kids': ['family', 'kids', 'children', 'animation', 'adventure'],
+            'horror_suspense': ['horror', 'scary', 'suspense', 'supernatural', 'thriller'],
+            'biographical_historical': ['biography', 'history', 'historical', 'true story', 'based on']
         }
         
-        # Director signature styles
-        self.director_signatures = {
-            'S.S. Rajamouli': {
-                'style': ['epic_scale', 'visual_spectacle', 'emotional_core', 'cultural_pride'],
-                'themes': ['heroism', 'tradition', 'loyalty', 'sacrifice'],
-                'weight': 1.0
-            },
-            'Christopher Nolan': {
-                'style': ['complex_narrative', 'time_manipulation', 'cerebral', 'practical_effects'],
-                'themes': ['reality_perception', 'memory', 'sacrifice', 'obsession'],
-                'weight': 0.9
-            },
-            'Trivikram Srinivas': {
-                'style': ['dialogue_driven', 'family_drama', 'contemporary', 'witty'],
-                'themes': ['family_values', 'relationships', 'humor', 'wisdom'],
-                'weight': 0.95
-            },
-            'Koratala Siva': {
-                'style': ['mass_appeal', 'social_message', 'emotional', 'commercial'],
-                'themes': ['social_change', 'leadership', 'responsibility', 'justice'],
-                'weight': 0.9
-            }
+        # Telugu cinema specific patterns
+        self.telugu_patterns = {
+            'mass_commercial': ['mass', 'commercial', 'entertainment', 'blockbuster'],
+            'family_sentiment': ['family', 'sentiment', 'emotional', 'relationships'],
+            'action_heroism': ['action', 'hero', 'heroism', 'fight', 'justice'],
+            'romantic_musical': ['romance', 'music', 'songs', 'dance', 'love'],
+            'social_message': ['social', 'message', 'awareness', 'issue', 'society']
         }
-        
-        logger.info("CineBrain CinematicDNAAnalyzer initialized with Telugu cinema emphasis")
     
-    def analyze_user_cinematic_dna(self, user_interactions: List[Dict]) -> Dict[str, Any]:
+    def build_user_profile(self, user_id: int, force_refresh: bool = False) -> Dict[str, Any]:
         """
-        Analyze user's cinematic DNA based on interaction history
+        Build comprehensive user profile with real-time updates
         
         Args:
-            user_interactions: List of user interactions with content metadata
-            
+            user_id: User ID
+            force_refresh: Force profile rebuild
+        
         Returns:
-            Dict containing cinematic DNA profile
+            Dict[str, Any]: Comprehensive user profile
         """
+        # Check cache first
+        if not force_refresh:
+            cache_key = self.cache_manager.get_user_cache_key(user_id, "profile")
+            cached_profile = self.cache_manager.get(cache_key)
+            if cached_profile:
+                logger.debug(f"Retrieved cached profile for user {user_id}")
+                return cached_profile
+        
         try:
-            if not user_interactions:
-                return self._get_default_dna_profile()
+            # Get user data
+            user = self._get_user(user_id)
+            if not user:
+                return self._create_cold_start_profile(user_id)
             
-            theme_scores = defaultdict(float)
-            style_scores = defaultdict(float)
-            director_affinity = defaultdict(float)
+            # Get user interactions
+            interactions = self._get_user_interactions(user_id)
+            if len(interactions) < self.min_interactions_for_profile:
+                return self._create_minimal_profile(user, interactions)
             
-            total_weight = 0
-            
-            for interaction in user_interactions:
-                # Get interaction weight
-                weight = self._get_interaction_weight(interaction)
-                total_weight += weight
+            # Build comprehensive profile
+            profile = {
+                'user_id': user_id,
+                'last_updated': datetime.utcnow().isoformat(),
+                'profile_version': '3.0',
                 
-                # Analyze themes from content
-                content_themes = self._extract_content_themes(interaction)
-                for theme, score in content_themes.items():
-                    theme_scores[theme] += score * weight
+                # Core preferences
+                'explicit_preferences': self._extract_explicit_preferences(user),
+                'implicit_preferences': self._extract_implicit_preferences(interactions),
                 
-                # Analyze director affinity
-                director = interaction.get('director', '')
-                if director in self.director_signatures:
-                    director_weight = self.director_signatures[director]['weight']
-                    director_affinity[director] += weight * director_weight
+                # Advanced analysis
+                'cinematic_dna': self._analyze_cinematic_dna(interactions),
+                'behavioral_patterns': self._analyze_behavioral_patterns(interactions),
+                'temporal_patterns': self._analyze_temporal_patterns(interactions),
+                'engagement_metrics': self._calculate_engagement_metrics(interactions),
                 
-                # Analyze cinematic style
-                content_style = self._analyze_cinematic_style(interaction)
-                for style, score in content_style.items():
-                    style_scores[style] += score * weight
-            
-            # Normalize scores
-            if total_weight > 0:
-                theme_scores = {k: v/total_weight for k, v in theme_scores.items()}
-                style_scores = {k: v/total_weight for k, v in style_scores.items()}
-                director_affinity = {k: v/total_weight for k, v in director_affinity.items()}
-            
-            # Calculate sophistication and preferences
-            sophistication = self._calculate_cinematic_sophistication(user_interactions)
-            narrative_complexity = self._calculate_narrative_complexity_preference(user_interactions)
-            
-            return {
-                'dominant_themes': dict(sorted(theme_scores.items(), key=lambda x: x[1], reverse=True)[:5]),
-                'preferred_styles': dict(sorted(style_scores.items(), key=lambda x: x[1], reverse=True)[:5]),
-                'director_affinity': dict(sorted(director_affinity.items(), key=lambda x: x[1], reverse=True)[:3]),
-                'cinematic_sophistication': sophistication,
-                'narrative_complexity_preference': narrative_complexity,
-                'telugu_cinema_affinity': self._calculate_telugu_affinity(user_interactions),
-                'quality_over_popularity': self._calculate_quality_preference(user_interactions),
-                'genre_depth': self._calculate_genre_depth(user_interactions),
-                'last_analyzed': datetime.utcnow().isoformat()
+                # Personalization features
+                'user_embedding': self.embedding_manager.get_user_embedding(user_id).tolist(),
+                'preference_clusters': self._identify_preference_clusters(interactions),
+                'recommendation_context': self._build_recommendation_context(interactions),
+                
+                # Quality metrics
+                'profile_completeness': 0.0,
+                'confidence_score': 0.0,
+                'diversity_score': 0.0
             }
+            
+            # Calculate derived metrics
+            profile['profile_completeness'] = self._calculate_profile_completeness(profile)
+            profile['confidence_score'] = self._calculate_confidence_score(profile, interactions)
+            profile['diversity_score'] = self._calculate_preference_diversity(interactions)
+            
+            # User segmentation
+            profile['user_segment'] = self._determine_user_segment(profile)
+            
+            # Cache the profile
+            cache_key = self.cache_manager.get_user_cache_key(user_id, "profile")
+            self.cache_manager.set(cache_key, profile, ttl=3600)  # Cache for 1 hour
+            
+            logger.info(f"Built profile for user {user_id} with {len(interactions)} interactions")
+            return profile
             
         except Exception as e:
-            logger.error(f"Error analyzing cinematic DNA: {e}")
-            return self._get_default_dna_profile()
+            logger.error(f"Error building profile for user {user_id}: {e}")
+            return self._create_error_profile(user_id)
     
-    def _extract_content_themes(self, interaction: Dict) -> Dict[str, float]:
-        """Extract thematic elements from content"""
-        themes = {}
-        
-        # Analyze overview/plot
-        overview = interaction.get('overview', '').lower()
-        title = interaction.get('title', '').lower()
-        genres = interaction.get('genres', [])
-        
-        combined_text = f"{title} {overview}"
-        
-        for theme_name, theme_data in self.cinematic_themes.items():
-            score = 0.0
-            
-            # Check keywords
-            for keyword in theme_data['keywords']:
-                if keyword in combined_text:
-                    score += 0.5
-            
-            # Check Telugu-specific terms (higher weight)
-            for telugu_term in theme_data.get('telugu_emphasis', []):
-                if telugu_term in combined_text:
-                    score += 1.0
-            
-            # Genre-based scoring
-            if theme_name == 'action_spectacle' and any(g in ['Action', 'Adventure', 'Thriller'] for g in genres):
-                score += 0.7
-            elif theme_name == 'romance_emotion' and 'Romance' in genres:
-                score += 0.8
-            elif theme_name == 'family_values' and any(g in ['Family', 'Drama'] for g in genres):
-                score += 0.6
-            
-            if score > 0:
-                themes[theme_name] = min(score * theme_data['weight'], 1.0)
-        
-        return themes
-    
-    def _calculate_telugu_affinity(self, interactions: List[Dict]) -> float:
-        """Calculate user's affinity for Telugu cinema"""
-        telugu_interactions = 0
-        total_interactions = len(interactions)
-        
-        for interaction in interactions:
-            languages = interaction.get('languages', [])
-            if any('telugu' in lang.lower() for lang in languages):
-                telugu_interactions += 1
-        
-        return telugu_interactions / total_interactions if total_interactions > 0 else 0.0
-
-class RealTimeProfileUpdater:
-    """
-    Real-time profile updater that continuously learns from user interactions
-    """
-    
-    def __init__(self, embedding_manager: EmbeddingManager, cache_manager: CacheManager):
-        """
-        Initialize real-time profile updater
-        
-        Args:
-            embedding_manager: EmbeddingManager instance
-            cache_manager: CacheManager instance
-        """
-        self.embedding_manager = embedding_manager
-        self.cache_manager = cache_manager
-        self.performance_optimizer = PerformanceOptimizer()
-        
-        # Learning parameters
-        self.learning_rates = {
-            'favorite': 0.3,
-            'watchlist': 0.2,
-            'rating': 0.25,
-            'view': 0.1,
-            'search': 0.05,
-            'like': 0.15
-        }
-        
-        # Interaction queue for batch processing
-        self.interaction_queue = []
-        self.batch_size = 10
-        
-        logger.info("CineBrain RealTimeProfileUpdater initialized")
-    
-    @PerformanceOptimizer.time_function('update_user_profile')
-    def update_user_profile(self, user_id: int, interaction_event: UserInteractionEvent) -> bool:
+    def update_profile_realtime(self, user_id: int, interaction_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Update user profile in real-time based on new interaction
         
         Args:
-            user_id: User identifier
-            interaction_event: New interaction event
-            
+            user_id: User ID
+            interaction_data: New interaction data
+        
         Returns:
-            bool: Success status
+            Dict[str, Any]: Updated profile sections
         """
         try:
-            # Add to interaction queue
-            self.interaction_queue.append(interaction_event)
+            # Update user embedding first
+            self.embedding_manager.update_user_embedding(user_id, interaction_data, self.learning_rate)
             
-            # Calculate learning rate
-            learning_rate = self._calculate_adaptive_learning_rate(user_id, interaction_event)
+            # Get current profile
+            current_profile = self.build_user_profile(user_id)
             
-            # Update user embedding
-            interaction_data = self._convert_event_to_interaction_data(interaction_event)
-            updated_embedding = self.embedding_manager.update_user_embedding_realtime(
-                user_id, interaction_data
+            # Extract interaction features
+            content_id = interaction_data.get('content_id')
+            interaction_type = interaction_data.get('interaction_type', 'view')
+            rating = interaction_data.get('rating')
+            
+            # Update specific profile sections
+            updates = {
+                'last_interaction': datetime.utcnow().isoformat(),
+                'interaction_type': interaction_type,
+                'updated_sections': []
+            }
+            
+            # Update implicit preferences
+            if interaction_type in ['favorite', 'like', 'rating']:
+                implicit_update = self._update_implicit_preferences(
+                    current_profile.get('implicit_preferences', {}),
+                    interaction_data
+                )
+                updates['implicit_preferences'] = implicit_update
+                updates['updated_sections'].append('implicit_preferences')
+            
+            # Update behavioral patterns
+            behavioral_update = self._update_behavioral_patterns(
+                current_profile.get('behavioral_patterns', {}),
+                interaction_data
             )
+            updates['behavioral_patterns'] = behavioral_update
+            updates['updated_sections'].append('behavioral_patterns')
             
-            # Invalidate relevant caches
-            self.cache_manager.invalidate_user_cache(user_id)
+            # Update engagement metrics
+            engagement_update = self._update_engagement_metrics(
+                current_profile.get('engagement_metrics', {}),
+                interaction_data
+            )
+            updates['engagement_metrics'] = engagement_update
+            updates['updated_sections'].append('engagement_metrics')
             
-            # Process batch if queue is full
-            if len(self.interaction_queue) >= self.batch_size:
-                self._process_interaction_batch()
+            # Invalidate cached profile to force refresh on next request
+            cache_key = self.cache_manager.get_user_cache_key(user_id, "profile")
+            self.cache_manager.delete(cache_key)
             
-            logger.info(f"Updated profile for user {user_id} with learning rate {learning_rate}")
-            return True
+            logger.debug(f"Updated profile for user {user_id} with {interaction_type} interaction")
+            return updates
             
         except Exception as e:
-            logger.error(f"Error updating user profile for user {user_id}: {e}")
-            return False
+            logger.error(f"Error updating profile for user {user_id}: {e}")
+            return {'error': str(e)}
     
-    def _calculate_adaptive_learning_rate(self, user_id: int, 
-                                        interaction_event: UserInteractionEvent) -> float:
-        """Calculate adaptive learning rate based on context"""
-        base_rate = self.learning_rates.get(interaction_event.interaction_type, 0.1)
-        
-        # Adjust based on interaction recency
-        time_since_interaction = datetime.utcnow() - interaction_event.timestamp
-        recency_factor = max(0.5, 1.0 - time_since_interaction.total_seconds() / 3600)  # Decay over 1 hour
-        
-        # Adjust based on user engagement level
-        engagement_factor = 1.0  # Could be calculated based on user's historical activity
-        
-        # Adjust based on content quality
-        quality_factor = 1.0
-        if interaction_event.rating:
-            quality_factor = min(interaction_event.rating / 10.0, 1.0)
-        
-        return base_rate * recency_factor * engagement_factor * quality_factor
-    
-    def _convert_event_to_interaction_data(self, event: UserInteractionEvent) -> Dict:
-        """Convert interaction event to data format for embedding update"""
-        return {
-            'content_id': event.content_id,
-            'interaction_type': event.interaction_type,
-            'rating': event.rating,
-            'timestamp': event.timestamp,
-            'metadata': event.metadata or {},
-            'context': event.context or {}
-        }
-
-class UserProfileAnalyzer:
-    """
-    Main user profile analyzer that orchestrates all profile analysis components
-    """
-    
-    def __init__(self, db, models: Dict, embedding_manager: EmbeddingManager, 
-                 cache_manager: CacheManager):
-        """
-        Initialize user profile analyzer
-        
-        Args:
-            db: Database instance
-            models: Dictionary of database models
-            embedding_manager: EmbeddingManager instance
-            cache_manager: CacheManager instance
-        """
-        self.db = db
-        self.models = models
-        self.embedding_manager = embedding_manager
-        self.cache_manager = cache_manager
-        
-        # Initialize sub-components
-        self.cinematic_dna_analyzer = CinematicDNAAnalyzer()
-        self.realtime_updater = RealTimeProfileUpdater(embedding_manager, cache_manager)
-        self.performance_optimizer = PerformanceOptimizer()
-        
-        # User profile cache
-        self.user_profiles = {}
-        
-        logger.info("CineBrain UserProfileAnalyzer initialized")
-    
-    @PerformanceOptimizer.time_function('build_comprehensive_profile')
-    def build_comprehensive_user_profile(self, user_id: int, 
-                                       force_refresh: bool = False) -> Optional[UserPreferenceProfile]:
-        """
-        Build comprehensive user preference profile
-        
-        Args:
-            user_id: User identifier
-            force_refresh: Force profile regeneration
-            
-        Returns:
-            UserPreferenceProfile or None
-        """
-        try:
-            # Check cache first (unless force refresh)
-            if not force_refresh and user_id in self.user_profiles:
-                cached_profile = self.user_profiles[user_id]
-                # Check if profile is recent (within 1 hour)
-                if (datetime.utcnow() - cached_profile.last_updated).total_seconds() < 3600:
-                    return cached_profile
-            
-            # Get user interactions
-            user_interactions = self._get_user_interactions(user_id)
-            if not user_interactions:
-                return self._create_cold_start_profile(user_id)
-            
-            # Convert interactions to structured format
-            interaction_data = self._prepare_interaction_data(user_interactions)
-            
-            # Create user embedding
-            user_embedding = self.embedding_manager.create_user_embedding(user_id, interaction_data)
-            
-            # Analyze preferences
-            genre_preferences = self._analyze_genre_preferences(interaction_data)
-            language_preferences = self._analyze_language_preferences(interaction_data)
-            content_type_preferences = self._analyze_content_type_preferences(interaction_data)
-            
-            # Calculate quality and sophistication metrics
-            quality_threshold = self._calculate_quality_threshold(interaction_data)
-            sophistication_score = self._calculate_sophistication_score(interaction_data)
-            
-            # Determine engagement level
-            engagement_level = self._determine_engagement_level(interaction_data)
-            
-            # Calculate confidence score
-            confidence_score = self._calculate_profile_confidence(interaction_data)
-            
-            # Analyze temporal patterns
-            temporal_patterns = self._analyze_temporal_patterns(interaction_data)
-            
-            # Analyze cinematic DNA
-            cinematic_dna = self.cinematic_dna_analyzer.analyze_user_cinematic_dna(interaction_data)
-            
-            # Create comprehensive profile
-            profile = UserPreferenceProfile(
-                user_id=user_id,
-                embedding=user_embedding,
-                genre_preferences=genre_preferences,
-                language_preferences=language_preferences,
-                content_type_preferences=content_type_preferences,
-                quality_threshold=quality_threshold,
-                sophistication_score=sophistication_score,
-                engagement_level=engagement_level,
-                last_updated=datetime.utcnow(),
-                confidence_score=confidence_score,
-                temporal_patterns=temporal_patterns,
-                cinematic_dna=cinematic_dna
-            )
-            
-            # Cache the profile
-            self.user_profiles[user_id] = profile
-            
-            logger.info(f"Built comprehensive profile for user {user_id} with confidence {confidence_score}")
-            return profile
-            
-        except Exception as e:
-            logger.error(f"Error building user profile for user {user_id}: {e}")
+    def _get_user(self, user_id: int):
+        """Get user from database"""
+        if not self.models.get('User') or not self.db:
             return None
-    
-    def update_profile_realtime(self, user_id: int, interaction_event: UserInteractionEvent) -> bool:
-        """
-        Update user profile in real-time
-        
-        Args:
-            user_id: User identifier
-            interaction_event: New interaction event
-            
-        Returns:
-            bool: Success status
-        """
-        try:
-            # Update through real-time updater
-            success = self.realtime_updater.update_user_profile(user_id, interaction_event)
-            
-            # Invalidate cached profile to force refresh on next access
-            if user_id in self.user_profiles:
-                del self.user_profiles[user_id]
-            
-            return success
-            
-        except Exception as e:
-            logger.error(f"Error updating profile in real-time for user {user_id}: {e}")
-            return False
+        return self.models['User'].query.get(user_id)
     
     def _get_user_interactions(self, user_id: int) -> List[Any]:
         """Get user interactions from database"""
+        if not self.models.get('UserInteraction') or not self.db:
+            return []
+        
+        # Get recent interactions (last 6 months for relevance)
+        cutoff_date = datetime.utcnow() - timedelta(days=180)
+        
+        interactions = self.models['UserInteraction'].query.filter(
+            self.models['UserInteraction'].user_id == user_id,
+            self.models['UserInteraction'].timestamp >= cutoff_date
+        ).order_by(self.models['UserInteraction'].timestamp.desc()).all()
+        
+        return interactions
+    
+    def _extract_explicit_preferences(self, user) -> Dict[str, Any]:
+        """Extract user's explicit preferences from profile"""
         try:
-            UserInteraction = self.models['UserInteraction']
-            Content = self.models['Content']
+            return {
+                'preferred_languages': safe_json_loads(getattr(user, 'preferred_languages', '[]')),
+                'preferred_genres': safe_json_loads(getattr(user, 'preferred_genres', '[]')),
+                'location': getattr(user, 'location', ''),
+                'created_at': getattr(user, 'created_at', datetime.utcnow()).isoformat()
+            }
+        except Exception as e:
+            logger.warning(f"Error extracting explicit preferences: {e}")
+            return {
+                'preferred_languages': ['telugu', 'english'],  # Default Telugu-first
+                'preferred_genres': [],
+                'location': '',
+                'created_at': datetime.utcnow().isoformat()
+            }
+    
+    def _extract_implicit_preferences(self, interactions: List[Any]) -> Dict[str, Any]:
+        """Extract implicit preferences from user interactions"""
+        if not interactions:
+            return {
+                'total_interactions': 0,
+                'genre_preferences': {},
+                'language_preferences': {},
+                'content_type_preferences': {},
+                'rating_patterns': {},
+                'interaction_types': {}
+            }
+        
+        # Collect interaction data
+        genres = []
+        languages = []
+        content_types = []
+        ratings = []
+        interaction_types = Counter()
+        
+        # Weight recent interactions more heavily
+        now = datetime.utcnow()
+        
+        for interaction in interactions:
+            # Calculate recency weight
+            days_ago = (now - interaction.timestamp).days
+            recency_weight = math.exp(-days_ago / 30)  # Exponential decay over 30 days
             
-            # Get interactions with content details
-            interactions = self.db.session.query(UserInteraction, Content).join(
-                Content, UserInteraction.content_id == Content.id
-            ).filter(UserInteraction.user_id == user_id).order_by(
-                UserInteraction.timestamp.desc()
-            ).limit(500).all()  # Limit to recent 500 interactions
+            interaction_types[interaction.interaction_type] += recency_weight
             
-            return interactions
+            # Get content for this interaction
+            content = self._get_content_for_interaction(interaction)
+            if not content:
+                continue
+            
+            # Extract content features with recency weighting
+            if content.genres:
+                content_genres = safe_json_loads(content.genres)
+                for genre in content_genres:
+                    genres.extend([genre] * int(recency_weight * 10))
+            
+            if content.languages:
+                content_languages = safe_json_loads(content.languages)
+                for language in content_languages:
+                    languages.extend([language] * int(recency_weight * 10))
+            
+            content_types.extend([content.content_type] * int(recency_weight * 10))
+            
+            if interaction.rating:
+                ratings.append({
+                    'rating': interaction.rating,
+                    'weight': recency_weight,
+                    'timestamp': interaction.timestamp.isoformat()
+                })
+        
+        # Calculate preference scores
+        genre_counter = Counter(genres)
+        language_counter = Counter(languages)
+        type_counter = Counter(content_types)
+        
+        return {
+            'total_interactions': len(interactions),
+            'genre_preferences': {
+                'counts': dict(genre_counter.most_common(10)),
+                'top_genres': [g for g, _ in genre_counter.most_common(5)],
+                'diversity': len(set(genres)) / max(len(genres), 1)
+            },
+            'language_preferences': {
+                'counts': dict(language_counter.most_common(5)),
+                'top_languages': [l for l, _ in language_counter.most_common(3)],
+                'telugu_preference': language_counter.get('Telugu', 0) / max(len(languages), 1)
+            },
+            'content_type_preferences': {
+                'counts': dict(type_counter),
+                'primary_type': type_counter.most_common(1)[0][0] if type_counter else 'movie'
+            },
+            'rating_patterns': {
+                'average_rating': np.mean([r['rating'] for r in ratings]) if ratings else 0,
+                'rating_std': np.std([r['rating'] for r in ratings]) if ratings else 0,
+                'total_ratings': len(ratings),
+                'rating_distribution': Counter([r['rating'] for r in ratings])
+            },
+            'interaction_types': dict(interaction_types)
+        }
+    
+    def _analyze_cinematic_dna(self, interactions: List[Any]) -> Dict[str, Any]:
+        """Analyze user's cinematic DNA based on content consumption"""
+        if not interactions:
+            return {'themes': {}, 'telugu_patterns': {}, 'sophistication': 0.0}
+        
+        # Collect content overviews and metadata
+        all_text = []
+        telugu_content_count = 0
+        total_content = 0
+        
+        for interaction in interactions:
+            content = self._get_content_for_interaction(interaction)
+            if not content:
+                continue
+            
+            total_content += 1
+            
+            # Collect text for theme analysis
+            text_parts = []
+            if content.title:
+                text_parts.append(content.title)
+            if content.overview:
+                text_parts.append(content.overview)
+            
+            all_text.append(' '.join(text_parts).lower())
+            
+            # Check for Telugu content
+            if content.languages:
+                languages = safe_json_loads(content.languages)
+                if any('telugu' in lang.lower() for lang in languages):
+                    telugu_content_count += 1
+        
+        # Analyze themes
+        theme_scores = {}
+        for theme, keywords in self.cinematic_themes.items():
+            score = 0
+            for text in all_text:
+                for keyword in keywords:
+                    if keyword in text:
+                        score += 1
+            theme_scores[theme] = score / max(len(all_text), 1)
+        
+        # Analyze Telugu-specific patterns
+        telugu_pattern_scores = {}
+        for pattern, keywords in self.telugu_patterns.items():
+            score = 0
+            for text in all_text:
+                for keyword in keywords:
+                    if keyword in text:
+                        score += 1
+            telugu_pattern_scores[pattern] = score / max(len(all_text), 1)
+        
+        # Calculate sophistication level
+        sophistication = self._calculate_cinematic_sophistication(interactions)
+        
+        return {
+            'themes': theme_scores,
+            'telugu_patterns': telugu_pattern_scores,
+            'sophistication': sophistication,
+            'telugu_content_ratio': telugu_content_count / max(total_content, 1),
+            'dominant_theme': max(theme_scores.items(), key=lambda x: x[1])[0] if theme_scores else None
+        }
+    
+    def _analyze_behavioral_patterns(self, interactions: List[Any]) -> Dict[str, Any]:
+        """Analyze user's behavioral patterns"""
+        if not interactions:
+            return {}
+        
+        # Time-based patterns
+        hour_distribution = Counter()
+        day_distribution = Counter()
+        
+        # Interaction patterns
+        session_lengths = []
+        current_session = []
+        session_gap_threshold = timedelta(hours=2)
+        
+        interactions_sorted = sorted(interactions, key=lambda x: x.timestamp)
+        
+        for i, interaction in enumerate(interactions_sorted):
+            hour_distribution[interaction.timestamp.hour] += 1
+            day_distribution[interaction.timestamp.weekday()] += 1
+            
+            # Session analysis
+            if (current_session and 
+                interaction.timestamp - current_session[-1].timestamp > session_gap_threshold):
+                # End current session
+                if len(current_session) > 1:
+                    session_duration = (current_session[-1].timestamp - current_session[0].timestamp).seconds / 60
+                    session_lengths.append(session_duration)
+                current_session = [interaction]
+            else:
+                current_session.append(interaction)
+        
+        # Add final session
+        if len(current_session) > 1:
+            session_duration = (current_session[-1].timestamp - current_session[0].timestamp).seconds / 60
+            session_lengths.append(session_duration)
+        
+        return {
+            'peak_hours': [h for h, _ in hour_distribution.most_common(3)],
+            'active_days': [d for d, _ in day_distribution.most_common(3)],
+            'session_stats': {
+                'average_session_length': np.mean(session_lengths) if session_lengths else 0,
+                'total_sessions': len(session_lengths),
+                'longest_session': max(session_lengths) if session_lengths else 0
+            },
+            'activity_consistency': np.std(list(hour_distribution.values())) if hour_distribution else 0,
+            'weekend_ratio': (day_distribution[5] + day_distribution[6]) / max(sum(day_distribution.values()), 1)
+        }
+    
+    def _analyze_temporal_patterns(self, interactions: List[Any]) -> Dict[str, Any]:
+        """Analyze temporal patterns in user behavior"""
+        if not interactions:
+            return {}
+        
+        # Group interactions by week to see trends
+        weekly_activity = defaultdict(int)
+        monthly_activity = defaultdict(int)
+        
+        for interaction in interactions:
+            # Week-based grouping
+            week_key = interaction.timestamp.strftime('%Y-W%U')
+            weekly_activity[week_key] += 1
+            
+            # Month-based grouping
+            month_key = interaction.timestamp.strftime('%Y-%m')
+            monthly_activity[month_key] += 1
+        
+        # Calculate trends
+        weekly_counts = list(weekly_activity.values())
+        monthly_counts = list(monthly_activity.values())
+        
+        return {
+            'weekly_trend': self._calculate_trend(weekly_counts),
+            'monthly_trend': self._calculate_trend(monthly_counts),
+            'activity_stability': 1 - np.std(weekly_counts) / max(np.mean(weekly_counts), 1) if weekly_counts else 0,
+            'recent_activity_change': self._calculate_recent_activity_change(interactions)
+        }
+    
+    def _calculate_engagement_metrics(self, interactions: List[Any]) -> Dict[str, Any]:
+        """Calculate user engagement metrics"""
+        if not interactions:
+            return {
+                'engagement_score': 0.0,
+                'interaction_diversity': 0.0,
+                'rating_engagement': 0.0,
+                'discovery_rate': 0.0
+            }
+        
+        # Interaction type diversity
+        interaction_types = Counter(i.interaction_type for i in interactions)
+        type_diversity = len(interaction_types) / len(interactions) if interactions else 0
+        
+        # Rating engagement
+        ratings = [i for i in interactions if i.rating is not None]
+        rating_engagement = len(ratings) / len(interactions) if interactions else 0
+        
+        # Discovery rate (unique content consumed)
+        unique_content = len(set(i.content_id for i in interactions))
+        discovery_rate = unique_content / len(interactions) if interactions else 0
+        
+        # Overall engagement score
+        engagement_score = (
+            min(len(interactions) / 100, 1.0) * 0.3 +  # Activity volume
+            type_diversity * 0.3 +  # Interaction diversity
+            rating_engagement * 0.2 +  # Rating participation
+            discovery_rate * 0.2  # Content discovery
+        )
+        
+        return {
+            'engagement_score': engagement_score,
+            'interaction_diversity': type_diversity,
+            'rating_engagement': rating_engagement,
+            'discovery_rate': discovery_rate,
+            'total_interactions': len(interactions),
+            'unique_content': unique_content
+        }
+    
+    def _identify_preference_clusters(self, interactions: List[Any]) -> Dict[str, Any]:
+        """Identify user preference clusters using ML"""
+        if len(interactions) < 10:
+            return {'clusters': [], 'primary_cluster': None}
+        
+        try:
+            # Create feature vectors for clustering
+            features = []
+            
+            for interaction in interactions:
+                content = self._get_content_for_interaction(interaction)
+                if not content:
+                    continue
+                
+                # Create feature vector
+                feature_vector = []
+                
+                # Genre features (one-hot encoded)
+                genres = safe_json_loads(content.genres or '[]')
+                common_genres = ['Action', 'Drama', 'Comedy', 'Romance', 'Thriller', 'Horror', 'Sci-Fi', 'Animation']
+                for genre in common_genres:
+                    feature_vector.append(1 if genre in genres else 0)
+                
+                # Content type features
+                feature_vector.append(1 if content.content_type == 'movie' else 0)
+                feature_vector.append(1 if content.content_type == 'tv' else 0)
+                feature_vector.append(1 if content.content_type == 'anime' else 0)
+                
+                # Rating feature
+                feature_vector.append(content.rating / 10.0 if content.rating else 0.5)
+                
+                # Language features
+                languages = safe_json_loads(content.languages or '[]')
+                feature_vector.append(1 if any('telugu' in lang.lower() for lang in languages) else 0)
+                feature_vector.append(1 if any('english' in lang.lower() for lang in languages) else 0)
+                
+                features.append(feature_vector)
+            
+            if len(features) < 5:
+                return {'clusters': [], 'primary_cluster': None}
+            
+            # Normalize features
+            features_array = np.array(features)
+            features_normalized = self.scaler.fit_transform(features_array)
+            
+            # Perform clustering
+            n_clusters = min(3, len(features) // 3)  # Adaptive cluster count
+            clusterer = KMeans(n_clusters=n_clusters, random_state=42)
+            cluster_labels = clusterer.fit_predict(features_normalized)
+            
+            # Analyze clusters
+            cluster_analysis = {}
+            for cluster_id in range(n_clusters):
+                cluster_indices = np.where(cluster_labels == cluster_id)[0]
+                cluster_interactions = [interactions[i] for i in cluster_indices if i < len(interactions)]
+                
+                cluster_analysis[f'cluster_{cluster_id}'] = {
+                    'size': len(cluster_interactions),
+                    'dominant_features': self._analyze_cluster_features(cluster_interactions)
+                }
+            
+            # Find primary cluster
+            primary_cluster = max(cluster_analysis.items(), key=lambda x: x[1]['size'])[0]
+            
+            return {
+                'clusters': cluster_analysis,
+                'primary_cluster': primary_cluster,
+                'cluster_count': n_clusters
+            }
             
         except Exception as e:
-            logger.error(f"Error getting user interactions for user {user_id}: {e}")
-            return []
+            logger.warning(f"Error in preference clustering: {e}")
+            return {'clusters': [], 'primary_cluster': None}
     
-    def _prepare_interaction_data(self, interactions: List[Tuple]) -> List[Dict]:
-        """Prepare interaction data for analysis"""
-        interaction_data = []
+    def _build_recommendation_context(self, interactions: List[Any]) -> Dict[str, Any]:
+        """Build context for recommendations"""
+        if not interactions:
+            return {'context_type': 'cold_start'}
         
-        for interaction, content in interactions:
-            try:
-                data = {
-                    'content_id': content.id,
-                    'interaction_type': interaction.interaction_type,
-                    'rating': interaction.rating,
-                    'timestamp': interaction.timestamp,
-                    'title': content.title,
-                    'content_type': content.content_type,
-                    'genres': json.loads(content.genres or '[]'),
-                    'languages': json.loads(content.languages or '[]'),
-                    'overview': content.overview or '',
-                    'director': getattr(content, 'director', ''),
-                    'release_year': content.release_date.year if content.release_date else None,
-                    'rating_score': content.rating or 0,
-                    'popularity': content.popularity or 0
-                }
-                interaction_data.append(data)
-                
-            except Exception as e:
-                logger.warning(f"Error preparing interaction data: {e}")
-                continue
+        recent_interactions = [i for i in interactions 
+                             if i.timestamp > datetime.utcnow() - timedelta(days=7)]
         
-        return interaction_data
-    
-    def _analyze_genre_preferences(self, interaction_data: List[Dict]) -> Dict[str, float]:
-        """Analyze user's genre preferences with weighted scoring"""
-        genre_scores = defaultdict(float)
-        total_weight = 0
-        
-        for interaction in interaction_data:
-            # Calculate weight based on interaction type and recency
-            weight = self._get_interaction_weight(interaction)
-            total_weight += weight
-            
-            # Add genre scores
-            for genre in interaction.get('genres', []):
-                genre_scores[genre] += weight
-        
-        # Normalize scores
-        if total_weight > 0:
-            genre_scores = {genre: score/total_weight for genre, score in genre_scores.items()}
-        
-        # Sort and return top genres
-        sorted_genres = sorted(genre_scores.items(), key=lambda x: x[1], reverse=True)
-        return dict(sorted_genres[:10])  # Top 10 genres
-    
-    def _analyze_language_preferences(self, interaction_data: List[Dict]) -> Dict[str, float]:
-        """Analyze user's language preferences with Telugu priority"""
-        language_scores = defaultdict(float)
-        total_weight = 0
-        
-        for interaction in interaction_data:
-            weight = self._get_interaction_weight(interaction)
-            total_weight += weight
-            
-            # Add language scores with priority weighting
-            for language in interaction.get('languages', []):
-                lang_priority = LANGUAGE_PRIORITY.get(language.lower(), 0.5)
-                language_scores[language] += weight * lang_priority
-        
-        # Normalize scores
-        if total_weight > 0:
-            language_scores = {lang: score/total_weight for lang, score in language_scores.items()}
-        
-        # Sort by preference
-        sorted_languages = sorted(language_scores.items(), key=lambda x: x[1], reverse=True)
-        return dict(sorted_languages[:5])  # Top 5 languages
-    
-    def _get_interaction_weight(self, interaction: Dict) -> float:
-        """Calculate weight for an interaction based on type and recency"""
-        # Base weights by interaction type
-        type_weights = {
-            'favorite': 3.0,
-            'watchlist': 2.5,
-            'rating': 2.0,
-            'view': 1.5,
-            'search': 1.0,
-            'like': 1.2
+        context = {
+            'context_type': 'active_user',
+            'recent_activity_level': len(recent_interactions),
+            'primary_content_type': self._get_primary_content_type(interactions),
+            'discovery_mode': len(set(i.content_id for i in recent_interactions)) / max(len(recent_interactions), 1),
+            'quality_preference': self._calculate_quality_preference(interactions),
+            'language_context': self._get_language_context(interactions)
         }
         
-        base_weight = type_weights.get(interaction.get('interaction_type'), 1.0)
-        
-        # Apply recency decay
-        timestamp = interaction.get('timestamp', datetime.utcnow())
-        if isinstance(timestamp, str):
-            timestamp = datetime.fromisoformat(timestamp)
-        
-        days_ago = (datetime.utcnow() - timestamp).days
-        recency_weight = decay_weight(days_ago)
-        
-        # Apply rating boost
-        rating_weight = 1.0
-        if interaction.get('rating'):
-            rating_weight = min(interaction['rating'] / 8.0, 1.5)  # Boost for high ratings
-        
-        return base_weight * recency_weight * rating_weight
+        return context
     
-    def _create_cold_start_profile(self, user_id: int) -> UserPreferenceProfile:
-        """Create a default profile for new users"""
-        return UserPreferenceProfile(
-            user_id=user_id,
-            embedding=np.zeros(self.embedding_manager.embedding_dim),
-            genre_preferences={'Action': 0.3, 'Drama': 0.3, 'Comedy': 0.2, 'Romance': 0.2},
-            language_preferences={'Telugu': 0.4, 'English': 0.3, 'Hindi': 0.3},
-            content_type_preferences={'movie': 0.6, 'tv': 0.3, 'anime': 0.1},
-            quality_threshold=7.0,
-            sophistication_score=0.5,
-            engagement_level='new_user',
-            last_updated=datetime.utcnow(),
-            confidence_score=0.1,
-            temporal_patterns={},
-            cinematic_dna={}
-        )
+    # Helper methods
+    def _get_content_for_interaction(self, interaction):
+        """Get content object for interaction"""
+        if not self.models.get('Content'):
+            return None
+        return self.models['Content'].query.get(interaction.content_id)
     
-    def get_performance_stats(self) -> Dict:
-        """Get performance statistics for the profile analyzer"""
-        return self.performance_optimizer.get_performance_stats()
+    def _calculate_cinematic_sophistication(self, interactions: List[Any]) -> float:
+        """Calculate user's cinematic sophistication level"""
+        if not interactions:
+            return 0.0
+        
+        sophistication_factors = []
+        
+        for interaction in interactions:
+            content = self._get_content_for_interaction(interaction)
+            if not content:
+                continue
+            
+            # Rating factor (higher ratings suggest discerning taste)
+            if content.rating:
+                rating_factor = min(content.rating / 10.0, 1.0)
+                sophistication_factors.append(rating_factor)
+            
+            # Vote count factor (less mainstream = more sophisticated)
+            if content.vote_count:
+                # Inverse relationship with vote count
+                vote_factor = 1.0 / (1.0 + content.vote_count / 1000.0)
+                sophistication_factors.append(vote_factor)
+        
+        return np.mean(sophistication_factors) if sophistication_factors else 0.5
+    
+    def _calculate_trend(self, values: List[int]) -> str:
+        """Calculate trend direction from time series values"""
+        if len(values) < 2:
+            return 'stable'
+        
+        # Simple linear trend calculation
+        x = np.arange(len(values))
+        slope = np.polyfit(x, values, 1)[0]
+        
+        if slope > 0.1:
+            return 'increasing'
+        elif slope < -0.1:
+            return 'decreasing'
+        else:
+            return 'stable'
+    
+    def _calculate_recent_activity_change(self, interactions: List[Any]) -> float:
+        """Calculate change in recent activity levels"""
+        if len(interactions) < 10:
+            return 0.0
+        
+        # Split interactions into recent and older
+        midpoint = len(interactions) // 2
+        recent = interactions[:midpoint]
+        older = interactions[midpoint:]
+        
+        recent_rate = len(recent) / 30  # Assuming recent = last 30 days
+        older_rate = len(older) / 30
+        
+        if older_rate == 0:
+            return 1.0 if recent_rate > 0 else 0.0
+        
+        return (recent_rate - older_rate) / older_rate
+    
+    def _calculate_profile_completeness(self, profile: Dict[str, Any]) -> float:
+        """Calculate profile completeness score"""
+        completeness_factors = []
+        
+        # Explicit preferences
+        explicit = profile.get('explicit_preferences', {})
+        if explicit.get('preferred_languages'):
+            completeness_factors.append(0.2)
+        if explicit.get('preferred_genres'):
+            completeness_factors.append(0.2)
+        
+        # Implicit preferences
+        implicit = profile.get('implicit_preferences', {})
+        if implicit.get('total_interactions', 0) > 10:
+            completeness_factors.append(0.3)
+        
+        # Cinematic DNA
+        dna = profile.get('cinematic_dna', {})
+        if dna.get('themes'):
+            completeness_factors.append(0.2)
+        
+        # Behavioral patterns
+        behavioral = profile.get('behavioral_patterns', {})
+        if behavioral.get('session_stats'):
+            completeness_factors.append(0.1)
+        
+        return sum(completeness_factors)
+    
+    def _calculate_confidence_score(self, profile: Dict[str, Any], interactions: List[Any]) -> float:
+        """Calculate confidence in profile accuracy"""
+        confidence_factors = []
+        
+        # Interaction volume
+        interaction_count = len(interactions)
+        volume_confidence = min(interaction_count / 50, 1.0)
+        confidence_factors.append(volume_confidence * 0.4)
+        
+        # Interaction diversity
+        interaction_types = set(i.interaction_type for i in interactions)
+        diversity_confidence = len(interaction_types) / 5  # Assuming 5 main types
+        confidence_factors.append(min(diversity_confidence, 1.0) * 0.3)
+        
+        # Temporal consistency
+        if len(interactions) > 5:
+            recent_interactions = len([i for i in interactions 
+                                     if i.timestamp > datetime.utcnow() - timedelta(days=30)])
+            temporal_confidence = min(recent_interactions / 10, 1.0)
+            confidence_factors.append(temporal_confidence * 0.3)
+        
+        return sum(confidence_factors)
+    
+    def _calculate_preference_diversity(self, interactions: List[Any]) -> float:
+        """Calculate diversity of user preferences"""
+        if not interactions:
+            return 0.0
+        
+        # Collect genres and content types
+        all_genres = []
+        all_types = []
+        
+        for interaction in interactions:
+            content = self._get_content_for_interaction(interaction)
+            if not content:
+                continue
+            
+            if content.genres:
+                genres = safe_json_loads(content.genres)
+                all_genres.extend(genres)
+            
+            all_types.append(content.content_type)
+        
+        # Calculate diversity metrics
+        genre_diversity = len(set(all_genres)) / max(len(all_genres), 1)
+        type_diversity = len(set(all_types)) / max(len(all_types), 1)
+        
+        return (genre_diversity + type_diversity) / 2
+    
+    def _determine_user_segment(self, profile: Dict[str, Any]) -> str:
+        """Determine user segment based on profile"""
+        engagement = profile.get('engagement_metrics', {}).get('engagement_score', 0)
+        confidence = profile.get('confidence_score', 0)
+        interactions = profile.get('implicit_preferences', {}).get('total_interactions', 0)
+        
+        if confidence > 0.8 and engagement > 0.7:
+            return 'power_user'
+        elif confidence > 0.6 and interactions > 20:
+            return 'active_user'
+        elif interactions > 5:
+            return 'regular_user'
+        else:
+            return 'new_user'
+    
+    def _create_cold_start_profile(self, user_id: int) -> Dict[str, Any]:
+        """Create profile for new users"""
+        return {
+            'user_id': user_id,
+            'profile_type': 'cold_start',
+            'last_updated': datetime.utcnow().isoformat(),
+            'explicit_preferences': {
+                'preferred_languages': ['telugu', 'english'],  # Default Telugu-first
+                'preferred_genres': [],
+                'location': ''
+            },
+            'implicit_preferences': {
+                'total_interactions': 0
+            },
+            'cinematic_dna': {
+                'themes': {},
+                'sophistication': 0.5
+            },
+            'user_embedding': np.zeros(128).tolist(),
+            'profile_completeness': 0.1,
+            'confidence_score': 0.0,
+            'user_segment': 'new_user',
+            'recommendation_context': {
+                'context_type': 'cold_start',
+                'language_context': 'telugu_first'
+            }
+        }
+    
+    def _create_minimal_profile(self, user, interactions: List[Any]) -> Dict[str, Any]:
+        """Create minimal profile for users with few interactions"""
+        explicit_prefs = self._extract_explicit_preferences(user)
+        
+        return {
+            'user_id': user.id,
+            'profile_type': 'minimal',
+            'last_updated': datetime.utcnow().isoformat(),
+            'explicit_preferences': explicit_prefs,
+            'implicit_preferences': self._extract_implicit_preferences(interactions),
+            'profile_completeness': 0.3,
+            'confidence_score': 0.2,
+            'user_segment': 'new_user'
+        }
+    
+    def _create_error_profile(self, user_id: int) -> Dict[str, Any]:
+        """Create error fallback profile"""
+        return {
+            'user_id': user_id,
+            'profile_type': 'error',
+            'error': 'Failed to build profile',
+            'last_updated': datetime.utcnow().isoformat(),
+            'user_segment': 'unknown'
+        }
+    
+    # Real-time update methods
+    def _update_implicit_preferences(self, current_prefs: Dict[str, Any], 
+                                   interaction_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Update implicit preferences with new interaction"""
+        # This would contain incremental update logic
+        # For now, return current preferences with interaction count increment
+        updated = current_prefs.copy()
+        updated['total_interactions'] = updated.get('total_interactions', 0) + 1
+        return updated
+    
+    def _update_behavioral_patterns(self, current_patterns: Dict[str, Any],
+                                  interaction_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Update behavioral patterns with new interaction"""
+        updated = current_patterns.copy()
+        # Add incremental pattern updates here
+        return updated
+    
+    def _update_engagement_metrics(self, current_metrics: Dict[str, Any],
+                                 interaction_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Update engagement metrics with new interaction"""
+        updated = current_metrics.copy()
+        # Add incremental engagement updates here
+        return updated
+    
+    def _get_primary_content_type(self, interactions: List[Any]) -> str:
+        """Get user's primary content type preference"""
+        type_counter = Counter()
+        for interaction in interactions:
+            content = self._get_content_for_interaction(interaction)
+            if content:
+                type_counter[content.content_type] += 1
+        
+        return type_counter.most_common(1)[0][0] if type_counter else 'movie'
+    
+    def _calculate_quality_preference(self, interactions: List[Any]) -> float:
+        """Calculate user's quality preference threshold"""
+        ratings = []
+        for interaction in interactions:
+            content = self._get_content_for_interaction(interaction)
+            if content and content.rating:
+                ratings.append(content.rating)
+        
+        return np.mean(ratings) if ratings else 7.0
+    
+    def _get_language_context(self, interactions: List[Any]) -> str:
+        """Get user's language context"""
+        telugu_count = 0
+        total_count = 0
+        
+        for interaction in interactions:
+            content = self._get_content_for_interaction(interaction)
+            if content and content.languages:
+                total_count += 1
+                languages = safe_json_loads(content.languages)
+                if any('telugu' in lang.lower() for lang in languages):
+                    telugu_count += 1
+        
+        if total_count == 0:
+            return 'telugu_first'
+        
+        telugu_ratio = telugu_count / total_count
+        
+        if telugu_ratio > 0.7:
+            return 'telugu_primary'
+        elif telugu_ratio > 0.3:
+            return 'telugu_mixed'
+        else:
+            return 'international'
+    
+    def _analyze_cluster_features(self, cluster_interactions: List[Any]) -> Dict[str, Any]:
+        """Analyze features of a preference cluster"""
+        # This would analyze the dominant features of a cluster
+        # For now, return basic analysis
+        return {
+            'size': len(cluster_interactions),
+            'avg_rating': 7.0  # Placeholder
+        }
