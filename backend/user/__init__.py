@@ -1,12 +1,10 @@
-# backend/user/__init__.py
-
+# user/__init__.py
 """
-CineBrain User Module - Enhanced Edition
-Comprehensive user management with AI-powered personalization integration
+CineBrain User Module
+Comprehensive user management system with modular architecture
 """
 
 from .routes import user_bp
 
 __all__ = ['user_bp']
-__version__ = '3.0.0'
-__author__ = 'CineBrain AI Team'
+__version__ = '1.0.0'

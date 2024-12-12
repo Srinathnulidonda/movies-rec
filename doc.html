@@ -1,0 +1,1189 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CineBrain System Architecture</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: #f5f5f5;
+            padding: 20px;
+        }
+
+        .document {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            padding: 60px;
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.1);
+        }
+
+        .header {
+            text-align: center;
+            border-bottom: 4px solid #2c3e50;
+            padding-bottom: 30px;
+            margin-bottom: 40px;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            color: #2c3e50;
+            margin-bottom: 10px;
+        }
+
+        .header .subtitle {
+            font-size: 1.2em;
+            color: #7f8c8d;
+        }
+
+        .section {
+            margin-bottom: 40px;
+        }
+
+        .section-title {
+            font-size: 1.8em;
+            color: #2c3e50;
+            border-left: 5px solid #3498db;
+            padding-left: 15px;
+            margin-bottom: 20px;
+            margin-top: 30px;
+        }
+
+        .subsection-title {
+            font-size: 1.4em;
+            color: #34495e;
+            margin-top: 25px;
+            margin-bottom: 15px;
+            padding-bottom: 5px;
+            border-bottom: 2px solid #ecf0f1;
+        }
+
+        .architecture-diagram {
+            background: #2c3e50;
+            color: #ecf0f1;
+            padding: 30px;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            overflow-x: auto;
+            margin: 20px 0;
+            white-space: pre;
+        }
+
+        .code-block {
+            background: #282c34;
+            color: #abb2bf;
+            padding: 20px;
+            border-radius: 6px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            overflow-x: auto;
+            margin: 15px 0;
+            border-left: 4px solid #61afef;
+        }
+
+        .keyword {
+            color: #c678dd;
+            font-weight: bold;
+        }
+
+        .function {
+            color: #61afef;
+        }
+
+        .string {
+            color: #98c379;
+        }
+
+        .comment {
+            color: #5c6370;
+            font-style: italic;
+        }
+
+        .highlight-box {
+            background: #e8f4f8;
+            border-left: 4px solid #3498db;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 4px;
+        }
+
+        .success-box {
+            background: #d4edda;
+            border-left: 4px solid #28a745;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 4px;
+        }
+
+        .warning-box {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 4px;
+        }
+
+        .info-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .info-table th {
+            background: #3498db;
+            color: white;
+            padding: 12px;
+            text-align: left;
+            font-weight: 600;
+        }
+
+        .info-table td {
+            padding: 12px;
+            border-bottom: 1px solid #ecf0f1;
+        }
+
+        .info-table tr:nth-child(even) {
+            background: #f8f9fa;
+        }
+
+        .info-table tr:hover {
+            background: #e8f4f8;
+        }
+
+        ul,
+        ol {
+            margin-left: 30px;
+            margin-bottom: 15px;
+        }
+
+        li {
+            margin-bottom: 8px;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 0.85em;
+            font-weight: 600;
+            margin-right: 5px;
+        }
+
+        .badge-success {
+            background: #28a745;
+            color: white;
+        }
+
+        .badge-warning {
+            background: #ffc107;
+            color: #333;
+        }
+
+        .badge-info {
+            background: #17a2b8;
+            color: white;
+        }
+
+        .flow-diagram {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 25px;
+            border-radius: 8px;
+            margin: 20px 0;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            white-space: pre;
+            overflow-x: auto;
+        }
+
+        .grade-box {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            border-radius: 10px;
+            text-align: center;
+            margin: 30px 0;
+        }
+
+        .grade-box h3 {
+            font-size: 2em;
+            margin-bottom: 10px;
+        }
+
+        .grade-box .score {
+            font-size: 3em;
+            font-weight: bold;
+            margin: 20px 0;
+        }
+
+        .print-button {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: #3498db;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 1em;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
+            z-index: 1000;
+        }
+
+        .print-button:hover {
+            background: #2980b9;
+        }
+
+        @media print {
+            body {
+                background: white;
+                padding: 0;
+            }
+
+            .document {
+                box-shadow: none;
+                padding: 20px;
+            }
+
+            .print-button {
+                display: none;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <button class="print-button" onclick="window.print()">🖨️ Print/Save PDF</button>
+
+    <div class="document">
+        <div class="header">
+            <h1>🎬 CineBrain System Architecture</h1>
+            <p class="subtitle">Complete Technical Documentation</p>
+            <p style="color: #95a5a6; margin-top: 10px;">Version 1.0 | Comprehensive System Analysis</p>
+        </div>
+
+        <!-- High-Level Overview -->
+        <div class="section">
+            <h2 class="section-title">📋 High-Level Overview</h2>
+            <div class="architecture-diagram">┌─────────────────────────────────────────────────────────────┐
+                │ CINEBRAIN SYSTEM │
+                ├─────────────────────────────────────────────────────────────┤
+                │ │
+                │ ┌──────────┐ ┌──────────┐ ┌──────────────┐ │
+                │ │ app.py │───▶│ user/ │───▶│ personalized/│ │
+                │ │ (Core) │ │ (Module) │ │ (AI/ML) │ │
+                │ └──────────┘ └──────────┘ └──────────────┘ │
+                │ │ │ │ │
+                │ ▼ ▼ ▼ │
+                │ ┌──────────────────────────────────────────────┐ │
+                │ │ services/ (Utilities) │ │
+                │ └──────────────────────────────────────────────┘ │
+                │ │
+                └─────────────────────────────────────────────────────────────┘</div>
+        </div>
+
+        <!-- File Responsibilities -->
+        <div class="section">
+            <h2 class="section-title">🗂️ File Responsibilities</h2>
+
+            <!-- app.py -->
+            <h3 class="subsection-title">1. backend/app.py (Main Application - 2000+ lines)</h3>
+            <div class="highlight-box">
+                <strong>Purpose:</strong> Central hub and orchestrator
+            </div>
+
+            <p><strong>Responsibilities:</strong></p>
+            <ul>
+                <li><span class="badge badge-success">✓</span> Flask app initialization</li>
+                <li><span class="badge badge-success">✓</span> Database models (User, Content, UserInteraction, Review,
+                    etc.)</li>
+                <li><span class="badge badge-success">✓</span> External API services (TMDB, OMDb, Jikan, YouTube)</li>
+                <li><span class="badge badge-success">✓</span> Core content routes (search, trending, details, similar)
+                </li>
+                <li><span class="badge badge-success">✓</span> Module registration (user, personalized, auth, admin,
+                    support)</li>
+                <li><span class="badge badge-success">✓</span> Anonymous recommendation engine</li>
+                <li><span class="badge badge-success">✓</span> Cache and session management</li>
+                <li><span class="badge badge-success">✓</span> Database initialization and CLI commands</li>
+            </ul>
+
+            <p><strong>Key Classes:</strong></p>
+            <div class="code-block"><span class="comment"># Database Models</span>
+                <span class="keyword">class</span> <span class="function">User</span>(db.Model)
+                <span class="keyword">class</span> <span class="function">Content</span>(db.Model)
+                <span class="keyword">class</span> <span class="function">UserInteraction</span>(db.Model)
+                <span class="keyword">class</span> <span class="function">UserDeviceActivity</span>(db.Model)
+
+                <span class="comment"># External API Services</span>
+                <span class="keyword">class</span> <span class="function">CineBrainTMDBService</span>
+                <span class="keyword">class</span> <span class="function">CineBrainJikanService</span>
+                <span class="keyword">class</span> <span class="function">CineBrainYouTubeService</span>
+
+                <span class="comment"># Recommendation Engine</span>
+                <span class="keyword">class</span> <span class="function">CineBrainAnonymousRecommendationEngine</span>
+            </div>
+
+            <p><strong>Routes Provided:</strong></p>
+            <div class="code-block"><span class="string">/api/search</span>
+                <span class="string">/api/content/&lt;id&gt;</span>
+                <span class="string">/api/details/&lt;slug&gt;</span>
+                <span class="string">/api/recommendations/trending</span>
+                <span class="string">/api/recommendations/genre/&lt;genre&gt;</span>
+                <span class="string">/api/recommendations/regional/&lt;language&gt;</span>
+                <span class="string">/api/recommendations/anime</span>
+                <span class="string">/api/recommendations/similar/&lt;id&gt;</span>
+                <span class="string">/api/upcoming</span>
+                <span class="string">/api/health</span>
+                <span class="string">/api/performance</span>
+            </div>
+
+            <!-- user/ Module -->
+            <h3 class="subsection-title">2. backend/user/ Module (User Management)</h3>
+
+            <div class="highlight-box">
+                <strong>user/__init__.py</strong><br>
+                • Exports user_bp blueprint<br>
+                • Version metadata
+            </div>
+
+            <div class="highlight-box">
+                <strong>user/routes.py</strong> (Blueprint Registration Hub)<br>
+                • Registers ALL user-related routes<br>
+                • Handles login/register<br>
+                • Maps routes to functions in other user files<br>
+                • Initializes user module with init_user_routes()
+            </div>
+
+            <p><strong>Routes:</strong></p>
+            <div class="code-block"><span class="string">/api/register</span>
+                <span class="string">/api/login</span>
+                <span class="string">/api/users/profile</span> <span class="comment"># GET, PUT</span>
+                <span class="string">/api/users/avatar/*</span>
+                <span class="string">/api/user/watchlist/*</span>
+                <span class="string">/api/user/favorites/*</span>
+                <span class="string">/api/user/ratings/*</span>
+                <span class="string">/api/user/activity/*</span>
+                <span class="string">/api/user/dashboard</span>
+                <span class="string">/api/users/settings/*</span>
+                <span class="string">/api/personalized/*</span> <span class="comment"># some overlap</span>
+            </div>
+
+            <!-- user/activity.py -->
+            <div class="subsection-title" style="font-size: 1.2em; margin-top: 25px;">user/activity.py</div>
+            <div class="highlight-box">
+                <strong>Purpose:</strong> Track ALL user interactions
+            </div>
+
+            <p><strong>Responsibilities:</strong></p>
+            <ul>
+                <li><span class="badge badge-success">✓</span> Record interactions (view, like, favorite, watchlist,
+                    rating)</li>
+                <li><span class="badge badge-success">✓</span> Get user activity history</li>
+                <li><span class="badge badge-success">✓</span> Analyze activity patterns (hourly, daily, session-based)
+                </li>
+                <li><span class="badge badge-success">✓</span> Calculate activity streaks</li>
+                <li><span class="badge badge-success">✓</span> Generate activity insights</li>
+                <li><span class="badge badge-success">✓</span> Weekly recap generation</li>
+                <li><span class="badge badge-success">✓</span> Real-time updates to personalization engine</li>
+            </ul>
+
+            <p><strong>Key Functions:</strong></p>
+            <div class="code-block"><span class="keyword">def</span> <span
+                    class="function">update_user_feedback</span>(user_id, content_id, feedback_type):
+                <span class="keyword">pass</span>
+            </div>
+
+            <!-- personalized/utils.py -->
+            <div class="subsection-title" style="font-size: 1.2em; margin-top: 25px;">personalized/utils.py (ML
+                Utilities)</div>
+            <div class="highlight-box">
+                <strong>Purpose:</strong> ML utilities and helpers
+            </div>
+
+            <p><strong>Classes:</strong></p>
+            <div class="success-box">
+                <strong>1. TeluguPriorityManager</strong><br>
+                • Language priority scoring<br>
+                • Telugu-first sorting<br>
+                • Language weights configuration
+            </div>
+
+            <div class="success-box">
+                <strong>2. EmbeddingManager</strong> (128-dimensional)<br>
+                • TF-IDF vectorization (Title + Overview)<br>
+                • Dimensionality reduction (TruncatedSVD)<br>
+                • User/content embeddings<br>
+                • Real-time embedding updates<br>
+                • Cosine similarity computation
+            </div>
+
+            <div class="success-box">
+                <strong>3. SimilarityEngine</strong><br>
+                • Multi-dimensional similarity<br>
+                • Genre similarity (Jaccard)<br>
+                • Language similarity<br>
+                • Rating similarity<br>
+                • Temporal similarity
+            </div>
+
+            <div class="success-box">
+                <strong>4. CacheManager</strong><br>
+                • Redis/simple cache backend<br>
+                • Memory cache fallback (LRU, 1000 items)<br>
+                • Cache key generation<br>
+                • TTL management
+            </div>
+
+            <p><strong>Helper Functions:</strong></p>
+            <div class="code-block"><span class="keyword">def</span> <span
+                    class="function">safe_json_loads</span>(json_str):
+                <span class="keyword">pass</span>
+
+                <span class="keyword">def</span> <span class="function">normalize_scores</span>(scores):
+                <span class="keyword">pass</span>
+
+                <span class="keyword">def</span> <span class="function">calculate_diversity_score</span>(content_list):
+                <span class="keyword">pass</span>
+            </div>
+        </div>
+
+        <!-- User Data Flow -->
+        <div class="section">
+            <h2 class="section-title">🔄 User Data Flow (Complete Journey)</h2>
+
+            <h3 class="subsection-title">Phase 1: User Registration/Login</h3>
+            <div class="flow-diagram">User registers/logs in
+                ↓
+                app.py: /api/register or /api/login
+                OR
+                services/auth.py: Enhanced auth service
+                ↓
+                User model created/validated
+                ↓
+                JWT token generated
+                ↓
+                Token returned to client</div>
+
+            <h3 class="subsection-title">Phase 2: User Interaction</h3>
+            <div class="flow-diagram">User interacts with content (view/like/favorite/rate)
+                ↓
+                Frontend sends POST /api/interactions
+                ↓
+                user/routes.py: Routes to activity.record_interaction()
+                ↓
+                user/activity.py:
+                - Validates interaction
+                - Creates UserInteraction record
+                - Saves to database
+                ↓
+                user/activity.py calls:
+                1. recommendation_engine.update_user_feedback()
+                ↓
+                personalized/recommendation_engine.py:
+                - Updates user embedding (learning_rate=0.1)
+                - Adjusts content weights
+                - Real-time model updates
+
+                2. profile_analyzer.update_profile_realtime()
+                ↓
+                personalized/profile_analyzer.py:
+                - Updates implicit preferences
+                - Updates behavioral patterns
+                - Updates engagement metrics
+                - Invalidates cached profile</div>
+
+            <h3 class="subsection-title">Phase 3: Profile Building</h3>
+            <div class="flow-diagram">System needs user profile (for recommendations)
+                ↓
+                personalized/profile_analyzer.py: build_user_profile(user_id)
+                ↓
+                1. Check cache (1-hour TTL)
+                ↓
+                2. Query UserInteraction (last 6 months)
+                ↓
+                3. Analyze:
+                - Explicit preferences (from User model)
+                - Implicit preferences (from interactions)
+                - Cinematic DNA (thematic analysis)
+                - Behavioral patterns (session, time)
+                - Temporal patterns (trends)
+                - Engagement metrics
+                ↓
+                4. ML Processing:
+                - Generate user embedding (128-dim)
+                - KMeans clustering (8 clusters)
+                - Calculate diversity score
+                - Calculate confidence score
+                ↓
+                5. Determine user segment (new/regular/active/power)
+                ↓
+                6. Cache profile (1 hour)
+                ↓
+                Return comprehensive profile</div>
+
+            <h3 class="subsection-title">Phase 4: Recommendation Generation</h3>
+            <div class="flow-diagram">User requests recommendations
+                ↓
+                Frontend: GET /api/personalized/recommendations
+                ↓
+                personalized/routes.py: get_recommendations()
+                ↓
+                1. Authenticate (JWT)
+                ↓
+                2. Check cache (5-min TTL)
+                ↓
+                3. personalized/recommendation_engine.py:
+                generate_recommendations(user_id, limit, context)
+                ↓
+                4. Build user profile (from Phase 3)
+                ↓
+                5. Get candidate pool (quality-filtered, Telugu-sorted)
+                ↓
+                6. Get algorithm weights (based on user segment)
+                ↓
+                7. Run multiple engines in parallel:
+
+                CollaborativeEngine:
+                - Matrix factorization (NMF)
+                - Predict scores for candidates
+
+                ContentBasedEngine:
+                - Embedding similarity
+                - Genre matching
+                - Language matching (Telugu priority)
+                - Quality matching
+
+                GraphBasedEngine:
+                - PageRank from user's content
+                - Graph propagation
+
+                ClusteringEngine:
+                - Cluster-based recommendations
+
+                PopularityEngine:
+                - Trending + popular content
+                ↓
+                8. Combine scores (weighted average)
+                ↓
+                9. Apply context adjustments (time, device, location)
+                ↓
+                10. Rank items
+                ↓
+                11. Apply diversity injection (20% diversity weight)
+                ↓
+                12. Apply exploration (15% exploration rate)
+                ↓
+                13. Format recommendations
+                ↓
+                14. Calculate metadata (diversity score, processing time)
+                ↓
+                15. Cache results (5 min)
+                ↓
+                Return recommendations to user</div>
+
+            <h3 class="subsection-title">Phase 5: User Interaction Loop (Continuous Learning)</h3>
+            <div class="flow-diagram">User interacts with recommended content
+                ↓
+                Feedback sent: POST /api/personalized/feedback
+                ↓
+                personalized/routes.py: submit_feedback()
+                ↓
+                recommendation_engine.update_user_feedback()
+                ↓
+                Updates:
+                - User embedding (exponential moving average)
+                - Interaction weights
+                - Algorithm performance tracking
+                ↓
+                Invalidates caches:
+                - User profile cache
+                - Recommendation cache
+                ↓
+                Next recommendation request uses updated data
+                ↓
+                LOOP continues (continuous improvement)</div>
+        </div>
+
+        <!-- Module Integration Points -->
+        <div class="section">
+            <h2 class="section-title">🏗️ Module Integration Points</h2>
+
+            <h3 class="subsection-title">app.py → user/ Integration</h3>
+            <div class="code-block"><span class="comment"># In app.py</span>
+                <span class="keyword">from</span> user.routes <span class="keyword">import</span> user_bp,
+                init_user_routes
+
+                user_services = {**services, **personalization_services, <span class="string">'cache'</span>: cache}
+                init_user_routes(app, db, models, user_services)
+                app.register_blueprint(user_bp)
+            </div>
+
+            <h3 class="subsection-title">app.py → personalized/ Integration</h3>
+            <div class="code-block"><span class="comment"># In app.py</span>
+                <span class="keyword">from</span> personalized <span class="keyword">import</span>
+                initialize_personalization_system
+                <span class="keyword">from</span> personalized.routes <span class="keyword">import</span>
+                personalized_bp
+
+                personalization_components = initialize_personalization_system(
+                app=app, db=db, models=models, cache=cache
+                )
+                app.register_blueprint(personalized_bp)
+            </div>
+
+            <h3 class="subsection-title">user/ → personalized/ Integration</h3>
+            <div class="code-block"><span class="comment"># In user/utils.py</span>
+                <span class="keyword">from</span> personalized <span class="keyword">import</span> get_profile_analyzer,
+                get_recommendation_engine
+
+                <span class="comment"># In user/activity.py</span>
+                recommendation_engine.update_user_feedback(user_id, content_id, type, rating)
+                profile_analyzer.update_profile_realtime(user_id, interaction_data)
+            </div>
+        </div>
+
+        <!-- Logic Organization -->
+        <div class="section">
+            <h2 class="section-title">🔧 Logic Organization (What Goes Where)</h2>
+
+            <h3 class="subsection-title">✅ CORRECT Current Structure</h3>
+            <table class="info-table">
+                <thead>
+                    <tr>
+                        <th>Logic Type</th>
+                        <th>Current Location</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>Database models</td>
+                        <td>app.py</td>
+                        <td><span class="badge badge-success">✓ Correct</span> (shared by all)</td>
+                    </tr>
+                    <tr>
+                        <td>External APIs</td>
+                        <td>app.py</td>
+                        <td><span class="badge badge-success">✓ Correct</span> (global services)</td>
+                    </tr>
+                    <tr>
+                        <td>User authentication</td>
+                        <td>services/auth.py</td>
+                        <td><span class="badge badge-success">✓ Correct</span> (reusable service)</td>
+                    </tr>
+                    <tr>
+                        <td>User interactions</td>
+                        <td>user/activity.py</td>
+                        <td><span class="badge badge-success">✓ Correct</span> (user module)</td>
+                    </tr>
+                    <tr>
+                        <td>Watchlist/Favorites</td>
+                        <td>user/watchlist.py, user/favorites.py</td>
+                        <td><span class="badge badge-success">✓ Correct</span></td>
+                    </tr>
+                    <tr>
+                        <td>User profile</td>
+                        <td>user/profile.py</td>
+                        <td><span class="badge badge-success">✓ Correct</span></td>
+                    </tr>
+                    <tr>
+                        <td>AI profile analysis</td>
+                        <td>personalized/profile_analyzer.py</td>
+                        <td><span class="badge badge-success">✓ Correct</span></td>
+                    </tr>
+                    <tr>
+                        <td>ML recommendations</td>
+                        <td>personalized/recommendation_engine.py</td>
+                        <td><span class="badge badge-success">✓ Correct</span></td>
+                    </tr>
+                    <tr>
+                        <td>Content details</td>
+                        <td>services/details.py</td>
+                        <td><span class="badge badge-success">✓ Correct</span> (shared service)</td>
+                    </tr>
+                    <tr>
+                        <td>Admin functions</td>
+                        <td>services/admin.py</td>
+                        <td><span class="badge badge-success">✓ Correct</span></td>
+                    </tr>
+                    <tr>
+                        <td>Support tickets</td>
+                        <td>services/support.py</td>
+                        <td><span class="badge badge-success">✓ Correct</span></td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <h3 class="subsection-title">⚠️ POTENTIAL Improvements</h3>
+            <table class="info-table">
+                <thead>
+                    <tr>
+                        <th>Logic</th>
+                        <th>Current</th>
+                        <th>Could Move To</th>
+                        <th>Reason</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>Anonymous recommendations</td>
+                        <td>app.py</td>
+                        <td>personalized/anonymous.py</td>
+                        <td>Better organization</td>
+                    </tr>
+                    <tr>
+                        <td>Content search</td>
+                        <td>app.py routes</td>
+                        <td>services/search.py</td>
+                        <td>Reduce app.py size</td>
+                    </tr>
+                    <tr>
+                        <td>Trending logic</td>
+                        <td>app.py routes</td>
+                        <td>services/trending.py</td>
+                        <td>Reduce app.py size</td>
+                    </tr>
+                    <tr>
+                        <td>External API classes</td>
+                        <td>app.py</td>
+                        <td>services/external_apis.py</td>
+                        <td>Cleaner separation</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Recommended Refactoring -->
+        <div class="section">
+            <h2 class="section-title">📝 Recommended Refactoring (Optional)</h2>
+
+            <h3 class="subsection-title">Option 1: Extract External APIs</h3>
+            <div class="code-block"><span class="comment"># Create backend/services/external_apis.py</span>
+                <span class="keyword">class</span> <span class="function">TMDBService</span>:
+                <span class="comment"># Move CineBrainTMDBService from app.py</span>
+                <span class="keyword">pass</span>
+
+                <span class="keyword">class</span> <span class="function">OMDbService</span>:
+                <span class="comment"># Move CineBrainOMDbService from app.py</span>
+                <span class="keyword">pass</span>
+
+                <span class="keyword">class</span> <span class="function">JikanService</span>:
+                <span class="comment"># Move CineBrainJikanService from app.py</span>
+                <span class="keyword">pass</span>
+
+                <span class="keyword">class</span> <span class="function">YouTubeService</span>:
+                <span class="comment"># Move CineBrainYouTubeService from app.py</span>
+                <span class="keyword">pass</span>
+            </div>
+
+            <h3 class="subsection-title">Option 2: Extract Anonymous Engine</h3>
+            <div class="code-block"><span class="comment"># Create backend/personalized/anonymous.py</span>
+                <span class="keyword">class</span> <span class="function">AnonymousRecommendationEngine</span>:
+                <span class="comment"># Move CineBrainAnonymousRecommendationEngine from app.py</span>
+                <span class="keyword">pass</span>
+            </div>
+
+            <h3 class="subsection-title">Option 3: Extract Search</h3>
+            <div class="code-block"><span class="comment"># Create backend/services/search.py</span>
+                <span class="keyword">class</span> <span class="function">SearchService</span>:
+                <span class="keyword">@staticmethod</span>
+                <span class="keyword">def</span> <span class="function">search_content</span>(query, content_type,
+                page):
+                <span class="comment"># Move /api/search logic from app.py</span>
+                <span class="keyword">pass</span>
+            </div>
+        </div>
+
+        <!-- Architecture Quality -->
+        <div class="section">
+            <h2 class="section-title">📊 Current Architecture Quality</h2>
+
+            <h3 class="subsection-title">✅ Strengths</h3>
+            <div class="success-box">
+                <ol>
+                    <li><span class="badge badge-success">✓</span> Clean modular separation (user/ and personalized/)
+                    </li>
+                    <li><span class="badge badge-success">✓</span> Proper dependency injection</li>
+                    <li><span class="badge badge-success">✓</span> Singleton pattern for services</li>
+                    <li><span class="badge badge-success">✓</span> Real-time learning pipeline</li>
+                    <li><span class="badge badge-success">✓</span> Comprehensive caching strategy</li>
+                    <li><span class="badge badge-success">✓</span> Telugu-first cultural intelligence</li>
+                    <li><span class="badge badge-success">✓</span> Multi-algorithm hybrid approach</li>
+                    <li><span class="badge badge-success">✓</span> Production-ready error handling</li>
+                </ol>
+            </div>
+
+            <h3 class="subsection-title">⚠️ Minor Issues</h3>
+            <div class="warning-box">
+                <ol>
+                    <li><span class="badge badge-warning">⚠</span> app.py is large (2000+ lines) - could be further
+                        modularized</li>
+                    <li><span class="badge badge-warning">⚠</span> Some duplicate route handling between app.py and
+                        modules</li>
+                    <li><span class="badge badge-warning">⚠</span> External API classes in app.py could be extracted
+                    </li>
+                </ol>
+            </div>
+
+            <div class="grade-box">
+                <h3>🎯 Overall Assessment</h3>
+                <div class="score">A (90/100)</div>
+                <p>Excellent modular architecture with minor optimization opportunities</p>
+            </div>
+        </div>
+
+        <!-- Quick Reference -->
+        <div class="section">
+            <h2 class="section-title">🚀 Quick Reference: Where to Add New Features</h2>
+
+            <table class="info-table">
+                <thead>
+                    <tr>
+                        <th>Feature Type</th>
+                        <th>Add To</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>New user endpoint</td>
+                        <td>user/routes.py + new file in user/</td>
+                    </tr>
+                    <tr>
+                        <td>New ML algorithm</td>
+                        <td>personalized/recommendation_engine.py</td>
+                    </tr>
+                    <tr>
+                        <td>New profile metric</td>
+                        <td>personalized/profile_analyzer.py</td>
+                    </tr>
+                    <tr>
+                        <td>New content source</td>
+                        <td>services/external_apis.py (create if needed)</td>
+                    </tr>
+                    <tr>
+                        <td>New admin feature</td>
+                        <td>services/admin.py</td>
+                    </tr>
+                    <tr>
+                        <td>Database model</td>
+                        <td>app.py (models section)</td>
+                    </tr>
+                    <tr>
+                        <td>Authentication logic</td>
+                        <td>services/auth.py</td>
+                    </tr>
+                    <tr>
+                        <td>Content processing</td>
+                        <td>services/details.py or services/content.py</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Footer -->
+        <div
+            style="margin-top: 60px; padding-top: 30px; border-top: 2px solid #ecf0f1; text-align: center; color: #7f8c8d;">
+            <p><strong>CineBrain System Architecture Documentation</strong></p>
+            <p>Generated on: November 2025 | Version 1.0</p>
+            <p style="margin-top: 20px; font-size: 0.9em;">
+                This document provides a comprehensive overview of the CineBrain system architecture,<br>
+                including all modules, data flows, integration points, and best practices.
+            </p>
+        </div>
+    </div>
+
+    <script>
+        // Add smooth scroll behavior
+        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+            anchor.addEventListener('click', function (e) {
+                e.preventDefault();
+                document.querySelector(this.getAttribute('href')).scrollIntoView({
+                    behavior: 'smooth'
+                });
+            });
+        });
+    </script>
+</body>
+
+</html>> <span class="function">record_interaction</span>(current_user):
+<span class="comment"># Main interaction recorder</span>
+<span class="keyword">pass</span>
+
+<span class="keyword">def</span> <span class="function">get_user_activity</span>(current_user):
+<span class="comment"># Fetch activity with analytics</span>
+<span class="keyword">pass</span>
+
+<span class="keyword">def</span> <span class="function">analyze_activity_patterns</span>(interactions):
+<span class="comment"># Behavioral analysis</span>
+<span class="keyword">pass</span>
+
+<span class="keyword">def</span> <span class="function">get_activity_insights</span>(current_user):
+<span class="comment"># AI-powered insights</span>
+<span class="keyword">pass</span>
+
+<span class="keyword">def</span> <span class="function">get_weekly_recap</span>(current_user):
+<span class="comment"># Weekly summary</span>
+<span class="keyword">pass</span></div>
+
+<p><strong>Data Flow:</strong></p>
+<div class="flow-diagram">User Action → record_interaction() → UserInteraction DB
+    ↓
+    recommendation_engine.update_user_feedback()
+    ↓
+    profile_analyzer.update_profile_realtime()</div>
+
+<!-- user/dashboard.py -->
+<div class="subsection-title" style="font-size: 1.2em; margin-top: 25px;">user/dashboard.py</div>
+<div class="highlight-box">
+    <strong>Purpose:</strong> Comprehensive user dashboard data
+</div>
+
+<p><strong>Responsibilities:</strong></p>
+<ul>
+    <li><span class="badge badge-success">✓</span> Top picks (personalized recommendations)</li>
+    <li><span class="badge badge-success">✓</span> Watchlist preview</li>
+    <li><span class="badge badge-success">✓</span> Favorites collection</li>
+    <li><span class="badge badge-success">✓</span> Discover new content</li>
+    <li><span class="badge badge-success">✓</span> Daily personalized mix</li>
+    <li><span class="badge badge-success">✓</span> Taste graph visualization</li>
+    <li><span class="badge badge-success">✓</span> Trending now (personalized)</li>
+    <li><span class="badge badge-success">✓</span> Mood-based recommendations (time-aware)</li>
+    <li><span class="badge badge-success">✓</span> Weekly recap</li>
+    <li><span class="badge badge-success">✓</span> CineStats (viewing analytics)</li>
+    <li><span class="badge badge-success">✓</span> Achievement badges</li>
+    <li><span class="badge badge-success">✓</span> AI summary cards</li>
+</ul>
+
+<p><strong>Key Functions:</strong></p>
+<div class="code-block"><span class="keyword">def</span> <span class="function">get_user_analytics</span>():
+    <span class="comment"># Comprehensive analytics</span>
+    <span class="keyword">pass</span>
+
+    <span class="keyword">def</span> <span class="function">get_profile_insights</span>():
+    <span class="comment"># AI-powered profile insights</span>
+    <span class="keyword">pass</span>
+
+    <span class="keyword">def</span> <span class="function">get_dashboard</span>():
+    <span class="comment"># Main dashboard aggregator</span>
+    <span class="keyword">pass</span>
+</div>
+
+<!-- user/ratings.py -->
+<div class="subsection-title" style="font-size: 1.2em; margin-top: 25px;">user/ratings.py</div>
+<div class="highlight-box">
+    <strong>Purpose:</strong> Advanced rating system with analytics
+</div>
+
+<p><strong>Responsibilities:</strong></p>
+<ul>
+    <li><span class="badge badge-success">✓</span> Add/remove/update ratings (1-10 scale)</li>
+    <li><span class="badge badge-success">✓</span> Rating statistics (average, median, std dev)</li>
+    <li><span class="badge badge-success">✓</span> Genre rating patterns</li>
+    <li><span class="badge badge-success">✓</span> Rating trends (improving/declining)</li>
+    <li><span class="badge badge-success">✓</span> Critical vs popular taste analysis</li>
+    <li><span class="badge badge-success">✓</span> Rating-based recommendations</li>
+    <li><span class="badge badge-success">✓</span> Export functionality</li>
+</ul>
+
+<p><strong>Advanced Analytics:</strong></p>
+<div class="code-block"><span class="comment"># Analytics Features</span>
+    - Content type averages
+    - Genre averages
+    - Decade preferences
+    - Language preferences
+    - Rating consistency score
+    - Correlation with critics
+    - Mainstream vs indie preference</div>
+
+<!-- personalized/ Module -->
+<h3 class="subsection-title">3. backend/personalized/ Module (AI/ML Engine)</h3>
+
+<div class="highlight-box">
+    <strong>personalized/__init__.py</strong><br>
+    Module initialization and singleton management
+</div>
+
+<p><strong>Exports:</strong></p>
+<div class="code-block"><span class="keyword">from</span> personalized <span class="keyword">import</span> (
+    UserProfileAnalyzer,
+    EmbeddingManager,
+    SimilarityEngine,
+    CacheManager,
+    TeluguPriorityManager,
+    get_profile_analyzer,
+    get_embedding_manager,
+    get_similarity_engine,
+    get_cache_manager,
+    get_recommendation_engine,
+    initialize_personalization_system
+    )</div>
+
+<p><strong>Initialization Flow:</strong></p>
+<div class="flow-diagram">initialize_personalization_system(app, db, models, cache)
+    ↓
+    Creates: profile_analyzer, embedding_manager,
+    similarity_engine, cache_manager, recommendation_engine
+    ↓
+    init_personalized_routes(models, db, cache)
+    ↓
+    Returns: All components + status</div>
+
+<!-- personalized/routes.py -->
+<div class="subsection-title" style="font-size: 1.2em; margin-top: 25px;">personalized/routes.py</div>
+<p><strong>Routes:</strong></p>
+<div class="code-block"><span class="string">/api/personalized/recommendations</span> <span class="comment"># Main
+        recommendations</span>
+    <span class="string">/api/personalized/recommendations/feed</span> <span class="comment"># Infinite scroll
+        feed</span>
+    <span class="string">/api/personalized/recommendations/similar/&lt;id&gt;</span>
+    <span class="string">/api/personalized/profile</span> <span class="comment"># User profile insights</span>
+    <span class="string">/api/personalized/feedback</span> <span class="comment"># Feedback processing</span>
+    <span class="string">/api/personalized/preferences</span> <span class="comment"># Update preferences</span>
+    <span class="string">/api/personalized/trending</span> <span class="comment"># Personalized trending</span>
+    <span class="string">/api/personalized/health</span> <span class="comment"># Health check</span>
+</div>
+
+<!-- personalized/profile_analyzer.py -->
+<div class="subsection-title" style="font-size: 1.2em; margin-top: 25px;">personalized/profile_analyzer.py (AI Profile
+    Builder)</div>
+<div class="highlight-box">
+    <strong>Purpose:</strong> Build comprehensive user profiles with ML
+</div>
+
+<p><strong>Responsibilities:</strong></p>
+<ul>
+    <li><span class="badge badge-success">✓</span> Extract explicit preferences (languages, genres)</li>
+    <li><span class="badge badge-success">✓</span> Extract implicit preferences (from interactions)</li>
+    <li><span class="badge badge-success">✓</span> Cinematic DNA analysis (thematic preferences)</li>
+    <li><span class="badge badge-success">✓</span> Telugu cinema pattern recognition</li>
+    <li><span class="badge badge-success">✓</span> Behavioral pattern analysis (session, time-based)</li>
+    <li><span class="badge badge-success">✓</span> Temporal pattern analysis (trends over time)</li>
+    <li><span class="badge badge-success">✓</span> Engagement metrics calculation</li>
+    <li><span class="badge badge-success">✓</span> User clustering (KMeans)</li>
+    <li><span class="badge badge-success">✓</span> Preference clustering</li>
+    <li><span class="badge badge-success">✓</span> Real-time profile updates</li>
+</ul>
+
+<p><strong>Profile Structure:</strong></p>
+<div class="code-block">{
+    <span class="string">'user_id'</span>: int,
+    <span class="string">'explicit_preferences'</span>: {...}, <span class="comment"># User-set preferences</span>
+    <span class="string">'implicit_preferences'</span>: {...}, <span class="comment"># Learned from interactions</span>
+    <span class="string">'cinematic_dna'</span>: {...}, <span class="comment"># Thematic analysis</span>
+    <span class="string">'behavioral_patterns'</span>: {...}, <span class="comment"># Session/time patterns</span>
+    <span class="string">'temporal_patterns'</span>: {...}, <span class="comment"># Trends over time</span>
+    <span class="string">'engagement_metrics'</span>: {...}, <span class="comment"># Engagement scoring</span>
+    <span class="string">'user_embedding'</span>: [...], <span class="comment"># 128-dimensional vector</span>
+    <span class="string">'preference_clusters'</span>: {...}, <span class="comment"># ML clustering</span>
+    <span class="string">'recommendation_context'</span>: {...}, <span class="comment"># Context for
+        recommendations</span>
+    <span class="string">'profile_completeness'</span>: float, <span class="comment"># 0-1 score</span>
+    <span class="string">'confidence_score'</span>: float, <span class="comment"># 0-1 score</span>
+    <span class="string">'diversity_score'</span>: float, <span class="comment"># 0-1 score</span>
+    <span class="string">'user_segment'</span>: str <span class="comment"># new/regular/active/power</span>
+    }
+</div>
+
+<p><strong>Key Methods:</strong></p>
+<div class="code-block"><span class="keyword">def</span> <span class="function">build_user_profile</span>(user_id):
+    <span class="comment"># Main profile builder</span>
+    <span class="keyword">pass</span>
+
+    <span class="keyword">def</span> <span class="function">update_profile_realtime</span>(user_id, interaction):
+    <span class="comment"># Real-time updates</span>
+    <span class="keyword">pass</span>
+
+    <span class="keyword">def</span> <span class="function">_analyze_cinematic_dna</span>(interactions):
+    <span class="comment"># Theme analysis</span>
+    <span class="keyword">pass</span>
+
+    <span class="keyword">def</span> <span class="function">_identify_preference_clusters</span>(interactions):
+    <span class="comment"># ML clustering</span>
+    <span class="keyword">pass</span>
+</div>
+
+<!-- personalized/recommendation_engine.py -->
+<div class="subsection-title" style="font-size: 1.2em; margin-top: 25px;">personalized/recommendation_engine.py (Hybrid
+    AI Engine)</div>
+<div class="highlight-box">
+    <strong>Purpose:</strong> Multi-algorithm recommendation system
+</div>
+
+<p><strong>Components:</strong></p>
+<div class="success-box">
+    <strong>1. CollaborativeEngine</strong> (Matrix Factorization)<br>
+    • NMF-based collaborative filtering<br>
+    • 50-factor latent space<br>
+    • User-item interaction matrix
+</div>
+
+<div class="success-box">
+    <strong>2. ContentBasedEngine</strong> (Feature-based)<br>
+    • Embedding similarity (40%)<br>
+    • Genre matching (25%)<br>
+    • Language matching with Telugu priority (20%)<br>
+    • Quality matching (15%)
+</div>
+
+<div class="success-box">
+    <strong>3. GraphBasedEngine</strong> (Network Analysis)<br>
+    • Content similarity graph<br>
+    • Personalized PageRank<br>
+    • Graph propagation
+</div>
+
+<div class="success-box">
+    <strong>4. ClusteringEngine</strong> (User Segmentation)<br>
+    • User preference clusters<br>
+    • Cluster-based recommendations
+</div>
+
+<div class="success-box">
+    <strong>5. HybridRecommendationEngine</strong> (Orchestrator)<br>
+    • Combines all engines<br>
+    • Dynamic weight adjustment by user segment<br>
+    • Context-aware recommendations<br>
+    • Diversity injection<br>
+    • Exploration vs exploitation
+</div>
+
+<p><strong>Algorithm Weights (Dynamic by User Segment):</strong></p>
+<div class="code-block">new_user: {
+    <span class="string">'collaborative'</span>: <span class="keyword">0.05</span>,
+    <span class="string">'content_based'</span>: <span class="keyword">0.25</span>,
+    <span class="string">'graph_based'</span>: <span class="keyword">0.10</span>,
+    <span class="string">'clustering'</span>: <span class="keyword">0.10</span>,
+    <span class="string">'popularity'</span>: <span class="keyword">0.50</span>
+    }
+
+    active_user: {
+    <span class="string">'collaborative'</span>: <span class="keyword">0.35</span>,
+    <span class="string">'content_based'</span>: <span class="keyword">0.25</span>,
+    <span class="string">'graph_based'</span>: <span class="keyword">0.25</span>,
+    <span class="string">'clustering'</span>: <span class="keyword">0.10</span>,
+    <span class="string">'popularity'</span>: <span class="keyword">0.05</span>
+    }
+</div>
+
+<p><strong>Key Methods:</strong></p>
+<div class="code-block"><span class="keyword">def</span> <span class="function">generate_recommendations</span>(user_id,
+    limit, context):
+    <span class="keyword">pass</span>
+
+    <span class="keyword">def</span> <span class="function">get_similar_content</span>(content_id, limit):
+    <span class="keyword">pass</span>
+
+    <span class="keyword">def</span
