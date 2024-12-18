@@ -3,7 +3,11 @@ from flask import request, jsonify
 from datetime import datetime
 import json
 import logging
-from .utils import require_auth, db, User, UserInteraction, Content, get_enhanced_user_stats, recommendation_engine
+from .utils import (
+    require_auth, db, User, UserInteraction, Content, 
+    get_enhanced_user_stats, recommendation_engine,
+    get_cinematic_dna_summary, profile_analyzer, personalized_recommendation_engine
+)
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +16,9 @@ def get_user_profile(current_user):
     """Get comprehensive user profile"""
     try:
         stats = get_enhanced_user_stats(current_user.id)
+        
+        # Get Cinematic DNA summary if available
+        cinematic_dna_summary = get_cinematic_dna_summary(current_user.id)
         
         recent_interactions = []
         if UserInteraction:
@@ -38,9 +45,12 @@ def get_user_profile(current_user):
             except Exception as e:
                 logger.warning(f"Could not get CineBrain recent activity: {e}")
         
+        # Get recommendation effectiveness with new system priority
         rec_effectiveness = {}
         try:
-            if recommendation_engine:
+            if personalized_recommendation_engine:
+                rec_effectiveness = personalized_recommendation_engine.get_user_recommendation_metrics(current_user.id)
+            elif recommendation_engine:
                 rec_effectiveness = recommendation_engine.get_user_recommendation_metrics(current_user.id)
         except Exception as e:
             logger.warning(f"Could not get CineBrain recommendation effectiveness: {e}")
@@ -70,17 +80,24 @@ def get_user_profile(current_user):
                 'last_active': current_user.last_active.isoformat() if current_user.last_active else None
             },
             'stats': stats,
+            'cinematic_dna': cinematic_dna_summary,
             'recent_activity': recent_interactions,
             'recommendation_effectiveness': rec_effectiveness,
             'profile_completion': {
                 'score': completion_score,
                 'missing_fields': missing_fields,
                 'suggestions': [
-                    'Add preferred languages to get better CineBrain recommendations',
+                    'Add preferred languages to unlock Telugu-first recommendations',
                     'Select favorite genres to improve CineBrain content discovery',
                     'Add your location for regional CineBrain content suggestions',
                     'Upload an avatar to personalize your CineBrain profile'
                 ][:len(missing_fields)]
+            },
+            'advanced_features': {
+                'cinematic_dna_available': bool(cinematic_dna_summary),
+                'behavioral_analysis_active': bool(profile_analyzer),
+                'real_time_learning': bool(personalized_recommendation_engine),
+                'telugu_priority_enabled': True
             }
         }
         
@@ -186,7 +203,30 @@ def update_user_preferences(current_user):
         
         db.session.commit()
         
-        if recommendation_engine:
+        # Update both recommendation engines if available
+        update_results = []
+        
+        if personalized_recommendation_engine:
+            try:
+                # Use new real-time update method
+                success = profile_analyzer.update_profile_realtime(
+                    current_user.id,
+                    {
+                        'interaction_type': 'preference_update',
+                        'metadata': {
+                            'updated_languages': data.get('preferred_languages'),
+                            'updated_genres': data.get('preferred_genres'),
+                            'source': 'explicit_preference_update'
+                        }
+                    }
+                )
+                if success:
+                    update_results.append('advanced_personalization')
+                logger.info(f"Successfully updated CineBrain advanced preferences for user {current_user.id}")
+            except Exception as e:
+                logger.warning(f"Failed to update CineBrain advanced preferences: {e}")
+        
+        if recommendation_engine and recommendation_engine != personalized_recommendation_engine:
             try:
                 recommendation_engine.update_user_preferences_realtime(
                     current_user.id,
@@ -199,9 +239,9 @@ def update_user_preferences(current_user):
                         }
                     }
                 )
-                logger.info(f"Successfully updated CineBrain preferences for user {current_user.id}")
+                update_results.append('legacy_personalization')
             except Exception as e:
-                logger.warning(f"Failed to update CineBrain recommendation engine: {e}")
+                logger.warning(f"Failed to update CineBrain legacy preferences: {e}")
         
         return jsonify({
             'success': True,
@@ -210,7 +250,8 @@ def update_user_preferences(current_user):
                 'preferred_languages': json.loads(current_user.preferred_languages or '[]'),
                 'preferred_genres': json.loads(current_user.preferred_genres or '[]')
             },
-            'recommendation_refresh': 'triggered'
+            'recommendation_refresh': 'triggered',
+            'systems_updated': update_results
         }), 200
         
     except Exception as e:
