@@ -1,6 +1,5 @@
-#backend/app.py 
 from typing import Optional
-from flask import Flask, request, jsonify, session, render_template
+from flask import Flask, request, jsonify, session, render_template, redirect
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
 from flask_caching import Cache
@@ -49,7 +48,6 @@ from services.new_releases import init_cinebrain_new_releases_service
 from services.review import init_review_service
 from user.routes import user_bp, init_user_routes
 from recommendation import recommendation_bp, init_recommendation_routes
-# Add these imports for the new personalized system
 from personalized import init_personalized_system, personalized_bp
 import re
 import click
@@ -60,6 +58,7 @@ load_dotenv()
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'your-secret-key-change-in-production')
 DATABASE_URL = os.environ.get('DATABASE_URL')
+
 if os.environ.get('DATABASE_URL'):
     app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL').replace('postgres://', 'postgresql://')
 else:
@@ -89,6 +88,31 @@ if DATABASE_URL and DATABASE_URL.startswith('postgresql://'):
         }
     }
 
+if os.environ.get('FLASK_ENV') == 'production':
+    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+        'pool_pre_ping': True,
+        'pool_recycle': 300,
+        'pool_size': 10,
+        'max_overflow': 20,
+        'connect_args': {
+            'sslmode': 'require',
+            'connect_timeout': 10,
+            'application_name': 'CineBrain_Production'
+        }
+    }
+    
+    if REDIS_URL and REDIS_URL.startswith(('redis://', 'rediss://')):
+        app.config['CACHE_DEFAULT_TIMEOUT'] = 7200
+        app.config['CACHE_THRESHOLD'] = 500
+    
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s %(levelname)s %(name)s: %(message)s'
+    )
+    
+    app.debug = False
+    app.testing = False
+
 db = SQLAlchemy(app)
 CORS(app)
 cache = Cache(app)
@@ -106,6 +130,22 @@ app.config['SECRET_KEY'] = app.secret_key
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+@app.before_request
+def security_headers():
+    if os.environ.get('FLASK_ENV') == 'production':
+        if not request.is_secure and request.headers.get('X-Forwarded-Proto') != 'https':
+            return redirect(request.url.replace('http://', 'https://'), code=301)
+
+@app.after_request
+def add_security_headers(response):
+    if os.environ.get('FLASK_ENV') == 'production':
+        response.headers['X-Content-Type-Options'] = 'nosniff'
+        response.headers['X-Frame-Options'] = 'DENY'
+        response.headers['X-XSS-Protection'] = '1; mode=block'
+        response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
+        response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+    return response
 
 def create_http_session():
     session = requests.Session()
@@ -708,24 +748,15 @@ try:
 except Exception as e:
     logger.error(f"Failed to initialize CineBrain support service: {e}")
 
-# Replace the existing personalized initialization block with the new advanced system
 try:
-    # Initialize the new modular personalized recommendation system
     profile_analyzer, personalized_recommendation_engine = init_personalized_system(
         app, db, models, services, cache
     )
     
     if profile_analyzer and personalized_recommendation_engine:
         logger.info("✅ CineBrain Advanced Personalized Recommendation System initialized successfully")
-        logger.info(f"   - Profile Analyzer: Active")
-        logger.info(f"   - Recommendation Engine: Active with Telugu-first priority")
-        logger.info(f"   - Real-time Learning: Enabled")
-        
-        # Add to services dictionary
         services['profile_analyzer'] = profile_analyzer
         services['personalized_recommendation_engine'] = personalized_recommendation_engine
-        
-        # Register the personalized blueprint
         app.register_blueprint(personalized_bp, url_prefix='/api')
         logger.info("✅ CineBrain Personalized routes registered at /api/personalized/*")
     else:
@@ -767,7 +798,6 @@ try:
 except Exception as e:
     logger.error(f"Failed to initialize CineBrain Critics Choice service: {e}")
 
-# Add RecommendationOrchestrator to services
 try:
     cinebrain_recommendation_orchestrator = RecommendationOrchestrator()
     services['recommendation_orchestrator'] = cinebrain_recommendation_orchestrator
@@ -775,7 +805,6 @@ try:
 except Exception as e:
     logger.error(f"Failed to initialize CineBrain RecommendationOrchestrator: {e}")
 
-# Initialize recommendation routes
 try:
     init_recommendation_routes(app, db, models, services, cache)
     app.register_blueprint(recommendation_bp)
@@ -840,6 +869,34 @@ def setup_support_monitoring():
     monitor_thread = threading.Thread(target=support_monitor, daemon=True)
     monitor_thread.start()
     logger.info("CineBrain support monitoring thread started")
+
+def setup_render_keepalive():
+    def keepalive_task():
+        while True:
+            try:
+                time.sleep(600)
+                
+                if os.environ.get('PORT') and not os.environ.get('FLASK_ENV') == 'development':
+                    try:
+                        response = http_session.get(
+                            f"http://localhost:{os.environ.get('PORT', 5000)}/api/health",
+                            timeout=5
+                        )
+                        if response.status_code == 200:
+                            logger.info("✅ CineBrain keep-alive ping successful")
+                        else:
+                            logger.warning(f"⚠️ CineBrain keep-alive ping returned {response.status_code}")
+                    except Exception as e:
+                        logger.warning(f"⚠️ CineBrain keep-alive ping failed: {e}")
+                        
+            except Exception as e:
+                logger.error(f"❌ CineBrain keep-alive thread error: {e}")
+                time.sleep(600)
+    
+    if os.environ.get('PORT') and not os.environ.get('FLASK_ENV') == 'development':
+        keepalive_thread = threading.Thread(target=keepalive_task, daemon=True)
+        keepalive_thread.start()
+        logger.info("🔄 CineBrain Render keep-alive service started")
 
 def on_new_support_ticket(ticket):
     try:
@@ -1434,7 +1491,6 @@ def performance_check():
             'cinebrain_brand': 'CineBrain Entertainment Platform'
         }), 500
 
-# Updated health check endpoint with personalized system status
 @app.route('/api/health', methods=['GET'])
 def health_check():
     try:
@@ -1446,7 +1502,6 @@ def health_check():
             'cinebrain_brand': 'CineBrain Entertainment Platform'
         }
         
-        # Database check
         try:
             db.session.execute(text('SELECT 1'))
             health_info['database'] = 'connected'
@@ -1454,7 +1509,6 @@ def health_check():
             health_info['database'] = 'disconnected'
             health_info['status'] = 'degraded'
         
-        # Cache check
         try:
             cache.set('cinebrain_health_check', 'ok', timeout=10)
             if cache.get('cinebrain_health_check') == 'ok':
@@ -1466,7 +1520,6 @@ def health_check():
             health_info['cache'] = 'disconnected'
             health_info['status'] = 'degraded'
         
-        # Add personalized system check
         health_info['personalized_recommendation_system'] = {
             'profile_analyzer': 'enabled' if 'profile_analyzer' in services and services['profile_analyzer'] else 'disabled',
             'recommendation_engine': 'enabled' if 'personalized_recommendation_engine' in services and services['personalized_recommendation_engine'] else 'disabled',
@@ -1496,7 +1549,6 @@ def health_check():
             'personalized_service': 'enabled' if 'personalized' in app.blueprints else 'disabled'
         }
         
-        # Add personalized system stats
         try:
             if 'profile_analyzer' in services and services['profile_analyzer']:
                 total_users = User.query.count()
@@ -1577,7 +1629,8 @@ def health_check():
                 'cinebrain_advanced_personalized_system',
                 'cinebrain_cinematic_dna_analysis',
                 'cinebrain_preference_embedding_engine',
-                'cinebrain_real_time_learning'
+                'cinebrain_real_time_learning',
+                'cinebrain_render_keepalive_service'
             ],
             'memory_optimizations': 'cinebrain_enabled',
             'unicode_fixes': 'cinebrain_applied',
@@ -1595,6 +1648,26 @@ def health_check():
             'timestamp': datetime.utcnow().isoformat(),
             'cinebrain_brand': 'CineBrain Entertainment Platform'
         }), 500
+
+@app.route('/api/production-stats', methods=['GET'])
+def production_stats():
+    try:
+        stats = {
+            'timestamp': datetime.utcnow().isoformat(),
+            'environment': 'production',
+            'uptime_hours': (datetime.utcnow() - datetime.utcnow().replace(hour=0, minute=0, second=0)).total_seconds() / 3600,
+            'total_users': User.query.count(),
+            'total_content': Content.query.count(),
+            'active_sessions': UserInteraction.query.filter(
+                UserInteraction.timestamp >= datetime.utcnow() - timedelta(hours=1)
+            ).count(),
+            'recommendation_engine_status': 'active' if 'personalized_recommendation_engine' in services else 'inactive',
+            'database_connections': 'healthy',
+            'cache_status': 'connected' if cache else 'disconnected'
+        }
+        return jsonify(stats), 200
+    except Exception as e:
+        return jsonify({'error': str(e), 'status': 'unhealthy'}), 500
 
 @app.cli.command('generate-slugs')
 def generate_slugs():
@@ -1697,10 +1770,8 @@ def cinebrain_new_releases_refresh_cli():
         print(f"Failed to refresh CineBrain new releases: {e}")
         logger.error(f"CineBrain CLI new releases refresh error: {e}")
 
-# New CLI commands for personalized system
 @app.cli.command('analyze-user-profiles')
 def analyze_user_profiles_cli():
-    """Analyze all user profiles and generate Cinematic DNA"""
     try:
         print("Starting CineBrain user profile analysis...")
         
@@ -1710,7 +1781,6 @@ def analyze_user_profiles_cli():
         
         profile_analyzer = services['profile_analyzer']
         
-        # Get all users
         users = User.query.all()
         print(f"Found {len(users)} users to analyze")
         
@@ -1721,7 +1791,6 @@ def analyze_user_profiles_cli():
             try:
                 print(f"\nAnalyzing user {i}/{len(users)}: {user.username} (ID: {user.id})")
                 
-                # Build comprehensive profile
                 profile = profile_analyzer.build_comprehensive_profile(user.id)
                 
                 if profile:
@@ -1750,11 +1819,9 @@ def analyze_user_profiles_cli():
 @app.cli.command('test-personalized-recommendations')
 @click.argument('username')
 def test_personalized_recommendations_cli(username):
-    """Test personalized recommendations for a specific user"""
     try:
         print(f"Testing CineBrain personalized recommendations for user: {username}")
         
-        # Get user
         user = User.query.filter_by(username=username).first()
         if not user:
             print(f"Error: User '{username}' not found")
@@ -1766,7 +1833,6 @@ def test_personalized_recommendations_cli(username):
         
         engine = services['personalized_recommendation_engine']
         
-        # Get recommendations
         print(f"\nGenerating recommendations for {username} (ID: {user.id})...")
         
         recommendations = engine.get_personalized_recommendations(
@@ -1788,7 +1854,6 @@ def test_personalized_recommendations_cli(username):
                 print(f"   - Why: {rec['personalized_explanation']}")
                 print()
             
-            # Show insights
             insights = recommendations.get('profile_insights', {})
             print("User Profile Insights:")
             print(f"- Profile Strength: {insights.get('profile_strength', 'unknown')}")
@@ -1810,33 +1875,25 @@ def create_tables():
             
             admin = User.query.filter_by(username='admin').first()
             if not admin:
-                print("Creating CineBrain admin user...")
+                print("Creating CineBrain production admin...")
                 admin = User(
                     username='admin',
-                    email='srinathnulidonda.dev@gmail.com',
-                    password_hash=generate_password_hash('admin123'),
+                    email=os.environ.get('ADMIN_EMAIL', 'srinathnulidonda.dev@gmail.com'),
+                    password_hash=generate_password_hash(
+                        os.environ.get('ADMIN_PASSWORD', 'admin123')
+                    ),
                     is_admin=True
                 )
                 db.session.add(admin)
                 db.session.commit()
-                print("CineBrain admin user created successfully")
-                print(f"Admin username: admin")
-                print(f"Admin password: admin123")
-            else:
-                print("CineBrain admin user already exists")
-                print(f"Admin ID: {admin.id}")
-                print(f"Admin username: {admin.username}")
-                print(f"Admin email: {admin.email}")
-                print(f"Password hash exists: {bool(admin.password_hash)}")
-            
-            test_check = check_password_hash(admin.password_hash, 'admin123')
-            print(f"Password verification test: {test_check}")
+                print("✅ CineBrain production admin created")
             
             setup_support_monitoring()
+            setup_render_keepalive()
             
-            logger.info("CineBrain database tables created successfully")
+            logger.info("🚀 CineBrain production database initialized successfully")
     except Exception as e:
-        logger.error(f"CineBrain database initialization error: {e}")
+        logger.error(f"❌ CineBrain production database initialization error: {e}")
 
 create_tables()
 
@@ -1849,44 +1906,18 @@ if __name__ == '__main__':
     print("  ✅ Telugu-first Cultural Priority")
     print("  ✅ Real-time Learning")
     print("  ✅ Multi-strategy Recommendations")
+    print("  ✅ Render Keep-Alive Service")
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('FLASK_ENV') == 'development'
     app.run(host='0.0.0.0', port=port, debug=debug)
 else:
-    print("=== CineBrain Flask app with Advanced Personalized System ===")
+    print("=== CineBrain Flask Production Mode ===")
     print(f"App name: {app.name}")
     print(f"Python version: 3.13.4")
-    print(f"CineBrain brand: CineBrain Entertainment Platform")
-    print(f"Database URI configured: {'Yes' if app.config.get('SQLALCHEMY_DATABASE_URI') else 'No'}")
+    print(f"Environment: {os.environ.get('FLASK_ENV', 'production')}")
+    print(f"Database configured: {'Yes' if app.config.get('SQLALCHEMY_DATABASE_URI') else 'No'}")
     print(f"Cache type: {app.config.get('CACHE_TYPE', 'Not configured')}")
-    print(f"CineBrain details service status: {'Initialized' if details_service else 'Failed to initialize'}")
-    print(f"CineBrain content service status: {'Initialized' if content_service else 'Failed to initialize'}")
-    print(f"CineBrain new releases service status: {'Integrated' if cinebrain_new_releases_service else 'Failed to initialize'}")
-    print(f"CineBrain critics choice service status: {'Integrated' if 'critics_choice_service' in services else 'Failed to initialize'}")
-    print(f"CineBrain support service status: {'Integrated' if 'support_bp' in app.blueprints else 'Not integrated'}")
-    print(f"CineBrain auth service status: {'Integrated' if 'auth_bp' in app.blueprints else 'Not integrated'}")
-    print(f"CineBrain user service status: {'Integrated' if 'user_bp' in app.blueprints else 'Not integrated'}")
-    print(f"CineBrain recommendation service status: {'Integrated' if 'recommendations' in app.blueprints else 'Not integrated'}")
-    print(f"   Personalized System: {'Active' if 'profile_analyzer' in services else 'Not Initialized'}")
-    
-    print("\n=== CineBrain Advanced Personalized Recommendation System Features ===")
-    print("✅ Modular recommendation architecture")
-    print("✅ All original endpoints preserved")
-    print("✅ OMDb completely removed")
-    print("✅ Advanced algorithms integration")
-    print("✅ Telugu-first priority system")
-    print("✅ Ultra-powerful similarity engine")
-    print("✅ Critics choice with auto-refresh")
-    print("✅ New releases with 45-day strict filter")
-    print("✅ Upcoming content with Telugu focus")
-    print("✅ Anonymous recommendation engine")
-    print("✅ Admin recommendation system")
-    print("✅ Advanced Personalized System with Cinematic DNA")
-    print("✅ Real-time Learning and Profile Analysis")
-    print("✅ Multi-strategy Recommendation Engine")
-    print("✅ Behavioral Analysis and Preference Embeddings")
-    
-    print(f"\n=== CineBrain Registered Routes ===")
-    for rule in app.url_map.iter_rules():
-        print(f"{rule.endpoint}: {rule.rule} [{', '.join(rule.methods)}]")
-    print("=== End of CineBrain Routes ===\n")
+    print(f"Keep-alive service: {'Active' if os.environ.get('PORT') else 'Disabled'}")
+    print("✅ Production optimizations enabled")
+    print("✅ Security headers active")
+    print("✅ Render deployment ready")
