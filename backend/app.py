@@ -51,6 +51,8 @@ from user.routes import user_bp, init_user_routes
 from recommendation import recommendation_bp, init_recommendation_routes
 # Add these imports for the new personalized system
 from personalized import init_personalized_system, personalized_bp
+# Import System module
+from system.routes import system_bp, init_system_routes
 import re
 import click
 import traceback
@@ -783,6 +785,15 @@ try:
 except Exception as e:
     logger.error(f"Failed to initialize CineBrain recommendation routes: {e}")
 
+# Initialize system routes
+try:
+    init_system_routes(app, db, models, services)
+    app.register_blueprint(system_bp)
+    logger.info("✅ CineBrain system monitoring service initialized successfully")
+    services['system_service'] = True
+except Exception as e:
+    logger.error(f"❌ Failed to initialize CineBrain system monitoring service: {e}")
+
 def setup_support_monitoring():
     def support_monitor():
         while True:
@@ -1386,215 +1397,7 @@ def populate_all_cast_crew():
         logger.error(f"CineBrain error in bulk cast/crew population: {e}")
         return jsonify({'error': 'Failed to populate CineBrain cast/crew'}), 500
 
-@app.route('/api/performance', methods=['GET'])
-def performance_check():
-    try:
-        total_content = Content.query.count()
-        content_with_slugs = Content.query.filter(
-            and_(Content.slug != None, Content.slug != '')
-        ).count()
-        
-        stats = {
-            'status': 'healthy',
-            'timestamp': datetime.utcnow().isoformat(),
-            'cinebrain_brand': 'CineBrain Entertainment Platform',
-            'cinebrain_service': 'performance',
-            'database': {
-                'total_content': total_content,
-                'content_with_slugs': content_with_slugs,
-                'content_without_slugs': total_content - content_with_slugs,
-                'slug_coverage': round((content_with_slugs / total_content * 100), 2) if total_content > 0 else 0
-            },
-            'cache_type': app.config.get('CACHE_TYPE', 'unknown'),
-            'cinebrain_services': {
-                'details_service': 'enabled' if details_service else 'disabled',
-                'content_service': 'enabled' if content_service else 'disabled',
-                'new_releases_service': 'enabled' if cinebrain_new_releases_service else 'disabled',
-                'critics_choice_service': 'enabled' if 'critics_choice_service' in services else 'disabled'
-            },
-            'performance': {
-                'thread_pool_workers': 3,
-                'api_timeouts': '5s',
-                'cache_timeout': '15min-30min',
-                'optimization_level': 'cinebrain_high'
-            }
-        }
-        
-        if cinebrain_new_releases_service:
-            stats['new_releases_stats'] = cinebrain_new_releases_service.get_stats()
-        
-        return jsonify(stats), 200
-        
-    except Exception as e:
-        logger.error(f"CineBrain performance check error: {e}")
-        return jsonify({
-            'status': 'error',
-            'error': str(e),
-            'timestamp': datetime.utcnow().isoformat(),
-            'cinebrain_brand': 'CineBrain Entertainment Platform'
-        }), 500
-
-# Updated health check endpoint with personalized system status
-@app.route('/api/health', methods=['GET'])
-def health_check():
-    try:
-        health_info = {
-            'status': 'healthy',
-            'timestamp': datetime.utcnow().isoformat(),
-            'version': '5.5.0',
-            'python_version': '3.13.4',
-            'cinebrain_brand': 'CineBrain Entertainment Platform'
-        }
-        
-        # Database check
-        try:
-            db.session.execute(text('SELECT 1'))
-            health_info['database'] = 'connected'
-        except:
-            health_info['database'] = 'disconnected'
-            health_info['status'] = 'degraded'
-        
-        # Cache check
-        try:
-            cache.set('cinebrain_health_check', 'ok', timeout=10)
-            if cache.get('cinebrain_health_check') == 'ok':
-                health_info['cache'] = 'connected'
-            else:
-                health_info['cache'] = 'error'
-                health_info['status'] = 'degraded'
-        except:
-            health_info['cache'] = 'disconnected'
-            health_info['status'] = 'degraded'
-        
-        # Add personalized system check
-        health_info['personalized_recommendation_system'] = {
-            'profile_analyzer': 'enabled' if 'profile_analyzer' in services and services['profile_analyzer'] else 'disabled',
-            'recommendation_engine': 'enabled' if 'personalized_recommendation_engine' in services and services['personalized_recommendation_engine'] else 'disabled',
-            'real_time_learning': 'enabled',
-            'telugu_priority': 'active',
-            'cinematic_dna_analysis': 'active',
-            'behavior_analysis': 'active',
-            'preference_embeddings': 'active'
-        }
-        
-        health_info['cinebrain_services'] = {
-            'tmdb': bool(TMDB_API_KEY),
-            'youtube': bool(YOUTUBE_API_KEY),
-            'new_releases_service': 'enabled' if cinebrain_new_releases_service else 'disabled',
-            'critics_choice_service': 'enabled' if 'critics_choice_service' in services else 'disabled',
-            'algorithms': 'cinebrain_optimized_enabled',
-            'slug_support': 'cinebrain_comprehensive_enabled',
-            'details_service': 'enabled' if details_service else 'disabled',
-            'content_service': 'enabled' if content_service else 'disabled',
-            'cast_crew': 'cinebrain_fully_enabled',
-            'support_service': 'enabled' if 'support_bp' in app.blueprints else 'disabled',
-            'admin_notifications': 'cinebrain_enabled',
-            'monitoring': 'cinebrain_active',
-            'auth_service': 'enabled' if 'auth_bp' in app.blueprints else 'disabled',
-            'user_service': 'enabled' if 'user_bp' in app.blueprints else 'disabled',
-            'recommendation_service': 'enabled' if 'recommendations' in app.blueprints else 'disabled',
-            'personalized_service': 'enabled' if 'personalized' in app.blueprints else 'disabled'
-        }
-        
-        # Add personalized system stats
-        try:
-            if 'profile_analyzer' in services and services['profile_analyzer']:
-                total_users = User.query.count()
-                health_info['personalized_stats'] = {
-                    'total_users': total_users,
-                    'profile_cache_enabled': bool(cache),
-                    'embedding_engine': 'active',
-                    'cinematic_dna_analyzer': 'active',
-                    'behavior_analyzer': 'active',
-                    'recommendation_strategies': [
-                        'advanced_hybrid',
-                        'content_collaborative_mix', 
-                        'content_based_primary',
-                        'popularity_cultural'
-                    ]
-                }
-        except Exception as e:
-            health_info['personalized_stats'] = {'error': str(e)}
-        
-        try:
-            total_content = Content.query.count()
-            content_with_slugs = Content.query.filter(
-                and_(Content.slug != None, Content.slug != '')
-            ).count()
-            
-            health_info['cinebrain_slug_status'] = {
-                'total_content': total_content,
-                'with_slugs': content_with_slugs,
-                'without_slugs': total_content - content_with_slugs,
-                'coverage_percentage': round((content_with_slugs / total_content * 100), 2) if total_content > 0 else 0
-            }
-        except Exception as e:
-            health_info['cinebrain_slug_status'] = {'error': str(e)}
-        
-        try:
-            total_content_persons = ContentPerson.query.count()
-            total_persons = Person.query.count()
-            
-            health_info['cinebrain_cast_crew_status'] = {
-                'total_relations': total_content_persons,
-                'total_persons': total_persons,
-                'content_with_cast': db.session.query(ContentPerson.content_id).distinct().count()
-            }
-        except Exception as e:
-            health_info['cinebrain_cast_crew_status'] = {'error': str(e)}
-        
-        try:
-            if 'SupportTicket' in globals():
-                health_info['cinebrain_support_status'] = {
-                    'total_tickets': globals()['SupportTicket'].query.count(),
-                    'open_tickets': globals()['SupportTicket'].query.filter(
-                        globals()['SupportTicket'].status.in_(['open', 'in_progress'])
-                    ).count(),
-                    'total_feedback': globals()['Feedback'].query.count() if 'Feedback' in globals() else 0
-                }
-        except Exception as e:
-            health_info['cinebrain_support_status'] = {'error': str(e)}
-        
-        if cinebrain_new_releases_service:
-            health_info['cinebrain_new_releases'] = cinebrain_new_releases_service.get_stats()
-        
-        health_info['cinebrain_performance'] = {
-            'optimizations_applied': [
-                'cinebrain_python_3.13_compatibility',
-                'cinebrain_reduced_api_timeouts', 
-                'cinebrain_optimized_thread_pools',
-                'cinebrain_enhanced_caching',
-                'cinebrain_error_handling_improvements',
-                'cinebrain_cast_crew_optimization',
-                'cinebrain_support_service_integration',
-                'cinebrain_admin_notification_system',
-                'cinebrain_real_time_monitoring',
-                'cinebrain_auth_service_enhanced',
-                'cinebrain_user_service_modular',
-                'cinebrain_new_releases_service',
-                'cinebrain_enhanced_critics_choice_service',
-                'cinebrain_recommendation_service_modular',
-                'cinebrain_advanced_personalized_system',
-                'cinebrain_cinematic_dna_analysis',
-                'cinebrain_preference_embedding_engine',
-                'cinebrain_real_time_learning'
-            ],
-            'memory_optimizations': 'cinebrain_enabled',
-            'unicode_fixes': 'cinebrain_applied',
-            'monitoring': 'cinebrain_background_threads_active',
-            'telugu_priority': 'cinebrain_enabled',
-            'omdb_removed': 'cinebrain_complete'
-        }
-        
-        return jsonify(health_info), 200
-        
-    except Exception as e:
-        return jsonify({
-            'status': 'unhealthy',
-            'error': str(e),
-            'timestamp': datetime.utcnow().isoformat(),
-            'cinebrain_brand': 'CineBrain Entertainment Platform'
-        }), 500
+# Note: Removed the original /api/performance and /api/health routes as they're now in the System module
 
 @app.cli.command('generate-slugs')
 def generate_slugs():
@@ -1841,7 +1644,7 @@ def create_tables():
 create_tables()
 
 if __name__ == '__main__':
-    print("=== Running CineBrain Flask with Advanced Personalized Recommendation System ===")
+    print("=== Running CineBrain Flask with Advanced Personalized Recommendation System & System Monitoring ===")
     print("Features:")
     print("  ✅ Cinematic DNA Analysis")
     print("  ✅ Advanced Behavioral Analysis") 
@@ -1849,11 +1652,13 @@ if __name__ == '__main__':
     print("  ✅ Telugu-first Cultural Priority")
     print("  ✅ Real-time Learning")
     print("  ✅ Multi-strategy Recommendations")
+    print("  ✅ Comprehensive System Monitoring")
+    print("  ✅ Performance Analytics")
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('FLASK_ENV') == 'development'
     app.run(host='0.0.0.0', port=port, debug=debug)
 else:
-    print("=== CineBrain Flask app with Advanced Personalized System ===")
+    print("=== CineBrain Flask app with Advanced Systems ===")
     print(f"App name: {app.name}")
     print(f"Python version: 3.13.4")
     print(f"CineBrain brand: CineBrain Entertainment Platform")
@@ -1867,9 +1672,10 @@ else:
     print(f"CineBrain auth service status: {'Integrated' if 'auth_bp' in app.blueprints else 'Not integrated'}")
     print(f"CineBrain user service status: {'Integrated' if 'user_bp' in app.blueprints else 'Not integrated'}")
     print(f"CineBrain recommendation service status: {'Integrated' if 'recommendations' in app.blueprints else 'Not integrated'}")
+    print(f"CineBrain system monitoring service status: {'Integrated' if 'system_bp' in app.blueprints else 'Not integrated'}")
     print(f"   Personalized System: {'Active' if 'profile_analyzer' in services else 'Not Initialized'}")
     
-    print("\n=== CineBrain Advanced Personalized Recommendation System Features ===")
+    print("\n=== CineBrain Advanced Features ===")
     print("✅ Modular recommendation architecture")
     print("✅ All original endpoints preserved")
     print("✅ OMDb completely removed")
@@ -1885,6 +1691,9 @@ else:
     print("✅ Real-time Learning and Profile Analysis")
     print("✅ Multi-strategy Recommendation Engine")
     print("✅ Behavioral Analysis and Preference Embeddings")
+    print("✅ Comprehensive System Monitoring & Health Checks")
+    print("✅ Performance Analytics & Alerts")
+    print("✅ Real-time Metrics & Database Statistics")
     
     print(f"\n=== CineBrain Registered Routes ===")
     for rule in app.url_map.iter_rules():

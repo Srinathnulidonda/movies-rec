@@ -1,9 +1,11 @@
+# System/init.py
+
 """
-CineBrain System Services
-Advanced system-level services for performance optimization and management
+CineBrain System Module
+System monitoring, health checks, and performance management
 """
 
-from .memory_optimizer import CineBrainMemoryOptimizer
-from .restart_service import CineBrainAdvancedRestartService
+from .routes import system_bp
 
-__all__ = ['CineBrainMemoryOptimizer', 'CineBrainAdvancedRestartService']
+__all__ = ['system_bp']
+__version__ = '1.0.0'
