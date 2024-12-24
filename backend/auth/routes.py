@@ -8,7 +8,7 @@ import logging
 
 from .service import (
     check_rate_limit, generate_reset_token, verify_reset_token, 
-    validate_password, get_request_info, email_service, 
+    validate_password, get_request_info, 
     redis_client, app, db, FRONTEND_URL, EMAIL_REGEX
 )
 from .mail_templates import get_professional_template
@@ -17,12 +17,10 @@ logger = logging.getLogger(__name__)
 
 auth_bp = Blueprint('auth', __name__)
 
-# Remove User from imports and get it dynamically
 def get_user_model():
     """Get User model dynamically to avoid import timing issues"""
     from .service import User
     if User is None:
-        # Fallback: import from main app module
         try:
             from app import User as AppUser
             return AppUser
@@ -30,6 +28,14 @@ def get_user_model():
             logger.error("Could not import User model")
             return None
     return User
+
+def get_email_service():
+    """Get email service dynamically to avoid import timing issues"""
+    from .service import email_service
+    if email_service is None:
+        logger.error("Email service not initialized")
+        return None
+    return email_service
 
 @auth_bp.route('/api/auth/forgot-password', methods=['POST', 'OPTIONS'])
 def forgot_password():
@@ -53,6 +59,11 @@ def forgot_password():
         User = get_user_model()
         if not User:
             return jsonify({'error': 'Service temporarily unavailable'}), 503
+        
+        # Get email service dynamically
+        email_service = get_email_service()
+        if not email_service:
+            return jsonify({'error': 'Email service temporarily unavailable'}), 503
         
         user = User.query.filter_by(email=email).first()
         
@@ -128,6 +139,11 @@ def reset_password():
         User = get_user_model()
         if not User:
             return jsonify({'error': 'Service temporarily unavailable'}), 503
+        
+        # Get email service dynamically
+        email_service = get_email_service()
+        if not email_service:
+            return jsonify({'error': 'Email service temporarily unavailable'}), 503
         
         user = User.query.filter_by(email=email).first()
         if not user:
@@ -233,6 +249,11 @@ def get_fallback_emails():
         if not auth_header or not auth_header.startswith('Bearer '):
             return jsonify({'error': 'Admin authentication required'}), 401
         
+        # Get email service dynamically
+        email_service = get_email_service()
+        if not email_service:
+            return jsonify({'error': 'Email service not available'}), 503
+        
         emails = email_service.get_fallback_emails(limit=50)
         
         return jsonify({
@@ -254,6 +275,9 @@ def auth_health():
         User = get_user_model()
         if User:
             User.query.limit(1).first()
+        
+        # Get email service dynamically
+        email_service = get_email_service()
         
         # Check Redis status
         redis_status = 'not_configured'
@@ -299,6 +323,7 @@ def auth_health():
             'frontend_url': FRONTEND_URL,
             'fallback_mode': not email_enabled,
             'user_model_available': User is not None,
+            'email_service_available': email_service is not None,
             'timestamp': datetime.utcnow().isoformat()
         }), 200
         
