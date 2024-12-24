@@ -9,13 +9,27 @@ import logging
 from .service import (
     check_rate_limit, generate_reset_token, verify_reset_token, 
     validate_password, get_request_info, email_service, 
-    redis_client, app, db, User, FRONTEND_URL, EMAIL_REGEX
+    redis_client, app, db, FRONTEND_URL, EMAIL_REGEX
 )
 from .mail_templates import get_professional_template
 
 logger = logging.getLogger(__name__)
 
 auth_bp = Blueprint('auth', __name__)
+
+# Remove User from imports and get it dynamically
+def get_user_model():
+    """Get User model dynamically to avoid import timing issues"""
+    from .service import User
+    if User is None:
+        # Fallback: import from main app module
+        try:
+            from app import User as AppUser
+            return AppUser
+        except ImportError:
+            logger.error("Could not import User model")
+            return None
+    return User
 
 @auth_bp.route('/api/auth/forgot-password', methods=['POST', 'OPTIONS'])
 def forgot_password():
@@ -34,6 +48,11 @@ def forgot_password():
             return jsonify({
                 'error': 'Too many password reset requests. Please try again in 10 minutes.'
             }), 429
+        
+        # Get User model dynamically
+        User = get_user_model()
+        if not User:
+            return jsonify({'error': 'Service temporarily unavailable'}), 503
         
         user = User.query.filter_by(email=email).first()
         
@@ -104,6 +123,11 @@ def reset_password():
         email = verify_reset_token(token)
         if not email:
             return jsonify({'error': 'Invalid or expired reset token'}), 400
+        
+        # Get User model dynamically
+        User = get_user_model()
+        if not User:
+            return jsonify({'error': 'Service temporarily unavailable'}), 503
         
         user = User.query.filter_by(email=email).first()
         if not user:
@@ -180,6 +204,11 @@ def verify_token():
         
         email = verify_reset_token(token)
         if email:
+            # Get User model dynamically
+            User = get_user_model()
+            if not User:
+                return jsonify({'valid': False, 'error': 'Service temporarily unavailable'}), 503
+            
             user = User.query.filter_by(email=email).first()
             if user:
                 return jsonify({
@@ -222,6 +251,7 @@ def auth_health():
     """Authentication service health check"""
     try:
         # Test database connection
+        User = get_user_model()
         if User:
             User.query.limit(1).first()
         
@@ -268,6 +298,7 @@ def auth_health():
             'redis_stats': redis_stats,
             'frontend_url': FRONTEND_URL,
             'fallback_mode': not email_enabled,
+            'user_model_available': User is not None,
             'timestamp': datetime.utcnow().isoformat()
         }), 200
         
