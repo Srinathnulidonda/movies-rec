@@ -11,4 +11,4 @@ __all__ = [
     'verify_reset_token', 
     'validate_password'
 ]
-__version__ = '2.0.0'
+__version__ = '2.1.0'

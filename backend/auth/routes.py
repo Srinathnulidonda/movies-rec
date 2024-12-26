@@ -84,7 +84,8 @@ def forgot_password():
                 html=html_content,
                 text=text_content,
                 priority='high',
-                reset_token=token
+                reset_token=token,
+                to_name=user.username
             )
             
             logger.info(f"Password reset requested for {email}")
@@ -177,7 +178,8 @@ def reset_password():
             subject="Your password was changed - CineBrain",
             html=html_content,
             text=text_content,
-            priority='high'
+            priority='high',
+            to_name=user.username
         )
         
         # Generate new auth token
@@ -267,6 +269,29 @@ def get_fallback_emails():
         logger.error(f"Get fallback emails error: {e}")
         return jsonify({'error': 'Failed to retrieve fallback emails'}), 500
 
+@auth_bp.route('/api/auth/email-stats', methods=['GET'])
+def get_email_stats():
+    """Get email queue statistics"""
+    try:
+        # Get email service dynamically
+        email_service = get_email_service()
+        if not email_service:
+            return jsonify({'error': 'Email service not available'}), 503
+        
+        stats = email_service.get_queue_stats()
+        
+        return jsonify({
+            'success': True,
+            'stats': stats,
+            'email_service_enabled': email_service.email_enabled,
+            'service_type': 'brevo',
+            'timestamp': datetime.utcnow().isoformat()
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Get email stats error: {e}")
+        return jsonify({'error': 'Failed to retrieve email statistics'}), 500
+
 @auth_bp.route('/api/auth/health', methods=['GET'])
 def auth_health():
     """Authentication service health check"""
@@ -301,23 +326,16 @@ def auth_health():
         email_enabled = email_service.email_enabled if email_service else False
         
         # Get queue sizes
-        queue_size = 0
-        fallback_queue_size = 0
-        if redis_client:
-            try:
-                queue_size = redis_client.llen('email_queue')
-                fallback_queue_size = redis_client.llen('email_fallback_queue')
-            except:
-                pass
+        queue_stats = email_service.get_queue_stats() if email_service else {}
         
         return jsonify({
             'status': 'healthy',
             'service': 'authentication',
-            'email_service': 'Resend API',
+            'email_service': 'Brevo (SendinBlue) API',
             'email_configured': email_configured,
             'email_enabled': email_enabled,
-            'email_queue_size': queue_size,
-            'fallback_queue_size': fallback_queue_size,
+            'email_queue_size': queue_stats.get('queue_size', 0),
+            'fallback_queue_size': queue_stats.get('fallback_queue_size', 0),
             'redis_status': redis_status,
             'redis_stats': redis_stats,
             'frontend_url': FRONTEND_URL,
