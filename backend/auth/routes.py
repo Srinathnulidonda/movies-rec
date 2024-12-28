@@ -324,6 +324,8 @@ def auth_health():
         # Check email service status
         email_configured = email_service is not None and email_service.is_configured
         email_enabled = email_service.email_enabled if email_service else False
+        smtp_enabled = email_service.smtp_enabled if email_service else False
+        api_enabled = email_service.api_enabled if email_service else False
         
         # Get queue sizes
         queue_stats = email_service.get_queue_stats() if email_service else {}
@@ -331,9 +333,12 @@ def auth_health():
         return jsonify({
             'status': 'healthy',
             'service': 'authentication',
-            'email_service': 'Brevo (SendinBlue) API',
+            'email_service': 'Brevo',
+            'email_method': 'SMTP' if smtp_enabled else 'API' if api_enabled else 'None',
             'email_configured': email_configured,
             'email_enabled': email_enabled,
+            'smtp_enabled': smtp_enabled,
+            'api_enabled': api_enabled,
             'email_queue_size': queue_stats.get('queue_size', 0),
             'fallback_queue_size': queue_stats.get('fallback_queue_size', 0),
             'redis_status': redis_status,
