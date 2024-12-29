@@ -142,20 +142,20 @@ class BrevoEmailService:
                     self.is_configured = True
                     return
         else:
-            # In development, prefer SMTP
-            if self.smtp_username and self.smtp_password:
-                self.smtp_enabled = self._test_smtp_connection_safe()
-                if self.smtp_enabled:
-                    logger.info("✅ Using Brevo SMTP for email delivery (Development)")
-                    self.email_enabled = True
-                    self.is_configured = True
-                    return
-            
-            # Try API as fallback
+            # Try API first since SMTP seems blocked
             if self.api_key and self.sender_email:
                 self.api_enabled = self._test_api_connection()
                 if self.api_enabled:
                     logger.info("✅ Using Brevo API for email delivery (Development)")
+                    self.email_enabled = True
+                    self.is_configured = True
+                    return
+            
+            # Try SMTP as fallback
+            if self.smtp_username and self.smtp_password:
+                self.smtp_enabled = self._test_smtp_connection_safe()
+                if self.smtp_enabled:
+                    logger.info("✅ Using Brevo SMTP for email delivery (Development)")
                     self.email_enabled = True
                     self.is_configured = True
                     return
@@ -207,6 +207,10 @@ class BrevoEmailService:
 
     def _test_api_connection(self):
         """Test Brevo API connectivity"""
+        if not self.api_key:
+            logger.warning("⚠️ No Brevo API key configured")
+            return False
+            
         try:
             headers = {
                 'api-key': self.api_key,
@@ -214,22 +218,42 @@ class BrevoEmailService:
                 'Accept': 'application/json'
             }
             
+            # Test with a simple endpoint
             response = requests.get(f"{self.base_url}/account", headers=headers, timeout=10)
             
             if response.status_code == 200:
-                account_data = response.json()
-                account_email = account_data.get('email', 'Unknown')
-                plan = account_data.get('plan', {}).get('type', 'Unknown')
-                logger.info(f"✅ Brevo API connected successfully")
-                logger.info(f"   Account: {account_email}")
-                logger.info(f"   Plan: {plan}")
-                return True
+                try:
+                    account_data = response.json()
+                    
+                    # Handle both dict and list responses
+                    if isinstance(account_data, dict):
+                        account_email = account_data.get('email', 'Unknown')
+                        plan_info = account_data.get('plan', {})
+                        plan = plan_info.get('type', 'Unknown') if isinstance(plan_info, dict) else 'Unknown'
+                    else:
+                        # If response is not what we expect, but status is 200, API is working
+                        account_email = 'Connected'
+                        plan = 'Active'
+                    
+                    logger.info(f"✅ Brevo API connected successfully")
+                    logger.info(f"   Account: {account_email}")
+                    logger.info(f"   Status: Active")
+                    return True
+                except Exception as e:
+                    # Even if parsing fails, if we got 200, API is working
+                    logger.info(f"✅ Brevo API connected (response parsing issue: {e})")
+                    return True
             else:
                 logger.warning(f"⚠️ Brevo API test failed with status: {response.status_code}")
+                if response.status_code == 401:
+                    logger.error("❌ Invalid API key - please check your BREVO_API_KEY")
                 return False
                 
+        except requests.exceptions.Timeout:
+            logger.error(f"❌ Brevo API connection timeout")
+            return False
         except Exception as e:
-            logger.error(f"❌ Brevo API connection test failed: {e}")
+            logger.error(f"❌ Brevo API connection test failed: {str(e)}")
             return False
 
     def start_email_worker(self):
@@ -365,8 +389,8 @@ class BrevoEmailService:
                 }
             ],
             'subject': email_data['subject'],
-            'htmlContent': email_data['html'],
-            'textContent': email_data.get('text', ''),
+            'htmlContent': email_data.get('html', '<p>No HTML content</p>'),
+            'textContent': email_data.get('text', 'No text content'),
         }
         
         if self.reply_to_email:
@@ -384,8 +408,12 @@ class BrevoEmailService:
             )
             
             if response.status_code == 201:
-                res = response.json()
-                message_id = res.get('messageId', 'unknown')
+                try:
+                    res = response.json()
+                    message_id = res.get('messageId', 'unknown') if isinstance(res, dict) else 'sent'
+                except:
+                    message_id = 'sent'
+                    
                 logger.info(f"✅ Email sent successfully via API to {email_data['to']} (ID: {message_id})")
                 
                 # Store success status
@@ -428,6 +456,9 @@ class BrevoEmailService:
         """Store unsent email in fallback queue"""
         if not self.redis_client:
             logger.warning(f"📧 Fallback email for {email_data['to']}: {email_data.get('reset_token', 'No token')}")
+            if email_data.get('reset_token'):
+                reset_url = f"{FRONTEND_URL}/auth/reset-password.html?token={email_data['reset_token']}"
+                logger.info(f"🔗 Password reset link: {reset_url}")
             return
             
         email_data['failed_at'] = datetime.utcnow().isoformat()
@@ -584,6 +615,10 @@ def init_auth(flask_app, database, user_model):
         logger.info(f"✅ Auth module initialized with Brevo {method} support [{ENVIRONMENT}]")
     else:
         logger.warning(f"⚠️ Auth module initialized WITHOUT email - using fallback mode [{ENVIRONMENT}]")
+        if BREVO_API_KEY:
+            logger.info(f"   API Key present: {BREVO_API_KEY[:20]}...")
+        else:
+            logger.warning("   No BREVO_API_KEY found in environment variables")
 
 
 def check_rate_limit(identifier: str, max_requests: int = 5, window: int = 300) -> bool:
