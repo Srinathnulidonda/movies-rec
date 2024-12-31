@@ -37,7 +37,7 @@ serializer = None
 redis_client = None
 
 # Configuration
-FRONTEND_URL = os.getenv('FRONTEND_URL')
+FRONTEND_URL = os.getenv('FRONTEND_URL', 'https://cinebrain.vercel.app')
 BACKEND_URL = os.getenv('BACKEND_URL')
 REDIS_URL = os.getenv('REDIS_URL')
 ENVIRONMENT = os.getenv('ENVIRONMENT', 'development')
@@ -49,7 +49,7 @@ BREVO_SMTP_PORT = int(os.getenv('BREVO_SMTP_PORT', '587'))
 BREVO_SMTP_USERNAME = os.getenv('BREVO_SMTP_USERNAME')
 BREVO_SMTP_PASSWORD = os.getenv('BREVO_SMTP_PASSWORD')
 BREVO_SENDER_EMAIL = os.getenv('BREVO_SENDER_EMAIL', 'projects.srinath@gmail.com')
-BREVO_SENDER_NAME = os.getenv('BREVO_SENDER_NAME', 'CineBrain')
+BREVO_SENDER_NAME = os.getenv('BREVO_SENDER_NAME', 'CineBrain App')
 REPLY_TO_EMAIL = os.getenv('REPLY_TO_EMAIL', BREVO_SENDER_EMAIL)
 
 EMAIL_REGEX = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
@@ -84,7 +84,7 @@ def init_redis():
 
 
 class BrevoEmailService:
-    """Email service using Brevo SMTP and API"""
+    """Email service using Brevo SMTP and API with enhanced deliverability"""
 
     def __init__(self, api_key=None):
         self.api_key = api_key or BREVO_API_KEY
@@ -116,8 +116,17 @@ class BrevoEmailService:
         if self.email_enabled:
             self.start_email_worker()
             logger.info("✅ Brevo email worker initialized successfully")
+            self._log_sender_info()
         else:
             logger.warning("⚠️ Email service disabled - no valid configuration found")
+
+    def _log_sender_info(self):
+        """Log sender configuration for debugging"""
+        logger.info(f"📧 Email Configuration:")
+        logger.info(f"   Sender: {self.sender_name} <{self.sender_email}>")
+        logger.info(f"   Reply-To: {self.reply_to_email}")
+        logger.info(f"   Environment: {ENVIRONMENT}")
+        logger.info(f"   Method: {'SMTP' if self.smtp_enabled else 'API' if self.api_enabled else 'None'}")
 
     def _initialize_email_service(self):
         """Initialize email service - API first in production, SMTP first in development"""
@@ -142,7 +151,7 @@ class BrevoEmailService:
                     self.is_configured = True
                     return
         else:
-            # Try API first since SMTP seems blocked
+            # Try API first since SMTP might be blocked
             if self.api_key and self.sender_email:
                 self.api_enabled = self._test_api_connection()
                 if self.api_enabled:
@@ -298,27 +307,38 @@ class BrevoEmailService:
         self._store_fallback_email(email_data)
 
     def _send_email_smtp(self, email_data: Dict, retry_count: int = 0) -> bool:
-        """Send email using SMTP"""
+        """Send email using SMTP with enhanced headers for deliverability"""
         try:
             # In production, use shorter timeout
             timeout = 10 if ENVIRONMENT == 'production' else 30
             
-            # Create message
+            # Create message with enhanced headers
             message = MIMEMultipart("alternative")
             message["Subject"] = email_data['subject']
             message["From"] = f"{self.sender_name} <{self.sender_email}>"
             message["To"] = email_data['to']
+            message["Reply-To"] = self.reply_to_email
             
-            if self.reply_to_email:
-                message["Reply-To"] = self.reply_to_email
+            # Add headers to improve deliverability
+            message["X-Mailer"] = "CineBrain/1.0"
+            message["X-Priority"] = "3"  # Normal priority
+            message["Importance"] = "Normal"
+            message["X-MSMail-Priority"] = "Normal"
+            message["Message-ID"] = f"<{uuid.uuid4()}@cinebrain.vercel.app>"
+            message["Date"] = datetime.utcnow().strftime('%a, %d %b %Y %H:%M:%S +0000')
             
-            # Add text and HTML parts
+            # Add List-Unsubscribe for better deliverability
+            unsubscribe_email = f"unsubscribe@{self.sender_email.split('@')[1]}"
+            message["List-Unsubscribe"] = f"<mailto:{unsubscribe_email}?subject=Unsubscribe>, <{FRONTEND_URL}/unsubscribe>"
+            message["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
+            
+            # Add content
             if email_data.get('text'):
-                part1 = MIMEText(email_data['text'], "plain")
+                part1 = MIMEText(email_data['text'], "plain", "utf-8")
                 message.attach(part1)
             
             if email_data.get('html'):
-                part2 = MIMEText(email_data['html'], "html")
+                part2 = MIMEText(email_data['html'], "html", "utf-8")
                 message.attach(part2)
             
             # Send email with timeout
@@ -337,7 +357,8 @@ class BrevoEmailService:
                     'timestamp': datetime.utcnow().isoformat(),
                     'to': email_data['to'],
                     'service': 'brevo_smtp',
-                    'method': 'smtp'
+                    'method': 'smtp',
+                    'subject': email_data['subject']
                 }))
             
             return True
@@ -367,7 +388,7 @@ class BrevoEmailService:
                 return False
 
     def _send_email_api(self, email_data: Dict, retry_count: int = 0) -> bool:
-        """Send email using Brevo API"""
+        """Send email using Brevo API with enhanced headers"""
         if not self.api_key:
             return False
             
@@ -377,6 +398,7 @@ class BrevoEmailService:
             'Accept': 'application/json'
         }
 
+        # Build payload with enhanced headers
         payload = {
             'sender': {
                 'email': self.sender_email,
@@ -385,12 +407,20 @@ class BrevoEmailService:
             'to': [
                 {
                     'email': email_data['to'],
-                    'name': email_data.get('to_name', '')
+                    'name': email_data.get('to_name', email_data['to'].split('@')[0])
                 }
             ],
             'subject': email_data['subject'],
             'htmlContent': email_data.get('html', '<p>No HTML content</p>'),
             'textContent': email_data.get('text', 'No text content'),
+            'headers': {
+                'X-Mailer': 'CineBrain/1.0',
+                'X-Priority': '3',
+                'X-MSMail-Priority': 'Normal',
+                'List-Unsubscribe': f'<{FRONTEND_URL}/unsubscribe>',
+                'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click'
+            },
+            'tags': ['transactional', 'cinebrain']
         }
         
         if self.reply_to_email:
@@ -424,7 +454,8 @@ class BrevoEmailService:
                         'to': email_data['to'],
                         'brevo_message_id': message_id,
                         'service': 'brevo_api',
-                        'method': 'api'
+                        'method': 'api',
+                        'subject': email_data['subject']
                     }))
                 
                 return True
@@ -473,6 +504,11 @@ class BrevoEmailService:
     def queue_email(self, to: str, subject: str, html: str, text: str = "", priority: str = 'normal', reset_token: str = None, to_name: str = ""):
         """Queue email to be sent asynchronously"""
         email_id = str(uuid.uuid4())
+        
+        # Clean up recipient name
+        if not to_name:
+            to_name = to.split('@')[0].replace('.', ' ').title()
+        
         email_data = {
             'id': email_id,
             'to': to,
@@ -501,7 +537,7 @@ class BrevoEmailService:
                 self.redis_client.lpush('email_queue', json.dumps(email_data))
             else:
                 self.redis_client.rpush('email_queue', json.dumps(email_data))
-            logger.info(f"📧 Queued email for {to} (ID: {email_id})")
+            logger.info(f"📧 Queued email for {to} (ID: {email_id}) - Subject: {subject}")
         else:
             # If no Redis, send directly in background thread
             threading.Thread(target=self._send_email, args=(email_data,), daemon=True).start()
@@ -567,21 +603,33 @@ class BrevoEmailService:
                 'fallback_queue_size': 0,
                 'smtp_enabled': self.smtp_enabled,
                 'api_enabled': self.api_enabled,
-                'environment': ENVIRONMENT
+                'environment': ENVIRONMENT,
+                'sender': self.sender_email
             }
             
         try:
             queue_size = self.redis_client.llen('email_queue')
             fallback_queue_size = self.redis_client.llen('email_fallback_queue')
             
+            # Get recent sent count
+            sent_count = 0
+            try:
+                keys = self.redis_client.keys('email_sent:*')
+                sent_count = len(keys)
+            except:
+                pass
+            
             return {
                 'queue_size': queue_size,
                 'fallback_queue_size': fallback_queue_size,
+                'sent_count_24h': sent_count,
                 'service': 'brevo',
                 'smtp_enabled': self.smtp_enabled,
                 'api_enabled': self.api_enabled,
                 'method': 'smtp' if self.smtp_enabled else 'api' if self.api_enabled else 'none',
-                'environment': ENVIRONMENT
+                'environment': ENVIRONMENT,
+                'sender': self.sender_email,
+                'sender_name': self.sender_name
             }
         except Exception as e:
             logger.error(f"Error getting queue stats: {e}")
