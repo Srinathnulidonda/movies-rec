@@ -46,7 +46,6 @@ from services.algorithms import (
 from services.personalized import init_personalized
 from services.details import init_details_service, SlugManager, ContentService
 from services.new_releases import init_cinebrain_new_releases_service
-from services.review import init_review_service
 from user.routes import user_bp, init_user_routes
 from recommendation import recommendation_bp, init_recommendation_routes
 from personalized import init_personalized_system, personalized_bp
@@ -685,12 +684,18 @@ services = {
     'cache': cache
 }
 
+# Initialize the new modular reviews system
 try:
-    review_service = init_review_service(app, db, models, cache)
-    services['review_service'] = review_service
-    logger.info("Review service initialized successfully")
+    from reviews import init_reviews_service
+    
+    review_services = init_reviews_service(app, db, models, cache)
+    if review_services:
+        logger.info("✅ CineBrain Reviews system initialized successfully")
+        services.update(review_services)
+    else:
+        logger.warning("⚠️ CineBrain Reviews system failed to initialize")
 except Exception as e:
-    logger.error(f"Failed to initialize review service: {e}")
+    logger.error(f"❌ Failed to initialize CineBrain Reviews system: {e}")
 
 try:
     cinebrain_new_releases_service = init_cinebrain_new_releases_service(app, db, models, services)
@@ -1187,38 +1192,6 @@ def get_content_details(content_id):
         logger.error(f"CineBrain content details error: {e}")
         return jsonify({'error': 'Failed to get CineBrain content details'}), 500
 
-@app.route('/api/details/<slug>/reviews', methods=['GET'])
-def get_content_reviews_by_slug(slug):
-    try:
-        user_id = None
-        auth_header = request.headers.get('Authorization')
-        if auth_header and auth_header.startswith('Bearer '):
-            token = auth_header.split(' ')[1]
-            try:
-                payload = jwt.decode(token, app.config['SECRET_KEY'], algorithms=['HS256'])
-                user_id = payload.get('user_id')
-            except:
-                pass
-        
-        content = Content.query.filter_by(slug=slug).first()
-        if not content:
-            return jsonify({'error': 'Content not found'}), 404
-        
-        if 'review_service' in globals() and review_service:
-            result = review_service.get_content_reviews(slug, 
-                page=int(request.args.get('page', 1)),
-                limit=int(request.args.get('limit', 10)),
-                sort_by=request.args.get('sort_by', 'newest'),
-                user_id=user_id
-            )
-            return jsonify(result), 200 if result['success'] else 404
-        else:
-            return jsonify({'error': 'Review service not available'}), 503
-            
-    except Exception as e:
-        logger.error(f"Error getting reviews for content {slug}: {e}")
-        return jsonify({'error': 'Failed to get reviews'}), 500
-
 @app.route('/api/person/<slug>', methods=['GET'])
 def get_person_details(slug):
     try:
@@ -1246,52 +1219,6 @@ def get_person_details(slug):
     except Exception as e:
         logger.error(f"CineBrain error getting person details for slug {slug}: {e}")
         return jsonify({'error': 'Failed to get CineBrain person details'}), 500
-
-@app.route('/api/details/<slug>/reviews', methods=['POST'])
-@auth_required
-def add_review(slug):
-    try:
-        content = Content.query.filter_by(slug=slug).first()
-        if not content:
-            return jsonify({'error': 'CineBrain content not found'}), 404
-        
-        user_id = request.user_id
-        review_data = request.json
-        
-        if details_service:
-            result = details_service.add_review(content.id, user_id, review_data)
-        else:
-            return jsonify({'error': 'CineBrain service unavailable'}), 503
-        
-        if result['success']:
-            return jsonify(result), 201
-        else:
-            return jsonify(result), 400
-            
-    except Exception as e:
-        logger.error(f"CineBrain error adding review: {e}")
-        return jsonify({'error': 'Failed to add CineBrain review'}), 500
-
-@app.route('/api/reviews/<int:review_id>/helpful', methods=['POST'])
-@auth_required
-def vote_review_helpful(review_id):
-    try:
-        user_id = request.user_id
-        is_helpful = request.json.get('is_helpful', True)
-        
-        if details_service:
-            success = details_service.vote_review_helpful(review_id, user_id, is_helpful)
-        else:
-            return jsonify({'error': 'CineBrain service unavailable'}), 503
-        
-        if success:
-            return jsonify({'success': True}), 200
-        else:
-            return jsonify({'error': 'Failed to vote on CineBrain review'}), 400
-            
-    except Exception as e:
-        logger.error(f"CineBrain error voting on review: {e}")
-        return jsonify({'error': 'Failed to vote on CineBrain review'}), 500
 
 @app.route('/api/admin/slugs/migrate', methods=['POST'])
 @auth_required
@@ -1666,6 +1593,7 @@ if __name__ == '__main__':
     print("  ✅ Background Operations Management")
     print("  ✅ Resend Email Service Integration")
     print("  ✅ Modular Authentication System")
+    print("  ✅ Advanced Reviews & Rating System")
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('FLASK_ENV') == 'development'
     app.run(host='0.0.0.0', port=port, debug=debug)
@@ -1678,6 +1606,7 @@ else:
     print(f"Cache type: {app.config.get('CACHE_TYPE', 'Not configured')}")
     print(f"CineBrain details service status: {'Initialized' if details_service else 'Failed to initialize'}")
     print(f"CineBrain content service status: {'Initialized' if content_service else 'Failed to initialize'}")
+    print(f"CineBrain reviews system status: {'Integrated' if 'review_service' in services else 'Failed to initialize'}")
     print(f"CineBrain new releases service status: {'Integrated' if cinebrain_new_releases_service else 'Failed to initialize'}")
     print(f"CineBrain critics choice service status: {'Integrated' if 'critics_choice_service' in services else 'Failed to initialize'}")
     print(f"CineBrain support service status: {'Integrated' if 'support_bp' in app.blueprints else 'Not integrated'}")
@@ -1710,6 +1639,7 @@ else:
     print("✅ Background Operations & Maintenance Tasks")
     print("✅ Resend Email Service with Professional Templates")
     print("✅ Modular Authentication System")
+    print("✅ Advanced Reviews & Rating System with Moderation")
     
     print(f"\n=== CineBrain Registered Routes ===")
     for rule in app.url_map.iter_rules():
