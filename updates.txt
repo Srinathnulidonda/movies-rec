@@ -13,3 +13,60 @@ System/
 ├── __init__.py
 ├── routes.py
 └── system.py
+
+
+i need to convert my services.support.py file into this stucture
+support/                    # Help Center & Contact
+├── __init__.py
+├── routes.py
+├── tickets.py
+├── report_issues.py
+└── contact.py
+
+and the mail service should be same as the auth folder service which is brevo
+
+just create an file in the auth folde that is support_mail_templates to use the mails and design should be same as the user_mail_templates
+
+in the report_issues in the frontend this will be there 
+Report Details
+Your Name
+Full name (optional)
+Email Address *
+your.email@example.com
+Issue Type *
+
+Bug / Error
+Severity Level *
+Issue Title *
+Brief description of the issue
+Detailed Description *
+Please provide a detailed description of the issue:
+
+1. What were you trying to do?
+2. What happened instead?
+3. What did you expect to happen?
+4. When did this start occurring?
+
+Include any error messages or specific steps to reproduce the problem.
+Browser & Version
+Chrome 142
+Device & OS
+Windows
+Page URL (where the issue occurred)
+Screenshots or Files 
+
+use the cloudinary for the images which is already using for the avatar so just create an folder in that is report_issues there will be the photos stored
+# Configure Cloudinary
+cloudinary.config(
+    cloud_name=os.environ.get('CLOUDINARY_CLOUD_NAME'),
+    api_key=os.environ.get('CLOUDINARY_API_KEY'),
+    api_secret=os.environ.get('CLOUDINARY_API_SECRET'),
+    secure=True
+)
+
+after user reporting_issue, contact, tickets this all should be send to the admin email and they are store in the admin protal to check the updates and updating admin can do anything with those
+
+also for the users should be there an automation mail after  reporting_issue, contact, tickets
+
+
+provide this in 2 phases
