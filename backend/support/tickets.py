@@ -6,31 +6,15 @@ from sqlalchemy import func, desc, and_, or_
 import jwt
 import logging
 import json
-import enum
 from typing import Dict, Optional, List
+from app import TicketStatusEnum, TicketPriorityEnum, TicketTypeEnum
 
 logger = logging.getLogger(__name__)
 
-class TicketStatus(enum.Enum):
-    OPEN = "open"
-    IN_PROGRESS = "in_progress"
-    WAITING_FOR_USER = "waiting_for_user"
-    RESOLVED = "resolved"
-    CLOSED = "closed"
-
-class TicketPriority(enum.Enum):
-    LOW = "low"
-    NORMAL = "normal"
-    HIGH = "high"
-    URGENT = "urgent"
-
-class TicketType(enum.Enum):
-    GENERAL = "general"
-    TECHNICAL = "technical"
-    ACCOUNT = "account"
-    BILLING = "billing"
-    FEATURE_REQUEST = "feature_request"
-    BUG_REPORT = "bug_report"
+# Keep aliases for backward compatibility
+TicketStatus = TicketStatusEnum
+TicketPriority = TicketPriorityEnum
+TicketType = TicketTypeEnum
 
 class TicketService:
     def __init__(self, app, db, models, services):
@@ -59,15 +43,15 @@ class TicketService:
         
         return ticket_number
     
-    def calculate_sla_deadline(self, priority: TicketPriority) -> datetime:
+    def calculate_sla_deadline(self, priority: TicketPriorityEnum) -> datetime:
         """Calculate SLA deadline based on priority"""
         now = datetime.utcnow()
         
         sla_hours = {
-            TicketPriority.URGENT: 4,
-            TicketPriority.HIGH: 24,
-            TicketPriority.NORMAL: 48,
-            TicketPriority.LOW: 72
+            TicketPriorityEnum.URGENT: 4,
+            TicketPriorityEnum.HIGH: 24,
+            TicketPriorityEnum.NORMAL: 48,
+            TicketPriorityEnum.LOW: 72
         }
         
         hours = sla_hours.get(priority, 48)
@@ -120,6 +104,39 @@ class TicketService:
         
         return 'Unknown Browser'
     
+    def _string_to_priority_enum(self, priority_str: str) -> TicketPriorityEnum:
+        """Convert string priority to enum"""
+        priority_mapping = {
+            'low': TicketPriorityEnum.LOW,
+            'normal': TicketPriorityEnum.NORMAL,
+            'high': TicketPriorityEnum.HIGH,
+            'urgent': TicketPriorityEnum.URGENT
+        }
+        return priority_mapping.get(priority_str.lower(), TicketPriorityEnum.NORMAL)
+    
+    def _string_to_type_enum(self, type_str: str) -> TicketTypeEnum:
+        """Convert string type to enum"""
+        type_mapping = {
+            'general': TicketTypeEnum.GENERAL,
+            'technical': TicketTypeEnum.TECHNICAL,
+            'account': TicketTypeEnum.ACCOUNT,
+            'billing': TicketTypeEnum.BILLING,
+            'feature_request': TicketTypeEnum.FEATURE_REQUEST,
+            'bug_report': TicketTypeEnum.BUG_REPORT
+        }
+        return type_mapping.get(type_str.lower(), TicketTypeEnum.GENERAL)
+    
+    def _string_to_status_enum(self, status_str: str) -> TicketStatusEnum:
+        """Convert string status to enum"""
+        status_mapping = {
+            'open': TicketStatusEnum.OPEN,
+            'in_progress': TicketStatusEnum.IN_PROGRESS,
+            'waiting_for_user': TicketStatusEnum.WAITING_FOR_USER,
+            'resolved': TicketStatusEnum.RESOLVED,
+            'closed': TicketStatusEnum.CLOSED
+        }
+        return status_mapping.get(status_str.lower(), TicketStatusEnum.OPEN)
+    
     def create_ticket(self):
         """Create a new support ticket"""
         try:
@@ -141,8 +158,9 @@ class TicketService:
             # Generate ticket number
             ticket_number = self.generate_ticket_number()
             
-            # Determine priority
-            priority = TicketPriority(data.get('priority', 'normal'))
+            # Convert string inputs to enums
+            priority = self._string_to_priority_enum(data.get('priority', 'normal'))
+            ticket_type = self._string_to_type_enum(data.get('ticket_type', 'general'))
             
             # Create ticket
             ticket = self.SupportTicket(
@@ -153,9 +171,9 @@ class TicketService:
                 user_email=data['email'],
                 user_name=data['name'],
                 category_id=data['category_id'],
-                ticket_type=TicketType(data.get('ticket_type', 'general')),
+                ticket_type=ticket_type,
                 priority=priority,
-                status=TicketStatus.OPEN,
+                status=TicketStatusEnum.OPEN,
                 sla_deadline=self.calculate_sla_deadline(priority),
                 **request_info
             )
@@ -232,9 +250,9 @@ class TicketService:
                     'ticket_number': ticket.ticket_number,
                     'subject': ticket.subject,
                     'description': ticket.description,
-                    'status': ticket.status.value,
-                    'priority': ticket.priority.value,
-                    'ticket_type': ticket.ticket_type.value,
+                    'status': ticket.status.value,  # Convert enum to string
+                    'priority': ticket.priority.value,  # Convert enum to string
+                    'ticket_type': ticket.ticket_type.value,  # Convert enum to string
                     'category': {
                         'id': category.id,
                         'name': category.name,
@@ -266,6 +284,49 @@ class TicketService:
         except Exception as e:
             logger.error(f"Error fetching ticket {ticket_number}: {e}")
             return jsonify({'error': 'Failed to fetch ticket'}), 500
+    
+    def update_ticket_status(self, ticket_id, new_status_str, update_message="", staff_user=None):
+        """Update ticket status"""
+        try:
+            ticket = self.SupportTicket.query.get_or_404(ticket_id)
+            old_status = ticket.status
+            
+            # Convert string to enum
+            new_status = self._string_to_status_enum(new_status_str)
+            
+            # Update status
+            ticket.status = new_status
+            
+            # Update timestamps based on status
+            if new_status == TicketStatusEnum.RESOLVED and not ticket.resolved_at:
+                ticket.resolved_at = datetime.utcnow()
+            elif new_status == TicketStatusEnum.CLOSED and not ticket.closed_at:
+                ticket.closed_at = datetime.utcnow()
+            
+            # Add activity
+            activity = self.TicketActivity(
+                ticket_id=ticket.id,
+                action='status_updated',
+                description=f'Status changed from {old_status.value} to {new_status.value}',
+                old_value=old_status.value,
+                new_value=new_status.value,
+                actor_type='admin',
+                actor_id=staff_user.id if staff_user else None,
+                actor_name=staff_user.username if staff_user else 'System'
+            )
+            
+            self.db.session.add(activity)
+            self.db.session.commit()
+            
+            # Send status update email to user
+            self._send_status_update_email(ticket, old_status.value, new_status.value, update_message, staff_user)
+            
+            return True
+            
+        except Exception as e:
+            self.db.session.rollback()
+            logger.error(f"Error updating ticket status: {e}")
+            return False
     
     def _check_rate_limit(self, email: str) -> bool:
         """Check rate limit for ticket creation"""
@@ -306,7 +367,7 @@ class TicketService:
                 ticket_number=ticket.ticket_number,
                 user_name=data['name'],
                 subject=ticket.subject,
-                priority=ticket.priority.value,
+                priority=ticket.priority.value,  # Convert enum to string
                 category=category.name if category else 'General Support'
             )
             
@@ -374,6 +435,109 @@ class TicketService:
             
         except Exception as e:
             logger.error(f"Error sending admin notification: {e}")
+    
+    def _send_status_update_email(self, ticket, old_status, new_status, update_message, staff_user):
+        """Send status update email to user"""
+        try:
+            if not self.email_service:
+                return
+            
+            from auth.support_mail_templates import get_support_template
+            
+            html, text = get_support_template(
+                'ticket_status_updated',
+                ticket_number=ticket.ticket_number,
+                user_name=ticket.user_name,
+                old_status=old_status,
+                new_status=new_status,
+                update_message=update_message,
+                staff_name=staff_user.username if staff_user else 'Support Team'
+            )
+            
+            self.email_service.queue_email(
+                to=ticket.user_email,
+                subject=f"Ticket Status Updated #{ticket.ticket_number} - CineBrain",
+                html=html,
+                text=text,
+                priority='high',
+                to_name=ticket.user_name
+            )
+            
+            logger.info(f"Status update email queued for {ticket.user_email}")
+            
+        except Exception as e:
+            logger.error(f"Error sending status update email: {e}")
+    
+    def get_tickets_by_status(self, status_str):
+        """Get tickets by status"""
+        try:
+            status_enum = self._string_to_status_enum(status_str)
+            return self.SupportTicket.query.filter_by(status=status_enum).all()
+        except Exception as e:
+            logger.error(f"Error getting tickets by status: {e}")
+            return []
+    
+    def get_tickets_by_priority(self, priority_str):
+        """Get tickets by priority"""
+        try:
+            priority_enum = self._string_to_priority_enum(priority_str)
+            return self.SupportTicket.query.filter_by(priority=priority_enum).all()
+        except Exception as e:
+            logger.error(f"Error getting tickets by priority: {e}")
+            return []
+    
+    def get_overdue_tickets(self):
+        """Get overdue tickets"""
+        try:
+            return self.SupportTicket.query.filter(
+                self.SupportTicket.sla_deadline < datetime.utcnow(),
+                self.SupportTicket.sla_breached == False,
+                self.SupportTicket.status.in_([TicketStatusEnum.OPEN, TicketStatusEnum.IN_PROGRESS])
+            ).all()
+        except Exception as e:
+            logger.error(f"Error getting overdue tickets: {e}")
+            return []
+    
+    def get_urgent_unresponded_tickets(self, hours=1):
+        """Get urgent tickets without response"""
+        try:
+            cutoff_time = datetime.utcnow() - timedelta(hours=hours)
+            return self.SupportTicket.query.filter(
+                self.SupportTicket.priority == TicketPriorityEnum.URGENT,
+                self.SupportTicket.first_response_at.is_(None),
+                self.SupportTicket.created_at < cutoff_time
+            ).all()
+        except Exception as e:
+            logger.error(f"Error getting urgent unresponded tickets: {e}")
+            return []
+    
+    def get_ticket_stats(self):
+        """Get ticket statistics"""
+        try:
+            stats = {}
+            
+            # Status counts
+            for status in TicketStatusEnum:
+                count = self.SupportTicket.query.filter_by(status=status).count()
+                stats[status.value] = count
+            
+            # Priority counts
+            priority_stats = {}
+            for priority in TicketPriorityEnum:
+                count = self.SupportTicket.query.filter_by(priority=priority).count()
+                priority_stats[priority.value] = count
+            
+            stats['priority_breakdown'] = priority_stats
+            
+            # SLA stats
+            stats['overdue_count'] = len(self.get_overdue_tickets())
+            stats['urgent_unresponded_count'] = len(self.get_urgent_unresponded_tickets())
+            
+            return stats
+            
+        except Exception as e:
+            logger.error(f"Error getting ticket stats: {e}")
+            return {}
 
 def init_ticket_service(app, db, models, services):
     """Initialize ticket service"""

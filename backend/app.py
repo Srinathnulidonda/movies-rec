@@ -7,6 +7,7 @@ from flask_caching import Cache
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta
 from sqlalchemy import func, and_, or_, desc, text
+from sqlalchemy.dialects.postgresql import ENUM
 import requests
 import os
 import json
@@ -58,6 +59,7 @@ import traceback
 from dotenv import load_dotenv
 import cloudinary
 import cloudinary.uploader
+import enum
 
 load_dotenv()
 
@@ -118,6 +120,28 @@ app.config['SECRET_KEY'] = app.secret_key
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Define Enums for Support System
+class TicketStatusEnum(enum.Enum):
+    OPEN = "open"
+    IN_PROGRESS = "in_progress"
+    WAITING_FOR_USER = "waiting_for_user"
+    RESOLVED = "resolved"
+    CLOSED = "closed"
+
+class TicketPriorityEnum(enum.Enum):
+    LOW = "low"
+    NORMAL = "normal"
+    HIGH = "high"
+    URGENT = "urgent"
+
+class TicketTypeEnum(enum.Enum):
+    GENERAL = "general"
+    TECHNICAL = "technical"
+    ACCOUNT = "account"
+    BILLING = "billing"
+    FEATURE_REQUEST = "feature_request"
+    BUG_REPORT = "bug_report"
 
 def create_http_session():
     session = requests.Session()
@@ -341,7 +365,7 @@ class Review(db.Model):
         db.UniqueConstraint('content_id', 'user_id'),
     )
 
-# Support System Models
+# Support System Models with Proper Enums
 class SupportCategory(db.Model):
     __tablename__ = 'support_categories'
     
@@ -368,9 +392,11 @@ class SupportTicket(db.Model):
     user_name = db.Column(db.String(255), nullable=False)
     
     category_id = db.Column(db.Integer, db.ForeignKey('support_categories.id'), nullable=False)
-    ticket_type = db.Column(db.String(20), nullable=False)
-    priority = db.Column(db.String(10), default='normal')
-    status = db.Column(db.String(20), default='open')
+    
+    # Use proper ENUM columns for PostgreSQL
+    ticket_type = db.Column(db.Enum(TicketTypeEnum), nullable=False, default=TicketTypeEnum.GENERAL)
+    priority = db.Column(db.Enum(TicketPriorityEnum), default=TicketPriorityEnum.NORMAL)
+    status = db.Column(db.Enum(TicketStatusEnum), default=TicketStatusEnum.OPEN)
     
     browser_info = db.Column(db.Text)
     device_info = db.Column(db.Text)
@@ -979,37 +1005,43 @@ def setup_support_monitoring():
                     try:
                         from services.admin import AdminNotificationService
                         
-                        # Check for SLA breaches in tickets
+                        # Check for SLA breaches in tickets - Use enum values
                         overdue_tickets = SupportTicket.query.filter(
                             SupportTicket.sla_deadline < datetime.utcnow(),
                             SupportTicket.sla_breached == False,
-                            SupportTicket.status.in_(['open', 'in_progress'])
+                            SupportTicket.status.in_([TicketStatusEnum.OPEN, TicketStatusEnum.IN_PROGRESS])
                         ).all()
                         
                         for ticket in overdue_tickets:
                             ticket.sla_breached = True
-                            AdminNotificationService.notify_sla_breach(ticket)
+                            try:
+                                AdminNotificationService.notify_sla_breach(ticket)
+                            except Exception as e:
+                                logger.error(f"CineBrain error handling SLA breach notification: {e}")
                         
                         if overdue_tickets:
                             db.session.commit()
                             logger.info(f"Marked {len(overdue_tickets)} tickets as SLA breached")
                         
-                        # Check for urgent tickets without response
+                        # Check for urgent tickets without response - Use enum values
                         urgent_tickets = SupportTicket.query.filter(
-                            SupportTicket.priority == 'urgent',
+                            SupportTicket.priority == TicketPriorityEnum.URGENT,
                             SupportTicket.first_response_at.is_(None),
                             SupportTicket.created_at < datetime.utcnow() - timedelta(hours=1)
                         ).all()
                         
                         for ticket in urgent_tickets:
-                            AdminNotificationService.create_notification(
-                                'urgent_ticket',
-                                f"CineBrain Urgent Ticket Needs Attention",
-                                f"Ticket #{ticket.ticket_number} has been open for over 1 hour without response",
-                                related_ticket_id=ticket.id,
-                                is_urgent=True,
-                                action_required=True
-                            )
+                            try:
+                                AdminNotificationService.create_notification(
+                                    'urgent_ticket',
+                                    f"CineBrain Urgent Ticket Needs Attention",
+                                    f"Ticket #{ticket.ticket_number} has been open for over 1 hour without response",
+                                    related_ticket_id=ticket.id,
+                                    is_urgent=True,
+                                    action_required=True
+                                )
+                            except Exception as e:
+                                logger.error(f"CineBrain error handling urgent ticket notification: {e}")
                         
                         # Check for critical unresolved issues
                         critical_issues = IssueReport.query.filter(
@@ -1019,14 +1051,17 @@ def setup_support_monitoring():
                         ).all()
                         
                         for issue in critical_issues:
-                            AdminNotificationService.create_notification(
-                                'critical_issue',
-                                f"Critical Issue Unresolved",
-                                f"Critical issue {issue.issue_id} has been unresolved for over 2 hours",
-                                related_issue_id=issue.id,
-                                is_urgent=True,
-                                action_required=True
-                            )
+                            try:
+                                AdminNotificationService.create_notification(
+                                    'critical_issue',
+                                    f"Critical Issue Unresolved",
+                                    f"Critical issue {issue.issue_id} has been unresolved for over 2 hours",
+                                    related_issue_id=issue.id,
+                                    is_urgent=True,
+                                    action_required=True
+                                )
+                            except Exception as e:
+                                logger.error(f"CineBrain error handling critical issue notification: {e}")
                         
                     except Exception as e:
                         logger.error(f"CineBrain support monitoring inner error: {e}")
