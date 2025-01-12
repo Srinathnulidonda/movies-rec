@@ -5,6 +5,7 @@ from datetime import datetime
 import logging
 import re
 import jwt
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -15,9 +16,30 @@ class ContactService:
         self.app = app
         self.db = db
         self.User = models['User']
-        self.ContactMessage = models.get('ContactMessage')  # Will create this model
-        self.email_service = services.get('email_service')  # Brevo from auth
+        self.ContactMessage = models.get('ContactMessage')
+        
+        # Enhanced email service initialization
+        self.email_service = self._initialize_email_service(services)
         self.redis_client = services.get('redis_client')
+        
+        logger.info("✅ ContactService initialized successfully")
+    
+    def _initialize_email_service(self, services):
+        """Initialize email service with fallbacks"""
+        email_service = services.get('email_service')
+        if email_service:
+            return email_service
+        
+        try:
+            from auth.service import email_service as auth_email_service
+            if auth_email_service and hasattr(auth_email_service, 'queue_email'):
+                logger.info("✅ Email service loaded from auth module for contact")
+                return auth_email_service
+        except Exception as e:
+            logger.warning(f"Could not load auth email service for contact: {e}")
+        
+        logger.warning("⚠️ No email service available for contact")
+        return None
     
     def get_user_from_token(self):
         """Extract user from JWT token"""
@@ -45,7 +67,7 @@ class ContactService:
         }
     
     def submit_contact(self):
-        """Handle contact form submission"""
+        """Handle contact form submission with enhanced notifications"""
         try:
             data = request.get_json()
             
@@ -81,13 +103,11 @@ class ContactService:
             self.db.session.add(contact_message)
             self.db.session.commit()
             
-            # Send user confirmation
+            # Send notifications
             self._send_user_confirmation(data)
-            
-            # Send admin notification
             self._send_admin_notification(contact_message, data)
             
-            logger.info(f"Contact form submitted by {data['email']}")
+            logger.info(f"✅ Contact form submitted by {data['email']}")
             
             return jsonify({
                 'success': True,
@@ -97,7 +117,7 @@ class ContactService:
             
         except Exception as e:
             self.db.session.rollback()
-            logger.error(f"Error processing contact form: {e}")
+            logger.error(f"❌ Error processing contact form: {e}")
             return jsonify({'error': 'Failed to send your message. Please try again.'}), 500
     
     def _check_rate_limit(self, email: str) -> bool:
@@ -127,6 +147,7 @@ class ContactService:
         """Send confirmation email to user"""
         try:
             if not self.email_service:
+                logger.warning("Email service not available - cannot send user confirmation")
                 return
             
             from auth.support_mail_templates import get_support_template
@@ -146,19 +167,20 @@ class ContactService:
                 to_name=data['name']
             )
             
-            logger.info(f"Contact confirmation email queued for {data['email']}")
+            logger.info(f"✅ Contact confirmation email queued for {data['email']}")
             
         except Exception as e:
-            logger.error(f"Error sending contact confirmation: {e}")
+            logger.error(f"❌ Error sending contact confirmation: {e}")
     
     def _send_admin_notification(self, contact_message, data):
         """Send admin notification email"""
         try:
             if not self.email_service:
+                logger.warning("Email service not available - cannot send admin notification")
                 return
             
-            import os
             admin_email = os.environ.get('ADMIN_EMAIL', 'srinathnulidonda.dev@gmail.com')
+            admin_link = f"{os.environ.get('FRONTEND_URL', 'https://cinebrain.vercel.app')}/admin/support/contact/{contact_message.id}"
             
             from auth.support_mail_templates import get_support_template
             
@@ -180,6 +202,11 @@ class ContactService:
                 <div style="background: #f8f9fa; padding: 15px; border-left: 4px solid #28a745; margin: 15px 0;">
                     {data['message']}
                 </div>
+                <p style="margin-top: 20px;">
+                    <a href="{admin_link}" style="background: #113CCF; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block;">
+                        View in Admin Dashboard
+                    </a>
+                </p>
                 """,
                 user_email=data['email']
             )
@@ -193,10 +220,10 @@ class ContactService:
                 to_name='CineBrain Admin'
             )
             
-            logger.info(f"Admin notification email queued for contact from {data['email']}")
+            logger.info(f"✅ Admin notification email queued for contact from {data['email']}")
             
         except Exception as e:
-            logger.error(f"Error sending admin notification: {e}")
+            logger.error(f"❌ Error sending admin notification: {e}")
 
 def init_contact_service(app, db, models, services):
     """Initialize contact service"""

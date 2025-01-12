@@ -1,0 +1,1651 @@
+5. # auth/support_mail_templates.py
+
+from datetime import datetime
+import os
+
+FRONTEND_URL = os.environ.get('FRONTEND_URL', 'https://cinebrain.vercel.app')
+BRAND_IMAGE_URL = 'https://i.postimg.cc/W3H6FXDR/cinebrain-brand-4k.png'
+
+def get_support_template(template_type: str, **kwargs) -> tuple:
+    """Get professional support email templates matching CineBrain design"""
+    base_css = """
+    <style type="text/css">
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        
+        /* Reset */
+        body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
+        table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
+        img { -ms-interpolation-mode: bicubic; border: 0; outline: none; text-decoration: none; display: block; }
+        body { margin: 0; padding: 0; width: 100%; height: 100%; }
+        
+        /* Prevent auto-scaling */
+        .ReadMsgBody { width: 100%; }
+        .ExternalClass { width: 100%; }
+        .ExternalClass, .ExternalClass p, .ExternalClass span, .ExternalClass font, .ExternalClass td, .ExternalClass div { line-height: 100%; }
+        
+        /* Remove spacing */
+        table { border-collapse: collapse; }
+        
+        /* Mobile Styles */
+        @media only screen and (max-width: 600px) {
+            .wrapper { width: 100% !important; }
+            .container { width: 100% !important; min-width: 100% !important; }
+            .content-cell { padding: 24px 20px !important; }
+            .header-cell { padding: 24px 20px !important; }
+            .footer-cell { padding: 20px !important; }
+            .brand-img { width: 180px !important; height: auto !important; }
+            .h1 { font-size: 20px !important; line-height: 26px !important; }
+            .h2 { font-size: 16px !important; line-height: 22px !important; }
+            .text { font-size: 14px !important; line-height: 22px !important; }
+            .btn { padding: 12px 24px !important; font-size: 14px !important; display: block !important; margin: 8px 0 !important; }
+            .ticket-info { padding: 16px !important; }
+            .footer-link { display: inline-block !important; margin: 0 6px !important; font-size: 12px !important; }
+            .footer-divider { margin: 0 2px !important; }
+            .copyright { font-size: 11px !important; line-height: 18px !important; }
+            .btn-container { text-align: center !important; }
+            .btn-inline { display: block !important; margin: 8px auto !important; }
+        }
+    </style>
+    """
+    
+    if template_type == 'ticket_created':
+        return _get_ticket_created_template(base_css, **kwargs)
+    elif template_type == 'contact_received':
+        return _get_contact_received_template(base_css, **kwargs)
+    elif template_type == 'issue_reported':
+        return _get_issue_reported_template(base_css, **kwargs)
+    elif template_type == 'ticket_response':
+        return _get_ticket_response_template(base_css, **kwargs)
+    elif template_type == 'admin_notification':
+        return _get_admin_notification_template(base_css, **kwargs)
+    elif template_type == 'feedback_received':
+        return _get_feedback_received_template(base_css, **kwargs)
+    elif template_type == 'ticket_status_updated':
+        return _get_ticket_status_updated_template(base_css, **kwargs)
+    else:
+        return _get_generic_support_template(base_css, **kwargs)
+
+def _get_ticket_created_template(base_css: str, **kwargs) -> tuple:
+    """Support ticket created confirmation"""
+    ticket_number = kwargs.get('ticket_number', '')
+    user_name = kwargs.get('user_name', 'there')
+    subject = kwargs.get('subject', '')
+    priority = kwargs.get('priority', 'normal')
+    category = kwargs.get('category', 'General Support')
+    
+    priority_colors = {
+        'low': '#10b981',
+        'normal': '#3b82f6', 
+        'high': '#f59e0b',
+        'urgent': '#ef4444'
+    }
+    
+    priority_color = priority_colors.get(priority, '#3b82f6')
+    
+    html = f"""<!DOCTYPE html>
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="format-detection" content="telephone=no, date=no, address=no, email=no">
+    <meta name="x-apple-disable-message-reformatting">
+    <title>Support Ticket Created - CineBrain</title>
+    {base_css}
+</head>
+<body style="margin: 0; padding: 0; background-color: #f6f9fc; font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;">
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #f6f9fc; margin: 0; padding: 0;">
+        <tr>
+            <td align="center" style="padding: 20px 0;">
+                <table role="presentation" cellspacing="0" cellpadding="0" border="0" class="container" style="width: 100%; max-width: 600px; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
+                    
+                    <!-- Header -->
+                    <tr>
+                        <td class="header-cell" align="center" style="background: linear-gradient(135deg, #000000 0%, #1a1a1a 100%); padding: 40px 24px;">
+                            <img src="{BRAND_IMAGE_URL}" alt="CineBrain" class="brand-img" width="220" height="auto" style="display: block; margin: 0 auto 16px auto; max-width: 100%;">
+                            <p style="color: #ffffff; font-size: 16px; margin: 0; opacity: 0.9; font-weight: 500;">🎧 Support Team</p>
+                        </td>
+                    </tr>
+                    
+                    <!-- Content -->
+                    <tr>
+                        <td class="content-cell" style="padding: 36px 40px 24px;">
+                            <!-- Success Header -->
+                            <div align="center" style="margin: 0 0 32px 0;">
+                                <div style="font-size: 48px; line-height: 1; margin: 0 0 16px 0;">🎫</div>
+                                <h1 class="h1" style="font-size: 26px; font-weight: 700; color: #1a1a1a; margin: 0 0 8px 0; line-height: 1.2; letter-spacing: -0.02em;">Ticket Created Successfully!</h1>
+                                <p class="h2" style="font-size: 16px; color: #6b7280; margin: 0; line-height: 1.4;">We've received your support request</p>
+                            </div>
+                            
+                            <p class="text" style="font-size: 15px; color: #1a1a1a; margin: 0 0 20px 0; font-weight: 500;">Hi {user_name} 👋</p>
+                            
+                            <p class="text" style="font-size: 15px; color: #4b5563; line-height: 1.6; margin: 0 0 24px 0;">Thank you for contacting CineBrain support. We've successfully created a support ticket for your request and our team will get back to you soon.</p>
+                            
+                            <!-- Ticket Details Card -->
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" class="ticket-info" style="background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); border-radius: 12px; border: 1px solid #e5e7eb; margin: 0 0 24px 0;">
+                                <tr>
+                                    <td style="padding: 24px;">
+                                        <h3 style="font-size: 16px; font-weight: 700; color: #1a1a1a; margin: 0 0 16px 0;">📋 Ticket Details</h3>
+                                        
+                                        <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                                            <tr>
+                                                <td style="padding: 8px 0; border-bottom: 1px solid #e5e7eb;">
+                                                    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                                                        <tr>
+                                                            <td style="font-size: 13px; color: #6b7280; font-weight: 500; width: 30%; vertical-align: top;">Ticket Number</td>
+                                                            <td style="font-size: 14px; color: #1a1a1a; font-weight: 700; width: 70%; font-family: 'Monaco', monospace; background: #e0e7ff; padding: 4px 8px; border-radius: 4px; display: inline-block;">#{ticket_number}</td>
+                                                        </tr>
+                                                    </table>
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td style="padding: 8px 0; border-bottom: 1px solid #e5e7eb;">
+                                                    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                                                        <tr>
+                                                            <td style="font-size: 13px; color: #6b7280; font-weight: 500; width: 30%; vertical-align: top;">Subject</td>
+                                                            <td style="font-size: 13px; color: #1a1a1a; font-weight: 600; width: 70%; word-wrap: break-word;">{subject}</td>
+                                                        </tr>
+                                                    </table>
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td style="padding: 8px 0; border-bottom: 1px solid #e5e7eb;">
+                                                    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                                                        <tr>
+                                                            <td style="font-size: 13px; color: #6b7280; font-weight: 500; width: 30%; vertical-align: top;">Category</td>
+                                                            <td style="font-size: 13px; color: #1a1a1a; font-weight: 600; width: 70%;">{category}</td>
+                                                        </tr>
+                                                    </table>
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td style="padding: 8px 0; border-bottom: 1px solid #e5e7eb;">
+                                                    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                                                        <tr>
+                                                            <td style="font-size: 13px; color: #6b7280; font-weight: 500; width: 30%; vertical-align: top;">Priority</td>
+                                                            <td style="font-size: 12px; color: {priority_color}; font-weight: 700; width: 70%; text-transform: uppercase; background: {priority_color}20; padding: 2px 8px; border-radius: 12px; display: inline-block;">{priority}</td>
+                                                        </tr>
+                                                    </table>
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td style="padding: 8px 0;">
+                                                    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                                                        <tr>
+                                                            <td style="font-size: 13px; color: #6b7280; font-weight: 500; width: 30%; vertical-align: top;">Status</td>
+                                                            <td style="font-size: 12px; color: #059669; font-weight: 700; width: 70%; background: #d1fae5; padding: 2px 8px; border-radius: 12px; display: inline-block;">OPEN</td>
+                                                        </tr>
+                                                    </table>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                </tr>
+                            </table>
+                            
+                            <!-- What's Next -->
+                            <div style="background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%); border: 1px solid #93c5fd; border-radius: 10px; padding: 20px; margin: 0 0 24px 0;">
+                                <h3 style="font-size: 15px; font-weight: 700; color: #1e40af; margin: 0 0 12px 0;">⏰ What happens next?</h3>
+                                <ul style="font-size: 13px; color: #1e3a8a; margin: 0; padding-left: 18px; line-height: 1.5;">
+                                    <li style="margin-bottom: 6px;">Our support team will review your ticket within <strong>24 hours</strong></li>
+                                    <li style="margin-bottom: 6px;">You'll receive email updates when we respond to your ticket</li>
+                                    <li style="margin-bottom: 6px;">Reply to this email to add more information to your ticket</li>
+                                    <li style="margin-bottom: 0;">Use ticket number <strong>#{ticket_number}</strong> in all communications</li>
+                                </ul>
+                            </div>
+                            
+                            <!-- CTA Button -->
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" class="btn-container">
+                                <tr>
+                                    <td align="center" style="padding: 8px 0 24px 0;">
+                                        <!--[if mso]>
+                                        <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="{FRONTEND_URL}/support/ticket/{ticket_number}" style="height:48px;v-text-anchor:middle;width:220px;" arcsize="15%" stroke="f" fillcolor="#113CCF">
+                                            <w:anchorlock/>
+                                            <center style="color:#ffffff;font-family:sans-serif;font-size:16px;font-weight:700;">View Ticket Status</center>
+                                        </v:roundrect>
+                                        <![endif]-->
+                                        <!--[if !mso]><!-->
+                                        <a href="{FRONTEND_URL}/support/ticket/{ticket_number}" class="btn" style="display: inline-block; background: #113CCF; color: #ffffff; text-decoration: none; font-size: 16px; font-weight: 700; padding: 15px 32px; border-radius: 8px; box-shadow: 0 4px 12px rgba(17,60,207,0.3); transition: all 0.2s;" target="_blank">View Ticket Status 🎫</a>
+                                        <!--<![endif]-->
+                                    </td>
+                                </tr>
+                            </table>
+                            
+                            <!-- Help Section -->
+                            <div style="background-color: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; margin: 0 0 20px 0;">
+                                <p style="font-size: 13px; font-weight: 600; color: #1a1a1a; margin: 0 0 8px 0;">💡 Need immediate help?</p>
+                                <p style="font-size: 13px; color: #6b7280; margin: 0; line-height: 1.4;">Check our <a href="{FRONTEND_URL}/support/faq" style="color: #113CCF; text-decoration: none;">FAQ section</a> for instant answers to common questions, or visit our <a href="{FRONTEND_URL}/support" style="color: #113CCF; text-decoration: none;">help center</a>.</p>
+                            </div>
+                            
+                            <p style="font-size: 13px; color: #9ca3af; margin: 0; line-height: 1.4;">This is an automated confirmation. Please do not reply to this email. Use the link above to view or update your ticket.</p>
+                        </td>
+                    </tr>
+                    
+                    <!-- Footer -->
+                    <tr>
+                        <td class="footer-cell" style="background-color: #f9fafb; padding: 24px 40px; border-top: 1px solid #e5e7eb;">
+                            <p class="copyright" align="center" style="font-size: 12px; color: #9ca3af; margin: 0 0 12px 0; line-height: 1.5;">© {datetime.now().year} CineBrain Support Team. All rights reserved.<br>Ticket #{ticket_number} • Created on {datetime.now().strftime('%B %d, %Y')}</p>
+                            
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                                <tr>
+                                    <td align="center" style="padding: 0;">
+                                        <a href="{FRONTEND_URL}/support" class="footer-link" style="color: #6b7280; text-decoration: none; font-size: 13px; margin: 0 10px; font-weight: 500;">Support Center</a><span class="footer-divider" style="color: #d1d5db; margin: 0 3px;">•</span><a href="{FRONTEND_URL}/support/faq" class="footer-link" style="color: #6b7280; text-decoration: none; font-size: 13px; margin: 0 10px; font-weight: 500;">FAQ</a><span class="footer-divider" style="color: #d1d5db; margin: 0 3px;">•</span><a href="{FRONTEND_URL}/contact" class="footer-link" style="color: #6b7280; text-decoration: none; font-size: 13px; margin: 0 10px; font-weight: 500;">Contact Us</a>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>"""
+    
+    text = f"""🎫 Support Ticket Created - CineBrain
+
+Hi {user_name} 👋
+
+Thank you for contacting CineBrain support. We've successfully created a support ticket for your request.
+
+Ticket Details:
+• Ticket Number: #{ticket_number}
+• Subject: {subject}
+• Category: {category}
+• Priority: {priority.upper()}
+• Status: OPEN
+
+What happens next:
+• Our support team will review your ticket within 24 hours
+• You'll receive email updates when we respond
+• Reply to this email to add more information
+• Use ticket number #{ticket_number} in all communications
+
+View your ticket: {FRONTEND_URL}/support/ticket/{ticket_number}
+
+Need immediate help? Check our FAQ: {FRONTEND_URL}/support/faq
+
+---
+© {datetime.now().year} CineBrain Support Team
+Ticket #{ticket_number} • Created on {datetime.now().strftime('%B %d, %Y')}
+
+Support Center: {FRONTEND_URL}/support
+FAQ: {FRONTEND_URL}/support/faq
+Contact: {FRONTEND_URL}/contact"""
+    
+    return html, text
+
+def _get_contact_received_template(base_css: str, **kwargs) -> tuple:
+    """Contact form submission confirmation"""
+    user_name = kwargs.get('user_name', 'there')
+    subject = kwargs.get('subject', '')
+    
+    html = f"""<!DOCTYPE html>
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="format-detection" content="telephone=no, date=no, address=no, email=no">
+    <meta name="x-apple-disable-message-reformatting">
+    <title>Message Received - CineBrain</title>
+    {base_css}
+</head>
+<body style="margin: 0; padding: 0; background-color: #f6f9fc; font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;">
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #f6f9fc; margin: 0; padding: 0;">
+        <tr>
+            <td align="center" style="padding: 20px 0;">
+                <table role="presentation" cellspacing="0" cellpadding="0" border="0" class="container" style="width: 100%; max-width: 600px; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
+                    
+                    <!-- Header -->
+                    <tr>
+                        <td class="header-cell" align="center" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); padding: 40px 24px;">
+                            <img src="{BRAND_IMAGE_URL}" alt="CineBrain" class="brand-img" width="220" height="auto" style="display: block; margin: 0 auto 16px auto; max-width: 100%;">
+                            <p style="color: #ffffff; font-size: 16px; margin: 0; opacity: 0.9; font-weight: 500;">💌 Message Received</p>
+                        </td>
+                    </tr>
+                    
+                    <!-- Content -->
+                    <tr>
+                        <td class="content-cell" style="padding: 36px 40px 24px;">
+                            <!-- Success Header -->
+                            <div align="center" style="margin: 0 0 32px 0;">
+                                <div style="font-size: 48px; line-height: 1; margin: 0 0 16px 0;">✅</div>
+                                <h1 class="h1" style="font-size: 26px; font-weight: 700; color: #1a1a1a; margin: 0 0 8px 0; line-height: 1.2; letter-spacing: -0.02em;">Message Received!</h1>
+                                <p class="h2" style="font-size: 16px; color: #6b7280; margin: 0; line-height: 1.4;">Thank you for contacting us</p>
+                            </div>
+                            
+                            <p class="text" style="font-size: 15px; color: #1a1a1a; margin: 0 0 20px 0; font-weight: 500;">Hi {user_name} 👋</p>
+                            
+                            <p class="text" style="font-size: 15px; color: #4b5563; line-height: 1.6; margin: 0 0 24px 0;">Thank you for reaching out to CineBrain! We've successfully received your message about "<strong>{subject}</strong>" and our team will get back to you as soon as possible.</p>
+                            
+                            <!-- Message Info -->
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%); border-radius: 12px; border: 1px solid #a7f3d0; margin: 0 0 24px 0;">
+                                <tr>
+                                    <td style="padding: 24px;">
+                                        <h3 style="font-size: 16px; font-weight: 700; color: #065f46; margin: 0 0 16px 0;">📨 Your Message</h3>
+                                        
+                                        <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                                            <tr>
+                                                <td style="padding: 8px 0; border-bottom: 1px solid #a7f3d0;">
+                                                    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                                                        <tr>
+                                                            <td style="font-size: 13px; color: #047857; font-weight: 500; width: 25%; vertical-align: top;">Subject</td>
+                                                            <td style="font-size: 13px; color: #064e3b; font-weight: 600; width: 75%; word-wrap: break-word;">{subject}</td>
+                                                        </tr>
+                                                    </table>
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td style="padding: 8px 0;">
+                                                    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                                                        <tr>
+                                                            <td style="font-size: 13px; color: #047857; font-weight: 500; width: 25%; vertical-align: top;">Received</td>
+                                                            <td style="font-size: 13px; color: #064e3b; font-weight: 600; width: 75%;">{datetime.now().strftime('%B %d, %Y at %I:%M %p')}</td>
+                                                        </tr>
+                                                    </table>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                </tr>
+                            </table>
+                            
+                            <!-- What's Next -->
+                            <div style="background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%); border: 1px solid #93c5fd; border-radius: 10px; padding: 20px; margin: 0 0 24px 0;">
+                                <h3 style="font-size: 15px; font-weight: 700; color: #1e40af; margin: 0 0 12px 0;">⏰ What happens next?</h3>
+                                <ul style="font-size: 13px; color: #1e3a8a; margin: 0; padding-left: 18px; line-height: 1.5;">
+                                    <li style="margin-bottom: 6px;">Our team will review your message within <strong>24-48 hours</strong></li>
+                                    <li style="margin-bottom: 6px;">You'll receive a personalized response via email</li>
+                                    <li style="margin-bottom: 6px;">For urgent matters, we may contact you directly</li>
+                                    <li style="margin-bottom: 0;">Keep an eye on your inbox (and spam folder)</li>
+                                </ul>
+                            </div>
+                            
+                            <!-- CTA Button -->
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" class="btn-container">
+                                <tr>
+                                    <td align="center" style="padding: 8px 0 24px 0;">
+                                        <!--[if mso]>
+                                        <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="{FRONTEND_URL}/support" style="height:48px;v-text-anchor:middle;width:220px;" arcsize="15%" stroke="f" fillcolor="#113CCF">
+                                            <w:anchorlock/>
+                                            <center style="color:#ffffff;font-family:sans-serif;font-size:16px;font-weight:700;">Visit Support Center</center>
+                                        </v:roundrect>
+                                        <![endif]-->
+                                        <!--[if !mso]><!-->
+                                        <a href="{FRONTEND_URL}/support" class="btn" style="display: inline-block; background: #113CCF; color: #ffffff; text-decoration: none; font-size: 16px; font-weight: 700; padding: 15px 32px; border-radius: 8px; box-shadow: 0 4px 12px rgba(17,60,207,0.3); transition: all 0.2s;" target="_blank">Visit Support Center 🏠</a>
+                                        <!--<![endif]-->
+                                    </td>
+                                </tr>
+                            </table>
+                            
+                            <p style="font-size: 13px; color: #9ca3af; margin: 0; line-height: 1.4;">In the meantime, you can explore our <a href="{FRONTEND_URL}/support/faq" style="color: #113CCF; text-decoration: none;">FAQ section</a> or browse our <a href="{FRONTEND_URL}/support" style="color: #113CCF; text-decoration: none;">help center</a> for instant answers.</p>
+                        </td>
+                    </tr>
+                    
+                    <!-- Footer -->
+                    <tr>
+                        <td class="footer-cell" style="background-color: #f9fafb; padding: 24px 40px; border-top: 1px solid #e5e7eb;">
+                            <p class="copyright" align="center" style="font-size: 12px; color: #9ca3af; margin: 0 0 12px 0; line-height: 1.5;">© {datetime.now().year} CineBrain Support Team. All rights reserved.<br>We appreciate your patience and will respond soon!</p>
+                            
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                                <tr>
+                                    <td align="center" style="padding: 0;">
+                                        <a href="{FRONTEND_URL}/support" class="footer-link" style="color: #6b7280; text-decoration: none; font-size: 13px; margin: 0 10px; font-weight: 500;">Support Center</a><span class="footer-divider" style="color: #d1d5db; margin: 0 3px;">•</span><a href="{FRONTEND_URL}/support/faq" class="footer-link" style="color: #6b7280; text-decoration: none; font-size: 13px; margin: 0 10px; font-weight: 500;">FAQ</a><span class="footer-divider" style="color: #d1d5db; margin: 0 3px;">•</span><a href="{FRONTEND_URL}/contact" class="footer-link" style="color: #6b7280; text-decoration: none; font-size: 13px; margin: 0 10px; font-weight: 500;">Contact Us</a>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>"""
+    
+    text = f"""✅ Message Received - CineBrain
+
+Hi {user_name} 👋
+
+Thank you for reaching out to CineBrain! We've successfully received your message.
+
+Your Message:
+• Subject: {subject}
+• Received: {datetime.now().strftime('%B %d, %Y at %I:%M %p')}
+
+What happens next:
+• Our team will review your message within 24-48 hours
+• You'll receive a personalized response via email
+• For urgent matters, we may contact you directly
+• Keep an eye on your inbox (and spam folder)
+
+Visit our support center: {FRONTEND_URL}/support
+Browse FAQ: {FRONTEND_URL}/support/faq
+
+---
+© {datetime.now().year} CineBrain Support Team
+We appreciate your patience and will respond soon!
+
+Support Center: {FRONTEND_URL}/support
+FAQ: {FRONTEND_URL}/support/faq
+Contact: {FRONTEND_URL}/contact"""
+    
+    return html, text
+
+def _get_issue_reported_template(base_css: str, **kwargs) -> tuple:
+    """Issue report confirmation"""
+    user_name = kwargs.get('user_name', 'there')
+    issue_title = kwargs.get('issue_title', '')
+    issue_type = kwargs.get('issue_type', 'Bug/Error')
+    severity = kwargs.get('severity', 'Normal')
+    ticket_number = kwargs.get('ticket_number', '')
+    
+    severity_colors = {
+        'low': '#10b981',
+        'normal': '#3b82f6',
+        'high': '#f59e0b',
+        'critical': '#ef4444'
+    }
+    
+    severity_color = severity_colors.get(severity.lower(), '#3b82f6')
+    
+    html = f"""<!DOCTYPE html>
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="format-detection" content="telephone=no, date=no, address=no, email=no">
+    <meta name="x-apple-disable-message-reformatting">
+    <title>Issue Report Received - CineBrain</title>
+    {base_css}
+</head>
+<body style="margin: 0; padding: 0; background-color: #f6f9fc; font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;">
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #f6f9fc; margin: 0; padding: 0;">
+        <tr>
+            <td align="center" style="padding: 20px 0;">
+                <table role="presentation" cellspacing="0" cellpadding="0" border="0" class="container" style="width: 100%; max-width: 600px; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
+                    
+                    <!-- Header -->
+                    <tr>
+                        <td class="header-cell" align="center" style="background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); padding: 40px 24px;">
+                            <img src="{BRAND_IMAGE_URL}" alt="CineBrain" class="brand-img" width="220" height="auto" style="display: block; margin: 0 auto 16px auto; max-width: 100%;">
+                            <p style="color: #ffffff; font-size: 16px; margin: 0; opacity: 0.9; font-weight: 500;">🐛 Issue Tracker</p>
+                        </td>
+                    </tr>
+                    
+                    <!-- Content -->
+                    <tr>
+                        <td class="content-cell" style="padding: 36px 40px 24px;">
+                            <!-- Success Header -->
+                            <div align="center" style="margin: 0 0 32px 0;">
+                                <div style="font-size: 48px; line-height: 1; margin: 0 0 16px 0;">🛠️</div>
+                                <h1 class="h1" style="font-size: 26px; font-weight: 700; color: #1a1a1a; margin: 0 0 8px 0; line-height: 1.2; letter-spacing: -0.02em;">Issue Report Received!</h1>
+                                <p class="h2" style="font-size: 16px; color: #6b7280; margin: 0; line-height: 1.4;">Thank you for helping us improve</p>
+                            </div>
+                            
+                            <p class="text" style="font-size: 15px; color: #1a1a1a; margin: 0 0 20px 0; font-weight: 500;">Hi {user_name} 👋</p>
+                            
+                            <p class="text" style="font-size: 15px; color: #4b5563; line-height: 1.6; margin: 0 0 24px 0;">Thank you for reporting this issue! Your detailed report helps us identify and fix problems to make CineBrain better for everyone. Our development team has been notified and will investigate.</p>
+                            
+                            <!-- Issue Details Card -->
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%); border-radius: 12px; border: 1px solid #fca5a5; margin: 0 0 24px 0;">
+                                <tr>
+                                    <td style="padding: 24px;">
+                                        <h3 style="font-size: 16px; font-weight: 700; color: #991b1b; margin: 0 0 16px 0;">🐞 Issue Details</h3>
+                                        
+                                        <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                                            <tr>
+                                                <td style="padding: 8px 0; border-bottom: 1px solid #fca5a5;">
+                                                    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                                                        <tr>
+                                                            <td style="font-size: 13px; color: #b91c1c; font-weight: 500; width: 25%; vertical-align: top;">Report ID</td>
+                                                            <td style="font-size: 14px; color: #7f1d1d; font-weight: 700; width: 75%; font-family: 'Monaco', monospace;">#{ticket_number}</td>
+                                                        </tr>
+                                                    </table>
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td style="padding: 8px 0; border-bottom: 1px solid #fca5a5;">
+                                                    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                                                        <tr>
+                                                            <td style="font-size: 13px; color: #b91c1c; font-weight: 500; width: 25%; vertical-align: top;">Title</td>
+                                                            <td style="font-size: 13px; color: #7f1d1d; font-weight: 600; width: 75%; word-wrap: break-word;">{issue_title}</td>
+                                                        </tr>
+                                                    </table>
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td style="padding: 8px 0; border-bottom: 1px solid #fca5a5;">
+                                                    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                                                        <tr>
+                                                            <td style="font-size: 13px; color: #b91c1c; font-weight: 500; width: 25%; vertical-align: top;">Type</td>
+                                                            <td style="font-size: 13px; color: #7f1d1d; font-weight: 600; width: 75%;">{issue_type}</td>
+                                                        </tr>
+                                                    </table>
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td style="padding: 8px 0;">
+                                                    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                                                        <tr>
+                                                            <td style="font-size: 13px; color: #b91c1c; font-weight: 500; width: 25%; vertical-align: top;">Severity</td>
+                                                            <td style="font-size: 12px; color: {severity_color}; font-weight: 700; width: 75%; text-transform: uppercase; background: {severity_color}20; padding: 2px 8px; border-radius: 12px; display: inline-block;">{severity}</td>
+                                                        </tr>
+                                                    </table>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                </tr>
+                            </table>
+                            
+                            <!-- What's Next -->
+                            <div style="background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%); border: 1px solid #93c5fd; border-radius: 10px; padding: 20px; margin: 0 0 24px 0;">
+                                <h3 style="font-size: 15px; font-weight: 700; color: #1e40af; margin: 0 0 12px 0;">⚙️ What happens next?</h3>
+                                <ul style="font-size: 13px; color: #1e3a8a; margin: 0; padding-left: 18px; line-height: 1.5;">
+                                    <li style="margin-bottom: 6px;">Our development team will <strong>reproduce and investigate</strong> the issue</li>
+                                    <li style="margin-bottom: 6px;">Critical bugs are prioritized for <strong>immediate fixes</strong></li>
+                                    <li style="margin-bottom: 6px;">You'll be notified when the issue is <strong>resolved</strong></li>
+                                    <li style="margin-bottom: 0;">Track progress in our <strong>changelog</strong> and updates</li>
+                                </ul>
+                            </div>
+                            
+                            <!-- CTA Buttons -->
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" class="btn-container">
+                                <tr>
+                                    <td align="center" style="padding: 8px 0 24px 0;">
+                                        <!--[if mso]>
+                                        <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="{FRONTEND_URL}/support/ticket/{ticket_number}" style="height:48px;v-text-anchor:middle;width:180px;" arcsize="15%" stroke="f" fillcolor="#113CCF">
+                                            <w:anchorlock/>
+                                            <center style="color:#ffffff;font-family:sans-serif;font-size:14px;font-weight:700;">Track Issue</center>
+                                        </v:roundrect>
+                                        <![endif]-->
+                                        <!--[if !mso]><!-->
+                                        <a href="{FRONTEND_URL}/support/ticket/{ticket_number}" class="btn btn-inline" style="display: inline-block; background: #113CCF; color: #ffffff; text-decoration: none; font-size: 14px; font-weight: 700; padding: 14px 28px; border-radius: 8px; box-shadow: 0 4px 12px rgba(17,60,207,0.3); transition: all 0.2s; margin-right: 12px;" target="_blank">Track Issue 🔍</a>
+                                        <!--<![endif]-->
+                                        
+                                        <!--[if mso]>
+                                        <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="{FRONTEND_URL}/support/report-issue" style="height:48px;v-text-anchor:middle;width:180px;" arcsize="15%" stroke="f" fillcolor="#10b981">
+                                            <w:anchorlock/>
+                                            <center style="color:#ffffff;font-family:sans-serif;font-size:14px;font-weight:700;">Report Another</center>
+                                        </v:roundrect>
+                                        <![endif]-->
+                                        <!--[if !mso]><!-->
+                                        <a href="{FRONTEND_URL}/support/report-issue" class="btn btn-inline" style="display: inline-block; background: #10b981; color: #ffffff; text-decoration: none; font-size: 14px; font-weight: 700; padding: 14px 28px; border-radius: 8px; box-shadow: 0 4px 12px rgba(16,185,129,0.3); transition: all 0.2s;" target="_blank">Report Another 🐛</a>
+                                        <!--<![endif]-->
+                                    </td>
+                                </tr>
+                            </table>
+                            
+                            <p style="font-size: 13px; color: #9ca3af; margin: 0; line-height: 1.4;">Thank you for making CineBrain better! Your report ID is <strong>#{ticket_number}</strong> for future reference.</p>
+                        </td>
+                    </tr>
+                    
+                    <!-- Footer -->
+                    <tr>
+                        <td class="footer-cell" style="background-color: #f9fafb; padding: 24px 40px; border-top: 1px solid #e5e7eb;">
+                            <p class="copyright" align="center" style="font-size: 12px; color: #9ca3af; margin: 0 0 12px 0; line-height: 1.5;">© {datetime.now().year} CineBrain Development Team. All rights reserved.<br>Issue #{ticket_number} • Reported on {datetime.now().strftime('%B %d, %Y')}</p>
+                            
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                                <tr>
+                                    <td align="center" style="padding: 0;">
+                                        <a href="{FRONTEND_URL}/support" class="footer-link" style="color: #6b7280; text-decoration: none; font-size: 13px; margin: 0 10px; font-weight: 500;">Support Center</a><span class="footer-divider" style="color: #d1d5db; margin: 0 3px;">•</span><a href="{FRONTEND_URL}/changelog" class="footer-link" style="color: #6b7280; text-decoration: none; font-size: 13px; margin: 0 10px; font-weight: 500;">Changelog</a><span class="footer-divider" style="color: #d1d5db; margin: 0 3px;">•</span><a href="{FRONTEND_URL}/support/report-issue" class="footer-link" style="color: #6b7280; text-decoration: none; font-size: 13px; margin: 0 10px; font-weight: 500;">Report Issue</a>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>"""
+    
+    text = f"""🛠️ Issue Report Received - CineBrain
+
+Hi {user_name} 👋
+
+Thank you for reporting this issue! Our development team has been notified and will investigate.
+
+Issue Details:
+• Report ID: #{ticket_number}
+• Title: {issue_title}
+• Type: {issue_type}
+• Severity: {severity.upper()}
+
+What happens next:
+• Our development team will reproduce and investigate the issue
+• Critical bugs are prioritized for immediate fixes
+• You'll be notified when the issue is resolved
+• Track progress in our changelog and updates
+
+Track your issue: {FRONTEND_URL}/support/ticket/{ticket_number}
+Report another issue: {FRONTEND_URL}/support/report-issue
+
+Thank you for making CineBrain better!
+
+---
+© {datetime.now().year} CineBrain Development Team
+Issue #{ticket_number} • Reported on {datetime.now().strftime('%B %d, %Y')}
+
+Support Center: {FRONTEND_URL}/support
+Changelog: {FRONTEND_URL}/changelog
+Report Issue: {FRONTEND_URL}/support/report-issue"""
+    
+    return html, text
+
+def _get_ticket_response_template(base_css: str, **kwargs) -> tuple:
+    """Staff response to ticket notification"""
+    ticket_number = kwargs.get('ticket_number', '')
+    user_name = kwargs.get('user_name', 'there')
+    staff_name = kwargs.get('staff_name', 'Support Team')
+    response_message = kwargs.get('response_message', '')
+    
+    html = f"""<!DOCTYPE html>
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="format-detection" content="telephone=no, date=no, address=no, email=no">
+    <meta name="x-apple-disable-message-reformatting">
+    <title>New Response - Ticket #{ticket_number}</title>
+    {base_css}
+</head>
+<body style="margin: 0; padding: 0; background-color: #f6f9fc; font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;">
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #f6f9fc; margin: 0; padding: 0;">
+        <tr>
+            <td align="center" style="padding: 20px 0;">
+                <table role="presentation" cellspacing="0" cellpadding="0" border="0" class="container" style="width: 100%; max-width: 600px; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
+                    
+                    <!-- Header -->
+                    <tr>
+                        <td class="header-cell" align="center" style="background: linear-gradient(135deg, #7c3aed 0%, #5b21b6 100%); padding: 40px 24px;">
+                            <img src="{BRAND_IMAGE_URL}" alt="CineBrain" class="brand-img" width="220" height="auto" style="display: block; margin: 0 auto 16px auto; max-width: 100%;">
+                            <p style="color: #ffffff; font-size: 16px; margin: 0; opacity: 0.9; font-weight: 500;">💬 New Response</p>
+                        </td>
+                    </tr>
+                    
+                    <!-- Content -->
+                    <tr>
+                        <td class="content-cell" style="padding: 36px 40px 24px;">
+                            <!-- Header -->
+                            <div align="center" style="margin: 0 0 32px 0;">
+                                <div style="font-size: 48px; line-height: 1; margin: 0 0 16px 0;">📧</div>
+                                <h1 class="h1" style="font-size: 26px; font-weight: 700; color: #1a1a1a; margin: 0 0 8px 0; line-height: 1.2; letter-spacing: -0.02em;">New Response to Your Ticket</h1>
+                                <p class="h2" style="font-size: 16px; color: #6b7280; margin: 0; line-height: 1.4;">Ticket #{ticket_number}</p>
+                            </div>
+                            
+                            <p class="text" style="font-size: 15px; color: #1a1a1a; margin: 0 0 20px 0; font-weight: 500;">Hi {user_name} 👋</p>
+                            
+                            <p class="text" style="font-size: 15px; color: #4b5563; line-height: 1.6; margin: 0 0 24px 0;"><strong>{staff_name}</strong> has responded to your support ticket. Here's what they said:</p>
+                            
+                            <!-- Response Card -->
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); border-radius: 12px; border: 1px solid #e5e7eb; margin: 0 0 24px 0;">
+                                <tr>
+                                    <td style="padding: 24px;">
+                                        <h3 style="font-size: 16px; font-weight: 700; color: #1a1a1a; margin: 0 0 16px 0;">💬 Response from {staff_name}</h3>
+                                        <div style="background: #ffffff; padding: 20px; border-left: 4px solid #7c3aed; border-radius: 8px; font-size: 14px; line-height: 1.6; color: #374151;">
+                                            {response_message}
+                                        </div>
+                                        <p style="font-size: 12px; color: #6b7280; margin: 12px 0 0 0; text-align: right;">Responded on {datetime.now().strftime('%B %d, %Y at %I:%M %p')}</p>
+                                    </td>
+                                </tr>
+                            </table>
+                            
+                            <!-- CTA Button -->
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" class="btn-container">
+                                <tr>
+                                    <td align="center" style="padding: 8px 0 24px 0;">
+                                        <!--[if mso]>
+                                        <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="{FRONTEND_URL}/support/ticket/{ticket_number}" style="height:48px;v-text-anchor:middle;width:220px;" arcsize="15%" stroke="f" fillcolor="#113CCF">
+                                            <w:anchorlock/>
+                                            <center style="color:#ffffff;font-family:sans-serif;font-size:16px;font-weight:700;">View Full Conversation</center>
+                                        </v:roundrect>
+                                        <![endif]-->
+                                        <!--[if !mso]><!-->
+                                        <a href="{FRONTEND_URL}/support/ticket/{ticket_number}" class="btn" style="display: inline-block; background: #113CCF; color: #ffffff; text-decoration: none; font-size: 16px; font-weight: 700; padding: 15px 32px; border-radius: 8px; box-shadow: 0 4px 12px rgba(17,60,207,0.3); transition: all 0.2s;" target="_blank">View Full Conversation 💬</a>
+                                        <!--<![endif]-->
+                                    </td>
+                                </tr>
+                            </table>
+                            
+                            <!-- Reply Info -->
+                            <div style="background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%); border: 1px solid #93c5fd; border-radius: 10px; padding: 20px; margin: 0 0 24px 0;">
+                                <h3 style="font-size: 15px; font-weight: 700; color: #1e40af; margin: 0 0 12px 0;">📧 Need to reply?</h3>
+                                <p style="font-size: 13px; color: #1e3a8a; margin: 0; line-height: 1.5;">You can reply directly to this email or click the button above to continue the conversation in our support portal. Our team will be notified immediately when you respond.</p>
+                            </div>
+                            
+                            <p style="font-size: 13px; color: #9ca3af; margin: 0; line-height: 1.4;">This email was sent regarding ticket #{ticket_number}. Please include this ticket number in any future communications.</p>
+                        </td>
+                    </tr>
+                    
+                    <!-- Footer -->
+                    <tr>
+                        <td class="footer-cell" style="background-color: #f9fafb; padding: 24px 40px; border-top: 1px solid #e5e7eb;">
+                            <p class="copyright" align="center" style="font-size: 12px; color: #9ca3af; margin: 0 0 12px 0; line-height: 1.5;">© {datetime.now().year} CineBrain Support Team. All rights reserved.<br>Ticket #{ticket_number} • {datetime.now().strftime('%B %d, %Y')}</p>
+                            
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                                <tr>
+                                    <td align="center" style="padding: 0;">
+                                        <a href="{FRONTEND_URL}/support" class="footer-link" style="color: #6b7280; text-decoration: none; font-size: 13px; margin: 0 10px; font-weight: 500;">Support Center</a><span class="footer-divider" style="color: #d1d5db; margin: 0 3px;">•</span><a href="{FRONTEND_URL}/support/faq" class="footer-link" style="color: #6b7280; text-decoration: none; font-size: 13px; margin: 0 10px; font-weight: 500;">FAQ</a><span class="footer-divider" style="color: #d1d5db; margin: 0 3px;">•</span><a href="{FRONTEND_URL}/contact" class="footer-link" style="color: #6b7280; text-decoration: none; font-size: 13px; margin: 0 10px; font-weight: 500;">Contact Us</a>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>"""
+    
+    text = f"""💬 New Response - Ticket #{ticket_number}
+
+Hi {user_name} 👋
+
+{staff_name} has responded to your support ticket:
+
+---
+{response_message}
+---
+
+Responded on {datetime.now().strftime('%B %d, %Y at %I:%M %p')}
+
+View full conversation: {FRONTEND_URL}/support/ticket/{ticket_number}
+
+You can reply directly to this email or visit the support portal to continue the conversation.
+
+---
+© {datetime.now().year} CineBrain Support Team
+Ticket #{ticket_number} • {datetime.now().strftime('%B %d, %Y')}
+
+Support Center: {FRONTEND_URL}/support
+FAQ: {FRONTEND_URL}/support/faq
+Contact: {FRONTEND_URL}/contact"""
+    
+    return html, text
+
+def _get_feedback_received_template(base_css: str, **kwargs) -> tuple:
+    """Feedback submission confirmation"""
+    user_name = kwargs.get('user_name', 'there')
+    feedback_type = kwargs.get('feedback_type', 'general')
+    subject = kwargs.get('subject', '')
+    
+    html = f"""<!DOCTYPE html>
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="format-detection" content="telephone=no, date=no, address=no, email=no">
+    <meta name="x-apple-disable-message-reformatting">
+    <title>Feedback Received - CineBrain</title>
+    {base_css}
+</head>
+<body style="margin: 0; padding: 0; background-color: #f6f9fc; font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;">
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #f6f9fc; margin: 0; padding: 0;">
+        <tr>
+            <td align="center" style="padding: 20px 0;">
+                <table role="presentation" cellspacing="0" cellpadding="0" border="0" class="container" style="width: 100%; max-width: 600px; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
+                    
+                    <!-- Header -->
+                    <tr>
+                        <td class="header-cell" align="center" style="background: linear-gradient(135deg, #ec4899 0%, #db2777 100%); padding: 40px 24px;">
+                            <img src="{BRAND_IMAGE_URL}" alt="CineBrain" class="brand-img" width="220" height="auto" style="display: block; margin: 0 auto 16px auto; max-width: 100%;">
+                            <p style="color: #ffffff; font-size: 16px; margin: 0; opacity: 0.9; font-weight: 500;">💝 Thank You!</p>
+                        </td>
+                    </tr>
+                    
+                    <!-- Content -->
+                    <tr>
+                        <td class="content-cell" style="padding: 36px 40px 24px;">
+                            <!-- Success Header -->
+                            <div align="center" style="margin: 0 0 32px 0;">
+                                <div style="font-size: 48px; line-height: 1; margin: 0 0 16px 0;">🌟</div>
+                                <h1 class="h1" style="font-size: 26px; font-weight: 700; color: #1a1a1a; margin: 0 0 8px 0; line-height: 1.2; letter-spacing: -0.02em;">Feedback Received!</h1>
+                                <p class="h2" style="font-size: 16px; color: #6b7280; margin: 0; line-height: 1.4;">Your input helps us improve</p>
+                            </div>
+                            
+                            <p class="text" style="font-size: 15px; color: #1a1a1a; margin: 0 0 20px 0; font-weight: 500;">Hi {user_name} 👋</p>
+                            
+                            <p class="text" style="font-size: 15px; color: #4b5563; line-height: 1.6; margin: 0 0 24px 0;">Thank you for taking the time to share your feedback with us! Your input is incredibly valuable and helps us make CineBrain better for everyone.</p>
+                            
+                            <!-- Feedback Info -->
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background: linear-gradient(135deg, #fdf2f8 0%, #fce7f3 100%); border-radius: 12px; border: 1px solid #f9a8d4; margin: 0 0 24px 0;">
+                                <tr>
+                                    <td style="padding: 24px;">
+                                        <h3 style="font-size: 16px; font-weight: 700; color: #be185d; margin: 0 0 16px 0;">💌 Your Feedback</h3>
+                                        
+                                        <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                                            <tr>
+                                                <td style="padding: 8px 0; border-bottom: 1px solid #f9a8d4;">
+                                                    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                                                        <tr>
+                                                            <td style="font-size: 13px; color: #be185d; font-weight: 500; width: 25%; vertical-align: top;">Type</td>
+                                                            <td style="font-size: 13px; color: #831843; font-weight: 600; width: 75%;">{feedback_type.replace('_', ' ').title()}</td>
+                                                        </tr>
+                                                    </table>
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td style="padding: 8px 0; border-bottom: 1px solid #f9a8d4;">
+                                                    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                                                        <tr>
+                                                            <td style="font-size: 13px; color: #be185d; font-weight: 500; width: 25%; vertical-align: top;">Subject</td>
+                                                            <td style="font-size: 13px; color: #831843; font-weight: 600; width: 75%; word-wrap: break-word;">{subject}</td>
+                                                        </tr>
+                                                    </table>
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td style="padding: 8px 0;">
+                                                    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                                                        <tr>
+                                                            <td style="font-size: 13px; color: #be185d; font-weight: 500; width: 25%; vertical-align: top;">Received</td>
+                                                            <td style="font-size: 13px; color: #831843; font-weight: 600; width: 75%;">{datetime.now().strftime('%B %d, %Y at %I:%M %p')}</td>
+                                                        </tr>
+                                                    </table>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                </tr>
+                            </table>
+                            
+                            <!-- What's Next -->
+                            <div style="background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%); border: 1px solid #93c5fd; border-radius: 10px; padding: 20px; margin: 0 0 24px 0;">
+                                <h3 style="font-size: 15px; font-weight: 700; color: #1e40af; margin: 0 0 12px 0;">🚀 What happens next?</h3>
+                                <ul style="font-size: 13px; color: #1e3a8a; margin: 0; padding-left: 18px; line-height: 1.5;">
+                                    <li style="margin-bottom: 6px;">Our product team <strong>reviews all feedback</strong> carefully</li>
+                                    <li style="margin-bottom: 6px;">Your suggestions directly <strong>influence our roadmap</strong></li>
+                                    <li style="margin-bottom: 6px;">Watch our <strong>changelog</strong> to see when features are implemented</li>
+                                    <li style="margin-bottom: 0;">We may contact you if we need <strong>more details</strong></li>
+                                </ul>
+                            </div>
+                            
+                            <!-- CTA Button -->
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" class="btn-container">
+                                <tr>
+                                    <td align="center" style="padding: 8px 0 24px 0;">
+                                        <!--[if mso]>
+                                        <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="{FRONTEND_URL}/changelog" style="height:48px;v-text-anchor:middle;width:220px;" arcsize="15%" stroke="f" fillcolor="#113CCF">
+                                            <w:anchorlock/>
+                                            <center style="color:#ffffff;font-family:sans-serif;font-size:16px;font-weight:700;">View Changelog</center>
+                                        </v:roundrect>
+                                        <![endif]-->
+                                        <!--[if !mso]><!-->
+                                        <a href="{FRONTEND_URL}/changelog" class="btn" style="display: inline-block; background: #113CCF; color: #ffffff; text-decoration: none; font-size: 16px; font-weight: 700; padding: 15px 32px; border-radius: 8px; box-shadow: 0 4px 12px rgba(17,60,207,0.3); transition: all 0.2s;" target="_blank">View Changelog 📋</a>
+                                        <!--<![endif]-->
+                                    </td>
+                                </tr>
+                            </table>
+                            
+                            <p style="font-size: 13px; color: #9ca3af; margin: 0; line-height: 1.4;">Want to share more feedback? Visit our <a href="{FRONTEND_URL}/support/feedback" style="color: #113CCF; text-decoration: none;">feedback page</a> anytime. We love hearing from you!</p>
+                        </td>
+                    </tr>
+                    
+                    <!-- Footer -->
+                    <tr>
+                        <td class="footer-cell" style="background-color: #f9fafb; padding: 24px 40px; border-top: 1px solid #e5e7eb;">
+                            <p class="copyright" align="center" style="font-size: 12px; color: #9ca3af; margin: 0 0 12px 0; line-height: 1.5;">© {datetime.now().year} CineBrain Product Team. All rights reserved.<br>Thank you for helping us improve!</p>
+                            
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                                <tr>
+                                    <td align="center" style="padding: 0;">
+                                        <a href="{FRONTEND_URL}/support" class="footer-link" style="color: #6b7280; text-decoration: none; font-size: 13px; margin: 0 10px; font-weight: 500;">Support Center</a><span class="footer-divider" style="color: #d1d5db; margin: 0 3px;">•</span><a href="{FRONTEND_URL}/changelog" class="footer-link" style="color: #6b7280; text-decoration: none; font-size: 13px; margin: 0 10px; font-weight: 500;">Changelog</a><span class="footer-divider" style="color: #d1d5db; margin: 0 3px;">•</span><a href="{FRONTEND_URL}/support/feedback" class="footer-link" style="color: #6b7280; text-decoration: none; font-size: 13px; margin: 0 10px; font-weight: 500;">Give Feedback</a>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>"""
+    
+    text = f"""🌟 Feedback Received - CineBrain
+
+Hi {user_name} 👋
+
+Thank you for taking the time to share your feedback with us! Your input helps us make CineBrain better.
+
+Your Feedback:
+• Type: {feedback_type.replace('_', ' ').title()}
+• Subject: {subject}
+• Received: {datetime.now().strftime('%B %d, %Y at %I:%M %p')}
+
+What happens next:
+• Our product team reviews all feedback carefully
+• Your suggestions directly influence our roadmap
+• Watch our changelog to see when features are implemented
+• We may contact you if we need more details
+
+View changelog: {FRONTEND_URL}/changelog
+Give more feedback: {FRONTEND_URL}/support/feedback
+
+---
+© {datetime.now().year} CineBrain Product Team
+Thank you for helping us improve!
+
+Support Center: {FRONTEND_URL}/support
+Changelog: {FRONTEND_URL}/changelog
+Give Feedback: {FRONTEND_URL}/support/feedback"""
+    
+    return html, text
+
+def _get_ticket_status_updated_template(base_css: str, **kwargs) -> tuple:
+    """Ticket status update notification"""
+    ticket_number = kwargs.get('ticket_number', '')
+    user_name = kwargs.get('user_name', 'there')
+    old_status = kwargs.get('old_status', '')
+    new_status = kwargs.get('new_status', '')
+    update_message = kwargs.get('update_message', '')
+    staff_name = kwargs.get('staff_name', 'Support Team')
+    
+    status_colors = {
+        'open': '#3b82f6',
+        'in_progress': '#f59e0b',
+        'waiting_for_user': '#8b5cf6',
+        'resolved': '#10b981',
+        'closed': '#6b7280'
+    }
+    
+    status_color = status_colors.get(new_status.lower(), '#3b82f6')
+    
+    html = f"""<!DOCTYPE html>
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="format-detection" content="telephone=no, date=no, address=no, email=no">
+    <meta name="x-apple-disable-message-reformatting">
+    <title>Ticket Status Updated - #{ticket_number}</title>
+    {base_css}
+</head>
+<body style="margin: 0; padding: 0; background-color: #f6f9fc; font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;">
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #f6f9fc; margin: 0; padding: 0;">
+        <tr>
+            <td align="center" style="padding: 20px 0;">
+                <table role="presentation" cellspacing="0" cellpadding="0" border="0" class="container" style="width: 100%; max-width: 600px; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
+                    
+                    <!-- Header -->
+                    <tr>
+                        <td class="header-cell" align="center" style="background: linear-gradient(135deg, {status_color} 0%, {status_color}dd 100%); padding: 40px 24px;">
+                            <img src="{BRAND_IMAGE_URL}" alt="CineBrain" class="brand-img" width="220" height="auto" style="display: block; margin: 0 auto 16px auto; max-width: 100%;">
+                            <p style="color: #ffffff; font-size: 16px; margin: 0; opacity: 0.9; font-weight: 500;">🔄 Status Update</p>
+                        </td>
+                    </tr>
+                    
+                    <!-- Content -->
+                    <tr>
+                        <td class="content-cell" style="padding: 36px 40px 24px;">
+                            <!-- Success Header -->
+                            <div align="center" style="margin: 0 0 32px 0;">
+                                <div style="font-size: 48px; line-height: 1; margin: 0 0 16px 0;">📋</div>
+                                <h1 class="h1" style="font-size: 26px; font-weight: 700; color: #1a1a1a; margin: 0 0 8px 0; line-height: 1.2; letter-spacing: -0.02em;">Ticket Status Updated</h1>
+                                <p class="h2" style="font-size: 16px; color: #6b7280; margin: 0; line-height: 1.4;">Ticket #{ticket_number}</p>
+                            </div>
+                            
+                            <p class="text" style="font-size: 15px; color: #1a1a1a; margin: 0 0 20px 0; font-weight: 500;">Hi {user_name} 👋</p>
+                            
+                            <p class="text" style="font-size: 15px; color: #4b5563; line-height: 1.6; margin: 0 0 24px 0;">Your support ticket has been updated by <strong>{staff_name}</strong>. Here are the details:</p>
+                            
+                            <!-- Status Change Card -->
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); border-radius: 12px; border: 1px solid #e5e7eb; margin: 0 0 24px 0;">
+                                <tr>
+                                    <td style="padding: 24px;">
+                                        <h3 style="font-size: 16px; font-weight: 700; color: #1a1a1a; margin: 0 0 16px 0;">🔄 Status Change</h3>
+                                        
+                                        <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                                            <tr>
+                                                <td style="padding: 12px 0; text-align: center;">
+                                                    <div style="display: inline-block; background: #e5e7eb; padding: 6px 12px; border-radius: 16px; font-size: 13px; font-weight: 600; color: #374151; margin-right: 8px;">{old_status.upper()}</div>
+                                                    <span style="font-size: 20px; color: #6b7280;">→</span>
+                                                    <div style="display: inline-block; background: {status_color}20; padding: 6px 12px; border-radius: 16px; font-size: 13px; font-weight: 700; color: {status_color}; margin-left: 8px;">{new_status.upper()}</div>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                        
+                                        {f'''<div style="background: #ffffff; padding: 16px; border-left: 4px solid {status_color}; border-radius: 8px; margin-top: 16px;">
+                                            <p style="font-size: 14px; line-height: 1.6; color: #374151; margin: 0;"><strong>Update Notes:</strong><br>{update_message}</p>
+                                        </div>''' if update_message else ''}
+                                        
+                                        <p style="font-size: 12px; color: #6b7280; margin: 16px 0 0 0; text-align: right;">Updated on {datetime.now().strftime('%B %d, %Y at %I:%M %p')}</p>
+                                    </td>
+                                </tr>
+                            </table>
+                            
+                            <!-- CTA Button -->
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" class="btn-container">
+                                <tr>
+                                    <td align="center" style="padding: 8px 0 24px 0;">
+                                        <!--[if mso]>
+                                        <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="{FRONTEND_URL}/support/ticket/{ticket_number}" style="height:48px;v-text-anchor:middle;width:220px;" arcsize="15%" stroke="f" fillcolor="#113CCF">
+                                            <w:anchorlock/>
+                                            <center style="color:#ffffff;font-family:sans-serif;font-size:16px;font-weight:700;">View Ticket Details</center>
+                                        </v:roundrect>
+                                        <![endif]-->
+                                        <!--[if !mso]><!-->
+                                        <a href="{FRONTEND_URL}/support/ticket/{ticket_number}" class="btn" style="display: inline-block; background: #113CCF; color: #ffffff; text-decoration: none; font-size: 16px; font-weight: 700; padding: 15px 32px; border-radius: 8px; box-shadow: 0 4px 12px rgba(17,60,207,0.3); transition: all 0.2s;" target="_blank">View Ticket Details 📋</a>
+                                        <!--<![endif]-->
+                                    </td>
+                                </tr>
+                            </table>
+                            
+                            <p style="font-size: 13px; color: #9ca3af; margin: 0; line-height: 1.4;">You'll receive email notifications whenever there are updates to your ticket. Reference: #{ticket_number}</p>
+                        </td>
+                    </tr>
+                    
+                    <!-- Footer -->
+                    <tr>
+                        <td class="footer-cell" style="background-color: #f9fafb; padding: 24px 40px; border-top: 1px solid #e5e7eb;">
+                            <p class="copyright" align="center" style="font-size: 12px; color: #9ca3af; margin: 0 0 12px 0; line-height: 1.5;">© {datetime.now().year} CineBrain Support Team. All rights reserved.<br>Ticket #{ticket_number} • Updated by {staff_name}</p>
+                            
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                                <tr>
+                                    <td align="center" style="padding: 0;">
+                                        <a href="{FRONTEND_URL}/support" class="footer-link" style="color: #6b7280; text-decoration: none; font-size: 13px; margin: 0 10px; font-weight: 500;">Support Center</a><span class="footer-divider" style="color: #d1d5db; margin: 0 3px;">•</span><a href="{FRONTEND_URL}/support/faq" class="footer-link" style="color: #6b7280; text-decoration: none; font-size: 13px; margin: 0 10px; font-weight: 500;">FAQ</a><span class="footer-divider" style="color: #d1d5db; margin: 0 3px;">•</span><a href="{FRONTEND_URL}/contact" class="footer-link" style="color: #6b7280; text-decoration: none; font-size: 13px; margin: 0 10px; font-weight: 500;">Contact Us</a>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>"""
+    
+    text = f"""🔄 Ticket Status Updated - #{ticket_number}
+
+Hi {user_name} 👋
+
+Your support ticket has been updated by {staff_name}.
+
+Status Change:
+{old_status.upper()} → {new_status.upper()}
+
+{f'Update Notes:\n{update_message}\n' if update_message else ''}
+
+Updated on {datetime.now().strftime('%B %d, %Y at %I:%M %p')}
+
+View ticket details: {FRONTEND_URL}/support/ticket/{ticket_number}
+
+You'll receive email notifications whenever there are updates to your ticket.
+
+---
+© {datetime.now().year} CineBrain Support Team
+Ticket #{ticket_number} • Updated by {staff_name}
+
+Support Center: {FRONTEND_URL}/support
+FAQ: {FRONTEND_URL}/support/faq
+Contact: {FRONTEND_URL}/contact"""
+    
+    return html, text
+
+def _get_admin_notification_template(base_css: str, **kwargs) -> tuple:
+    """Admin notification template"""
+    notification_type = kwargs.get('notification_type', 'support')
+    title = kwargs.get('title', 'New Support Request')
+    message = kwargs.get('message', '')
+    ticket_number = kwargs.get('ticket_number', '')
+    user_email = kwargs.get('user_email', '')
+    
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{title}</title>
+    {base_css}
+</head>
+<body style="margin: 0; padding: 0; background-color: #f6f9fc; font-family: 'Inter', Arial, sans-serif;">
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #f6f9fc;">
+        <tr>
+            <td align="center" style="padding: 20px 0;">
+                <table role="presentation" cellspacing="0" cellpadding="0" border="0" class="container" style="width: 100%; max-width: 600px; background-color: #ffffff; border-radius: 12px;">
+                    <tr>
+                        <td class="header-cell" align="center" style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); padding: 32px 24px;">
+                            <img src="{BRAND_IMAGE_URL}" alt="CineBrain" class="brand-img" width="220" height="auto" style="display: block; margin: 0 auto 16px auto;">
+                            <p style="color: #ffffff; font-size: 16px; margin: 0; opacity: 0.9; font-weight: 500;">🔔 Admin Alert</p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td class="content-cell" style="padding: 36px 40px 24px;">
+                            <h1 class="h1" style="font-size: 24px; color: #1a1a1a; margin: 0 0 20px 0;">{title}</h1>
+                            <div class="text" style="font-size: 15px; color: #4b5563; line-height: 1.6; margin: 0 0 20px 0;">{message}</div>
+                            
+                            {f'''
+                            <div style="background: #f8fafc; padding: 16px; border-radius: 8px; margin: 20px 0;">
+                                <p style="margin: 0; font-size: 14px;"><strong>Ticket:</strong> #{ticket_number}</p>
+                                <p style="margin: 8px 0 0 0; font-size: 14px;"><strong>User:</strong> {user_email}</p>
+                            </div>
+                            ''' if ticket_number else ''}
+                            
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                                <tr>
+                                    <td align="center" style="padding: 24px 0 20px 0;">
+                                        <a href="{FRONTEND_URL}/admin" class="btn" style="display: inline-block; background: #113CCF; color: #ffffff; text-decoration: none; font-size: 15px; font-weight: 600; padding: 13px 28px; border-radius: 8px;">View Admin Panel</a>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td class="footer-cell" style="background-color: #f9fafb; padding: 24px 40px; border-top: 1px solid #e5e7eb;">
+                            <p class="copyright" align="center" style="font-size: 12px; color: #9ca3af; margin: 0; line-height: 1.5;">© {datetime.now().year} CineBrain Admin System</p>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>"""
+    
+    text = f"""{title}
+
+{message}
+
+{'Ticket: #' + ticket_number if ticket_number else ''}
+{'User: ' + user_email if user_email else ''}
+
+View Admin Panel: {FRONTEND_URL}/admin
+
+---
+© {datetime.now().year} CineBrain Admin System"""
+    
+    return html, text
+
+def _get_generic_support_template(base_css: str, **kwargs) -> tuple:
+    """Generic support template"""
+    subject = kwargs.get('subject', 'CineBrain Support')
+    content = kwargs.get('content', '')
+    user_name = kwargs.get('user_name', 'there')
+    
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{subject}</title>
+    {base_css}
+</head>
+<body style="margin: 0; padding: 0; background-color: #f6f9fc; font-family: 'Inter', Arial, sans-serif;">
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #f6f9fc;">
+        <tr>
+            <td align="center" style="padding: 20px 0;">
+                <table role="presentation" cellspacing="0" cellpadding="0" border="0" class="container" style="width: 100%; max-width: 600px; background-color: #ffffff; border-radius: 12px;">
+                    <tr>
+                        <td class="header-cell" align="center" style="background-color: #000000; padding: 32px 24px;">
+                            <img src="{BRAND_IMAGE_URL}" alt="CineBrain" class="brand-img" width="220" height="auto" style="display: block; margin: 0 auto;">
+                        </td>
+                    </tr>
+                    <tr>
+                        <td class="content-cell" style="padding: 36px 40px 24px;">
+                            <h1 class="h1" style="font-size: 24px; color: #1a1a1a; margin: 0 0 20px 0;">{subject}</h1>
+                            <p class="text" style="font-size: 15px; margin: 0 0 16px 0;">Hi {user_name} 👋</p>
+                            <div class="text" style="font-size: 15px; color: #4b5563; line-height: 1.6;">{content}</div>
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                                <tr>
+                                    <td align="center" style="padding: 24px 0 20px 0;">
+                                        <a href="{FRONTEND_URL}/support" class="btn" style="display: inline-block; background: #113CCF; color: #ffffff; text-decoration: none; font-size: 15px; font-weight: 600; padding: 13px 28px; border-radius: 8px;">Visit Support Center</a>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td class="footer-cell" style="background-color: #f9fafb; padding: 24px 40px; border-top: 1px solid #e5e7eb;">
+                            <p class="copyright" align="center" style="font-size: 12px; color: #9ca3af; margin: 0; line-height: 1.5;">© {datetime.now().year} CineBrain Support Team</p>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>"""
+    
+    text = f"""{subject}
+
+Hi {user_name} 👋
+
+{content}
+
+Visit Support Center: {FRONTEND_URL}/support
+
+---
+© {datetime.now().year} CineBrain Support Team"""
+    
+    return html, text
+
+
+6. # auth/admin_mail_templates.py
+
+from datetime import datetime
+import os
+
+FRONTEND_URL = os.environ.get('FRONTEND_URL', 'https://cinebrain.vercel.app')
+BRAND_IMAGE_URL = 'https://i.postimg.cc/W3H6FXDR/cinebrain-brand-4k.png'
+
+def get_admin_template(template_type: str, **kwargs) -> tuple:
+    """Get professional admin email templates matching CineBrain design"""
+    base_css = """
+    <style type="text/css">
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        
+        /* Reset */
+        body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
+        table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
+        img { -ms-interpolation-mode: bicubic; border: 0; outline: none; text-decoration: none; display: block; }
+        body { margin: 0; padding: 0; width: 100%; height: 100%; }
+        
+        /* Prevent auto-scaling */
+        .ReadMsgBody { width: 100%; }
+        .ExternalClass { width: 100%; }
+        .ExternalClass, .ExternalClass p, .ExternalClass span, .ExternalClass font, .ExternalClass td, .ExternalClass div { line-height: 100%; }
+        
+        /* Remove spacing */
+        table { border-collapse: collapse; }
+        
+        /* Mobile Styles */
+        @media only screen and (max-width: 600px) {
+            .wrapper { width: 100% !important; }
+            .container { width: 100% !important; min-width: 100% !important; }
+            .content-cell { padding: 24px 20px !important; }
+            .header-cell { padding: 24px 20px !important; }
+            .footer-cell { padding: 20px !important; }
+            .brand-img { width: 180px !important; height: auto !important; }
+            .h1 { font-size: 20px !important; line-height: 26px !important; }
+            .h2 { font-size: 16px !important; line-height: 22px !important; }
+            .text { font-size: 14px !important; line-height: 22px !important; }
+            .btn { padding: 12px 24px !important; font-size: 14px !important; }
+            .alert-box { padding: 16px !important; }
+            .footer-link { display: inline-block !important; margin: 0 6px !important; font-size: 12px !important; }
+            .footer-divider { margin: 0 2px !important; }
+            .copyright { font-size: 11px !important; line-height: 18px !important; }
+        }
+    </style>
+    """
+    
+    if template_type == 'admin_notification':
+        return _get_admin_notification_template(base_css, **kwargs)
+    elif template_type == 'system_alert':
+        return _get_system_alert_template(base_css, **kwargs)
+    elif template_type == 'daily_summary':
+        return _get_daily_summary_template(base_css, **kwargs)
+    elif template_type == 'urgent_notification':
+        return _get_urgent_notification_template(base_css, **kwargs)
+    else:
+        return _get_generic_admin_template(base_css, **kwargs)
+
+def _get_admin_notification_template(base_css: str, **kwargs) -> tuple:
+    """General admin notification template"""
+    subject = kwargs.get('subject', 'CineBrain Admin Alert')
+    content = kwargs.get('content', '')
+    is_urgent = kwargs.get('is_urgent', False)
+    timestamp = kwargs.get('timestamp', datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC'))
+    
+    # Choose header color based on urgency
+    header_gradient = "linear-gradient(135deg, #ef4444 0%, #dc2626 100%)" if is_urgent else "linear-gradient(135deg, #1a73e8 0%, #4285f4 100%)"
+    priority_text = "🚨 URGENT ALERT" if is_urgent else "📋 ADMIN NOTIFICATION"
+    
+    html = f"""<!DOCTYPE html>
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="format-detection" content="telephone=no, date=no, address=no, email=no">
+    <meta name="x-apple-disable-message-reformatting">
+    <title>{subject}</title>
+    {base_css}
+</head>
+<body style="margin: 0; padding: 0; background-color: #f6f9fc; font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;">
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #f6f9fc; margin: 0; padding: 0;">
+        <tr>
+            <td align="center" style="padding: 20px 0;">
+                <table role="presentation" cellspacing="0" cellpadding="0" border="0" class="container" style="width: 100%; max-width: 600px; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
+                    
+                    <!-- Header -->
+                    <tr>
+                        <td class="header-cell" align="center" style="background: {header_gradient}; padding: 40px 24px;">
+                            <img src="{BRAND_IMAGE_URL}" alt="CineBrain" class="brand-img" width="220" height="auto" style="display: block; margin: 0 auto 16px auto; max-width: 100%;">
+                            <p style="color: #ffffff; font-size: 16px; margin: 0; opacity: 0.9; font-weight: 500;">{priority_text}</p>
+                        </td>
+                    </tr>
+                    
+                    <!-- Content -->
+                    <tr>
+                        <td class="content-cell" style="padding: 36px 40px 24px;">
+                            <!-- Alert Header -->
+                            <div align="center" style="margin: 0 0 32px 0;">
+                                <div style="font-size: 48px; line-height: 1; margin: 0 0 16px 0;">{'🚨' if is_urgent else '🔔'}</div>
+                                <h1 class="h1" style="font-size: 26px; font-weight: 700; color: #1a1a1a; margin: 0 0 8px 0; line-height: 1.2; letter-spacing: -0.02em;">{subject}</h1>
+                                <p class="h2" style="font-size: 16px; color: #6b7280; margin: 0; line-height: 1.4;">CineBrain Admin Dashboard</p>
+                            </div>
+                            
+                            <p class="text" style="font-size: 15px; color: #1a1a1a; margin: 0 0 20px 0; font-weight: 500;">Hello Admin 👋</p>
+                            
+                            <p class="text" style="font-size: 15px; color: #4b5563; line-height: 1.6; margin: 0 0 24px 0;">You're receiving this notification because an important event has occurred on the CineBrain platform that requires your attention.</p>
+                            
+                            <!-- Alert Details -->
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" class="alert-box" style="background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); border-radius: 12px; border: 1px solid #e5e7eb; margin: 0 0 24px 0;">
+                                <tr>
+                                    <td style="padding: 24px;">
+                                        <h3 style="font-size: 16px; font-weight: 700; color: #1a1a1a; margin: 0 0 16px 0;">📋 Alert Details</h3>
+                                        
+                                        <div style="background: #ffffff; padding: 20px; border-left: 4px solid {'#ef4444' if is_urgent else '#3b82f6'}; border-radius: 8px; font-size: 14px; line-height: 1.6; color: #374151;">
+                                            {content}
+                                        </div>
+                                        
+                                        <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin-top: 16px;">
+                                            <tr>
+                                                <td style="padding: 8px 0; border-bottom: 1px solid #e5e7eb;">
+                                                    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                                                        <tr>
+                                                            <td style="font-size: 13px; color: #6b7280; font-weight: 500; width: 25%; vertical-align: top;">Priority</td>
+                                                            <td style="font-size: 12px; color: {'#ef4444' if is_urgent else '#3b82f6'}; font-weight: 700; width: 75%; text-transform: uppercase; background: {'#ef444420' if is_urgent else '#3b82f620'}; padding: 2px 8px; border-radius: 12px; display: inline-block;">{'URGENT' if is_urgent else 'NORMAL'}</td>
+                                                        </tr>
+                                                    </table>
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td style="padding: 8px 0; border-bottom: 1px solid #e5e7eb;">
+                                                    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                                                        <tr>
+                                                            <td style="font-size: 13px; color: #6b7280; font-weight: 500; width: 25%; vertical-align: top;">System</td>
+                                                            <td style="font-size: 13px; color: #1a1a1a; font-weight: 600; width: 75%;">CineBrain Admin Dashboard</td>
+                                                        </tr>
+                                                    </table>
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td style="padding: 8px 0;">
+                                                    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                                                        <tr>
+                                                            <td style="font-size: 13px; color: #6b7280; font-weight: 500; width: 25%; vertical-align: top;">Timestamp</td>
+                                                            <td style="font-size: 13px; color: #1a1a1a; font-weight: 600; width: 75%;">{timestamp}</td>
+                                                        </tr>
+                                                    </table>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                </tr>
+                            </table>
+                            
+                            <!-- Action Required -->
+                            {f'''
+                            <div style="background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%); border: 1px solid #fca5a5; border-radius: 10px; padding: 20px; margin: 0 0 24px 0;">
+                                <h3 style="font-size: 15px; font-weight: 700; color: #dc2626; margin: 0 0 12px 0;">⚡ Immediate Action Required</h3>
+                                <p style="font-size: 13px; color: #7f1d1d; margin: 0; line-height: 1.5;">This is an urgent notification that requires immediate attention. Please log into the admin dashboard as soon as possible to review and take action.</p>
+                            </div>
+                            ''' if is_urgent else '''
+                            <div style="background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%); border: 1px solid #93c5fd; border-radius: 10px; padding: 20px; margin: 0 0 24px 0;">
+                                <h3 style="font-size: 15px; font-weight: 700; color: #1e40af; margin: 0 0 12px 0;">📋 Action Recommended</h3>
+                                <p style="font-size: 13px; color: #1e3a8a; margin: 0; line-height: 1.5;">Please review this notification when convenient and take any necessary action through the admin dashboard.</p>
+                            </div>
+                            '''}
+                            
+                            <!-- CTA Button -->
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                                <tr>
+                                    <td align="center" style="padding: 8px 0 24px 0;">
+                                        <!--[if mso]>
+                                        <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="{FRONTEND_URL}/admin" style="height:48px;v-text-anchor:middle;width:220px;" arcsize="15%" stroke="f" fillcolor="#113CCF">
+                                            <w:anchorlock/>
+                                            <center style="color:#ffffff;font-family:sans-serif;font-size:16px;font-weight:700;">Open Admin Dashboard</center>
+                                        </v:roundrect>
+                                        <![endif]-->
+                                        <!--[if !mso]><!-->
+                                        <a href="{FRONTEND_URL}/admin" class="btn" style="display: inline-block; background: #113CCF; color: #ffffff; text-decoration: none; font-size: 16px; font-weight: 700; padding: 15px 32px; border-radius: 8px; box-shadow: 0 4px 12px rgba(17,60,207,0.3); transition: all 0.2s;" target="_blank">Open Admin Dashboard 🎛️</a>
+                                        <!--<![endif]-->
+                                    </td>
+                                </tr>
+                            </table>
+                            
+                            <p style="font-size: 13px; color: #9ca3af; margin: 0; line-height: 1.4;">This is an automated notification from the CineBrain admin system. If you have questions, please contact the development team.</p>
+                        </td>
+                    </tr>
+                    
+                    <!-- Footer -->
+                    <tr>
+                        <td class="footer-cell" style="background-color: #f9fafb; padding: 24px 40px; border-top: 1px solid #e5e7eb;">
+                            <p class="copyright" align="center" style="font-size: 12px; color: #9ca3af; margin: 0 0 12px 0; line-height: 1.5;">© {datetime.now().year} CineBrain Admin System. All rights reserved.<br>Automated notification • {timestamp}</p>
+                            
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                                <tr>
+                                    <td align="center" style="padding: 0;">
+                                        <a href="{FRONTEND_URL}/admin" class="footer-link" style="color: #6b7280; text-decoration: none; font-size: 13px; margin: 0 10px; font-weight: 500;">Admin Dashboard</a><span class="footer-divider" style="color: #d1d5db; margin: 0 3px;">•</span><a href="{FRONTEND_URL}/admin/system-health" class="footer-link" style="color: #6b7280; text-decoration: none; font-size: 13px; margin: 0 10px; font-weight: 500;">System Health</a><span class="footer-divider" style="color: #d1d5db; margin: 0 3px;">•</span><a href="{FRONTEND_URL}/admin/support" class="footer-link" style="color: #6b7280; text-decoration: none; font-size: 13px; margin: 0 10px; font-weight: 500;">Support Center</a>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>"""
+    
+    text = f"""{'🚨 URGENT ALERT' if is_urgent else '🔔 ADMIN NOTIFICATION'} - CineBrain
+
+{subject}
+
+Hello Admin 👋
+
+{content}
+
+Priority: {'URGENT' if is_urgent else 'NORMAL'}
+System: CineBrain Admin Dashboard
+Timestamp: {timestamp}
+
+{'⚡ IMMEDIATE ACTION REQUIRED - Please log into the admin dashboard immediately.' if is_urgent else '📋 Action recommended - Please review when convenient.'}
+
+Admin Dashboard: {FRONTEND_URL}/admin
+
+---
+© {datetime.now().year} CineBrain Admin System
+Automated notification • {timestamp}
+
+Admin Dashboard: {FRONTEND_URL}/admin
+System Health: {FRONTEND_URL}/admin/system-health
+Support Center: {FRONTEND_URL}/admin/support"""
+    
+    return html, text
+
+def _get_system_alert_template(base_css: str, **kwargs) -> tuple:
+    """System alert notification template"""
+    alert_type = kwargs.get('alert_type', 'System Alert')
+    details = kwargs.get('details', '')
+    severity = kwargs.get('severity', 'medium')  # low, medium, high, critical
+    
+    severity_colors = {
+        'low': '#10b981',
+        'medium': '#f59e0b', 
+        'high': '#ef4444',
+        'critical': '#7c2d12'
+    }
+    
+    severity_color = severity_colors.get(severity, '#f59e0b')
+    
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>System Alert - {alert_type}</title>
+    {base_css}
+</head>
+<body style="margin: 0; padding: 0; background-color: #f6f9fc; font-family: 'Inter', Arial, sans-serif;">
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #f6f9fc;">
+        <tr>
+            <td align="center" style="padding: 20px 0;">
+                <table role="presentation" cellspacing="0" cellpadding="0" border="0" class="container" style="width: 100%; max-width: 600px; background-color: #ffffff; border-radius: 12px;">
+                    <tr>
+                        <td class="header-cell" align="center" style="background: linear-gradient(135deg, {severity_color} 0%, {severity_color}dd 100%); padding: 32px 24px;">
+                            <img src="{BRAND_IMAGE_URL}" alt="CineBrain" class="brand-img" width="220" height="auto" style="display: block; margin: 0 auto 16px auto;">
+                            <p style="color: #ffffff; font-size: 16px; margin: 0; opacity: 0.9; font-weight: 500;">⚠️ System Alert</p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td class="content-cell" style="padding: 36px 40px 24px;">
+                            <h1 class="h1" style="font-size: 24px; color: #1a1a1a; margin: 0 0 20px 0;">{alert_type}</h1>
+                            <div style="background: {severity_color}20; border-left: 4px solid {severity_color}; padding: 16px; margin: 20px 0; border-radius: 8px;">
+                                <p style="margin: 0; font-size: 14px; line-height: 1.6; color: #374151;"><strong>Alert Details:</strong><br>{details}</p>
+                            </div>
+                            <div style="background: #f8fafc; padding: 16px; border-radius: 8px; margin: 20px 0;">
+                                <p style="margin: 0; font-size: 14px;"><strong>Severity:</strong> <span style="color: {severity_color}; font-weight: bold; text-transform: uppercase;">{severity}</span></p>
+                                <p style="margin: 8px 0 0 0; font-size: 14px;"><strong>Time:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}</p>
+                                <p style="margin: 8px 0 0 0; font-size: 14px;"><strong>System:</strong> CineBrain Platform</p>
+                            </div>
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                                <tr>
+                                    <td align="center" style="padding: 24px 0 20px 0;">
+                                        <a href="{FRONTEND_URL}/admin/system-health" class="btn" style="display: inline-block; background: #113CCF; color: #ffffff; text-decoration: none; font-size: 15px; font-weight: 600; padding: 13px 28px; border-radius: 8px;">Check System Status</a>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td class="footer-cell" style="background-color: #f9fafb; padding: 24px 40px; border-top: 1px solid #e5e7eb;">
+                            <p class="copyright" align="center" style="font-size: 12px; color: #9ca3af; margin: 0; line-height: 1.5;">© {datetime.now().year} CineBrain System Monitor</p>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>"""
+    
+    text = f"""⚠️ System Alert - CineBrain
+
+{alert_type}
+
+Alert Details:
+{details}
+
+Severity: {severity.upper()}
+Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}
+System: CineBrain Platform
+
+Check System Status: {FRONTEND_URL}/admin/system-health
+
+---
+© {datetime.now().year} CineBrain System Monitor"""
+    
+    return html, text
+
+def _get_daily_summary_template(base_css: str, **kwargs) -> tuple:
+    """Daily summary email template"""
+    stats = kwargs.get('stats', {})
+    highlights = kwargs.get('highlights', [])
+    
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Daily Summary - CineBrain</title>
+    {base_css}
+</head>
+<body style="margin: 0; padding: 0; background-color: #f6f9fc; font-family: 'Inter', Arial, sans-serif;">
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #f6f9fc;">
+        <tr>
+            <td align="center" style="padding: 20px 0;">
+                <table role="presentation" cellspacing="0" cellpadding="0" border="0" class="container" style="width: 100%; max-width: 600px; background-color: #ffffff; border-radius: 12px;">
+                    <tr>
+                        <td class="header-cell" align="center" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); padding: 32px 24px;">
+                            <img src="{BRAND_IMAGE_URL}" alt="CineBrain" class="brand-img" width="220" height="auto" style="display: block; margin: 0 auto 16px auto;">
+                            <p style="color: #ffffff; font-size: 16px; margin: 0; opacity: 0.9; font-weight: 500;">📊 Daily Summary</p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td class="content-cell" style="padding: 36px 40px 24px;">
+                            <h1 class="h1" style="font-size: 24px; color: #1a1a1a; margin: 0 0 20px 0;">Daily Platform Summary</h1>
+                            <p class="text" style="font-size: 15px; color: #4b5563; margin: 0 0 24px 0;">Here's what happened on CineBrain today:</p>
+                            
+                            <div style="background: #f8fafc; padding: 20px; border-radius: 8px; margin: 20px 0;">
+                                <h3 style="margin: 0 0 16px 0; color: #1a1a1a;">📈 Today's Statistics</h3>
+                                <ul style="margin: 0; padding-left: 20px; color: #4b5563;">
+                                    <li>New Users: {stats.get('new_users', 0)}</li>
+                                    <li>Total Interactions: {stats.get('interactions', 0)}</li>
+                                    <li>Support Tickets: {stats.get('tickets', 0)}</li>
+                                    <li>Content Added: {stats.get('new_content', 0)}</li>
+                                </ul>
+                            </div>
+                            
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                                <tr>
+                                    <td align="center" style="padding: 24px 0 20px 0;">
+                                        <a href="{FRONTEND_URL}/admin" class="btn" style="display: inline-block; background: #113CCF; color: #ffffff; text-decoration: none; font-size: 15px; font-weight: 600; padding: 13px 28px; border-radius: 8px;">View Full Dashboard</a>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td class="footer-cell" style="background-color: #f9fafb; padding: 24px 40px; border-top: 1px solid #e5e7eb;">
+                            <p class="copyright" align="center" style="font-size: 12px; color: #9ca3af; margin: 0; line-height: 1.5;">© {datetime.now().year} CineBrain Daily Reports</p>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>"""
+    
+    text = f"""📊 Daily Summary - CineBrain
+
+Daily Platform Summary
+
+Today's Statistics:
+• New Users: {stats.get('new_users', 0)}
+• Total Interactions: {stats.get('interactions', 0)}
+• Support Tickets: {stats.get('tickets', 0)}
+• Content Added: {stats.get('new_content', 0)}
+
+View Full Dashboard: {FRONTEND_URL}/admin
+
+---
+© {datetime.now().year} CineBrain Daily Reports"""
+    
+    return html, text
+
+def _get_urgent_notification_template(base_css: str, **kwargs) -> tuple:
+    """Urgent notification template"""
+    title = kwargs.get('title', 'Urgent Notification')
+    message = kwargs.get('message', '')
+    action_url = kwargs.get('action_url', f'{FRONTEND_URL}/admin')
+    
+    return _get_admin_notification_template(base_css, 
+                                          subject=title,
+                                          content=message,
+                                          is_urgent=True,
+                                          **kwargs)
+
+def _get_generic_admin_template(base_css: str, **kwargs) -> tuple:
+    """Generic admin template"""
+    subject = kwargs.get('subject', 'CineBrain Admin')
+    content = kwargs.get('content', '')
+    
+    return _get_admin_notification_template(base_css,
+                                          subject=subject,
+                                          content=content,
+                                          is_urgent=False,
+                                          **kwargs)
