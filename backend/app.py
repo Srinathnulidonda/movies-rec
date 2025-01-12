@@ -1004,6 +1004,7 @@ def setup_support_monitoring():
                 with app.app_context():
                     try:
                         from services.admin import AdminNotificationService
+                        from support.tickets import TicketStatusEnum, TicketPriorityEnum
                         
                         # Check for SLA breaches in tickets - Use enum values
                         overdue_tickets = SupportTicket.query.filter(

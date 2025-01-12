@@ -6,10 +6,32 @@ from sqlalchemy import func, desc, and_, or_
 import jwt
 import logging
 import json
+import enum
 from typing import Dict, Optional, List
-from app import TicketStatusEnum, TicketPriorityEnum, TicketTypeEnum
 
 logger = logging.getLogger(__name__)
+
+# Define enums locally to avoid circular import
+class TicketStatusEnum(enum.Enum):
+    OPEN = "open"
+    IN_PROGRESS = "in_progress"
+    WAITING_FOR_USER = "waiting_for_user"
+    RESOLVED = "resolved"
+    CLOSED = "closed"
+
+class TicketPriorityEnum(enum.Enum):
+    LOW = "low"
+    NORMAL = "normal"
+    HIGH = "high"
+    URGENT = "urgent"
+
+class TicketTypeEnum(enum.Enum):
+    GENERAL = "general"
+    TECHNICAL = "technical"
+    ACCOUNT = "account"
+    BILLING = "billing"
+    FEATURE_REQUEST = "feature_request"
+    BUG_REPORT = "bug_report"
 
 # Keep aliases for backward compatibility
 TicketStatus = TicketStatusEnum
