@@ -38,4 +38,3 @@ spacy
 cloudinary
 Pillow
 psutil
-enum
