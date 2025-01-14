@@ -1,3 +1,5 @@
+# admin/service.py
+
 import os
 import json
 import logging
@@ -30,10 +32,28 @@ class AdminEmailService:
     def __init__(self, services):
         # Use the existing auth email service
         self.email_service = services.get('email_service')  # Brevo service from auth
-        self.is_configured = self.email_service is not None and hasattr(self.email_service, 'email_enabled') and self.email_service.email_enabled
         
-        if not self.is_configured:
-            logger.warning("Admin email service not configured - using fallback mode")
+        # Better fallback checking
+        if not self.email_service:
+            try:
+                from auth.service import email_service as auth_email_service
+                self.email_service = auth_email_service
+                logger.info("✅ Email service loaded from auth module for admin")
+            except Exception as e:
+                logger.warning(f"Could not load auth email service for admin: {e}")
+        
+        # Improved configuration check
+        self.is_configured = (
+            self.email_service is not None and 
+            hasattr(self.email_service, 'email_enabled') and 
+            self.email_service.email_enabled and
+            hasattr(self.email_service, 'queue_email')
+        )
+        
+        if self.is_configured:
+            logger.info("✅ Admin email service configured successfully with Brevo")
+        else:
+            logger.warning("⚠️ Admin email service not configured - using fallback mode")
     
     def send_admin_notification(self, subject: str, content: str, admin_emails: list, is_urgent: bool = False):
         """Send notification email to admins"""
@@ -58,20 +78,30 @@ class AdminEmailService:
             )
             
             # Send to each admin
+            success_count = 0
             for email in admin_emails:
-                admin_name = email.split('@')[0].replace('.', ' ').title()
-                
-                self.email_service.queue_email(
-                    to=email,
-                    subject=f"[CineBrain Admin] {subject}",
-                    html=html,
-                    text=text,
-                    priority='urgent' if is_urgent else 'high',
-                    to_name=admin_name
-                )
+                try:
+                    admin_name = email.split('@')[0].replace('.', ' ').title()
+                    
+                    self.email_service.queue_email(
+                        to=email,
+                        subject=f"[CineBrain Admin] {subject}",
+                        html=html,
+                        text=text,
+                        priority='urgent' if is_urgent else 'high',
+                        to_name=admin_name
+                    )
+                    success_count += 1
+                    logger.info(f"✅ Admin notification email queued for {email}: {subject}")
+                except Exception as e:
+                    logger.error(f"❌ Failed to queue email for {email}: {e}")
             
-            logger.info(f"✅ Admin notification emails queued: {subject}")
-            return True
+            if success_count > 0:
+                logger.info(f"✅ Admin notification emails queued successfully: {subject} ({success_count}/{len(admin_emails)})")
+                return True
+            else:
+                logger.error(f"❌ Failed to queue any admin notification emails")
+                return False
             
         except Exception as e:
             logger.error(f"❌ Admin email error: {e}")
@@ -93,6 +123,7 @@ class AdminNotificationService:
             self.telegram_service = TelegramAdminService
         except ImportError:
             self.telegram_service = None
+            logger.warning("Telegram service not available for admin notifications")
         
         # Create admin models
         self._create_admin_models()
@@ -236,12 +267,21 @@ class AdminNotificationService:
                 except Exception as e:
                     logger.warning(f"Telegram notification failed: {e}")
             
-            # Send email notification for urgent items
-            if is_urgent and self.email_service and self.email_service.is_configured:
+            # Send email notification
+            if self.email_service and self.email_service.is_configured:
                 try:
-                    admin_emails = [user.email for user in self.User.query.filter_by(is_admin=True).all()]
+                    # Get admin emails
+                    admin_users = self.User.query.filter_by(is_admin=True).all()
+                    admin_emails = [user.email for user in admin_users if user.email]
+                    
+                    # Also include environment variable admin email
+                    env_admin_email = os.environ.get('ADMIN_EMAIL')
+                    if env_admin_email and env_admin_email not in admin_emails:
+                        admin_emails.append(env_admin_email)
+                    
                     if admin_emails:
                         self.email_service.send_admin_notification(title, message, admin_emails, is_urgent)
+                        logger.info(f"✅ Email notifications sent to {len(admin_emails)} admins")
                 except Exception as e:
                     logger.warning(f"Admin email notification failed: {e}")
             
@@ -279,7 +319,7 @@ class AdminNotificationService:
             is_urgent = ticket.priority == 'urgent'
             
             self.create_notification(
-                NotificationType.NEW_TICKET,
+                NotificationType.NEW_TICKET if not is_urgent else NotificationType.URGENT_TICKET,
                 f"New {'Urgent ' if is_urgent else ''}Support Ticket",
                 f"Ticket #{ticket.ticket_number} created by {ticket.user_name}\n"
                 f"Subject: {ticket.subject}\n"
