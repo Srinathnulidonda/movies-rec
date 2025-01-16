@@ -47,6 +47,9 @@ class TicketService:
         self.email_service = self._initialize_email_service(services)
         self.redis_client = services.get('redis_client')
         
+        # Get admin notification service if available
+        self.admin_notification_service = services.get('admin_notification_service')
+        
         logger.info("✅ TicketService initialized successfully")
     
     def _initialize_email_service(self, services):
@@ -159,7 +162,7 @@ class TicketService:
         return 'Unknown Browser'
     
     def create_ticket(self):
-        """Create a new support ticket with enhanced error handling"""
+        """Create a new support ticket with enhanced error handling - FIXED"""
         try:
             data = request.get_json()
             
@@ -183,14 +186,30 @@ class TicketService:
             priority_value = data.get('priority', 'normal')
             ticket_type_value = data.get('ticket_type', 'general')
             
-            # Validate priority and type values
+            # FIXED: Validate and map ticket type values
             valid_priorities = ['low', 'normal', 'high', 'urgent']
-            valid_types = ['general', 'technical', 'account', 'billing', 'feature_request', 'bug_report']
+            valid_types = ['general', 'technical', 'billing', 'feature_request', 'bug_report']
             
+            # Map common variations to valid types
+            type_mapping = {
+                'account': 'general',  # Map 'account' to 'general'
+                'login': 'technical',
+                'payment': 'billing',
+                'feature': 'feature_request',
+                'bug': 'bug_report'
+            }
+            
+            # Apply mapping if needed
+            if ticket_type_value in type_mapping:
+                ticket_type_value = type_mapping[ticket_type_value]
+            
+            # Ensure valid values
             if priority_value not in valid_priorities:
                 priority_value = 'normal'
             if ticket_type_value not in valid_types:
                 ticket_type_value = 'general'
+            
+            logger.info(f"Creating ticket with type: {ticket_type_value}, priority: {priority_value}")
             
             # Create ticket with string values
             ticket = self.SupportTicket(
@@ -201,9 +220,9 @@ class TicketService:
                 user_email=data['email'],
                 user_name=data['name'],
                 category_id=data['category_id'],
-                ticket_type=ticket_type_value,
-                priority=priority_value,
-                status='open',
+                ticket_type=ticket_type_value,  # Using mapped string value
+                priority=priority_value,         # Using string value
+                status='open',                   # Using string value
                 sla_deadline=self.calculate_sla_deadline_string(priority_value),
                 **request_info
             )
@@ -225,9 +244,9 @@ class TicketService:
             
             # Send notifications
             self._send_user_confirmation(ticket, data)
-            self._send_admin_notification(ticket, data)
+            self._send_admin_notification_enhanced(ticket, data)
             
-            logger.info(f"Support ticket {ticket_number} created for {data['email']}")
+            logger.info(f"✅ Support ticket {ticket_number} created for {data['email']}")
             
             return jsonify({
                 'success': True,
@@ -239,8 +258,8 @@ class TicketService:
             
         except Exception as e:
             self.db.session.rollback()
-            logger.error(f"Error creating support ticket: {e}")
-            return jsonify({'error': 'Failed to create support ticket'}), 500
+            logger.error(f"❌ Error creating support ticket: {e}")
+            return jsonify({'error': 'Failed to create support ticket. Please try again.'}), 500
     
     def get_ticket(self, ticket_number):
         """Get ticket details by number"""
@@ -310,7 +329,7 @@ class TicketService:
             }), 200
             
         except Exception as e:
-            logger.error(f"Error fetching ticket {ticket_number}: {e}")
+            logger.error(f"❌ Error fetching ticket {ticket_number}: {e}")
             return jsonify({'error': 'Failed to fetch ticket'}), 500
     
     def _check_rate_limit(self, email: str) -> bool:
@@ -371,13 +390,43 @@ class TicketService:
             logger.error(f"❌ Error sending user confirmation: {e}")
     
     def _send_admin_notification(self, ticket, data):
-        """Send admin notification email"""
+        """Send admin notification email - DEPRECATED, use enhanced version"""
+        self._send_admin_notification_enhanced(ticket, data)
+    
+    def _send_admin_notification_enhanced(self, ticket, data):
+        """Send enhanced admin notification email - FIXED"""
         try:
+            # Try using admin notification service first
+            if self.admin_notification_service and hasattr(self.admin_notification_service, 'notify_new_ticket'):
+                try:
+                    self.admin_notification_service.notify_new_ticket(ticket)
+                    logger.info(f"✅ Admin notification sent via notification service for ticket {ticket.ticket_number}")
+                    return
+                except Exception as e:
+                    logger.warning(f"Admin notification service failed, using direct email: {e}")
+            
+            # Fallback to direct email if notification service not available
             if not self.email_service:
                 logger.warning("Email service not available - cannot send admin notification")
                 return
             
-            admin_email = os.environ.get('ADMIN_EMAIL', 'srinathnulidonda.dev@gmail.com')
+            # Get admin email(s)
+            admin_emails = []
+            
+            # Add environment admin email
+            env_admin_email = os.environ.get('ADMIN_EMAIL', 'srinathnulidonda.dev@gmail.com')
+            if env_admin_email:
+                admin_emails.append(env_admin_email)
+            
+            # Add database admin emails
+            admin_users = self.User.query.filter_by(is_admin=True).all()
+            for admin_user in admin_users:
+                if admin_user.email and admin_user.email not in admin_emails:
+                    admin_emails.append(admin_user.email)
+            
+            if not admin_emails:
+                logger.warning("No admin emails configured for notifications")
+                return
             
             from auth.support_mail_templates import get_support_template
             
@@ -397,7 +446,8 @@ class TicketService:
                     <li><strong>Subject:</strong> {ticket.subject}</li>
                     <li><strong>From:</strong> {data['name']} ({data['email']})</li>
                     <li><strong>Category:</strong> {category.name if category else 'General'}</li>
-                    <li><strong>Priority:</strong> {ticket.priority.upper()}</li>
+                    <li><strong>Priority:</strong> <span style="color: {'#ef4444' if ticket.priority == 'urgent' else '#f59e0b' if ticket.priority == 'high' else '#3b82f6'}; font-weight: bold;">{ticket.priority.upper()}</span></li>
+                    <li><strong>Type:</strong> {ticket.ticket_type.replace('_', ' ').title()}</li>
                     <li><strong>Status:</strong> {ticket.status.upper()}</li>
                 </ul>
                 <p><strong>Message:</strong></p>
@@ -414,16 +464,22 @@ class TicketService:
                 user_email=data['email']
             )
             
-            self.email_service.queue_email(
-                to=admin_email,
-                subject=f"🎫 New Support Ticket #{ticket.ticket_number} - CineBrain Admin",
-                html=html,
-                text=text,
-                priority='urgent' if ticket.priority == 'urgent' else 'high',
-                to_name='CineBrain Admin'
-            )
+            # Send to all admin emails
+            for admin_email in admin_emails:
+                try:
+                    self.email_service.queue_email(
+                        to=admin_email,
+                        subject=f"🎫 New Support Ticket #{ticket.ticket_number} - CineBrain Admin",
+                        html=html,
+                        text=text,
+                        priority='urgent' if ticket.priority == 'urgent' else 'high',
+                        to_name='CineBrain Admin'
+                    )
+                    logger.info(f"✅ Admin notification email queued for {admin_email}")
+                except Exception as e:
+                    logger.error(f"Failed to queue email for admin {admin_email}: {e}")
             
-            logger.info(f"✅ Admin notification email queued for ticket {ticket.ticket_number}")
+            logger.info(f"✅ Admin notifications sent for ticket {ticket.ticket_number}")
             
         except Exception as e:
             logger.error(f"❌ Error sending admin notification: {e}")
