@@ -117,6 +117,19 @@ class AdminNotificationService:
         self.email_service = AdminEmailService(services)
         self.redis_client = self._init_redis()
         
+        # Get admin models from the models dictionary instead of creating them
+        self.AdminNotification = models.get('AdminNotification')
+        self.CannedResponse = models.get('CannedResponse')
+        self.SupportMetrics = models.get('SupportMetrics')
+        
+        # Validate model availability
+        if not self.AdminNotification:
+            logger.warning("⚠️ AdminNotification model not available")
+        if not self.CannedResponse:
+            logger.warning("⚠️ CannedResponse model not available")
+        if not self.SupportMetrics:
+            logger.warning("⚠️ SupportMetrics model not available")
+        
         # Telegram service
         try:
             from admin.telegram import TelegramAdminService
@@ -124,9 +137,6 @@ class AdminNotificationService:
         except ImportError:
             self.telegram_service = None
             logger.warning("Telegram service not available for admin notifications")
-        
-        # Create admin models
-        self._create_admin_models()
         
         logger.info("✅ Admin notification service initialized")
     
@@ -156,82 +166,6 @@ class AdminNotificationService:
             logger.error(f"❌ Admin Redis connection failed: {e}")
             return None
     
-    def _create_admin_models(self):
-        """Create admin-specific database models"""
-        try:
-            class AdminNotification(self.db.Model):
-                __tablename__ = 'admin_notifications'
-                
-                id = self.db.Column(self.db.Integer, primary_key=True)
-                notification_type = self.db.Column(self.db.String(50), nullable=False)
-                title = self.db.Column(self.db.String(255), nullable=False)
-                message = self.db.Column(self.db.Text, nullable=False)
-                
-                admin_id = self.db.Column(self.db.Integer, self.db.ForeignKey('user.id'), nullable=True)
-                related_ticket_id = self.db.Column(self.db.Integer, nullable=True)
-                related_content_id = self.db.Column(self.db.Integer, self.db.ForeignKey('content.id'), nullable=True)
-                
-                is_read = self.db.Column(self.db.Boolean, default=False)
-                is_urgent = self.db.Column(self.db.Boolean, default=False)
-                action_required = self.db.Column(self.db.Boolean, default=False)
-                action_url = self.db.Column(self.db.String(500))
-                
-                notification_metadata = self.db.Column(self.db.JSON)
-                
-                created_at = self.db.Column(self.db.DateTime, default=datetime.utcnow)
-                read_at = self.db.Column(self.db.DateTime)
-            
-            class CannedResponse(self.db.Model):
-                __tablename__ = 'canned_responses'
-                
-                id = self.db.Column(self.db.Integer, primary_key=True)
-                title = self.db.Column(self.db.String(255), nullable=False)
-                content = self.db.Column(self.db.Text, nullable=False)
-                
-                category_id = self.db.Column(self.db.Integer, nullable=True)
-                tags = self.db.Column(self.db.JSON)
-                
-                is_active = self.db.Column(self.db.Boolean, default=True)
-                usage_count = self.db.Column(self.db.Integer, default=0)
-                
-                created_by = self.db.Column(self.db.Integer, self.db.ForeignKey('user.id'), nullable=False)
-                created_at = self.db.Column(self.db.DateTime, default=datetime.utcnow)
-                updated_at = self.db.Column(self.db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-            
-            class SupportMetrics(self.db.Model):
-                __tablename__ = 'support_metrics'
-                
-                id = self.db.Column(self.db.Integer, primary_key=True)
-                date = self.db.Column(self.db.Date, nullable=False)
-                
-                tickets_created = self.db.Column(self.db.Integer, default=0)
-                tickets_resolved = self.db.Column(self.db.Integer, default=0)
-                tickets_closed = self.db.Column(self.db.Integer, default=0)
-                
-                avg_first_response_time = self.db.Column(self.db.Float)
-                avg_resolution_time = self.db.Column(self.db.Float)
-                
-                sla_breaches = self.db.Column(self.db.Integer, default=0)
-                escalations = self.db.Column(self.db.Integer, default=0)
-                
-                customer_satisfaction = self.db.Column(self.db.Float)
-                feedback_count = self.db.Column(self.db.Integer, default=0)
-                
-                created_at = self.db.Column(self.db.DateTime, default=datetime.utcnow)
-            
-            # Store models in class for access
-            self.AdminNotification = AdminNotification
-            self.CannedResponse = CannedResponse
-            self.SupportMetrics = SupportMetrics
-            
-            # Create tables
-            with self.app.app_context():
-                self.db.create_all()
-                logger.info("✅ Admin models created successfully")
-                
-        except Exception as e:
-            logger.error(f"❌ Error creating admin models: {e}")
-    
     def create_notification(self, notification_type: str, title: str, message: str, 
                           admin_id: int = None, related_ticket_id: int = None, 
                           related_content_id: int = None, is_urgent: bool = False,
@@ -239,22 +173,27 @@ class AdminNotificationService:
                           metadata: dict = None):
         """Create a new admin notification"""
         try:
-            # Create database notification
-            notification = self.AdminNotification(
-                notification_type=notification_type,
-                title=title,
-                message=message,
-                admin_id=admin_id,
-                related_ticket_id=related_ticket_id,
-                related_content_id=related_content_id,
-                is_urgent=is_urgent,
-                action_required=action_required,
-                action_url=action_url,
-                notification_metadata=metadata or {}
-            )
-            
-            self.db.session.add(notification)
-            self.db.session.commit()
+            if not self.AdminNotification:
+                logger.warning("AdminNotification model not available, skipping database notification")
+                # Still proceed with other notification methods
+            else:
+                # Create database notification
+                notification = self.AdminNotification(
+                    notification_type=notification_type,
+                    title=title,
+                    message=message,
+                    admin_id=admin_id,
+                    related_ticket_id=related_ticket_id,
+                    related_content_id=related_content_id,
+                    is_urgent=is_urgent,
+                    action_required=action_required,
+                    action_url=action_url,
+                    notification_metadata=metadata or {}
+                )
+                
+                self.db.session.add(notification)
+                self.db.session.commit()
+                logger.info(f"✅ Database notification created: {title}")
             
             # Send Telegram notification
             if self.telegram_service:
@@ -264,6 +203,7 @@ class AdminNotificationService:
                         f"{title}\n\n{message}", 
                         is_urgent
                     )
+                    logger.info(f"✅ Telegram notification sent: {title}")
                 except Exception as e:
                     logger.warning(f"Telegram notification failed: {e}")
             
@@ -289,7 +229,7 @@ class AdminNotificationService:
             if self.redis_client:
                 try:
                     notification_data = {
-                        'id': notification.id,
+                        'id': notification.id if self.AdminNotification else f"temp_{int(datetime.utcnow().timestamp())}",
                         'type': notification_type,
                         'title': title,
                         'message': message,
@@ -301,11 +241,12 @@ class AdminNotificationService:
                     self.redis_client.lpush('admin_notifications', json.dumps(notification_data))
                     self.redis_client.ltrim('admin_notifications', 0, 99)  # Keep last 100
                     self.redis_client.expire('admin_notifications', 86400)  # 24 hours
+                    logger.info(f"✅ Redis notification stored: {title}")
                 except Exception as e:
                     logger.error(f"Redis notification error: {e}")
             
-            logger.info(f"✅ Admin notification created: {title}")
-            return notification
+            logger.info(f"✅ Admin notification created successfully: {title}")
+            return notification if self.AdminNotification else True
             
         except Exception as e:
             logger.error(f"❌ Error creating admin notification: {e}")
@@ -335,6 +276,7 @@ class AdminNotificationService:
                     'user_email': ticket.user_email
                 }
             )
+            logger.info(f"✅ New ticket notification sent for #{ticket.ticket_number}")
         except Exception as e:
             logger.error(f"❌ Error notifying new ticket: {e}")
     
@@ -351,8 +293,13 @@ class AdminNotificationService:
                 related_ticket_id=ticket.id,
                 is_urgent=True,
                 action_required=True,
-                action_url=f"/admin/support/tickets/{ticket.id}"
+                action_url=f"/admin/support/tickets/{ticket.id}",
+                metadata={
+                    'ticket_number': ticket.ticket_number,
+                    'sla_deadline': ticket.sla_deadline.isoformat() if ticket.sla_deadline else None
+                }
             )
+            logger.info(f"✅ SLA breach notification sent for #{ticket.ticket_number}")
         except Exception as e:
             logger.error(f"❌ Error notifying SLA breach: {e}")
     
@@ -377,8 +324,30 @@ class AdminNotificationService:
                     'rating': rating
                 }
             )
+            logger.info(f"✅ Feedback notification sent for feedback #{feedback.id}")
         except Exception as e:
             logger.error(f"❌ Error notifying feedback: {e}")
+    
+    def notify_system_alert(self, alert_type: str, title: str, details: str, is_urgent: bool = False):
+        """Notify admins about system alerts"""
+        try:
+            self.create_notification(
+                NotificationType.SYSTEM_ALERT,
+                f"System Alert: {title}",
+                f"Alert Type: {alert_type}\n"
+                f"Details: {details}\n"
+                f"Time: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}",
+                is_urgent=is_urgent,
+                action_required=True,
+                action_url="/admin/system-health",
+                metadata={
+                    'alert_type': alert_type,
+                    'timestamp': datetime.utcnow().isoformat()
+                }
+            )
+            logger.info(f"✅ System alert notification sent: {title}")
+        except Exception as e:
+            logger.error(f"❌ Error notifying system alert: {e}")
 
 class AdminService:
     """Main admin service for content and recommendation management"""
@@ -390,6 +359,11 @@ class AdminService:
         self.Content = models['Content']
         self.UserInteraction = models['UserInteraction']
         self.AdminRecommendation = models['AdminRecommendation']
+        
+        # Get admin models from models dictionary
+        self.AdminNotification = models.get('AdminNotification')
+        self.CannedResponse = models.get('CannedResponse')
+        self.SupportMetrics = models.get('SupportMetrics')
         
         self.TMDBService = services.get('TMDBService')
         self.JikanService = services.get('JikanService')
@@ -443,6 +417,7 @@ class AdminService:
                             'source': 'anime'
                         })
             
+            logger.info(f"✅ External content search completed: {len(results)} results for '{query}'")
             return results
             
         except Exception as e:
@@ -463,6 +438,7 @@ class AdminService:
                 existing_content = self.Content.query.filter_by(tmdb_id=tmdb_id).first()
             
             if existing_content:
+                logger.info(f"Content already exists: {existing_content.title}")
                 return {
                     'message': 'Content already exists',
                     'content_id': existing_content.id,
@@ -543,8 +519,9 @@ class AdminService:
                         action_url=f"/admin/content/{content.id}"
                     )
                 except Exception as e:
-                    logger.warning(f"Failed to create notification: {e}")
+                    logger.warning(f"Failed to create content notification: {e}")
             
+            logger.info(f"✅ External content saved: {content.title}")
             return {
                 'message': 'Content saved successfully',
                 'content_id': content.id,
@@ -565,6 +542,7 @@ class AdminService:
                 content = self.Content.query.filter_by(tmdb_id=content_id).first()
             
             if not content:
+                logger.warning(f"Content not found for ID: {content_id}")
                 return {'error': 'Content not found. Please save content first.'}
             
             # Create recommendation
@@ -585,6 +563,7 @@ class AdminService:
                     telegram_success = self.telegram_service.send_admin_recommendation(
                         content, admin_user.username, description
                     )
+                    logger.info(f"✅ Telegram recommendation sent: {content.title}")
                 except Exception as e:
                     logger.warning(f"Telegram send failed: {e}")
             
@@ -598,11 +577,13 @@ class AdminService:
                         f"Type: {recommendation_type}\n"
                         f"Description: {description[:100]}...",
                         admin_id=admin_user.id,
-                        related_content_id=content.id
+                        related_content_id=content.id,
+                        action_url=f"/admin/recommendations/{admin_rec.id}"
                     )
                 except Exception as e:
-                    logger.warning(f"Failed to create notification: {e}")
+                    logger.warning(f"Failed to create recommendation notification: {e}")
             
+            logger.info(f"✅ Admin recommendation created: {content.title} by {admin_user.username}")
             return {
                 'message': 'Admin recommendation created successfully',
                 'telegram_sent': telegram_success,
@@ -626,21 +607,23 @@ class AdminService:
                 content = self.Content.query.get(rec.content_id)
                 admin = self.User.query.get(rec.admin_id)
                 
-                result.append({
-                    'id': rec.id,
-                    'recommendation_type': rec.recommendation_type,
-                    'description': rec.description,
-                    'created_at': rec.created_at.isoformat(),
-                    'admin_name': admin.username if admin else 'Unknown',
-                    'content': {
-                        'id': content.id,
-                        'title': content.title,
-                        'content_type': content.content_type,
-                        'rating': content.rating,
-                        'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path
-                    }
-                })
+                if content and admin:
+                    result.append({
+                        'id': rec.id,
+                        'recommendation_type': rec.recommendation_type,
+                        'description': rec.description,
+                        'created_at': rec.created_at.isoformat(),
+                        'admin_name': admin.username,
+                        'content': {
+                            'id': content.id,
+                            'title': content.title,
+                            'content_type': content.content_type,
+                            'rating': content.rating,
+                            'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path
+                        }
+                    })
             
+            logger.info(f"✅ Retrieved {len(result)} admin recommendations")
             return {
                 'recommendations': result,
                 'total': admin_recs.total,
@@ -689,6 +672,7 @@ class AdminService:
             self.db.session.commit()
             stats['total_processed'] = stats['content_updated'] + stats['persons_updated']
             
+            logger.info(f"✅ Slug migration completed: {stats['content_updated']} content items updated")
             return stats
             
         except Exception as e:
@@ -717,6 +701,7 @@ class AdminService:
                     content.slug = slug[:150]  # Limit length
             
             self.db.session.commit()
+            logger.info(f"✅ Content slug updated: {content.title} -> {content.slug}")
             return content.slug
             
         except Exception as e:
@@ -745,6 +730,7 @@ class AdminService:
                     logger.error(f"Error processing cast/crew for {content.title}: {e}")
                     result['errors'] += 1
             
+            logger.info(f"✅ Cast/crew population completed: {result['processed']} items processed")
             return result
             
         except Exception as e:
@@ -761,53 +747,60 @@ class AdminService:
                     notifications_json = self.notification_service.redis_client.lrange('admin_notifications', 0, 19)
                     for notif_json in notifications_json:
                         recent_notifications.append(json.loads(notif_json))
+                    logger.info(f"✅ Retrieved {len(recent_notifications)} recent notifications from Redis")
                 except Exception as e:
                     logger.error(f"Redis notification retrieval error: {e}")
             
             # Get database notifications
             db_notifications = []
-            if hasattr(self.notification_service, 'AdminNotification'):
-                query = self.notification_service.AdminNotification.query
-                
-                if unread_only:
-                    query = query.filter_by(is_read=False)
-                
-                notifications = query.order_by(
-                    self.notification_service.AdminNotification.created_at.desc()
-                ).paginate(page=page, per_page=per_page, error_out=False)
-                
-                for notif in notifications.items:
-                    db_notifications.append({
-                        'id': notif.id,
-                        'type': notif.notification_type,
-                        'title': notif.title,
-                        'message': notif.message,
-                        'is_read': notif.is_read,
-                        'is_urgent': notif.is_urgent,
-                        'action_required': notif.action_required,
-                        'action_url': notif.action_url,
-                        'metadata': notif.notification_metadata,
-                        'created_at': notif.created_at.isoformat(),
-                        'read_at': notif.read_at.isoformat() if notif.read_at else None
-                    })
-                
-                pagination_info = {
-                    'current_page': page,
-                    'per_page': per_page,
-                    'total': notifications.total,
-                    'pages': notifications.pages,
-                    'has_prev': notifications.has_prev,
-                    'has_next': notifications.has_next
-                }
-            else:
-                pagination_info = {
-                    'current_page': 1,
-                    'per_page': per_page,
-                    'total': 0,
-                    'pages': 0,
-                    'has_prev': False,
-                    'has_next': False
-                }
+            pagination_info = {
+                'current_page': 1,
+                'per_page': per_page,
+                'total': 0,
+                'pages': 0,
+                'has_prev': False,
+                'has_next': False
+            }
+            
+            if self.AdminNotification:
+                try:
+                    query = self.AdminNotification.query
+                    
+                    if unread_only:
+                        query = query.filter_by(is_read=False)
+                    
+                    notifications = query.order_by(
+                        self.AdminNotification.created_at.desc()
+                    ).paginate(page=page, per_page=per_page, error_out=False)
+                    
+                    for notif in notifications.items:
+                        db_notifications.append({
+                            'id': notif.id,
+                            'type': notif.notification_type,
+                            'title': notif.title,
+                            'message': notif.message,
+                            'is_read': notif.is_read,
+                            'is_urgent': notif.is_urgent,
+                            'action_required': notif.action_required,
+                            'action_url': notif.action_url,
+                            'metadata': notif.notification_metadata,
+                            'created_at': notif.created_at.isoformat(),
+                            'read_at': notif.read_at.isoformat() if notif.read_at else None
+                        })
+                    
+                    pagination_info = {
+                        'current_page': page,
+                        'per_page': per_page,
+                        'total': notifications.total,
+                        'pages': notifications.pages,
+                        'has_prev': notifications.has_prev,
+                        'has_next': notifications.has_next
+                    }
+                    
+                    logger.info(f"✅ Retrieved {len(db_notifications)} database notifications")
+                    
+                except Exception as e:
+                    logger.error(f"Database notification retrieval error: {e}")
             
             return {
                 'recent_notifications': recent_notifications,
@@ -822,19 +815,21 @@ class AdminService:
     def mark_all_notifications_read(self):
         """Mark all notifications as read"""
         try:
-            if not hasattr(self.notification_service, 'AdminNotification'):
+            if not self.AdminNotification:
+                logger.warning("AdminNotification model not available")
                 return {'error': 'Notification system not available'}
             
-            self.notification_service.AdminNotification.query.filter_by(is_read=False).update({
+            updated_count = self.AdminNotification.query.filter_by(is_read=False).update({
                 'is_read': True,
                 'read_at': datetime.utcnow()
             })
             
             self.db.session.commit()
             
+            logger.info(f"✅ Marked {updated_count} notifications as read")
             return {
                 'success': True,
-                'message': 'All notifications marked as read'
+                'message': f'Marked {updated_count} notifications as read'
             }
             
         except Exception as e:
@@ -858,6 +853,7 @@ class AdminService:
             else:
                 return {'error': 'Invalid cache type'}
             
+            logger.info(f"✅ Cache cleared: {cache_type}")
             return {
                 'success': True,
                 'message': message,
@@ -867,7 +863,74 @@ class AdminService:
         except Exception as e:
             logger.error(f"Cache clear error: {e}")
             return {'error': 'Failed to clear cache'}
+    
+    def get_canned_responses(self, category_id=None):
+        """Get canned responses for support"""
+        try:
+            if not self.CannedResponse:
+                logger.warning("CannedResponse model not available")
+                return []
+            
+            query = self.CannedResponse.query.filter_by(is_active=True)
+            
+            if category_id:
+                query = query.filter_by(category_id=category_id)
+            
+            responses = query.order_by(self.CannedResponse.usage_count.desc()).all()
+            
+            result = []
+            for response in responses:
+                result.append({
+                    'id': response.id,
+                    'title': response.title,
+                    'content': response.content,
+                    'tags': response.tags or [],
+                    'usage_count': response.usage_count,
+                    'created_at': response.created_at.isoformat()
+                })
+            
+            logger.info(f"✅ Retrieved {len(result)} canned responses")
+            return result
+            
+        except Exception as e:
+            logger.error(f"Get canned responses error: {e}")
+            return []
+    
+    def create_canned_response(self, admin_user, title, content, category_id=None, tags=None):
+        """Create new canned response"""
+        try:
+            if not self.CannedResponse:
+                return {'error': 'Canned response system not available'}
+            
+            response = self.CannedResponse(
+                title=title,
+                content=content,
+                category_id=category_id,
+                tags=tags or [],
+                created_by=admin_user.id
+            )
+            
+            self.db.session.add(response)
+            self.db.session.commit()
+            
+            logger.info(f"✅ Canned response created: {title}")
+            return {
+                'success': True,
+                'response_id': response.id,
+                'message': 'Canned response created successfully'
+            }
+            
+        except Exception as e:
+            logger.error(f"Create canned response error: {e}")
+            self.db.session.rollback()
+            return {'error': 'Failed to create canned response'}
 
 def init_admin_service(app, db, models, services):
     """Initialize admin service"""
-    return AdminService(app, db, models, services)
+    try:
+        admin_service = AdminService(app, db, models, services)
+        logger.info("✅ Admin service initialized successfully")
+        return admin_service
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize admin service: {e}")
+        return None
