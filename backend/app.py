@@ -926,13 +926,13 @@ try:
 except Exception as e:
     logger.error(f"❌ Failed to initialize CineBrain new releases service: {e}")
 
-# Initialize Authentication System - FIXED
+# Initialize Authentication System - FIXED: Removed url_prefix
 try:
     from auth.service import init_auth, email_service as auth_email_service
     from auth.routes import auth_bp
     
     init_auth(app, db, User)
-    app.register_blueprint(auth_bp, url_prefix='/api/auth')  # FIXED: Added url_prefix
+    app.register_blueprint(auth_bp)  # FIXED: No url_prefix
     
     email_service = auth_email_service
     services['email_service'] = email_service
@@ -941,13 +941,13 @@ try:
 except Exception as e:
     logger.error(f"❌ Failed to initialize CineBrain authentication service: {e}")
 
-# Initialize Support System - FIXED
+# Initialize Support System - FIXED: Removed url_prefix
 try:
     if 'email_service' not in services and email_service:
         services['email_service'] = email_service
     
     support_models = init_support(app, db, models, services)
-    app.register_blueprint(support_bp, url_prefix='/api/support')  # FIXED: Added url_prefix
+    app.register_blueprint(support_bp)  # FIXED: No url_prefix
     
     if support_models:
         logger.info("✅ CineBrain Support System initialized successfully")
@@ -958,13 +958,13 @@ try:
 except Exception as e:
     logger.error(f"❌ Failed to initialize CineBrain Support System: {e}")
 
-# Initialize Admin System - FIXED (No Telegram for Support)
+# Initialize Admin System - FIXED: Removed url_prefix
 try:
     if email_service:
         services['email_service'] = email_service
     
     admin_models = init_admin(app, db, models, services)
-    app.register_blueprint(admin_bp, url_prefix='/api/admin')  # FIXED: Added url_prefix
+    app.register_blueprint(admin_bp)  # FIXED: No url_prefix
     
     if 'admin_notification_service' not in services:
         try:
@@ -990,7 +990,7 @@ try:
         logger.info("✅ CineBrain Advanced Personalized Recommendation System initialized successfully")
         services['profile_analyzer'] = profile_analyzer
         services['personalized_recommendation_engine'] = personalized_recommendation_engine
-        app.register_blueprint(personalized_bp, url_prefix='/api/personalized')
+        app.register_blueprint(personalized_bp)  # FIXED: No url_prefix
         logger.info("✅ CineBrain Personalized routes registered")
     else:
         logger.warning("⚠️ CineBrain Personalized Recommendation System failed to initialize fully")
@@ -1001,7 +1001,7 @@ except Exception as e:
 # Initialize User Routes
 try:
     init_user_routes(app, db, models, {**services, 'cache': cache})
-    app.register_blueprint(user_bp, url_prefix='/api/user')
+    app.register_blueprint(user_bp)  # FIXED: No url_prefix
     logger.info("✅ CineBrain user module initialized successfully")
 except Exception as e:
     logger.error(f"❌ Failed to initialize CineBrain user module: {e}")
@@ -1009,7 +1009,7 @@ except Exception as e:
 # Initialize Critics Choice Service
 try:
     critics_choice_service = init_critics_choice_service(app, db, models, services, cache)
-    app.register_blueprint(critics_choice_bp, url_prefix='/api/critics-choice')
+    app.register_blueprint(critics_choice_bp)  # FIXED: No url_prefix
     if critics_choice_service:
         logger.info("✅ CineBrain Critics Choice service integrated successfully")
         services['critics_choice_service'] = critics_choice_service
@@ -1029,7 +1029,7 @@ except Exception as e:
 # Initialize Recommendation Routes
 try:
     init_recommendation_routes(app, db, models, services, cache)
-    app.register_blueprint(recommendation_bp, url_prefix='/api/recommendations')
+    app.register_blueprint(recommendation_bp)  # FIXED: No url_prefix
     logger.info("✅ CineBrain recommendation routes initialized successfully")
 except Exception as e:
     logger.error(f"❌ Failed to initialize CineBrain recommendation routes: {e}")
@@ -1037,7 +1037,7 @@ except Exception as e:
 # Initialize System Routes
 try:
     init_system_routes(app, db, models, services)
-    app.register_blueprint(system_bp, url_prefix='/api/system')
+    app.register_blueprint(system_bp)  # FIXED: No url_prefix
     logger.info("✅ CineBrain system monitoring service initialized successfully")
     services['system_service'] = True
 except Exception as e:
@@ -1046,7 +1046,7 @@ except Exception as e:
 # Initialize Operations Routes
 try:
     init_operations_routes(app, db, models, services)
-    app.register_blueprint(operations_bp, url_prefix='/api/operations')
+    app.register_blueprint(operations_bp)  # FIXED: No url_prefix
     logger.info("✅ CineBrain operations service initialized successfully")
     services['operations_service'] = True
 except Exception as e:
@@ -1064,8 +1064,6 @@ def setup_support_monitoring():
                 with app.app_context():
                     try:
                         # FIXED: Use SQLAlchemy ORM instead of raw SQL to handle enum/string mismatch
-                        from sqlalchemy import and_, or_
-                        
                         current_time = datetime.utcnow()
                         
                         # Use ORM query instead of raw SQL
