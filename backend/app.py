@@ -1063,47 +1063,33 @@ def setup_support_monitoring():
                 
                 with app.app_context():
                     try:
-                        # FIXED: Use string values directly without enum casting
-                        overdue_query = text("""
-                            SELECT * FROM support_tickets 
-                            WHERE sla_deadline < :current_time 
-                            AND sla_breached = false 
-                            AND status IN ('open', 'in_progress')
-                        """)
+                        # FIXED: Use SQLAlchemy ORM instead of raw SQL to handle enum/string mismatch
+                        from sqlalchemy import and_, or_
                         
-                        result = db.session.execute(
-                            overdue_query,
-                            {'current_time': datetime.utcnow()}
-                        )
+                        current_time = datetime.utcnow()
                         
-                        overdue_tickets = result.fetchall()
-                        
-                        for ticket_row in overdue_tickets:
-                            # Update using direct SQL
-                            update_query = text("""
-                                UPDATE support_tickets 
-                                SET sla_breached = true 
-                                WHERE id = :ticket_id
-                            """)
-                            db.session.execute(
-                                update_query,
-                                {'ticket_id': ticket_row.id}
+                        # Use ORM query instead of raw SQL
+                        overdue_tickets = db.session.query(SupportTicket).filter(
+                            and_(
+                                SupportTicket.sla_deadline < current_time,
+                                SupportTicket.sla_breached == False,
+                                or_(
+                                    SupportTicket.status == 'open',
+                                    SupportTicket.status == 'in_progress'
+                                )
                             )
+                        ).all()
+                        
+                        for ticket in overdue_tickets:
+                            # Update using ORM
+                            ticket.sla_breached = True
                             
-                            logger.warning(f"SLA breached for ticket #{ticket_row.ticket_number}")
+                            logger.warning(f"SLA breached for ticket #{ticket.ticket_number}")
                             
                             # ONLY EMAIL notification to admin - NO TELEGRAM
                             try:
                                 if admin_notification_service:
-                                    class TicketObj:
-                                        def __init__(self, row):
-                                            self.id = row.id
-                                            self.ticket_number = row.ticket_number
-                                            self.created_at = row.created_at
-                                            self.sla_deadline = row.sla_deadline
-                                            self.priority = row.priority
-                                    
-                                    admin_notification_service.notify_sla_breach(TicketObj(ticket_row))
+                                    admin_notification_service.notify_sla_breach(ticket)
                             except Exception as e:
                                 logger.error(f"Error handling SLA breach notification: {e}")
                         
