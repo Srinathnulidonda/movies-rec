@@ -32,18 +32,23 @@ else:
     logger.warning("TELEGRAM_BOT_TOKEN not set - Telegram notifications disabled")
 
 class TelegramTemplates:
-    """Modern, compact templates for CineBrain"""
+    """Premium cinematic templates for CineBrain's Telegram channel"""
     
     @staticmethod
     def get_rating_display(rating):
-        """Get clean rating display"""
+        """Format rating with trophy emoji for high scores"""
         if not rating:
-            return "N/A"
-        return f"{rating}/10"
+            return "🏆 <b>N/A</b>"
+        if rating >= 9.0:
+            return f"🏆 <b>{rating}/10</b>"
+        elif rating >= 8.0:
+            return f"⭐ <b>{rating}/10</b>"
+        else:
+            return f"⭐ <b>{rating}/10</b>"
     
     @staticmethod
     def format_runtime(runtime):
-        """Format runtime compactly"""
+        """Format runtime elegantly"""
         if not runtime:
             return None
         hours = runtime // 60
@@ -60,24 +65,8 @@ class TelegramTemplates:
         return " • ".join(genres_list[:limit])
     
     @staticmethod
-    def format_info_line(rating, runtime, genres_list):
-        """Create aligned info line"""
-        parts = []
-        if rating:
-            parts.append(f"⭐ <b>{rating}/10</b>")
-        if runtime:
-            runtime_str = TelegramTemplates.format_runtime(runtime)
-            if runtime_str:
-                parts.append(f"⏱ <b>{runtime_str}</b>")
-        if genres_list:
-            genres_str = TelegramTemplates.format_genres(genres_list)
-            parts.append(f"🎭 <b>{genres_str}</b>")
-        
-        return " | ".join(parts) if parts else "🎭 <b>Drama</b>"
-    
-    @staticmethod
     def format_year(release_date):
-        """Extract year from date"""
+        """Extract and format year"""
         if not release_date:
             return ""
         try:
@@ -88,125 +77,148 @@ class TelegramTemplates:
             return ""
     
     @staticmethod
-    def truncate_overview(text, limit=180):
-        """Truncate text elegantly"""
+    def truncate_text(text, limit=150):
+        """Elegantly truncate text at word boundary"""
         if not text:
-            return "A cinematic experience awaits on CineBrain."
+            return "A cinematic masterpiece awaits your discovery on CineBrain."
         if len(text) <= limit:
             return text
         return text[:limit].rsplit(' ', 1)[0] + "..."
     
     @staticmethod
-    def get_hashtags(content_type, genres_list=None):
-        """Generate relevant hashtags"""
-        tags = ["#CineBrain"]
-        
-        if content_type == "movie":
-            tags.append("#MovieRecommendation")
-        elif content_type == "tv":
-            tags.append("#TVSeries")
-        elif content_type == "anime":
-            tags.append("#AnimeRecommendation")
-        
-        if genres_list and len(genres_list) > 0:
-            clean_genre = genres_list[0].replace(" ", "").replace("-", "")
-            tags.append(f"#{clean_genre}")
-        
-        tags.append("#NowTrending")
-        return " ".join(tags)
-    
-    @staticmethod
     def get_cinebrain_url(slug):
-        """Generate CineBrain URL"""
+        """Generate CineBrain detail page URL"""
         return f"https://cinebrain.vercel.app/explore/details.html?{slug}"
     
     @staticmethod
+    def get_content_emoji(content_type):
+        """Get appropriate emoji for content type"""
+        return {
+            'movie': '🎥',
+            'tv': '📺',
+            'anime': '🎌',
+            'series': '📺'
+        }.get(content_type, '🎬')
+    
+    # ═══════════════════════════════════════════════════════════════
+    # MOVIE RECOMMENDATION TEMPLATE
+    # Premium cinematic layout with CineBrain Insight branding
+    # ═══════════════════════════════════════════════════════════════
+    @staticmethod
     def movie_recommendation_template(content, admin_name, description, genres_list=None):
-        """Compact movie recommendation template"""
+        """Ultra-premium movie recommendation with cinematic layout"""
         
-        # Parse data
+        # Parse genres if needed
         if not genres_list and content.genres:
             try:
                 genres_list = json.loads(content.genres)
             except:
                 genres_list = []
         
+        # Format components
         year = TelegramTemplates.format_year(content.release_date)
-        info_line = TelegramTemplates.format_info_line(
-            content.rating, content.runtime, genres_list
-        )
-        overview = TelegramTemplates.truncate_overview(content.overview)
-        hashtags = TelegramTemplates.get_hashtags("movie", genres_list)
+        rating = TelegramTemplates.get_rating_display(content.rating)
+        runtime = TelegramTemplates.format_runtime(content.runtime)
+        genres = TelegramTemplates.format_genres(genres_list)
+        overview = TelegramTemplates.truncate_text(content.overview, 150)
         url = TelegramTemplates.get_cinebrain_url(content.slug)
         
-        message = f"""🎬 <b>{content.title.upper()}</b> <i>{year}</i>
+        # Build info line with proper spacing
+        info_parts = [rating]
+        if runtime:
+            info_parts.append(f"⏱ <b>{runtime}</b>")
+        info_parts.append(f"🎭 {genres}")
+        info_line = " | ".join(info_parts)
+        
+        message = f"""🎬 <b>CineBrain Spotlight</b>
+━━━━━━━━━━━━━━━━━━━
+
+<b>🎥 {content.title.upper()}</b> <i>{year}</i>
 
 {info_line}
 
-💡 <b>CineBrain Insight:</b>
-<i>{description}</i>
+━━━━━━━━━━━━━━━━━━━
+💡 <b>CineBrain Insight</b>
+<i>"{description}"</i>
 
 ━━━━━━━━━━━━━━━━━━━
-
+📖 <b>Synopsis</b>
 <i>{overview}</i>
 
-👉 <a href="{url}"><b>Watch on CineBrain</b></a>
+━━━━━━━━━━━━━━━━━━━
+🎯 <b>Watch on CineBrain</b>
+👉 <a href="{url}"><b>TAP HERE FOR FULL DETAILS</b></a>
 
-{hashtags}
+🍿 <i>Personalized recommendations & latest updates only on CineBrain</i>
 
-<i>Curated with 💙 by CineBrain</i>"""
+#CineBrain #SmartRecommendations #NowTrending
+
+╰┈➤ Curated with 💙 by <b>CineBrain</b>"""
         
         return message
     
+    # ═══════════════════════════════════════════════════════════════
+    # TV SERIES RECOMMENDATION TEMPLATE
+    # Binge-worthy series with editorial insights
+    # ═══════════════════════════════════════════════════════════════
     @staticmethod
     def tv_show_recommendation_template(content, admin_name, description, genres_list=None):
-        """Compact TV series template"""
+        """Premium TV series template with binge-worthy appeal"""
         
-        # Parse data
+        # Parse genres if needed
         if not genres_list and content.genres:
             try:
                 genres_list = json.loads(content.genres)
             except:
                 genres_list = []
         
+        # Format components
         year = TelegramTemplates.format_year(content.release_date)
-        # For TV shows, we might not have runtime
-        info_parts = []
-        if content.rating:
-            info_parts.append(f"⭐ <b>{content.rating}/10</b>")
-        info_parts.append(f"📺 <b>TV Series</b>")
-        if genres_list:
-            info_parts.append(f"🎭 <b>{TelegramTemplates.format_genres(genres_list)}</b>")
-        
-        info_line = " | ".join(info_parts)
-        overview = TelegramTemplates.truncate_overview(content.overview)
-        hashtags = TelegramTemplates.get_hashtags("tv", genres_list)
+        rating = TelegramTemplates.get_rating_display(content.rating)
+        genres = TelegramTemplates.format_genres(genres_list)
+        overview = TelegramTemplates.truncate_text(content.overview, 150)
         url = TelegramTemplates.get_cinebrain_url(content.slug)
         
-        message = f"""📺 <b>{content.title.upper()}</b> <i>{year}</i>
+        # Build info line
+        info_parts = [rating, f"📺 <b>Series</b>", f"🎭 {genres}"]
+        info_line = " | ".join(info_parts)
+        
+        message = f"""📺 <b>CineBrain Spotlight</b>
+━━━━━━━━━━━━━━━━━━━
+
+<b>📺 {content.title.upper()}</b> <i>{year}</i>
 
 {info_line}
 
-🌟 <b>Editor's Note:</b>
-<i>{description}</i>
+━━━━━━━━━━━━━━━━━━━
+💡 <b>CineBrain Insight</b>
+<i>"{description}"</i>
 
 ━━━━━━━━━━━━━━━━━━━
-
+📖 <b>Synopsis</b>
 <i>{overview}</i>
 
-👉 <a href="{url}"><b>Binge on CineBrain</b></a>
+━━━━━━━━━━━━━━━━━━━
+🎯 <b>Binge on CineBrain</b>
+👉 <a href="{url}"><b>START WATCHING NOW</b></a>
 
-{hashtags} #BingeWorthy
+🍿 <i>Complete seasons & exclusive content on CineBrain</i>
 
-<i>Curated with 💙 by CineBrain</i>"""
+#CineBrain #BingeWorthy #TVSeries
+
+╰┈➤ Curated with 💙 by <b>CineBrain</b>"""
         
         return message
     
+    # ═══════════════════════════════════════════════════════════════
+    # ANIME RECOMMENDATION TEMPLATE
+    # Japanese animation with otaku appeal
+    # ═══════════════════════════════════════════════════════════════
     @staticmethod
     def anime_recommendation_template(content, admin_name, description, genres_list=None, anime_genres_list=None):
-        """Compact anime template"""
+        """Premium anime template with cultural authenticity"""
         
-        # Parse genres
+        # Combine all genres
         all_genres = []
         if genres_list:
             all_genres.extend(genres_list)
@@ -224,42 +236,58 @@ class TelegramTemplates:
             except:
                 pass
         
+        # Format components
         year = TelegramTemplates.format_year(content.release_date)
-        info_parts = []
-        if content.rating:
-            info_parts.append(f"⭐ <b>{content.rating}/10</b>")
-        info_parts.append(f"🎌 <b>Anime</b>")
-        if all_genres:
-            info_parts.append(f"🎭 <b>{TelegramTemplates.format_genres(all_genres)}</b>")
-        
-        info_line = " | ".join(info_parts)
-        overview = TelegramTemplates.truncate_overview(content.overview)
-        hashtags = TelegramTemplates.get_hashtags("anime", all_genres)
+        rating = TelegramTemplates.get_rating_display(content.rating)
+        genres = TelegramTemplates.format_genres(all_genres)
+        overview = TelegramTemplates.truncate_text(content.overview, 150)
         url = TelegramTemplates.get_cinebrain_url(content.slug)
         
-        message = f"""🎌 <b>{content.title.upper()}</b> <i>{year}</i>
+        # Build info line
+        info_parts = [rating, f"🎌 <b>Anime</b>", f"🎭 {genres}"]
+        info_line = " | ".join(info_parts)
+        
+        # Add original title if different
+        title_display = f"<b>🎌 {content.title.upper()}</b>"
+        if content.original_title and content.original_title != content.title:
+            title_display += f"\n<i>{content.original_title}</i>"
+        
+        message = f"""🎌 <b>CineBrain Spotlight</b>
+━━━━━━━━━━━━━━━━━━━
+
+{title_display} <i>{year}</i>
 
 {info_line}
 
-🎯 <b>Spotlight Highlight:</b>
-<i>{description}</i>
+━━━━━━━━━━━━━━━━━━━
+💡 <b>CineBrain Insight</b>
+<i>"{description}"</i>
 
 ━━━━━━━━━━━━━━━━━━━
-
+📖 <b>Synopsis</b>
 <i>{overview}</i>
 
-👉 <a href="{url}"><b>Stream on CineBrain</b></a>
+━━━━━━━━━━━━━━━━━━━
+🎯 <b>Stream on CineBrain</b>
+👉 <a href="{url}"><b>WATCH WITH SUBTITLES</b></a>
 
-{hashtags}
+🍜 <i>Latest anime & classics streaming on CineBrain</i>
 
-<i>Curated with 💙 by CineBrain</i>"""
+#CineBrain #Anime #MustWatch
+
+╰┈➤ Curated with 💙 by <b>CineBrain</b>"""
         
         return message
     
+    # ═══════════════════════════════════════════════════════════════
+    # NEW CONTENT ALERT TEMPLATE
+    # Fresh arrivals with immediate appeal
+    # ═══════════════════════════════════════════════════════════════
     @staticmethod
     def new_content_alert_template(content):
-        """Compact new arrival template"""
+        """Clean new arrival notification"""
         
+        # Parse genres
         genres_list = []
         if content.genres:
             try:
@@ -267,39 +295,52 @@ class TelegramTemplates:
             except:
                 pass
         
+        # Format components
         year = TelegramTemplates.format_year(content.release_date)
-        info_line = TelegramTemplates.format_info_line(
-            content.rating, content.runtime, genres_list
-        )
-        overview = TelegramTemplates.truncate_overview(content.overview, 150)
+        rating = TelegramTemplates.get_rating_display(content.rating)
+        runtime = TelegramTemplates.format_runtime(content.runtime)
+        genres = TelegramTemplates.format_genres(genres_list)
+        overview = TelegramTemplates.truncate_text(content.overview, 120)
         url = TelegramTemplates.get_cinebrain_url(content.slug)
+        emoji = TelegramTemplates.get_content_emoji(content.content_type)
         
-        content_emoji = "🎬"
-        if content.content_type == "tv":
-            content_emoji = "📺"
-        elif content.content_type == "anime":
-            content_emoji = "🎌"
+        # Build info line
+        info_parts = [rating]
+        if runtime:
+            info_parts.append(f"⏱ <b>{runtime}</b>")
+        info_parts.append(f"🎭 {genres}")
+        info_line = " | ".join(info_parts)
         
-        message = f"""🆕 <b>{content.title.upper()}</b> <i>just added to CineBrain!</i>
+        message = f"""🆕 <b>Just Added to CineBrain</b>
+━━━━━━━━━━━━━━━━━━━
+
+<b>{emoji} {content.title.upper()}</b> <i>{year}</i>
 
 {info_line}
 
 ━━━━━━━━━━━━━━━━━━━
-
+📖 <b>Synopsis</b>
 <i>{overview}</i>
 
-👉 <a href="{url}"><b>View Full Details</b></a>
+━━━━━━━━━━━━━━━━━━━
+🎯 <b>Available Now</b>
+👉 <a href="{url}"><b>WATCH ON CINEBRAIN</b></a>
 
-#CineBrain #NewArrival #NowTrending #MustWatch
+#CineBrain #NewArrival #JustAdded
 
-<i>Curated with 💙 by CineBrain</i>"""
+╰┈➤ Fresh content daily on <b>CineBrain</b>"""
         
         return message
     
+    # ═══════════════════════════════════════════════════════════════
+    # TRENDING ALERT TEMPLATE
+    # Viral content with urgency
+    # ═══════════════════════════════════════════════════════════════
     @staticmethod
     def trending_alert_template(content, trend_type="trending"):
-        """Compact trending alert"""
+        """Trending content with viral appeal"""
         
+        # Parse genres
         genres_list = []
         if content.genres:
             try:
@@ -307,6 +348,7 @@ class TelegramTemplates:
             except:
                 pass
         
+        # Format components
         trend_emoji = {
             'rising': '📈',
             'hot': '🔥',
@@ -316,101 +358,133 @@ class TelegramTemplates:
         }.get(trend_type, '⚡')
         
         year = TelegramTemplates.format_year(content.release_date)
-        info_line = TelegramTemplates.format_info_line(
-            content.rating, content.runtime, genres_list
-        )
-        overview = TelegramTemplates.truncate_overview(content.overview, 150)
-        hashtags = TelegramTemplates.get_hashtags(content.content_type, genres_list)
+        rating = TelegramTemplates.get_rating_display(content.rating)
+        runtime = TelegramTemplates.format_runtime(content.runtime)
+        genres = TelegramTemplates.format_genres(genres_list)
+        overview = TelegramTemplates.truncate_text(content.overview, 120)
         url = TelegramTemplates.get_cinebrain_url(content.slug)
+        emoji = TelegramTemplates.get_content_emoji(content.content_type)
         
-        message = f"""{trend_emoji} <b>{content.title.upper()}</b> <i>is {trend_type} now!</i>
+        # Build info line
+        info_parts = [rating]
+        if runtime:
+            info_parts.append(f"⏱ <b>{runtime}</b>")
+        info_parts.append(f"🎭 {genres}")
+        info_line = " | ".join(info_parts)
+        
+        message = f"""{trend_emoji} <b>{trend_type.upper()} NOW</b>
+━━━━━━━━━━━━━━━━━━━
+
+<b>{emoji} {content.title.upper()}</b> <i>{year}</i>
 
 {info_line}
 
 ━━━━━━━━━━━━━━━━━━━
-
+📖 <b>What's the Buzz?</b>
 <i>{overview}</i>
 
-👉 <a href="{url}"><b>Join the hype on CineBrain</b></a>
+━━━━━━━━━━━━━━━━━━━
+🎯 <b>Join the Hype</b>
+👉 <a href="{url}"><b>WATCH NOW ON CINEBRAIN</b></a>
 
-{hashtags} #{trend_type.title()}
+#CineBrain #{trend_type.title()} #MustWatch
 
-<i>Curated with 💙 by CineBrain</i>"""
+╰┈➤ Trending content on <b>CineBrain</b>"""
         
         return message
     
+    # ═══════════════════════════════════════════════════════════════
+    # WEEKLY DIGEST TEMPLATE
+    # Curated weekly highlights
+    # ═══════════════════════════════════════════════════════════════
     @staticmethod
     def weekly_digest_template(recommendations_list, week_number):
-        """Compact weekly digest"""
+        """Weekly curated picks in compact format"""
         
-        message = f"""🌟 <b>CINEBRAIN WEEKLY PICKS</b> <i>Week {week_number}</i>
-
+        message = f"""🌟 <b>CineBrain Weekly</b> • <i>Week {week_number}</i>
 ━━━━━━━━━━━━━━━━━━━
+
+<b>TOP PICKS THIS WEEK</b>
 
 """
         
         for i, rec in enumerate(recommendations_list[:5], 1):
-            emoji = {'movie': '🎬', 'tv': '📺', 'anime': '🎌'}.get(rec['content_type'], '🎬')
+            emoji = TelegramTemplates.get_content_emoji(rec.get('content_type', 'movie'))
             rating = rec.get('rating', 'N/A')
+            if rating != 'N/A':
+                rating = f"{rating}/10"
+            
+            # Truncate description to keep it compact
+            desc = rec.get('description', '')[:50]
+            if len(rec.get('description', '')) > 50:
+                desc += "..."
             
             message += f"""<b>{i}.</b> {emoji} <b>{rec['title']}</b>
-   ⭐ {rating}/10 | <i>{rec['description'][:60]}...</i>
+   ⭐ {rating} | <i>{desc}</i>
 
 """
         
         message += f"""━━━━━━━━━━━━━━━━━━━
+🎯 <b>Explore All Picks</b>
+👉 <a href="https://cinebrain.vercel.app"><b>VISIT CINEBRAIN</b></a>
 
-🎯 <a href="https://cinebrain.vercel.app"><b>Explore all picks on CineBrain</b></a>
+#CineBrain #WeeklyPicks #Curated
 
-#CineBrain #WeeklyPicks #PersonalizedRecommendations
-
-<i>Curated with 💙 by CineBrain</i>"""
+╰┈➤ Your weekly dose from <b>CineBrain</b>"""
         
         return message
     
+    # ═══════════════════════════════════════════════════════════════
+    # BATCH CONTENT TEMPLATE
+    # Multiple new additions announcement
+    # ═══════════════════════════════════════════════════════════════
     @staticmethod
     def batch_content_template(content_list, batch_type="content"):
-        """Compact batch alert"""
+        """Batch content drop notification"""
         
         emoji = {'movies': '🎬', 'shows': '📺', 'anime': '🎌'}.get(batch_type, '🎬')
         count = len(content_list)
         
-        message = f"""{emoji} <b>{count} NEW {batch_type.upper()} ADDED!</b>
-
+        message = f"""{emoji} <b>{count} NEW {batch_type.upper()} ADDED</b>
 ━━━━━━━━━━━━━━━━━━━
+
+<b>LATEST ADDITIONS</b>
 
 """
         
         for i, content in enumerate(content_list[:5], 1):
-            rating = content.rating or 'N/A'
-            message += f"<b>{i}.</b> {emoji} <b>{content.title}</b> <i>(⭐ {rating}/10)</i>\n"
+            rating = content.rating if content.rating else 'N/A'
+            if rating != 'N/A':
+                rating = f"{rating}/10"
+            
+            message += f"<b>{i}.</b> {emoji} <b>{content.title}</b> • ⭐ {rating}\n"
         
         if count > 5:
-            message += f"\n<i>...and {count - 5} more!</i>\n"
+            message += f"\n<i>...plus {count - 5} more titles!</i>\n"
         
         message += f"""
 ━━━━━━━━━━━━━━━━━━━
-
-🎯 <a href="https://cinebrain.vercel.app"><b>Browse all on CineBrain</b></a>
+🎯 <b>Browse Collection</b>
+👉 <a href="https://cinebrain.vercel.app"><b>EXPLORE ALL ON CINEBRAIN</b></a>
 
 #CineBrain #NewContent #{batch_type.title()}
 
-<i>Curated with 💙 by CineBrain</i>"""
+╰┈➤ Fresh content daily on <b>CineBrain</b>"""
         
         return message
 
 class TelegramService:
-    """Service for sending Telegram notifications"""
+    """Service for sending beautifully formatted Telegram notifications"""
     
     @staticmethod
     def send_admin_recommendation(content, admin_name, description):
-        """Send admin recommendation"""
+        """Send admin-curated recommendation with premium formatting"""
         try:
             if not bot or not TELEGRAM_CHANNEL_ID:
                 logger.warning("Telegram recommendation skipped - channel not configured")
                 return False
             
-            # Choose template based on content type
+            # Select appropriate template based on content type
             if content.content_type == 'anime':
                 message = TelegramTemplates.anime_recommendation_template(
                     content, admin_name, description
@@ -432,12 +506,12 @@ class TelegramService:
                 else:
                     poster_url = f"https://image.tmdb.org/t/p/w500{content.poster_path}"
             
-            # Create inline keyboard
+            # Create premium inline keyboard
             keyboard = types.InlineKeyboardMarkup(row_width=2)
             
             detail_url = TelegramTemplates.get_cinebrain_url(content.slug)
             
-            # Primary buttons
+            # Primary action buttons
             watch_btn = types.InlineKeyboardButton(
                 text="🎬 Watch Now",
                 url=detail_url
@@ -448,7 +522,7 @@ class TelegramService:
             )
             keyboard.add(watch_btn, details_btn)
             
-            # Trailer button if available
+            # Add trailer button if available
             if content.youtube_trailer_id:
                 trailer_btn = types.InlineKeyboardButton(
                     text="🎥 Watch Trailer",
@@ -456,14 +530,14 @@ class TelegramService:
                 )
                 keyboard.add(trailer_btn)
             
-            # CineBrain button
+            # CineBrain exploration button
             explore_btn = types.InlineKeyboardButton(
-                text="🌟 Explore CineBrain",
+                text="🌐 Explore CineBrain",
                 url="https://cinebrain.vercel.app"
             )
             keyboard.add(explore_btn)
             
-            # Send message
+            # Send message with or without poster
             if poster_url:
                 try:
                     bot.send_photo(
@@ -489,7 +563,7 @@ class TelegramService:
                     reply_markup=keyboard
                 )
             
-            logger.info(f"✅ Recommendation sent: {content.title}")
+            logger.info(f"✅ Premium recommendation sent: {content.title}")
             return True
             
         except Exception as e:
@@ -498,7 +572,7 @@ class TelegramService:
     
     @staticmethod
     def send_trending_alert(content, trend_type="trending"):
-        """Send trending alert"""
+        """Send trending content alert with viral appeal"""
         try:
             if not bot or not TELEGRAM_CHANNEL_ID:
                 return False
@@ -518,7 +592,12 @@ class TelegramService:
                 text="🔥 Watch Now",
                 url=detail_url
             )
+            explore_btn = types.InlineKeyboardButton(
+                text="🌐 More Trending",
+                url="https://cinebrain.vercel.app"
+            )
             keyboard.add(watch_btn)
+            keyboard.add(explore_btn)
             
             if poster_url:
                 try:
@@ -553,7 +632,7 @@ class TelegramService:
     
     @staticmethod
     def send_new_content_alert(content):
-        """Send new content alert"""
+        """Send new content arrival notification"""
         try:
             if not bot or not TELEGRAM_CHANNEL_ID:
                 return False
@@ -573,7 +652,12 @@ class TelegramService:
                 text="✨ Discover Now",
                 url=detail_url
             )
+            browse_btn = types.InlineKeyboardButton(
+                text="🆕 More New Arrivals",
+                url="https://cinebrain.vercel.app"
+            )
             keyboard.add(discover_btn)
+            keyboard.add(browse_btn)
             
             if poster_url:
                 try:
@@ -608,7 +692,7 @@ class TelegramService:
     
     @staticmethod
     def send_weekly_digest(recommendations_list, week_number):
-        """Send weekly digest"""
+        """Send weekly curated digest"""
         try:
             if not bot or not TELEGRAM_CHANNEL_ID:
                 return False
@@ -620,7 +704,12 @@ class TelegramService:
                 text="🌟 View All Picks",
                 url="https://cinebrain.vercel.app"
             )
+            subscribe_btn = types.InlineKeyboardButton(
+                text="🔔 Get Updates",
+                url="https://t.me/" + TELEGRAM_CHANNEL_ID.replace('@', '')
+            )
             keyboard.add(explore_btn)
+            keyboard.add(subscribe_btn)
             
             bot.send_message(
                 chat_id=TELEGRAM_CHANNEL_ID,
@@ -638,7 +727,7 @@ class TelegramService:
     
     @staticmethod
     def send_new_content_batch_alert(content_list, batch_type="content"):
-        """Send batch content alert"""
+        """Send batch content notification"""
         try:
             if not bot or not TELEGRAM_CHANNEL_ID:
                 return False
@@ -667,11 +756,11 @@ class TelegramService:
             return False
 
 class TelegramAdminService:
-    """Admin notification service"""
+    """Admin notification service for internal updates"""
     
     @staticmethod
     def send_content_notification(content_title, admin_name, action_type="added"):
-        """Send admin notification"""
+        """Send admin action notification"""
         try:
             if not bot or not TELEGRAM_ADMIN_CHAT_ID:
                 return False
@@ -681,20 +770,18 @@ class TelegramAdminService:
                 'updated': '✏️',
                 'deleted': '🗑️',
                 'recommended': '⭐'
-            }
+            }.get(action_type, '📝')
             
-            emoji = action_emoji.get(action_type, '📝')
-            
-            message = f"""
-{emoji} <b>CONTENT {action_type.upper()}</b>
+            message = f"""{action_emoji} <b>ADMIN ACTION</b>
+━━━━━━━━━━━━━━━━━━━
 
-<b>📌 Title:</b> {content_title}
-<b>👤 Admin:</b> {admin_name}
-<b>⚡ Action:</b> {action_type}
-<b>🕐 Time:</b> {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}
+<b>Content:</b> {content_title}
+<b>Admin:</b> {admin_name}
+<b>Action:</b> {action_type.upper()}
+<b>Time:</b> {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}
 
-#AdminAction #CineBrain
-"""
+━━━━━━━━━━━━━━━━━━━
+#AdminAction #CineBrain"""
             
             bot.send_message(
                 chat_id=TELEGRAM_ADMIN_CHAT_ID,
@@ -711,29 +798,29 @@ class TelegramAdminService:
     
     @staticmethod
     def send_recommendation_stats(stats_data):
-        """Send recommendation statistics"""
+        """Send recommendation statistics to admin"""
         try:
             if not bot or not TELEGRAM_ADMIN_CHAT_ID:
                 return False
             
-            message = f"""
-📊 <b>RECOMMENDATION STATS</b>
+            message = f"""📊 <b>RECOMMENDATION STATS</b>
+━━━━━━━━━━━━━━━━━━━
 
-<b>📈 Overview:</b>
+<b>📈 Overview</b>
 • Total Recommendations: <b>{stats_data.get('total', 0)}</b>
 • This Week: <b>{stats_data.get('this_week', 0)}</b>
 • Top Admin: <b>{stats_data.get('top_admin', 'N/A')}</b>
 • Top Genre: <b>{stats_data.get('top_genre', 'N/A')}</b>
 
-<b>🎯 Engagement:</b>
+<b>🎯 Engagement</b>
 • Views: <b>{stats_data.get('views', 0):,}</b>
 • Clicks: <b>{stats_data.get('clicks', 0):,}</b>
 • CTR: <b>{stats_data.get('ctr', 0):.2f}%</b>
 
-<b>🕐 Generated:</b> {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}
+━━━━━━━━━━━━━━━━━━━
+<i>Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}</i>
 
-#Stats #CineBrain
-"""
+#Stats #CineBrain"""
             
             bot.send_message(
                 chat_id=TELEGRAM_ADMIN_CHAT_ID,
@@ -749,14 +836,14 @@ class TelegramAdminService:
             return False
 
 class TelegramScheduler:
-    """Background scheduler for automated tasks"""
+    """Background scheduler for automated Telegram tasks"""
     
     def __init__(self, app=None):
         self.app = app
         self.running = False
     
     def start_scheduler(self):
-        """Start the scheduler"""
+        """Start the background scheduler"""
         if self.running:
             return
         
@@ -784,23 +871,24 @@ class TelegramScheduler:
         logger.info("✅ Telegram scheduler started")
     
     def stop_scheduler(self):
-        """Stop the scheduler"""
+        """Stop the background scheduler"""
         self.running = False
         logger.info("🛑 Scheduler stopped")
     
     def _send_weekly_digest(self):
-        """Send weekly digest (placeholder)"""
+        """Internal method to send weekly digest"""
         try:
             week_number = datetime.utcnow().isocalendar()[1]
             logger.info(f"Would send weekly digest for week {week_number}")
-            # Implementation would query recent recommendations and send digest
+            # Implementation would query recent recommendations from database
+            # and call TelegramService.send_weekly_digest()
         except Exception as e:
             logger.error(f"Weekly digest error: {e}")
 
 telegram_scheduler = None
 
 def init_telegram_service(app, db, models, services):
-    """Initialize Telegram service"""
+    """Initialize Telegram service with all components"""
     global telegram_scheduler
     
     try:
@@ -808,14 +896,15 @@ def init_telegram_service(app, db, models, services):
         
         if bot:
             telegram_scheduler.start_scheduler()
-            logger.info("✅ Telegram service initialized")
-            logger.info("   - Modern compact templates: ✓")
+            logger.info("✅ Telegram service initialized with CineBrain branding")
+            logger.info("   - Premium cinematic templates: ✓")
+            logger.info("   - CineBrain Insight branding: ✓")
             logger.info("   - Content recommendations: ✓")
             logger.info("   - Trending alerts: ✓")
             logger.info("   - Admin notifications: ✓")
-            logger.info("   - CineBrain branding: ✓")
+            logger.info("   - Weekly digest scheduler: ✓")
         else:
-            logger.warning("⚠️ Telegram bot not configured")
+            logger.warning("⚠️ Telegram bot not configured - service disabled")
         
         return {
             'telegram_service': TelegramService,
@@ -829,7 +918,7 @@ def init_telegram_service(app, db, models, services):
         return None
 
 def cleanup_telegram_service():
-    """Cleanup Telegram service"""
+    """Cleanup Telegram service resources"""
     global telegram_scheduler
     if telegram_scheduler:
         telegram_scheduler.stop_scheduler()
