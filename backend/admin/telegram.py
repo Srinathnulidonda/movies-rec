@@ -1,5 +1,3 @@
-# admin/telegram.py
-
 """
 CineBrain Telegram Integration
 Premium cinematic messaging for intelligent movie discovery
@@ -122,12 +120,12 @@ class TelegramTemplates:
         # Build runtime display
         runtime_str = f" | ⏱ {runtime}" if runtime else ""
         
-        message = f"""<b>Movie: {content.title}{year}</b>
-<b>Ratings:</b> {rating}{runtime_str}
-<b>Genre:</b> {genres}
+        message = f"""<b>🎞️ Movie: {content.title}{year}</b>
+<b>✨ Ratings:</b> {rating}{runtime_str}
+<b>🎭 Genre:</b> {genres}
 {DIVIDER}
-📖 <b>Synopsis</b>
-<blockquote>{synopsis}</blockquote>
+💬 <b>Synopsis</b>
+<blockquote><i>{synopsis}</i></blockquote>
 {DIVIDER}
 <i>🍿 Smart recommendations • Upcoming updates • Latest updates • New releases • Trending updates — visit <a href="https://cinebrain.vercel.app/">CineBrain</a></i>
 
@@ -159,14 +157,12 @@ class TelegramTemplates:
         if hasattr(content, 'seasons') and content.seasons:
             runtime_str = f" | ⏱ {content.seasons} Seasons"
         
-        message = f"""<b>TV-Show/Web Series: {content.title}{year}</b>
-<b>Ratings:</b> {rating}{runtime_str}
-<b>Genre:</b> {genres}
+        message = f"""<b>🎞️ TV-Show/Web Series: {content.title}{year}</b>
+<b>✨ Ratings:</b> {rating}{runtime_str}
+<b>🎭 Genre:</b> {genres}
 {DIVIDER}
-📖 <b>Synopsis</b>
-
-<blockquote>{synopsis}</blockquote>
-
+💬 <b>Synopsis</b>
+<blockquote><i>{synopsis}</i></blockquote>
 {DIVIDER}
 <i>🍿 Smart recommendations • Upcoming updates • Latest updates • New releases • Trending updates — visit <a href="https://cinebrain.vercel.app/">CineBrain</a></i>
 
@@ -211,14 +207,12 @@ class TelegramTemplates:
         else:
             runtime_str = " | ⏱ Ongoing"
         
-        message = f"""<b>Anime: {content.title}{year}</b>
-<b>Ratings:</b> {rating}{runtime_str}
-<b>Genre:</b> {genres}
+        message = f"""<b>🎞️ Anime: {content.title}{year}</b>
+<b>✨ Ratings:</b> {rating}{runtime_str}
+<b>🎭 Genre:</b> {genres}
 {DIVIDER}
-📖 <b>Synopsis</b>
-
-<blockquote>{synopsis}</blockquote>
-
+💬 <b>Synopsis</b>
+<blockquote><i>{synopsis}</i></blockquote>
 {DIVIDER}
 <i>🍿 Smart recommendations • Upcoming updates • Latest updates • New releases • Trending updates — visit <a href="https://cinebrain.vercel.app/">CineBrain</a></i>
 
