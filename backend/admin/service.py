@@ -16,15 +16,15 @@ logger = logging.getLogger(__name__)
 REDIS_URL = os.environ.get('REDIS_URL')
 
 class NotificationType:
-    """Notification types as constants to avoid enum issues"""
-    NEW_TICKET = "new_ticket"
-    URGENT_TICKET = "urgent_ticket"
-    TICKET_ESCALATION = "ticket_escalation"
-    SLA_BREACH = "sla_breach"
-    FEEDBACK_RECEIVED = "feedback_received"
-    SYSTEM_ALERT = "system_alert"
-    USER_ACTIVITY = "user_activity"
-    CONTENT_ADDED = "content_added"
+    """Notification types as constants to match database ENUM values"""
+    NEW_TICKET = "NEW_TICKET"
+    URGENT_TICKET = "URGENT_TICKET"
+    TICKET_ESCALATION = "TICKET_ESCALATION"
+    SLA_BREACH = "SLA_BREACH"
+    FEEDBACK_RECEIVED = "FEEDBACK_RECEIVED"
+    SYSTEM_ALERT = "SYSTEM_ALERT"
+    USER_ACTIVITY = "user_activity"  # Use lowercase (newly added)
+    CONTENT_ADDED = "content_added"  # Use lowercase (newly added)
 
 class AdminEmailService:
     """Email service for admin notifications using auth email service"""
