@@ -733,7 +733,7 @@ def get_admin_dashboard():
         logger.error(f"Error fetching dashboard data: {e}")
         return jsonify({'error': 'Failed to fetch dashboard data'}), 500
 
-# Webhook Routes (moved from app.py)
+# Webhook Routes - UPDATED to use admin notification service through existing services
 @support_bp.route('/api/webhooks/support/ticket-created', methods=['POST'])
 def webhook_ticket_created():
     """Handle ticket creation webhook"""
@@ -744,10 +744,13 @@ def webhook_ticket_created():
         if ticket_id and 'SupportTicket' in globals():
             SupportTicket = globals()['SupportTicket']
             ticket = SupportTicket.query.get(ticket_id)
-            if ticket:
+            if ticket and ticket_service:
+                # Use the ticket service's admin notification service
                 try:
-                    from services.admin import AdminNotificationService
-                    AdminNotificationService.notify_new_ticket(ticket)
+                    if hasattr(ticket_service, 'admin_notification_service') and ticket_service.admin_notification_service:
+                        ticket_service.admin_notification_service.notify_new_ticket(ticket)
+                    else:
+                        logger.warning("Admin notification service not available for webhook")
                 except Exception as e:
                     logger.error(f"CineBrain error handling new ticket notification: {e}")
         
@@ -766,10 +769,13 @@ def webhook_feedback_created():
         if feedback_id and 'ContactMessage' in globals():
             ContactMessage = globals()['ContactMessage']
             feedback = ContactMessage.query.get(feedback_id)
-            if feedback:
+            if feedback and contact_service:
+                # Use the contact service's admin notification service
                 try:
-                    from services.admin import AdminNotificationService
-                    AdminNotificationService.notify_feedback_received(feedback)
+                    if hasattr(contact_service, 'admin_notification_service') and contact_service.admin_notification_service:
+                        contact_service.admin_notification_service.notify_feedback_received(feedback)
+                    else:
+                        logger.warning("Admin notification service not available for webhook")
                 except Exception as e:
                     logger.error(f"CineBrain error handling new feedback notification: {e}")
         
