@@ -8,6 +8,7 @@ import psutil
 from sqlalchemy import text
 
 from .system import SystemService
+from .admin_monitor import AdminMonitoringService
 
 # Create the system blueprint
 system_bp = Blueprint('system', __name__)
@@ -31,8 +32,9 @@ def init_system_routes(flask_app, database, app_models, app_services):
     models = app_models
     services = app_services
     
-    # Initialize SystemService
+    # Initialize SystemService and AdminMonitoringService
     SystemService.init(flask_app, database, app_models, app_services)
+    AdminMonitoringService.init(flask_app, database, app_models, app_services)
     
     logger.info("✅ CineBrain system routes initialized successfully")
 
@@ -77,6 +79,108 @@ def detailed_health_check():
             'timestamp': datetime.utcnow().isoformat()
         }), 500
 
+@system_bp.route('/api/health/admin', methods=['GET'])
+def admin_health_check():
+    """Admin-specific health check"""
+    try:
+        admin_health = AdminMonitoringService.get_admin_health_status()
+        return jsonify(admin_health), 200
+        
+    except Exception as e:
+        logger.error(f"CineBrain admin health check error: {e}")
+        return jsonify({
+            'error': 'Failed to get admin health status',
+            'timestamp': datetime.utcnow().isoformat()
+        }), 500
+
+# ============================================================================
+# ADMIN MONITORING ROUTES
+# ============================================================================
+
+@system_bp.route('/api/admin/monitoring/overview', methods=['GET'])
+def admin_monitoring_overview():
+    """Get admin monitoring overview"""
+    try:
+        overview = AdminMonitoringService.get_monitoring_overview()
+        return jsonify(overview), 200
+        
+    except Exception as e:
+        logger.error(f"Admin monitoring overview error: {e}")
+        return jsonify({
+            'error': 'Failed to get admin monitoring overview',
+            'timestamp': datetime.utcnow().isoformat()
+        }), 500
+
+@system_bp.route('/api/admin/monitoring/activity', methods=['GET'])
+def admin_activity_monitoring():
+    """Get admin activity monitoring data"""
+    try:
+        activity = AdminMonitoringService.get_admin_activity()
+        return jsonify(activity), 200
+        
+    except Exception as e:
+        logger.error(f"Admin activity monitoring error: {e}")
+        return jsonify({
+            'error': 'Failed to get admin activity data',
+            'timestamp': datetime.utcnow().isoformat()
+        }), 500
+
+@system_bp.route('/api/admin/monitoring/performance', methods=['GET'])
+def admin_performance_monitoring():
+    """Get admin performance metrics"""
+    try:
+        performance = AdminMonitoringService.get_admin_performance()
+        return jsonify(performance), 200
+        
+    except Exception as e:
+        logger.error(f"Admin performance monitoring error: {e}")
+        return jsonify({
+            'error': 'Failed to get admin performance metrics',
+            'timestamp': datetime.utcnow().isoformat()
+        }), 500
+
+@system_bp.route('/api/admin/monitoring/security', methods=['GET'])
+def admin_security_monitoring():
+    """Get admin security monitoring data"""
+    try:
+        security = AdminMonitoringService.get_security_monitoring()
+        return jsonify(security), 200
+        
+    except Exception as e:
+        logger.error(f"Admin security monitoring error: {e}")
+        return jsonify({
+            'error': 'Failed to get admin security data',
+            'timestamp': datetime.utcnow().isoformat()
+        }), 500
+
+@system_bp.route('/api/admin/monitoring/notifications', methods=['GET'])
+def admin_notifications_monitoring():
+    """Get admin notifications system health"""
+    try:
+        notifications = AdminMonitoringService.get_notification_system_health()
+        return jsonify(notifications), 200
+        
+    except Exception as e:
+        logger.error(f"Admin notifications monitoring error: {e}")
+        return jsonify({
+            'error': 'Failed to get admin notifications data',
+            'timestamp': datetime.utcnow().isoformat()
+        }), 500
+
+@system_bp.route('/api/admin/monitoring/alerts', methods=['GET'])
+def admin_monitoring_alerts():
+    """Get admin-specific monitoring alerts"""
+    try:
+        alerts = AdminMonitoringService.get_admin_alerts()
+        return jsonify(alerts), 200
+        
+    except Exception as e:
+        logger.error(f"Admin alerts monitoring error: {e}")
+        return jsonify({
+            'error': 'Failed to get admin alerts',
+            'timestamp': datetime.utcnow().isoformat()
+        }), 500
+
 # ============================================================================
 # PERFORMANCE MONITORING ROUTES
 # ============================================================================
@@ -106,6 +210,20 @@ def detailed_performance():
         logger.error(f"CineBrain detailed performance error: {e}")
         return jsonify({
             'error': 'Failed to get detailed performance metrics',
+            'timestamp': datetime.utcnow().isoformat()
+        }), 500
+
+@system_bp.route('/api/performance/admin', methods=['GET'])
+def admin_performance():
+    """Admin-specific performance metrics"""
+    try:
+        admin_perf = AdminMonitoringService.get_detailed_admin_performance()
+        return jsonify(admin_perf), 200
+        
+    except Exception as e:
+        logger.error(f"Admin performance error: {e}")
+        return jsonify({
+            'error': 'Failed to get admin performance metrics',
             'timestamp': datetime.utcnow().isoformat()
         }), 500
 
