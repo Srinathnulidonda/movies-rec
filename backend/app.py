@@ -102,7 +102,14 @@ if DATABASE_URL and 'postgresql://' in DATABASE_URL:
     }
 
 db = SQLAlchemy(app)
-CORS(app)
+
+# CORS Configuration - Updated with specific origins and credentials support
+CORS(app, origins=[
+    'https://cinebrain.vercel.app',
+    'http://127.0.0.1:5500', 
+    'http://127.0.0.1:5501',
+], supports_credentials=True)
+
 cache = Cache(app)
 
 # API Keys
