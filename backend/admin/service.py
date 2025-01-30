@@ -5,10 +5,12 @@ import json
 import logging
 import redis
 import uuid
+import time
 from datetime import datetime, timedelta
 from urllib.parse import urlparse
 from sqlalchemy import func, desc, and_, or_
 from collections import defaultdict
+from flask import request
 
 logger = logging.getLogger(__name__)
 
@@ -617,6 +619,350 @@ class AdminService:
         except Exception as e:
             logger.error(f"Get admin recommendations error: {e}")
             return {'error': 'Failed to get recommendations'}
+    
+    def publish_recommendation(self, recommendation_id, admin_user, options=None):
+        """
+        Enhanced recommendation publishing with comprehensive features
+        
+        @param recommendation_id: ID of recommendation to publish
+        @param admin_user: User object of admin performing action
+        @param options: Dict with publishing options
+        @return: Result dictionary with status and details
+        """
+        try:
+            # Default options
+            options = options or {}
+            notify_users = options.get('notify_users', True)
+            schedule_time = options.get('schedule_time')
+            priority = options.get('priority', 'normal')
+            tags = options.get('tags', [])
+            target_audience = options.get('target_audience', 'all')
+            publish_to = options.get('publish_to', ['telegram', 'website'])
+            
+            # Validate recommendation exists
+            recommendation = self.AdminRecommendation.query.get(recommendation_id)
+            if not recommendation:
+                logger.warning(f"Recommendation {recommendation_id} not found")
+                return {'error': 'Recommendation not found', 'code': 'NOT_FOUND'}
+            
+            # Check if already published
+            if recommendation.is_active:
+                logger.info(f"Recommendation {recommendation_id} already published")
+                return {
+                    'warning': 'Recommendation already published',
+                    'recommendation_id': recommendation_id,
+                    'published_at': recommendation.updated_at.isoformat() if hasattr(recommendation, 'updated_at') else None
+                }
+            
+            # Validate content exists
+            content = self.Content.query.get(recommendation.content_id)
+            if not content:
+                logger.error(f"Content {recommendation.content_id} not found for recommendation")
+                return {'error': 'Associated content not found', 'code': 'CONTENT_NOT_FOUND'}
+            
+            admin = self.User.query.get(recommendation.admin_id)
+            
+            # Start transaction
+            try:
+                # Update recommendation status
+                recommendation.is_active = True
+                if hasattr(recommendation, 'updated_at'):
+                    recommendation.updated_at = datetime.utcnow()
+                
+                # Add publishing metadata if model supports it
+                if hasattr(recommendation, 'metadata'):
+                    if not recommendation.metadata:
+                        recommendation.metadata = {}
+                    recommendation.metadata.update({
+                        'published_by': admin_user.id,
+                        'published_at': datetime.utcnow().isoformat(),
+                        'publish_options': options,
+                        'tags': tags,
+                        'priority': priority,
+                        'target_audience': target_audience
+                    })
+                
+                # Update content flags based on recommendation type
+                if recommendation.recommendation_type == 'critics_choice':
+                    content.is_critics_choice = True
+                    content.critics_score = content.rating  # Or calculate differently
+                elif recommendation.recommendation_type == 'trending':
+                    content.is_trending = True
+                elif recommendation.recommendation_type == 'new_release':
+                    content.is_new_release = True
+                
+                self.db.session.commit()
+                
+                # Track publishing results
+                results = {
+                    'recommendation_id': recommendation.id,
+                    'content_id': content.id,
+                    'content_title': content.title,
+                    'content_type': content.content_type,
+                    'recommendation_type': recommendation.recommendation_type,
+                    'published': True,
+                    'published_at': datetime.utcnow().isoformat(),
+                    'channels': {}
+                }
+                
+                # Invalidate relevant caches
+                self._invalidate_recommendation_caches(content, recommendation.recommendation_type)
+                
+                # Publish to Telegram
+                if 'telegram' in publish_to and self.telegram_service:
+                    try:
+                        # Enhanced Telegram sending with retry
+                        telegram_success = self._send_to_telegram_with_retry(
+                            content, admin.username, recommendation.description, priority
+                        )
+                        results['channels']['telegram'] = {
+                            'success': telegram_success,
+                            'timestamp': datetime.utcnow().isoformat()
+                        }
+                        
+                        if telegram_success:
+                            logger.info(f"✅ Telegram recommendation sent: {content.title}")
+                        else:
+                            logger.warning(f"⚠️ Telegram send failed for: {content.title}")
+                            
+                    except Exception as e:
+                        logger.error(f"Telegram error: {e}")
+                        results['channels']['telegram'] = {
+                            'success': False,
+                            'error': str(e),
+                            'timestamp': datetime.utcnow().isoformat()
+                        }
+                
+                # Send email notifications if enabled
+                if notify_users and self.notification_service:
+                    try:
+                        # Notify admins about publication
+                        self.notification_service.create_notification(
+                            NotificationType.CONTENT_ADDED,
+                            f"Recommendation Published: {content.title}",
+                            f"{admin_user.username} published a {recommendation.recommendation_type} recommendation\n"
+                            f"Content: {content.title}\n"
+                            f"Priority: {priority}\n"
+                            f"Target: {target_audience}",
+                            admin_id=admin_user.id,
+                            related_content_id=content.id,
+                            is_urgent=(priority == 'urgent'),
+                            action_url=f"/admin/recommendations/{recommendation.id}",
+                            metadata={
+                                'publisher_id': admin_user.id,
+                                'channels': list(results['channels'].keys()),
+                                'tags': tags
+                            }
+                        )
+                        results['notifications_sent'] = True
+                    except Exception as e:
+                        logger.error(f"Notification error: {e}")
+                        results['notifications_sent'] = False
+                
+                # Log analytics event
+                self._track_publishing_analytics(recommendation, content, admin_user, results)
+                
+                # Create activity log
+                self._log_admin_activity(
+                    admin_user,
+                    'publish_recommendation',
+                    f"Published {recommendation.recommendation_type} recommendation for {content.title}",
+                    {
+                        'recommendation_id': recommendation.id,
+                        'content_id': content.id,
+                        'channels': results['channels']
+                    }
+                )
+                
+                logger.info(
+                    f"✅ Recommendation published successfully: {content.title} "
+                    f"(ID: {recommendation.id}) by {admin_user.username}"
+                )
+                
+                results['message'] = 'Recommendation published successfully'
+                results['success'] = True
+                return results
+                
+            except Exception as e:
+                self.db.session.rollback()
+                logger.error(f"Database error during publishing: {e}")
+                raise e
+                
+        except Exception as e:
+            logger.error(f"Publish recommendation error: {e}")
+            return {
+                'error': 'Failed to publish recommendation',
+                'details': str(e),
+                'recommendation_id': recommendation_id
+            }
+    
+    def publish_recommendations_batch(self, recommendation_ids, admin_user, options=None):
+        """
+        Batch publish multiple recommendations with staggered timing
+        
+        @param recommendation_ids: List of recommendation IDs
+        @param admin_user: User object of admin
+        @param options: Batch publishing options
+        @return: Batch results
+        """
+        try:
+            options = options or {}
+            stagger_delay = options.get('stagger_delay', 60)  # seconds
+            
+            results = {
+                'total': len(recommendation_ids),
+                'published': 0,
+                'failed': 0,
+                'skipped': 0,
+                'details': []
+            }
+            
+            for idx, rec_id in enumerate(recommendation_ids):
+                try:
+                    # Add delay between publications (except for first)
+                    if idx > 0 and stagger_delay > 0:
+                        logger.info(f"Waiting {stagger_delay}s before next publication...")
+                        time.sleep(stagger_delay)
+                    
+                    result = self.publish_recommendation(rec_id, admin_user, options)
+                    
+                    if result.get('success'):
+                        results['published'] += 1
+                    elif result.get('warning'):
+                        results['skipped'] += 1
+                    else:
+                        results['failed'] += 1
+                    
+                    results['details'].append({
+                        'recommendation_id': rec_id,
+                        'status': 'published' if result.get('success') else 'failed',
+                        'result': result
+                    })
+                    
+                except Exception as e:
+                    logger.error(f"Failed to publish recommendation {rec_id}: {e}")
+                    results['failed'] += 1
+                    results['details'].append({
+                        'recommendation_id': rec_id,
+                        'status': 'error',
+                        'error': str(e)
+                    })
+            
+            # Send summary notification
+            if self.notification_service:
+                self.notification_service.create_notification(
+                    NotificationType.SYSTEM_ALERT,
+                    "Batch Publishing Complete",
+                    f"Published {results['published']}/{results['total']} recommendations\n"
+                    f"Failed: {results['failed']}, Skipped: {results['skipped']}",
+                    admin_id=admin_user.id,
+                    metadata=results
+                )
+            
+            logger.info(
+                f"✅ Batch publishing complete: {results['published']}/{results['total']} successful"
+            )
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"Batch publishing error: {e}")
+            return {
+                'error': 'Batch publishing failed',
+                'details': str(e)
+            }
+    
+    def _send_to_telegram_with_retry(self, content, admin_name, description, priority, max_retries=3):
+        """Send to Telegram with retry logic"""
+        for attempt in range(max_retries):
+            try:
+                success = self.telegram_service.send_admin_recommendation(
+                    content, admin_name, description
+                )
+                if success:
+                    return True
+                
+                # Wait before retry
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)  # Exponential backoff
+                    
+            except Exception as e:
+                logger.error(f"Telegram attempt {attempt + 1} failed: {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)
+        
+        return False
+    
+    def _invalidate_recommendation_caches(self, content, recommendation_type):
+        """Invalidate relevant caches after publishing"""
+        try:
+            if self.cache:
+                # Clear specific recommendation caches
+                cache_keys = [
+                    f"cinebrain:recommendations:{recommendation_type}:*",
+                    f"cinebrain:content:{content.id}",
+                    f"cinebrain:trending:*" if content.is_trending else None,
+                    f"cinebrain:critics_choice:*" if content.is_critics_choice else None,
+                    f"cinebrain:new_releases:*" if content.is_new_release else None
+                ]
+                
+                for key_pattern in cache_keys:
+                    if key_pattern:
+                        # If using Redis, use pattern matching
+                        if hasattr(self.cache, 'cache') and hasattr(self.cache.cache, 'delete_many'):
+                            # Flask-Caching with Redis backend
+                            import redis
+                            r = redis.from_url(self.app.config.get('CACHE_REDIS_URL'))
+                            for key in r.scan_iter(match=key_pattern):
+                                self.cache.delete(key.decode('utf-8'))
+                        
+                logger.info(f"✅ Cache invalidated for {recommendation_type} recommendation")
+                
+        except Exception as e:
+            logger.error(f"Cache invalidation error: {e}")
+    
+    def _track_publishing_analytics(self, recommendation, content, admin_user, results):
+        """Track publishing analytics"""
+        try:
+            # This would integrate with your analytics service
+            analytics_data = {
+                'event': 'recommendation_published',
+                'recommendation_id': recommendation.id,
+                'content_id': content.id,
+                'content_type': content.content_type,
+                'recommendation_type': recommendation.recommendation_type,
+                'admin_id': admin_user.id,
+                'admin_username': admin_user.username,
+                'channels': list(results.get('channels', {}).keys()),
+                'timestamp': datetime.utcnow().isoformat()
+            }
+            
+            # Log to your analytics service here
+            logger.info(f"📊 Analytics tracked: {analytics_data}")
+            
+        except Exception as e:
+            logger.error(f"Analytics tracking error: {e}")
+    
+    def _log_admin_activity(self, admin_user, action, description, metadata=None):
+        """Log admin activity for audit trail"""
+        try:
+            # This would create an audit log entry
+            activity = {
+                'admin_id': admin_user.id,
+                'admin_username': admin_user.username,
+                'action': action,
+                'description': description,
+                'metadata': metadata or {},
+                'ip_address': request.remote_addr if request else None,
+                'user_agent': request.headers.get('User-Agent') if request else None,
+                'timestamp': datetime.utcnow().isoformat()
+            }
+            
+            # Store in your audit log system
+            logger.info(f"🔍 Admin activity logged: {action} by {admin_user.username}")
+            
+        except Exception as e:
+            logger.error(f"Activity logging error: {e}")
     
     def migrate_all_slugs(self, batch_size=50):
         """Migrate all content slugs"""

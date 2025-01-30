@@ -1,3 +1,5 @@
+# admin/routes.py
+
 from flask import Blueprint, request, jsonify
 from datetime import datetime
 import json
@@ -43,53 +45,6 @@ def require_admin(f):
             return jsonify({'error': 'Admin access required'}), 403
         return f(user, *args, **kwargs)
     return decorated_function
-
-# Admin Dashboard Stats Endpoint (NEW)
-@admin_bp.route('/api/admin/dashboard/stats', methods=['GET', 'OPTIONS'])
-def get_admin_stats():
-    """Get quick admin stats for topbar/mobile nav - handles CORS preflight"""
-    try:
-        # Handle CORS preflight
-        if request.method == 'OPTIONS':
-            response = jsonify({})
-            response.headers['Access-Control-Allow-Origin'] = request.headers.get('Origin', '*')
-            response.headers['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
-            response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
-            response.headers['Access-Control-Allow-Credentials'] = 'true'
-            return response, 200
-        
-        # Check authentication
-        user = get_user_from_token()
-        if not user or not getattr(user, 'is_admin', False):
-            return jsonify({'error': 'Admin access required'}), 403
-        
-        # Get stats
-        stats = {
-            'pending_tickets': 0,
-            'new_reports': 0,
-            'system_alerts': 0
-        }
-        
-        try:
-            if dashboard_service:
-                # Get support dashboard data
-                support_data = dashboard_service.get_support_dashboard()
-                if support_data and 'ticket_stats' in support_data:
-                    stats['pending_tickets'] = support_data['ticket_stats'].get('urgent', 0)
-                    
-                # Get system health for alerts
-                health_data = dashboard_service.get_system_health()
-                if health_data and health_data.get('status') != 'healthy':
-                    stats['system_alerts'] = 1
-                    
-        except Exception as e:
-            logger.warning(f"Error fetching dashboard stats: {e}")
-        
-        return jsonify(stats), 200
-        
-    except Exception as e:
-        logger.error(f"Admin stats error: {e}")
-        return jsonify({'error': 'Failed to get admin stats'}), 500
 
 # Content Management Routes
 @admin_bp.route('/api/admin/search', methods=['GET'])
@@ -179,6 +134,79 @@ def get_admin_recommendations(current_user):
     except Exception as e:
         logger.error(f"Get admin recommendations error: {e}")
         return jsonify({'error': 'Failed to get recommendations'}), 500
+
+@admin_bp.route('/api/admin/recommendations/<int:recommendation_id>/publish', methods=['POST'])
+@require_admin
+def publish_recommendation(current_user, recommendation_id):
+    """Publish a draft recommendation with comprehensive tracking"""
+    try:
+        if not admin_service:
+            return jsonify({'error': 'Admin service not available'}), 503
+        
+        data = request.get_json() or {}
+        
+        # Optional parameters for enhanced publishing
+        options = {
+            'notify_users': data.get('notify_users', True),
+            'schedule_time': data.get('schedule_time'),  # ISO format datetime
+            'priority': data.get('priority', 'normal'),  # normal, high, urgent
+            'tags': data.get('tags', []),
+            'target_audience': data.get('target_audience', 'all'),  # all, regional, genre-specific
+            'publish_to': data.get('publish_to', ['telegram', 'website'])  # channels to publish
+        }
+        
+        result = admin_service.publish_recommendation(
+            recommendation_id, 
+            current_user,
+            options
+        )
+        
+        if result.get('error'):
+            return jsonify(result), 400
+        
+        return jsonify(result), 200
+        
+    except Exception as e:
+        logger.error(f"Publish recommendation error: {e}")
+        return jsonify({
+            'error': 'Failed to publish recommendation',
+            'details': str(e) if app.debug else None
+        }), 500
+
+@admin_bp.route('/api/admin/recommendations/publish-batch', methods=['POST'])
+@require_admin
+def publish_recommendations_batch(current_user):
+    """Batch publish multiple recommendations"""
+    try:
+        if not admin_service:
+            return jsonify({'error': 'Admin service not available'}), 503
+        
+        data = request.get_json()
+        if not data or 'recommendation_ids' not in data:
+            return jsonify({'error': 'recommendation_ids required'}), 400
+        
+        recommendation_ids = data['recommendation_ids']
+        if not isinstance(recommendation_ids, list) or not recommendation_ids:
+            return jsonify({'error': 'recommendation_ids must be a non-empty list'}), 400
+        
+        options = {
+            'notify_users': data.get('notify_users', True),
+            'stagger_delay': data.get('stagger_delay', 60),  # seconds between posts
+            'priority': data.get('priority', 'normal'),
+            'publish_to': data.get('publish_to', ['telegram', 'website'])
+        }
+        
+        result = admin_service.publish_recommendations_batch(
+            recommendation_ids,
+            current_user,
+            options
+        )
+        
+        return jsonify(result), 200
+        
+    except Exception as e:
+        logger.error(f"Batch publish error: {e}")
+        return jsonify({'error': 'Failed to batch publish recommendations'}), 500
 
 # Dashboard and Analytics Routes
 @admin_bp.route('/api/admin/dashboard', methods=['GET'])
@@ -486,7 +514,7 @@ def not_found(error):
 def internal_error(error):
     return jsonify({'error': 'Internal server error in admin service'}), 500
 
-# CORS Headers - Updated with more origins
+# CORS Headers
 @admin_bp.after_request
 def after_request(response):
     """Add CORS headers"""
@@ -494,19 +522,16 @@ def after_request(response):
     allowed_origins = [
         'https://cinebrain.vercel.app',
         'http://127.0.0.1:5500', 
-        'http://127.0.0.1:5501'
+        'http://127.0.0.1:5501',
+        'http://localhost:3000',
+        'http://localhost:5173'
     ]
     
-    # Allow CORS for all admin routes
-    if origin in allowed_origins or (origin and 'localhost' in origin):
+    if origin in allowed_origins:
         response.headers['Access-Control-Allow-Origin'] = origin
         response.headers['Access-Control-Allow-Headers'] = 'Content-Type,Authorization'
         response.headers['Access-Control-Allow-Methods'] = 'GET,PUT,POST,DELETE,OPTIONS'
         response.headers['Access-Control-Allow-Credentials'] = 'true'
-    
-    # Handle preflight
-    if request.method == 'OPTIONS':
-        response.headers['Access-Control-Max-Age'] = '3600'
     
     return response
 
