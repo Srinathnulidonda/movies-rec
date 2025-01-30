@@ -136,7 +136,7 @@ def create_admin_recommendation(current_user):
 @admin_bp.route('/api/admin/recommendations', methods=['GET'])
 @require_admin
 def get_admin_recommendations(current_user):
-    """Get admin recommendations"""
+    """Get admin recommendations with better error handling"""
     try:
         page = int(request.args.get('page', 1))
         per_page = int(request.args.get('per_page', 20))
@@ -151,6 +151,10 @@ def get_admin_recommendations(current_user):
         
     except Exception as e:
         logger.error(f"Get admin recommendations error: {e}")
+        try:
+            db.session.rollback()
+        except:
+            pass
         return jsonify({'error': 'Failed to get recommendations'}), 500
 
 @admin_bp.route('/api/admin/recommendations/<int:recommendation_id>', methods=['GET'])
@@ -262,7 +266,52 @@ def get_admin_dashboard(current_user):
         
     except Exception as e:
         logger.error(f"Dashboard error: {e}")
+        try:
+            db.session.rollback()
+        except:
+            pass
         return jsonify({'error': 'Failed to load dashboard'}), 500
+
+@admin_bp.route('/api/admin/dashboard/stats', methods=['GET'])
+@require_admin
+def get_dashboard_stats(current_user):
+    """Get dashboard statistics - separate endpoint for stats"""
+    try:
+        if not dashboard_service:
+            return jsonify({'error': 'Dashboard service not available'}), 503
+        
+        # Get basic stats only to avoid complex queries
+        stats = {}
+        
+        try:
+            stats['total_users'] = User.query.count() if User else 0
+        except Exception as e:
+            logger.error(f"Error getting user count: {e}")
+            stats['total_users'] = 0
+        
+        try:
+            stats['total_content'] = Content.query.count() if Content else 0
+        except Exception as e:
+            logger.error(f"Error getting content count: {e}")
+            stats['total_content'] = 0
+        
+        try:
+            stats['total_interactions'] = UserInteraction.query.count() if UserInteraction else 0
+        except Exception as e:
+            logger.error(f"Error getting interaction count: {e}")
+            stats['total_interactions'] = 0
+        
+        try:
+            stats['active_recommendations'] = AdminRecommendation.query.filter_by(is_active=True).count() if AdminRecommendation else 0
+        except Exception as e:
+            logger.error(f"Error getting recommendation count: {e}")
+            stats['active_recommendations'] = 0
+        
+        return jsonify(stats), 200
+        
+    except Exception as e:
+        logger.error(f"Dashboard stats error: {e}")
+        return jsonify({'error': 'Failed to load dashboard stats'}), 500
 
 @admin_bp.route('/api/admin/analytics', methods=['GET'])
 @require_admin
@@ -545,6 +594,49 @@ def populate_all_cast_crew(current_user):
         logger.error(f"Error in bulk cast/crew population: {e}")
         return jsonify({'error': 'Failed to populate cast/crew'}), 500
 
+# Health Check Routes (NEW)
+@admin_bp.route('/api/admin/health', methods=['GET'])
+def admin_health_check():
+    """Simple health check for admin service"""
+    return jsonify({
+        'status': 'healthy',
+        'service': 'CineBrain Admin',
+        'timestamp': datetime.utcnow().isoformat(),
+        'version': '4.0'
+    }), 200
+
+@admin_bp.route('/api/admin/ping', methods=['GET'])
+def admin_ping():
+    """Simple ping endpoint"""
+    return jsonify({
+        'message': 'pong',
+        'service': 'admin',
+        'timestamp': datetime.utcnow().isoformat()
+    }), 200
+
+# Service Status Routes (NEW)
+@admin_bp.route('/api/admin/services/status', methods=['GET'])
+@require_admin
+def get_services_status(current_user):
+    """Get status of all admin services"""
+    try:
+        status = {
+            'admin_service': 'available' if admin_service else 'unavailable',
+            'dashboard_service': 'available' if dashboard_service else 'unavailable',
+            'telegram_service': 'available' if telegram_service else 'unavailable',
+            'database': 'connected' if db else 'disconnected',
+            'cache': 'available' if cache else 'unavailable'
+        }
+        
+        return jsonify({
+            'status': status,
+            'timestamp': datetime.utcnow().isoformat()
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Services status error: {e}")
+        return jsonify({'error': 'Failed to get services status'}), 500
+
 # Error Handlers
 @admin_bp.errorhandler(404)
 def not_found(error):
@@ -552,6 +644,10 @@ def not_found(error):
 
 @admin_bp.errorhandler(500)
 def internal_error(error):
+    try:
+        db.session.rollback()
+    except:
+        pass
     return jsonify({'error': 'Internal server error in admin service'}), 500
 
 # CORS Headers
