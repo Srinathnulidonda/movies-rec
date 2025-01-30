@@ -296,6 +296,7 @@ class AdminRecommendation(db.Model):
     description = db.Column(db.Text)
     is_active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 class AnonymousInteraction(db.Model):
     id = db.Column(db.Integer, primary_key=True)

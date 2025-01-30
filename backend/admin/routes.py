@@ -89,7 +89,7 @@ def save_external_content(current_user):
         logger.error(f"Save content error: {e}")
         return jsonify({'error': 'Failed to process content'}), 500
 
-# Admin Recommendations
+# Admin Recommendations Routes
 @admin_bp.route('/api/admin/recommendations', methods=['POST'])
 @require_admin
 def create_admin_recommendation(current_user):
@@ -97,19 +97,35 @@ def create_admin_recommendation(current_user):
     try:
         data = request.get_json()
         
-        required_fields = ['content_id', 'recommendation_type', 'description']
-        if not all(field in data for field in required_fields):
-            return jsonify({'error': 'Missing required fields'}), 400
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
         
         if not admin_service:
             return jsonify({'error': 'Admin service not available'}), 503
         
-        result = admin_service.create_recommendation(
-            current_user, 
-            data['content_id'],
-            data['recommendation_type'],
-            data['description']
-        )
+        # Handle both content_data and content_id formats
+        if 'content_data' in data:
+            # New format: save content first, then create recommendation
+            result = admin_service.create_recommendation_from_external_content(
+                current_user, 
+                data['content_data'],
+                data.get('recommendation_type'),
+                data.get('description'),
+                data.get('status', 'draft'),
+                data.get('publish_to_telegram', False)
+            )
+        else:
+            # Legacy format: content already exists
+            required_fields = ['content_id', 'recommendation_type', 'description']
+            if not all(field in data for field in required_fields):
+                return jsonify({'error': 'Missing required fields'}), 400
+            
+            result = admin_service.create_recommendation(
+                current_user, 
+                data['content_id'],
+                data['recommendation_type'],
+                data['description']
+            )
         
         return jsonify(result), 201
         
@@ -124,89 +140,113 @@ def get_admin_recommendations(current_user):
     try:
         page = int(request.args.get('page', 1))
         per_page = int(request.args.get('per_page', 20))
+        filter_type = request.args.get('filter', 'all')
+        status = request.args.get('status')  # 'draft', 'active', etc.
         
         if not admin_service:
             return jsonify({'error': 'Admin service not available'}), 503
         
-        result = admin_service.get_recommendations(page, per_page)
+        result = admin_service.get_recommendations(page, per_page, filter_type, status)
         return jsonify(result), 200
         
     except Exception as e:
         logger.error(f"Get admin recommendations error: {e}")
         return jsonify({'error': 'Failed to get recommendations'}), 500
 
-@admin_bp.route('/api/admin/recommendations/<int:recommendation_id>/publish', methods=['POST'])
+@admin_bp.route('/api/admin/recommendations/<int:recommendation_id>', methods=['GET'])
 @require_admin
-def publish_recommendation(current_user, recommendation_id):
-    """Publish a draft recommendation with comprehensive tracking"""
+def get_recommendation_details(current_user, recommendation_id):
+    """Get specific recommendation details"""
     try:
         if not admin_service:
             return jsonify({'error': 'Admin service not available'}), 503
         
-        data = request.get_json() or {}
+        result = admin_service.get_recommendation_details(recommendation_id)
+        if not result:
+            return jsonify({'error': 'Recommendation not found'}), 404
         
-        # Optional parameters for enhanced publishing
-        options = {
-            'notify_users': data.get('notify_users', True),
-            'schedule_time': data.get('schedule_time'),  # ISO format datetime
-            'priority': data.get('priority', 'normal'),  # normal, high, urgent
-            'tags': data.get('tags', []),
-            'target_audience': data.get('target_audience', 'all'),  # all, regional, genre-specific
-            'publish_to': data.get('publish_to', ['telegram', 'website'])  # channels to publish
-        }
+        return jsonify(result), 200
         
-        result = admin_service.publish_recommendation(
-            recommendation_id, 
-            current_user,
-            options
-        )
+    except Exception as e:
+        logger.error(f"Get recommendation details error: {e}")
+        return jsonify({'error': 'Failed to get recommendation details'}), 500
+
+@admin_bp.route('/api/admin/recommendations/<int:recommendation_id>', methods=['PUT'])
+@require_admin
+def update_recommendation(current_user, recommendation_id):
+    """Update existing recommendation"""
+    try:
+        data = request.get_json()
         
-        if result.get('error'):
-            return jsonify(result), 400
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+        
+        if not admin_service:
+            return jsonify({'error': 'Admin service not available'}), 503
+        
+        result = admin_service.update_recommendation(current_user, recommendation_id, data)
+        if not result:
+            return jsonify({'error': 'Recommendation not found'}), 404
+        
+        return jsonify(result), 200
+        
+    except Exception as e:
+        logger.error(f"Update recommendation error: {e}")
+        return jsonify({'error': 'Failed to update recommendation'}), 500
+
+@admin_bp.route('/api/admin/recommendations/<int:recommendation_id>', methods=['DELETE'])
+@require_admin
+def delete_recommendation(current_user, recommendation_id):
+    """Delete recommendation"""
+    try:
+        if not admin_service:
+            return jsonify({'error': 'Admin service not available'}), 503
+        
+        result = admin_service.delete_recommendation(current_user, recommendation_id)
+        if not result:
+            return jsonify({'error': 'Recommendation not found'}), 404
+        
+        return jsonify(result), 200
+        
+    except Exception as e:
+        logger.error(f"Delete recommendation error: {e}")
+        return jsonify({'error': 'Failed to delete recommendation'}), 500
+
+@admin_bp.route('/api/admin/recommendations/<int:recommendation_id>/publish', methods=['POST'])
+@require_admin
+def publish_recommendation(current_user, recommendation_id):
+    """Publish upcoming recommendation"""
+    try:
+        if not admin_service:
+            return jsonify({'error': 'Admin service not available'}), 503
+        
+        result = admin_service.publish_recommendation(current_user, recommendation_id)
+        if not result:
+            return jsonify({'error': 'Recommendation not found'}), 404
         
         return jsonify(result), 200
         
     except Exception as e:
         logger.error(f"Publish recommendation error: {e}")
-        return jsonify({
-            'error': 'Failed to publish recommendation',
-            'details': str(e) if app.debug else None
-        }), 500
+        return jsonify({'error': 'Failed to publish recommendation'}), 500
 
-@admin_bp.route('/api/admin/recommendations/publish-batch', methods=['POST'])
+@admin_bp.route('/api/admin/recommendations/<int:recommendation_id>/send', methods=['POST'])
 @require_admin
-def publish_recommendations_batch(current_user):
-    """Batch publish multiple recommendations"""
+def send_recommendation_to_telegram(current_user, recommendation_id):
+    """Send recommendation to Telegram"""
     try:
         if not admin_service:
             return jsonify({'error': 'Admin service not available'}), 503
         
-        data = request.get_json()
-        if not data or 'recommendation_ids' not in data:
-            return jsonify({'error': 'recommendation_ids required'}), 400
-        
-        recommendation_ids = data['recommendation_ids']
-        if not isinstance(recommendation_ids, list) or not recommendation_ids:
-            return jsonify({'error': 'recommendation_ids must be a non-empty list'}), 400
-        
-        options = {
-            'notify_users': data.get('notify_users', True),
-            'stagger_delay': data.get('stagger_delay', 60),  # seconds between posts
-            'priority': data.get('priority', 'normal'),
-            'publish_to': data.get('publish_to', ['telegram', 'website'])
-        }
-        
-        result = admin_service.publish_recommendations_batch(
-            recommendation_ids,
-            current_user,
-            options
-        )
+        result = admin_service.send_recommendation_to_telegram(current_user, recommendation_id)
+        if not result:
+            return jsonify({'error': 'Recommendation not found'}), 404
         
         return jsonify(result), 200
         
     except Exception as e:
-        logger.error(f"Batch publish error: {e}")
-        return jsonify({'error': 'Failed to batch publish recommendations'}), 500
+        logger.error(f"Send to Telegram error: {e}")
+        return jsonify({'error': 'Failed to send to Telegram'}), 500
 
 # Dashboard and Analytics Routes
 @admin_bp.route('/api/admin/dashboard', methods=['GET'])
