@@ -24,6 +24,45 @@ class NotificationType:
     USER_ACTIVITY = "user_activity"
     CONTENT_ADDED = "content_added"
 
+class AdminEmailPreferences:
+    """Email preference model for database integration"""
+    def __init__(self, db):
+        self.db = db
+        
+        class AdminEmailPreferencesModel(db.Model):
+            __tablename__ = 'admin_email_preferences'
+            
+            id = db.Column(db.Integer, primary_key=True)
+            admin_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+            
+            # Support System Alerts (Critical - usually ON)
+            urgent_tickets = db.Column(db.Boolean, default=True)
+            sla_breaches = db.Column(db.Boolean, default=True)
+            system_alerts = db.Column(db.Boolean, default=True)
+            
+            # Content Management Alerts (Configurable)
+            content_added = db.Column(db.Boolean, default=True)
+            recommendation_created = db.Column(db.Boolean, default=True)
+            recommendation_updated = db.Column(db.Boolean, default=False)  # OFF by default
+            recommendation_deleted = db.Column(db.Boolean, default=False)  # OFF by default
+            recommendation_published = db.Column(db.Boolean, default=True)
+            
+            # User Activity Alerts (Configurable)
+            user_feedback = db.Column(db.Boolean, default=True)
+            regular_tickets = db.Column(db.Boolean, default=False)  # OFF by default
+            
+            # System Operations (Usually OFF)
+            cache_operations = db.Column(db.Boolean, default=False)
+            bulk_operations = db.Column(db.Boolean, default=False)
+            slug_updates = db.Column(db.Boolean, default=False)
+            
+            created_at = db.Column(db.DateTime, default=datetime.utcnow)
+            updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+            
+            __table_args__ = (db.UniqueConstraint('admin_id'),)
+        
+        self.Model = AdminEmailPreferencesModel
+
 class AdminEmailService:
     def __init__(self, services):
         self.email_service = services.get('email_service')
@@ -108,6 +147,17 @@ class AdminNotificationService:
         self.AdminNotification = models.get('AdminNotification')
         self.CannedResponse = models.get('CannedResponse')
         self.SupportMetrics = models.get('SupportMetrics')
+        self.AdminEmailPreferences = models.get('AdminEmailPreferences')
+        
+        # Create AdminEmailPreferences model if not provided
+        if not self.AdminEmailPreferences:
+            try:
+                email_prefs = AdminEmailPreferences(db)
+                self.AdminEmailPreferences = email_prefs.Model
+                logger.info("✅ AdminEmailPreferences model created dynamically")
+            except Exception as e:
+                logger.error(f"❌ Failed to create AdminEmailPreferences model: {e}")
+                self.AdminEmailPreferences = None
         
         if not self.AdminNotification:
             logger.warning("⚠️ AdminNotification model not available")
@@ -115,6 +165,8 @@ class AdminNotificationService:
             logger.warning("⚠️ CannedResponse model not available")
         if not self.SupportMetrics:
             logger.warning("⚠️ SupportMetrics model not available")
+        if not self.AdminEmailPreferences:
+            logger.warning("⚠️ AdminEmailPreferences model not available")
         
         logger.info("✅ Admin notification service initialized (EMAIL ONLY)")
     
@@ -143,11 +195,64 @@ class AdminNotificationService:
             logger.error(f"❌ Admin Redis connection failed: {e}")
             return None
     
+    def _should_send_email(self, admin_id: int, alert_type: str) -> bool:
+        """Check if email should be sent based on admin preferences"""
+        try:
+            if not self.AdminEmailPreferences:
+                return True  # Default to sending if preferences not available
+            
+            preferences = self.AdminEmailPreferences.query.filter_by(admin_id=admin_id).first()
+            if not preferences:
+                # Create default preferences for new admin
+                preferences = self._create_default_preferences(admin_id)
+                if not preferences:
+                    return True  # Default to sending if creation failed
+            
+            # Map alert types to preference fields
+            alert_mapping = {
+                'urgent_ticket': preferences.urgent_tickets,
+                'new_ticket': preferences.regular_tickets,
+                'sla_breach': preferences.sla_breaches,
+                'system_alert': preferences.system_alerts,
+                'content_added': preferences.content_added,
+                'recommendation_created': preferences.recommendation_created,
+                'recommendation_updated': preferences.recommendation_updated,
+                'recommendation_deleted': preferences.recommendation_deleted,
+                'recommendation_published': preferences.recommendation_published,
+                'feedback_received': preferences.user_feedback,
+                'cache_operation': preferences.cache_operations,
+                'bulk_operation': preferences.bulk_operations,
+                'slug_update': preferences.slug_updates
+            }
+            
+            return alert_mapping.get(alert_type, True)  # Default to True for unknown types
+            
+        except Exception as e:
+            logger.error(f"Error checking email preferences: {e}")
+            return True  # Default to sending on error
+    
+    def _create_default_preferences(self, admin_id: int):
+        """Create default preferences for new admin"""
+        try:
+            preferences = self.AdminEmailPreferences(admin_id=admin_id)
+            self.db.session.add(preferences)
+            self.db.session.commit()
+            logger.info(f"✅ Default email preferences created for admin {admin_id}")
+            return preferences
+        except Exception as e:
+            logger.error(f"Error creating default preferences for admin {admin_id}: {e}")
+            try:
+                self.db.session.rollback()
+            except:
+                pass
+            return None
+    
     def create_notification(self, notification_type: str, title: str, message: str, 
                           admin_id: int = None, related_ticket_id: int = None, 
                           related_content_id: int = None, is_urgent: bool = False,
                           action_required: bool = False, action_url: str = None,
-                          metadata: dict = None):
+                          metadata: dict = None, alert_type: str = None):
+        """Enhanced notification creation with email preferences"""
         try:
             notification = None
             if not self.AdminNotification:
@@ -177,18 +282,36 @@ class AdminNotificationService:
                     except:
                         pass
             
+            # Email notifications with preference checking
             if self.email_service and self.email_service.is_configured:
                 try:
                     admin_users = self.User.query.filter_by(is_admin=True).all()
-                    admin_emails = [user.email for user in admin_users if user.email]
                     
+                    # Filter admins based on their email preferences
+                    admins_to_notify = []
+                    for admin in admin_users:
+                        if admin.email and self._should_send_email(admin.id, alert_type or notification_type.lower()):
+                            admins_to_notify.append(admin.email)
+                    
+                    # Add environment admin email if configured
                     env_admin_email = os.environ.get('ADMIN_EMAIL')
-                    if env_admin_email and env_admin_email not in admin_emails:
-                        admin_emails.append(env_admin_email)
+                    if env_admin_email and env_admin_email not in admins_to_notify:
+                        # Check preferences for environment admin too
+                        env_admin = self.User.query.filter_by(email=env_admin_email).first()
+                        if env_admin and self._should_send_email(env_admin.id, alert_type or notification_type.lower()):
+                            admins_to_notify.append(env_admin_email)
+                        elif not env_admin:
+                            # Environment admin not in database, send for critical alerts only
+                            critical_alerts = ['urgent_ticket', 'sla_breach', 'system_alert']
+                            if (alert_type or notification_type.lower()) in critical_alerts:
+                                admins_to_notify.append(env_admin_email)
                     
-                    if admin_emails:
-                        self.email_service.send_admin_notification(title, message, admin_emails, is_urgent)
-                        logger.info(f"✅ Email notifications sent to {len(admin_emails)} admins: {title}")
+                    if admins_to_notify:
+                        self.email_service.send_admin_notification(title, message, admins_to_notify, is_urgent)
+                        logger.info(f"✅ Email notifications sent to {len(admins_to_notify)} admins: {title}")
+                    else:
+                        logger.info(f"📧 No admins configured to receive '{alert_type or notification_type}' emails")
+                        
                 except Exception as e:
                     logger.warning(f"Admin email notification failed: {e}")
             
@@ -225,6 +348,7 @@ class AdminNotificationService:
     def notify_new_ticket(self, ticket):
         try:
             is_urgent = ticket.priority == 'urgent'
+            alert_type = 'urgent_ticket' if is_urgent else 'new_ticket'
             
             self.create_notification(
                 NotificationType.NEW_TICKET if not is_urgent else NotificationType.URGENT_TICKET,
@@ -241,7 +365,8 @@ class AdminNotificationService:
                     'ticket_number': ticket.ticket_number,
                     'priority': ticket.priority,
                     'user_email': ticket.user_email
-                }
+                },
+                alert_type=alert_type
             )
             logger.info(f"✅ New ticket notification sent (EMAIL): #{ticket.ticket_number}")
         except Exception as e:
@@ -263,7 +388,8 @@ class AdminNotificationService:
                 metadata={
                     'ticket_number': ticket.ticket_number,
                     'sla_deadline': ticket.sla_deadline.isoformat() if ticket.sla_deadline else None
-                }
+                },
+                alert_type='sla_breach'
             )
             logger.info(f"✅ SLA breach notification sent (EMAIL): #{ticket.ticket_number}")
         except Exception as e:
@@ -287,27 +413,29 @@ class AdminNotificationService:
                     'feedback_type': feedback_type if isinstance(feedback_type, str) else 'general',
                     'user_email': feedback.user_email,
                     'rating': rating
-                }
+                },
+                alert_type='feedback_received'
             )
             logger.info(f"✅ Feedback notification sent (EMAIL): feedback #{feedback.id}")
         except Exception as e:
             logger.error(f"❌ Error notifying feedback: {e}")
     
-    def notify_system_alert(self, alert_type: str, title: str, details: str, is_urgent: bool = False):
+    def notify_system_alert(self, alert_type_param: str, title: str, details: str, is_urgent: bool = False):
         try:
             self.create_notification(
                 NotificationType.SYSTEM_ALERT,
                 f"System Alert: {title}",
-                f"Alert Type: {alert_type}\n"
+                f"Alert Type: {alert_type_param}\n"
                 f"Details: {details}\n"
                 f"Time: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}",
                 is_urgent=is_urgent,
                 action_required=True,
                 action_url="/admin/system-health",
                 metadata={
-                    'alert_type': alert_type,
+                    'alert_type': alert_type_param,
                     'timestamp': datetime.utcnow().isoformat()
-                }
+                },
+                alert_type='system_alert'
             )
             logger.info(f"✅ System alert notification sent (EMAIL): {title}")
         except Exception as e:
@@ -325,6 +453,7 @@ class AdminService:
         self.AdminNotification = models.get('AdminNotification')
         self.CannedResponse = models.get('CannedResponse')
         self.SupportMetrics = models.get('SupportMetrics')
+        self.AdminEmailPreferences = models.get('AdminEmailPreferences')
         
         self.TMDBService = services.get('TMDBService')
         self.JikanService = services.get('JikanService')
@@ -476,7 +605,8 @@ class AdminService:
                         f"Rating: {content.rating or 'N/A'}/10\n"
                         f"Type: {content.content_type}",
                         related_content_id=content.id,
-                        action_url=f"/admin/content/{content.id}"
+                        action_url=f"/admin/content/{content.id}",
+                        alert_type='content_added'
                     )
                 except Exception as e:
                     logger.warning(f"Failed to create content notification: {e}")
@@ -551,7 +681,8 @@ class AdminService:
                         f"Description: {description[:100]}...",
                         admin_id=admin_user.id,
                         related_content_id=content.id,
-                        action_url=f"/admin/recommendations/{admin_rec.id}"
+                        action_url=f"/admin/recommendations/{admin_rec.id}",
+                        alert_type='recommendation_created'
                     )
                 except Exception as e:
                     logger.warning(f"Failed to create recommendation notification: {e}")
@@ -614,7 +745,8 @@ class AdminService:
                         f"Description: {description[:100]}...",
                         admin_id=admin_user.id,
                         related_content_id=content.id,
-                        action_url=f"/admin/recommendations/{admin_rec.id}"
+                        action_url=f"/admin/recommendations/{admin_rec.id}",
+                        alert_type='recommendation_created'
                     )
                 except Exception as e:
                     logger.warning(f"Failed to create recommendation notification: {e}")
@@ -773,7 +905,8 @@ class AdminService:
                         f"Admin {admin_user.username} updated recommendation for '{content.title if content else 'Unknown'}'",
                         admin_id=admin_user.id,
                         related_content_id=recommendation.content_id,
-                        action_url=f"/admin/recommendations/{recommendation.id}"
+                        action_url=f"/admin/recommendations/{recommendation.id}",
+                        alert_type='recommendation_updated'
                     )
                 except Exception as e:
                     logger.warning(f"Failed to create update notification: {e}")
@@ -812,7 +945,8 @@ class AdminService:
                         f"Recommendation Deleted",
                         f"Admin {admin_user.username} deleted recommendation for '{content_title}'",
                         admin_id=admin_user.id,
-                        related_content_id=recommendation.content_id if content else None
+                        related_content_id=recommendation.content_id if content else None,
+                        alert_type='recommendation_deleted'
                     )
                 except Exception as e:
                     logger.warning(f"Failed to create delete notification: {e}")
@@ -868,7 +1002,8 @@ class AdminService:
                         f"Telegram sent: {'Yes' if telegram_sent else 'No'}",
                         admin_id=admin_user.id,
                         related_content_id=content.id,
-                        action_url=f"/admin/recommendations/{recommendation.id}"
+                        action_url=f"/admin/recommendations/{recommendation.id}",
+                        alert_type='recommendation_published'
                     )
                 except Exception as e:
                     logger.warning(f"Failed to create publish notification: {e}")
@@ -920,7 +1055,8 @@ class AdminService:
                         f"Admin {admin_user.username} sent recommendation for '{content.title}' to Telegram",
                         admin_id=admin_user.id,
                         related_content_id=content.id,
-                        action_url=f"/admin/recommendations/{recommendation.id}"
+                        action_url=f"/admin/recommendations/{recommendation.id}",
+                        alert_type='recommendation_published'
                     )
                 except Exception as e:
                     logger.warning(f"Failed to create send notification: {e}")
@@ -970,6 +1106,20 @@ class AdminService:
             self.db.session.commit()
             stats['total_processed'] = stats['content_updated'] + stats['persons_updated']
             
+            if self.notification_service:
+                try:
+                    self.notification_service.create_notification(
+                        NotificationType.SYSTEM_ALERT,
+                        f"Slug Migration Completed",
+                        f"Migrated {stats['content_updated']} content slugs\n"
+                        f"Errors: {stats['errors']}\n"
+                        f"Total processed: {stats['total_processed']}",
+                        action_url="/admin/content/manage",
+                        alert_type='bulk_operation'
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to create slug migration notification: {e}")
+            
             logger.info(f"✅ Slug migration completed: {stats['content_updated']} content items updated")
             return stats
             
@@ -1000,6 +1150,21 @@ class AdminService:
                     content.slug = slug[:150]
             
             self.db.session.commit()
+            
+            if self.notification_service:
+                try:
+                    self.notification_service.create_notification(
+                        NotificationType.SYSTEM_ALERT,
+                        f"Content Slug Updated",
+                        f"Updated slug for '{content.title}'\n"
+                        f"New slug: {content.slug}",
+                        related_content_id=content.id,
+                        action_url=f"/admin/content/{content.id}",
+                        alert_type='slug_update'
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to create slug update notification: {e}")
+            
             logger.info(f"✅ Content slug updated: {content.title} -> {content.slug}")
             return content.slug
             
@@ -1028,6 +1193,19 @@ class AdminService:
                 except Exception as e:
                     logger.error(f"Error processing cast/crew for {content.title}: {e}")
                     result['errors'] += 1
+            
+            if self.notification_service:
+                try:
+                    self.notification_service.create_notification(
+                        NotificationType.SYSTEM_ALERT,
+                        f"Cast/Crew Population Completed",
+                        f"Processed {result['processed']} content items\n"
+                        f"Errors: {result['errors']}",
+                        action_url="/admin/content/manage",
+                        alert_type='bulk_operation'
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to create cast/crew notification: {e}")
             
             logger.info(f"✅ Cast/crew population completed: {result['processed']} items processed")
             return result
@@ -1152,6 +1330,19 @@ class AdminService:
                 message = 'Recommendations cache cleared'
             else:
                 return {'error': 'Invalid cache type'}
+            
+            if self.notification_service:
+                try:
+                    self.notification_service.create_notification(
+                        NotificationType.SYSTEM_ALERT,
+                        f"Cache Cleared",
+                        f"Cache type '{cache_type}' has been cleared\n"
+                        f"Time: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}",
+                        action_url="/admin/cache/stats",
+                        alert_type='cache_operation'
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to create cache clear notification: {e}")
             
             logger.info(f"✅ Cache cleared: {cache_type}")
             return {

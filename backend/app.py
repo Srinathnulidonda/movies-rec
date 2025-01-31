@@ -506,6 +506,38 @@ class AdminNotification(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     read_at = db.Column(db.DateTime)
 
+class AdminEmailPreferences(db.Model):
+    __tablename__ = 'admin_email_preferences'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    admin_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    
+    # Support System Alerts (Critical - usually ON)
+    urgent_tickets = db.Column(db.Boolean, default=True)
+    sla_breaches = db.Column(db.Boolean, default=True)
+    system_alerts = db.Column(db.Boolean, default=True)
+    
+    # Content Management Alerts (Configurable)
+    content_added = db.Column(db.Boolean, default=True)
+    recommendation_created = db.Column(db.Boolean, default=True)
+    recommendation_updated = db.Column(db.Boolean, default=False)  # OFF by default
+    recommendation_deleted = db.Column(db.Boolean, default=False)  # OFF by default
+    recommendation_published = db.Column(db.Boolean, default=True)
+    
+    # User Activity Alerts (Configurable)
+    user_feedback = db.Column(db.Boolean, default=True)
+    regular_tickets = db.Column(db.Boolean, default=False)  # OFF by default
+    
+    # System Operations (Usually OFF)
+    cache_operations = db.Column(db.Boolean, default=False)
+    bulk_operations = db.Column(db.Boolean, default=False)
+    slug_updates = db.Column(db.Boolean, default=False)
+    
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    __table_args__ = (db.UniqueConstraint('admin_id'),)
+
 class CannedResponse(db.Model):
     __tablename__ = 'canned_responses'
     
@@ -885,7 +917,8 @@ models = {
     'IssueReport': IssueReport,
     'AdminNotification': AdminNotification,
     'CannedResponse': CannedResponse,
-    'SupportMetrics': SupportMetrics
+    'SupportMetrics': SupportMetrics,
+    'AdminEmailPreferences': AdminEmailPreferences
 }
 
 # Initialize services
