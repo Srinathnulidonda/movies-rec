@@ -548,12 +548,8 @@ class AdminService:
                 except:
                     release_date = None
             
+            # FIXED: Remove YouTube trailer functionality for now
             youtube_trailer_id = None
-            if self.ContentService:
-                youtube_trailer_id = self.ContentService.get_youtube_trailer(
-                    data.get('title'), 
-                    data.get('content_type')
-                )
             
             if data.get('source') == 'anime':
                 mal_id = int(data['id']) if isinstance(data['id'], str) and data['id'].isdigit() else data['id']
