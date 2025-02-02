@@ -100,13 +100,18 @@ def get_content_type_label(content_type: str) -> str:
     @param content_type: Content type string
     @return: Formatted label
     """
+    content_type = content_type.lower() if content_type else 'movie'
+    
     type_labels = {
-        'movie': 'Movie',
-        'tv': 'TV Show',
-        'series': 'Web Series',
-        'anime': 'Anime'
+        'movie': 'Movie Name',
+        'tv': 'TV Show Name',
+        'series': 'Series Name',
+        'web_series': 'Web Series Name', 
+        'tv_series': 'TV Series Name',
+        'anime': 'Anime Name'
     }
-    return type_labels.get(content_type, 'Movie')
+    
+    return type_labels.get(content_type, 'Movie Name')
 
 
 class TelegramTemplates:
@@ -238,7 +243,7 @@ class TelegramTemplates:
         # Build runtime display
         runtime_str = f" | ⏱ {runtime}" if runtime else ""
         
-        message = f"""<b>🎞️ {content_label} Name: {content.title}{year}</b>
+        message = f"""<b>🎞️ {content_label}: {content.title}{year}</b>
 <b>✨ Ratings:</b> {rating}{runtime_str}
 <b>🎭 Genre:</b> {genres}
 {DIVIDER}
@@ -275,8 +280,10 @@ class TelegramTemplates:
         runtime_str = ""
         if hasattr(content, 'seasons') and content.seasons:
             runtime_str = f" | ⏱ {content.seasons} Seasons"
+        elif hasattr(content, 'number_of_seasons') and content.number_of_seasons:
+            runtime_str = f" | ⏱ {content.number_of_seasons} Seasons"
         
-        message = f"""<b>🎞️ {content_label} Name: {content.title}{year}</b>
+        message = f"""<b>🎞️ {content_label}: {content.title}{year}</b>
 <b>✨ Ratings:</b> {rating}{runtime_str}
 <b>🎭 Genre:</b> {genres}
 {DIVIDER}
@@ -371,7 +378,7 @@ class TelegramTemplates:
 
         return f"""<b>{hook}</b>
 
-<b>🎞️ {content_label} Name: {title}{year}</b>
+<b>🎞️ {content_label}: {title}{year}</b>
 <i>{genres}{runtime_block} • ⭐ {rating}</i>
 {DIVIDER}
 
@@ -405,7 +412,7 @@ class TelegramTemplates:
 
         return f"""<b>💎 Hidden Gem Alert!</b>
 
-<b>🎞️ {content_label} Name: {title}{year}</b>
+<b>🎞️ {content_label}: {title}{year}</b>
 <i>{genres} • ⭐ {rating}</i>
 
 {short_hook}
@@ -485,8 +492,8 @@ class TelegramTemplates:
             movie = TelegramTemplates.safe_escape(item.get("title", "Unknown"))
             year = f" ({item.get('year')})" if item.get("year") else ""
             hook = TelegramTemplates.safe_escape(item.get("hook", ""))
-            content_type = get_content_type_label(item.get("content_type", "movie"))
-            lines.append(f"{idx}. <b>{content_type}: {movie}</b>{year} — {hook}")
+            content_label = get_content_type_label(item.get("content_type", "movie"))
+            lines.append(f"{idx}. <b>{content_label}: {movie}</b>{year} — {hook}")
 
         lines.append("")
         lines.append(DIVIDER)
@@ -510,11 +517,11 @@ class TelegramTemplates:
 
         return f"""<b>{cap}</b>
 
-<b>🎥 {content_label} Name: {title}{year}</b>
+<b>🎥 {content_label}: {title}{year}</b>
 <i>{genres}</i>
 {DIVIDER}
 
-🔎 Watch the clip below. If this hooks you, the full movie will blow your mind.
+🔎 Watch the clip below. If this hooks you, the full {content_label.lower()} will blow your mind.
 
 {CTA_FOLLOW}
 {CINEBRAIN_FOOTER_VIRAL}"""
@@ -902,7 +909,7 @@ def init_telegram_service(app, db, models, services) -> Optional[Dict[str, Any]]
             logger.info("✅ CineBrain Telegram service initialized successfully")
             logger.info("   ├─ Classic cinematic templates with posters: ✓")
             logger.info("   ├─ Viral engagement templates with posters: ✓")
-            logger.info("   ├─ Content type labels (Movie Name, Anime Name): ✓")
+            logger.info("   ├─ Content type labels (Movie Name, TV Show Name, Anime Name): ✓")
             logger.info("   ├─ Mobile-optimized layouts: ✓")
             logger.info("   ├─ Google Analytics tracking: ✓")
             logger.info("   ├─ Content recommendations: ✓")
