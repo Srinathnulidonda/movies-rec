@@ -90,11 +90,113 @@ def save_external_content(current_user):
         logger.error(f"Save content error: {e}")
         return jsonify({'error': 'Failed to process content'}), 500
 
+# Template Management Routes (NEW)
+@admin_bp.route('/api/admin/templates', methods=['GET'])
+@require_admin
+def get_available_templates(current_user):
+    """Get available Telegram templates"""
+    try:
+        templates = {
+            'standard': {
+                'name': 'Standard Recommendation',
+                'description': 'Classic CineBrain recommendation format',
+                'icon': '📽️',
+                'supports': ['movie', 'tv', 'anime'],
+                'parameters': ['admin_name', 'description']
+            },
+            'mind_bending': {
+                'name': 'Mind-Bending',
+                'description': 'For reality-warping, twist-heavy content',
+                'icon': '🔥',
+                'supports': ['movie', 'tv', 'anime'],
+                'parameters': ['if_you_like'],
+                'example_if_you_like': 'Inception, Primer, Dark'
+            },
+            'hidden_gem': {
+                'name': 'Hidden Gem',
+                'description': 'For lesser-known masterpieces',
+                'icon': '💎',
+                'supports': ['movie', 'tv', 'anime'],
+                'parameters': ['hook', 'if_you_like'],
+                'example_hook': 'A masterpiece that flew under the radar',
+                'example_if_you_like': 'A24 films, indie cinema'
+            },
+            'anime_gem': {
+                'name': 'Anime Gem',
+                'description': 'For emotionally impactful anime',
+                'icon': '🎐',
+                'supports': ['anime'],
+                'parameters': ['emotion_hook'],
+                'example_emotion_hook': 'Prepare for tears and existential questions'
+            }
+        }
+        
+        return jsonify({
+            'templates': templates,
+            'default': 'standard'
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Get templates error: {e}")
+        return jsonify({'error': 'Failed to get templates'}), 500
+
+@admin_bp.route('/api/admin/templates/suggest', methods=['POST'])
+@require_admin
+def suggest_template(current_user):
+    """Suggest best template for content"""
+    try:
+        data = request.get_json()
+        content_id = data.get('content_id')
+        
+        if not content_id:
+            return jsonify({'error': 'content_id required'}), 400
+        
+        content = Content.query.get(content_id)
+        if not content:
+            return jsonify({'error': 'Content not found'}), 404
+        
+        # Smart template suggestion logic
+        suggested = 'standard'
+        reason = 'Default template'
+        
+        # Check for mind-bending characteristics
+        mind_bending_genres = {'Sci-Fi', 'Thriller', 'Mystery', 'Psychological'}
+        mind_bending_keywords = ['time', 'loop', 'parallel', 'reality', 'mind', 'twist', 'consciousness']
+        
+        if content.genres:
+            genres = json.loads(content.genres) if isinstance(content.genres, str) else content.genres
+            if any(genre in mind_bending_genres for genre in genres):
+                overview_lower = content.overview.lower() if content.overview else ''
+                if any(keyword in overview_lower for keyword in mind_bending_keywords):
+                    suggested = 'mind_bending'
+                    reason = 'Content has mind-bending themes and genres'
+        
+        # Check for hidden gem (low popularity, high rating)
+        if hasattr(content, 'popularity') and hasattr(content, 'rating'):
+            if content.popularity < 50 and content.rating > 7.5:
+                suggested = 'hidden_gem'
+                reason = 'Low popularity but high rating indicates hidden gem'
+        
+        # Check for anime gem
+        if content.content_type == 'anime' and content.rating and content.rating > 8.0:
+            suggested = 'anime_gem'
+            reason = 'High-rated anime deserves special treatment'
+        
+        return jsonify({
+            'suggested_template': suggested,
+            'reason': reason,
+            'content_type': content.content_type
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Template suggestion error: {e}")
+        return jsonify({'error': 'Failed to suggest template'}), 500
+
 # Admin Recommendations Routes
 @admin_bp.route('/api/admin/recommendations', methods=['POST'])
 @require_admin
 def create_admin_recommendation(current_user):
-    """Create admin recommendation"""
+    """Create admin recommendation with template support"""
     try:
         data = request.get_json()
         
@@ -103,6 +205,10 @@ def create_admin_recommendation(current_user):
         
         if not admin_service:
             return jsonify({'error': 'Admin service not available'}), 503
+        
+        # Extract template information
+        template_type = data.get('template_type', 'standard')
+        template_params = data.get('template_params', {})
         
         # Handle both content_data and content_id formats
         if 'content_data' in data:
@@ -113,7 +219,9 @@ def create_admin_recommendation(current_user):
                 data.get('recommendation_type'),
                 data.get('description'),
                 data.get('status', 'draft'),
-                data.get('publish_to_telegram', False)
+                data.get('publish_to_telegram', False),
+                template_type=template_type,
+                template_params=template_params
             )
         else:
             # Legacy format: content already exists
@@ -125,7 +233,9 @@ def create_admin_recommendation(current_user):
                 current_user, 
                 data['content_id'],
                 data['recommendation_type'],
-                data['description']
+                data['description'],
+                template_type=template_type,
+                template_params=template_params
             )
         
         return jsonify(result), 201
@@ -179,7 +289,7 @@ def get_recommendation_details(current_user, recommendation_id):
 @admin_bp.route('/api/admin/recommendations/<int:recommendation_id>', methods=['PUT'])
 @require_admin
 def update_recommendation(current_user, recommendation_id):
-    """Update existing recommendation"""
+    """Update existing recommendation with template support"""
     try:
         data = request.get_json()
         
@@ -188,6 +298,13 @@ def update_recommendation(current_user, recommendation_id):
         
         if not admin_service:
             return jsonify({'error': 'Admin service not available'}), 503
+        
+        # Add template information if provided
+        if 'template_type' in data or 'template_params' in data:
+            data['template_data'] = {
+                'type': data.get('template_type', 'standard'),
+                'params': data.get('template_params', {})
+            }
         
         result = admin_service.update_recommendation(current_user, recommendation_id, data)
         if not result:
@@ -238,12 +355,23 @@ def publish_recommendation(current_user, recommendation_id):
 @admin_bp.route('/api/admin/recommendations/<int:recommendation_id>/send', methods=['POST'])
 @require_admin
 def send_recommendation_to_telegram(current_user, recommendation_id):
-    """Send recommendation to Telegram"""
+    """Send recommendation to Telegram with template support"""
     try:
         if not admin_service:
             return jsonify({'error': 'Admin service not available'}), 503
         
-        result = admin_service.send_recommendation_to_telegram(current_user, recommendation_id)
+        # Get optional template override from request
+        data = request.get_json() or {}
+        template_override = data.get('template_type')
+        template_params = data.get('template_params', {})
+        
+        result = admin_service.send_recommendation_to_telegram(
+            current_user, 
+            recommendation_id,
+            template_override=template_override,
+            template_params=template_params
+        )
+        
         if not result:
             return jsonify({'error': 'Recommendation not found'}), 404
         
@@ -252,6 +380,118 @@ def send_recommendation_to_telegram(current_user, recommendation_id):
     except Exception as e:
         logger.error(f"Send to Telegram error: {e}")
         return jsonify({'error': 'Failed to send to Telegram'}), 500
+
+@admin_bp.route('/api/admin/recommendations/<int:recommendation_id>/preview', methods=['POST'])
+@require_admin
+def preview_telegram_message(current_user, recommendation_id):
+    """Preview Telegram message with specific template"""
+    try:
+        if not admin_service or not telegram_service:
+            return jsonify({'error': 'Service not available'}), 503
+        
+        data = request.get_json() or {}
+        template_type = data.get('template_type', 'standard')
+        template_params = data.get('template_params', {})
+        
+        # Get recommendation and content
+        recommendation = AdminRecommendation.query.get(recommendation_id)
+        if not recommendation:
+            return jsonify({'error': 'Recommendation not found'}), 404
+        
+        content = Content.query.get(recommendation.content_id)
+        if not content:
+            return jsonify({'error': 'Content not found'}), 404
+        
+        # Generate preview based on template
+        from .telegram import TelegramTemplates
+        
+        if template_type == 'mind_bending':
+            message = TelegramTemplates.mind_bending_template(
+                content,
+                template_params.get('if_you_like')
+            )
+        elif template_type == 'hidden_gem':
+            message = TelegramTemplates.hidden_gem_template(
+                content,
+                template_params.get('hook', 'A masterpiece waiting to be discovered'),
+                template_params.get('if_you_like')
+            )
+        elif template_type == 'anime_gem':
+            message = TelegramTemplates.anime_gem_template(
+                content,
+                template_params.get('emotion_hook', 'An emotional journey')
+            )
+        else:
+            # Standard templates
+            if content.content_type == 'anime':
+                message = TelegramTemplates.anime_recommendation_template(
+                    content, current_user.username, recommendation.description
+                )
+            elif content.content_type in ['tv', 'series']:
+                message = TelegramTemplates.tv_show_recommendation_template(
+                    content, current_user.username, recommendation.description
+                )
+            else:
+                message = TelegramTemplates.movie_recommendation_template(
+                    content, current_user.username, recommendation.description
+                )
+        
+        return jsonify({
+            'preview': message,
+            'template_type': template_type,
+            'has_poster': bool(content.poster_path)
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Preview telegram message error: {e}")
+        return jsonify({'error': 'Failed to generate preview'}), 500
+
+# Send curated lists
+@admin_bp.route('/api/admin/telegram/send-list', methods=['POST'])
+@require_admin
+def send_telegram_list(current_user):
+    """Send curated list to Telegram"""
+    try:
+        if not telegram_service:
+            return jsonify({'error': 'Telegram service not available'}), 503
+        
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+        
+        list_title = data.get('title')
+        items = data.get('items', [])  # List of (title, year, hook) tuples
+        content_type = data.get('content_type', 'Movie')
+        
+        if not list_title or not items:
+            return jsonify({'error': 'Title and items required'}), 400
+        
+        # Convert items to proper format
+        formatted_items = []
+        for item in items:
+            if isinstance(item, dict):
+                formatted_items.append((
+                    item.get('title', ''),
+                    item.get('year', ''),
+                    item.get('hook', '')
+                ))
+            else:
+                formatted_items.append(item)
+        
+        from .telegram import TelegramService
+        success = TelegramService.send_top_list(list_title, formatted_items, content_type)
+        
+        if success:
+            return jsonify({
+                'success': True,
+                'message': 'List sent to Telegram successfully'
+            }), 200
+        else:
+            return jsonify({'error': 'Failed to send list to Telegram'}), 500
+        
+    except Exception as e:
+        logger.error(f"Send Telegram list error: {e}")
+        return jsonify({'error': 'Failed to send list'}), 500
 
 # Dashboard and Analytics Routes
 @admin_bp.route('/api/admin/dashboard', methods=['GET'])
@@ -809,7 +1049,11 @@ def init_admin_routes(flask_app, database, models, services):
         
         admin_service = init_admin_service(app, db, models, services)
         dashboard_service = init_dashboard_service(app, db, models, services)
-        telegram_service = init_telegram_service(app, db, models, services)
+        telegram_results = init_telegram_service(app, db, models, services)
+        
+        # Extract telegram_service from results
+        if telegram_results:
+            telegram_service = telegram_results.get('telegram_service')
         
         logger.info("✅ Admin routes initialized successfully")
         logger.info(f"   - Admin service: {'✓' if admin_service else '✗'}")
