@@ -1,5 +1,10 @@
 # admin/telegram.py
 
+"""
+CineBrain Telegram Integration
+Premium cinematic messaging for intelligent movie discovery
+"""
+
 import os
 import json
 import logging
@@ -252,7 +257,6 @@ class TelegramTemplates:
 <blockquote><i>{synopsis}</i></blockquote>
 {DIVIDER}
 <i>🍿 Smart recommendations • Upcoming updates • Latest updates • New releases • Trending updates — visit <a href="https://cinebrain.vercel.app/">CineBrain</a></i>
-
 {CINEBRAIN_FOOTER}"""
         
         return message
@@ -289,20 +293,19 @@ class TelegramTemplates:
 <b>{content_prefix} {content.title}{year}</b>
 <i>{genres} • ⭐ {rating}{runtime_str}</i>
 {DIVIDER}
-
 <b>Why this will break your reality:</b>
 <blockquote><i>{overview_text}</i></blockquote>
 • A concept that bends reality
 • A twist that rewrites the whole story
 • A low-budget masterpiece with maximum impact
-
 {DIVIDER}"""
         
-        # Add if_you_like section if provided
+        # Add if_you_like section if provided (FIXED: proper line breaks)
         if if_you_like:
-            message += f"<b>If you like:</b> {if_you_like}\n\n"
+            message += f"\n<b>If you like:</b> {if_you_like}\n"
         
-        message += f"""🔎 <i>More hidden gems — @cinebrain</i>
+        message += f"""
+🔎 <i>More hidden gems — @cinebrain</i>
 <i>🧠 CineBrain — Hidden Gems • Mind-Bending Sci-Fi • Rare Anime</i>
 
 {CINEBRAIN_FOOTER}"""
@@ -338,7 +341,7 @@ class TelegramTemplates:
 
 {hook_text}"""
         
-        # Add optional if_you_like section
+        # Add optional if_you_like section (FIXED: proper formatting)
         if if_you_like:
             message += f"\n\n<b>If you like:</b> {if_you_like}"
         
@@ -403,11 +406,9 @@ class TelegramTemplates:
 🎐 <b>Anime Gem — {content_prefix} {content.title}{year}</b>
 <i>{genres} • {status} • ⭐ {rating}</i>
 {DIVIDER}
-
 <b>Why this hits hard:</b>
 <blockquote><i>{overview_text}</i></blockquote>
 • {emotion_hook_text}
-
 {DIVIDER}
 🔎 <i>More rare anime — @cinebrain</i>
 <i>🧠 CineBrain — Hidden Gems • Mind-Bending Sci-Fi • Rare Anime</i>
@@ -438,7 +439,6 @@ class TelegramTemplates:
         message = f"""🧠 <b>{list_title}</b>
 
 {body}
-
 {DIVIDER}
 📌 <i>Save this list — @cinebrain</i>
 <i>🧠 CineBrain — Hidden Gems • Mind-Bending Sci-Fi • Rare Anime</i>
@@ -477,7 +477,6 @@ class TelegramTemplates:
 🎥 <b>{content_prefix} {content.title}{year}</b>
 <i>{genres}</i>
 {DIVIDER}
-
 ⚡ Watch the clip above.
 If this hooks you, the full movie will blow your mind.
 
@@ -752,11 +751,13 @@ class TelegramService:
                     else:
                         poster_url = f"https://image.tmdb.org/t/p/w500{content.poster_path}"
             
-            # Create inline keyboard
+            # Create inline keyboard with buttons SIDE BY SIDE
             keyboard = types.InlineKeyboardMarkup(row_width=2)
             
-            if template_type != 'top_list' and content:
-                # Generate tracking URLs
+            buttons = []
+            
+            # Add Details button for content-based templates
+            if template_type != 'top_list' and content and hasattr(content, 'slug') and content.slug:
                 campaign_type = f"{content.content_type}_recommendation"
                 content_identifier = content.slug.replace('-', '_')
                 
@@ -770,14 +771,20 @@ class TelegramService:
                     text="Full Details",
                     url=detail_url
                 )
-                keyboard.add(details_btn)
+                buttons.append(details_btn)
             
             # Always add explore button
             explore_btn = types.InlineKeyboardButton(
                 text="Explore More",
                 url=f"https://cinebrain.vercel.app/?utm_source=telegram&utm_medium=bot&utm_campaign=recommendation&utm_content=explore_more"
             )
-            keyboard.add(explore_btn)
+            buttons.append(explore_btn)
+            
+            # Add buttons in a single row (side by side)
+            if len(buttons) == 2:
+                keyboard.row(buttons[0], buttons[1])  # Side by side
+            elif len(buttons) == 1:
+                keyboard.add(buttons[0])  # Single button
             
             # Send message with or without poster based on template support
             if poster_url and poster_support and template_type != 'scene_clip':
@@ -880,7 +887,6 @@ class TelegramAdminService:
             
             message = f"""📊 <b>CineBrain Analytics</b>
 {DIVIDER}
-
 <b>📈 Recommendation Overview</b>
 • Total Recommendations: <b>{stats_data.get('total', 0):,}</b>
 • This Week: <b>{stats_data.get('this_week', 0):,}</b>
@@ -892,7 +898,6 @@ class TelegramAdminService:
 • Total Clicks: <b>{stats_data.get('clicks', 0):,}</b>
 • Click-Through Rate: <b>{stats_data.get('ctr', 0):.2f}%</b>
 • Avg. Engagement: <b>{stats_data.get('avg_engagement', 0):.1f}%</b>
-
 {DIVIDER}
 <i>Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}</i>
 
@@ -928,6 +933,8 @@ def init_telegram_service(app, db, models, services) -> Optional[Dict[str, Any]]
             logger.info("   ├─ Content type prefixes: ✓")
             logger.info("   ├─ Poster support (all except scene_clip): ✓")
             logger.info("   ├─ 5 custom templates: ✓")
+            logger.info("   ├─ Fixed button layout (side by side): ✓")
+            logger.info("   ├─ Fixed divider formatting: ✓")
             logger.info("   ├─ Mobile-optimized layouts: ✓")
             logger.info("   ├─ Google Analytics tracking: ✓")
             logger.info("   ├─ Content recommendations: ✓")
