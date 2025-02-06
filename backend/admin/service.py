@@ -548,12 +548,21 @@ class AdminService:
                 except:
                     release_date = None
             
+            # YouTube trailer lookup with proper error handling
             youtube_trailer_id = None
-            if self.ContentService:
-                youtube_trailer_id = self.ContentService.get_youtube_trailer(
-                    data.get('title'), 
-                    data.get('content_type')
-                )
+            try:
+                if self.ContentService and hasattr(self.ContentService, 'get_youtube_trailer'):
+                    youtube_trailer_id = self.ContentService.get_youtube_trailer(
+                        data.get('title'), 
+                        data.get('content_type')
+                    )
+                else:
+                    # Fallback: try to extract from data or set to None
+                    youtube_trailer_id = data.get('youtube_trailer_id') or None
+                    logger.info(f"YouTube trailer lookup skipped - ContentService not available or method missing")
+            except Exception as e:
+                logger.warning(f"YouTube trailer lookup failed for '{data.get('title')}': {e}")
+                youtube_trailer_id = None
             
             if data.get('source') == 'anime':
                 mal_id = int(data['id']) if isinstance(data['id'], str) and data['id'].isdigit() else data['id']
@@ -563,7 +572,7 @@ class AdminService:
                     original_title=data.get('original_title'),
                     content_type='anime',
                     genres=json.dumps(data.get('genres', [])),
-                    anime_genres=json.dumps([]),
+                    anime_genres=json.dumps(data.get('anime_genres', [])),
                     languages=json.dumps(['japanese']),
                     release_date=release_date,
                     rating=data.get('rating'),
@@ -591,7 +600,22 @@ class AdminService:
                     youtube_trailer_id=youtube_trailer_id
                 )
             
-            content.ensure_slug()
+            # Ensure slug generation with proper error handling
+            try:
+                if hasattr(content, 'ensure_slug'):
+                    content.ensure_slug()
+                else:
+                    # Fallback slug generation
+                    if content.title:
+                        import re
+                        slug = re.sub(r'[^\w\s-]', '', content.title.lower())
+                        slug = re.sub(r'[-\s]+', '-', slug).strip('-')
+                        content.slug = slug[:150] if slug else f"content-{content.tmdb_id or content.mal_id or 'unknown'}"
+                    logger.info(f"Generated fallback slug: {content.slug}")
+            except Exception as e:
+                logger.warning(f"Slug generation failed for '{content.title}': {e}")
+                # Set a basic slug as fallback
+                content.slug = f"content-{content.tmdb_id or content.mal_id or int(datetime.utcnow().timestamp())}"
             
             self.db.session.add(content)
             self.db.session.commit()
