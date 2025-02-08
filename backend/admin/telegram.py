@@ -297,7 +297,6 @@ class TelegramTemplates:
 <blockquote><i>{overview_text}</i></blockquote>
 • A concept that bends reality
 • A twist that rewrites the whole story
-• A low-budget masterpiece with maximum impact
 {DIVIDER}"""
         
         # Add if_you_like section if provided (FIXED: proper line breaks)
