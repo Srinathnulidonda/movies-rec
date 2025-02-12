@@ -27,3 +27,7 @@ make this templates similar to my above standared template
 
 the admin can change the template according in the frontend while posting the recommendations 
 
+in the Create Recommendation with Template the Hook Text, If You Like, Custom Overview, Scene Caption should be saved when the user saved as draft
+and in the draft sections there should be saved data and can edited that saved data
+
+add some colonms in database because i will add some 100 of movies in save as draft when i open in the draft there should be saved data in that 
