@@ -291,7 +291,7 @@ def check_watchlist_status_route(content_id):
 # FAVORITES ROUTES
 # ============================================================================
 
-@user_bp.route('/api/user/favorites', methods=['GET', 'OPTIONS'])@user_bp.route('/api/user/favorites', methods=['GET', 'OPTIONS'])
+@user_bp.route('/api/user/favorites', methods=['GET', 'OPTIONS'])
 def get_favorites_route():
     from .utils import require_auth
     
