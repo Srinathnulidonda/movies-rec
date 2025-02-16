@@ -291,28 +291,52 @@ def check_watchlist_status_route(content_id):
 # FAVORITES ROUTES
 # ============================================================================
 
-@user_bp.route('/api/user/favorites', methods=['GET', 'OPTIONS'])
+@user_bp.route('/api/user/favorites', methods=['GET', 'OPTIONS'])@user_bp.route('/api/user/favorites', methods=['GET', 'OPTIONS'])
 def get_favorites_route():
-    return favorites.get_favorites()
+    from .utils import require_auth
+    
+    @require_auth
+    def wrapper(current_user):
+        if request.method == 'OPTIONS':
+            return '', 200
+        return favorites.get_favorites(current_user)
+    
+    return wrapper()
 
 @user_bp.route('/api/user/favorites', methods=['POST', 'OPTIONS'])
 def add_to_favorites_route():
-    return favorites.add_to_favorites()
+    from .utils import require_auth
+    
+    @require_auth
+    def wrapper(current_user):
+        if request.method == 'OPTIONS':
+            return '', 200
+        return favorites.add_to_favorites(current_user)
+    
+    return wrapper()
 
 @user_bp.route('/api/user/favorites/<int:content_id>', methods=['DELETE', 'OPTIONS'])
 def remove_from_favorites_route(content_id):
     from .utils import require_auth
+    
     @require_auth
     def wrapper(current_user):
+        if request.method == 'OPTIONS':
+            return '', 200
         return favorites.remove_from_favorites(current_user, content_id)
+    
     return wrapper()
 
 @user_bp.route('/api/user/favorites/<int:content_id>', methods=['GET', 'OPTIONS'])
 def check_favorite_status_route(content_id):
     from .utils import require_auth
+    
     @require_auth
     def wrapper(current_user):
+        if request.method == 'OPTIONS':
+            return '', 200
         return favorites.check_favorite_status(current_user, content_id)
+    
     return wrapper()
 
 # ============================================================================

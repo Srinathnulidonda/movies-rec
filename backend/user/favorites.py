@@ -3,14 +3,15 @@ from flask import request, jsonify
 from datetime import datetime
 import json
 import logging
-from .utils import require_auth, db, UserInteraction, Content, format_content_for_response, recommendation_engine
 
 logger = logging.getLogger(__name__)
 
-@require_auth
 def get_favorites(current_user):
     """Get user's favorites"""
     try:
+        # Import here to ensure we get the initialized versions
+        from .utils import db, UserInteraction, Content, format_content_for_response
+        
         favorite_interactions = UserInteraction.query.filter_by(
             user_id=current_user.id,
             interaction_type='favorite'
@@ -39,16 +40,23 @@ def get_favorites(current_user):
         logger.error(f"CineBrain favorites error: {e}")
         return jsonify({'error': 'Failed to get CineBrain favorites'}), 500
 
-@require_auth
 def add_to_favorites(current_user):
     """Add content to favorites"""
     try:
+        # Import here to ensure we get the initialized versions
+        from .utils import db, UserInteraction, Content, recommendation_engine
+        
         data = request.get_json()
         content_id = data.get('content_id')
         rating = data.get('rating')
         
         if not content_id:
             return jsonify({'error': 'Content ID required'}), 400
+        
+        # Check if content exists
+        content_exists = Content.query.filter_by(id=content_id).first()
+        if not content_exists:
+            return jsonify({'error': 'Content not found in database'}), 404
         
         # Check if already in favorites
         existing = UserInteraction.query.filter_by(
@@ -100,13 +108,18 @@ def add_to_favorites(current_user):
         
     except Exception as e:
         logger.error(f"Add to CineBrain favorites error: {e}")
-        db.session.rollback()
+        # Import db here for rollback
+        from .utils import db
+        if db:
+            db.session.rollback()
         return jsonify({'error': 'Failed to add to CineBrain favorites'}), 500
 
-@require_auth
 def remove_from_favorites(current_user, content_id):
     """Remove content from favorites"""
     try:
+        # Import here to ensure we get the initialized versions
+        from .utils import db, UserInteraction, recommendation_engine
+        
         interaction = UserInteraction.query.filter_by(
             user_id=current_user.id,
             content_id=content_id,
@@ -141,13 +154,18 @@ def remove_from_favorites(current_user, content_id):
             
     except Exception as e:
         logger.error(f"Remove from CineBrain favorites error: {e}")
-        db.session.rollback()
+        # Import db here for rollback
+        from .utils import db
+        if db:
+            db.session.rollback()
         return jsonify({'error': 'Failed to remove from CineBrain favorites'}), 500
 
-@require_auth
 def check_favorite_status(current_user, content_id):
     """Check if content is in favorites"""
     try:
+        # Import here to ensure we get the initialized versions
+        from .utils import UserInteraction
+        
         interaction = UserInteraction.query.filter_by(
             user_id=current_user.id,
             content_id=content_id,
