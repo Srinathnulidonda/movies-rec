@@ -90,14 +90,25 @@ def add_to_favorites(current_user):
         # Update recommendation engine
         if recommendation_engine:
             try:
-                recommendation_engine.update_user_preferences_realtime(
-                    current_user.id,
-                    {
-                        'content_id': content_id,
-                        'interaction_type': 'favorite',
-                        'rating': rating
-                    }
-                )
+                # Check which method is available
+                if hasattr(recommendation_engine, 'update_user_preferences_realtime'):
+                    recommendation_engine.update_user_preferences_realtime(
+                        current_user.id,
+                        {
+                            'content_id': content_id,
+                            'interaction_type': 'favorite',
+                            'rating': rating
+                        }
+                    )
+                elif hasattr(recommendation_engine, 'update_user_profile'):
+                    recommendation_engine.update_user_profile(
+                        current_user.id,
+                        {
+                            'content_id': content_id,
+                            'interaction_type': 'favorite',
+                            'rating': rating
+                        }
+                    )
             except Exception as e:
                 logger.warning(f"Failed to update CineBrain recommendations: {e}")
         
@@ -132,13 +143,23 @@ def remove_from_favorites(current_user, content_id):
             
             if recommendation_engine:
                 try:
-                    recommendation_engine.update_user_preferences_realtime(
-                        current_user.id,
-                        {
-                            'content_id': content_id,
-                            'interaction_type': 'remove_favorite'
-                        }
-                    )
+                    # Check which method is available
+                    if hasattr(recommendation_engine, 'update_user_preferences_realtime'):
+                        recommendation_engine.update_user_preferences_realtime(
+                            current_user.id,
+                            {
+                                'content_id': content_id,
+                                'interaction_type': 'remove_favorite'
+                            }
+                        )
+                    elif hasattr(recommendation_engine, 'update_user_profile'):
+                        recommendation_engine.update_user_profile(
+                            current_user.id,
+                            {
+                                'content_id': content_id,
+                                'interaction_type': 'remove_favorite'
+                            }
+                        )
                 except Exception as e:
                     logger.warning(f"Failed to update CineBrain recommendations: {e}")
             
