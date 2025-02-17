@@ -661,7 +661,16 @@ def get_rating_for_content_route(content_id):
 
 @user_bp.route('/api/interactions', methods=['POST', 'OPTIONS'])
 def record_interaction_route():
-    return activity.record_interaction()
+    from .utils import require_auth
+    
+    @require_auth
+    def wrapper(current_user):
+        if request.method == 'OPTIONS':
+            return '', 200
+        return activity.record_interaction(current_user)
+    
+    return wrapper()
+
 
 @user_bp.route('/api/users/<username>/activity/public', methods=['GET'])
 def get_public_activity_route(username):
