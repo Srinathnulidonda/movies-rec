@@ -22,18 +22,30 @@ def record_interaction(current_user):
         if not all(field in data for field in required_fields):
             return jsonify({'error': 'Missing required fields for CineBrain interaction'}), 400
         
-        content_id = data['content_id']
+        original_content_id = data['content_id']
+        actual_content_id = original_content_id
         
-        content_exists = Content.query.filter_by(id=content_id).first()
+        # FIX: First check if content exists with the given ID
+        content_exists = Content.query.filter_by(id=original_content_id).first()
+        
         if not content_exists:
-            logger.warning(f"CineBrain: Content {content_id} not found in database, attempting to create")
+            logger.warning(f"CineBrain: Content {original_content_id} not found in database, attempting to create")
             
             try:
                 content_metadata = data.get('metadata', {})
                 content_info = content_metadata.get('content_info')
                 
                 if content_info:
-                    if content_service and content_info.get('tmdb_id'):
+                    # FIX: Try to find existing content by TMDB ID first
+                    if content_info.get('tmdb_id'):
+                        existing_by_tmdb = Content.query.filter_by(tmdb_id=content_info['tmdb_id']).first()
+                        if existing_by_tmdb:
+                            content_exists = existing_by_tmdb
+                            actual_content_id = existing_by_tmdb.id
+                            logger.info(f"CineBrain: Found existing content by TMDB ID, using ID {actual_content_id}")
+                    
+                    # If not found by TMDB ID, try to create from TMDB
+                    if not content_exists and content_service and content_info.get('tmdb_id'):
                         try:
                             from app import CineBrainTMDBService
                             tmdb_data = CineBrainTMDBService.get_content_details(
@@ -45,12 +57,17 @@ def record_interaction(current_user):
                                     tmdb_data, 
                                     content_info.get('content_type', 'movie').strip()
                                 )
-                                logger.info(f"CineBrain: Created content from TMDB for ID {content_id}")
+                                if content_exists:
+                                    actual_content_id = content_exists.id
+                                    logger.info(f"CineBrain: Created content from TMDB with ID {actual_content_id}")
                         except Exception as e:
                             logger.warning(f"Failed to fetch from TMDB: {e}")
                     
+                    # Create minimal record as last resort
                     if not content_exists:
-                        content_exists = create_minimal_content_record(content_id, content_info)
+                        content_exists = create_minimal_content_record(original_content_id, content_info)
+                        if content_exists:
+                            actual_content_id = content_exists.id
                 
                 if not content_exists:
                     return jsonify({
@@ -70,7 +87,7 @@ def record_interaction(current_user):
             interaction_type = 'watchlist' if data['interaction_type'] == 'remove_watchlist' else 'favorite'
             interaction = UserInteraction.query.filter_by(
                 user_id=current_user.id,
-                content_id=data['content_id'],
+                content_id=actual_content_id,  # FIX: Use actual_content_id
                 interaction_type=interaction_type
             ).first()
             
@@ -78,16 +95,15 @@ def record_interaction(current_user):
                 db.session.delete(interaction)
                 db.session.commit()
                 
-                # Update all recommendation systems for removal
+                # Update recommendation systems with actual content ID
                 update_results = []
                 
-                # Update new personalized system
                 if profile_analyzer:
                     try:
                         success = profile_analyzer.update_profile_realtime(
                             current_user.id,
                             {
-                                'content_id': data['content_id'],
+                                'content_id': actual_content_id,  # FIX: Use actual_content_id
                                 'interaction_type': data['interaction_type'],
                                 'metadata': data.get('metadata', {})
                             }
@@ -97,15 +113,14 @@ def record_interaction(current_user):
                     except Exception as e:
                         logger.warning(f"Failed to update CineBrain advanced profile for removal: {e}")
                 
-                # Update legacy system - check for correct method name
+                # Update legacy system
                 if recommendation_engine:
                     try:
-                        # Check which method is available
                         if hasattr(recommendation_engine, 'update_user_preferences_realtime'):
                             recommendation_engine.update_user_preferences_realtime(
                                 current_user.id,
                                 {
-                                    'content_id': data['content_id'],
+                                    'content_id': actual_content_id,  # FIX: Use actual_content_id
                                     'interaction_type': data['interaction_type'],
                                     'metadata': data.get('metadata', {})
                                 }
@@ -115,7 +130,7 @@ def record_interaction(current_user):
                             recommendation_engine.update_user_profile(
                                 current_user.id,
                                 {
-                                    'content_id': data['content_id'],
+                                    'content_id': actual_content_id,  # FIX: Use actual_content_id
                                     'interaction_type': data['interaction_type'],
                                     'metadata': data.get('metadata', {})
                                 }
@@ -128,7 +143,8 @@ def record_interaction(current_user):
                 return jsonify({
                     'success': True,
                     'message': message,
-                    'real_time_updates': update_results
+                    'real_time_updates': update_results,
+                    'actual_content_id': actual_content_id  # FIX: Return actual ID
                 }), 200
             else:
                 item_type = "watchlist" if interaction_type == "watchlist" else "favorites"
@@ -141,7 +157,7 @@ def record_interaction(current_user):
         if data['interaction_type'] in ['watchlist', 'favorite']:
             existing = UserInteraction.query.filter_by(
                 user_id=current_user.id,
-                content_id=data['content_id'],
+                content_id=actual_content_id,  # FIX: Use actual_content_id
                 interaction_type=data['interaction_type']
             ).first()
             
@@ -149,13 +165,14 @@ def record_interaction(current_user):
                 item_type = "watchlist" if data['interaction_type'] == "watchlist" else "favorites"
                 return jsonify({
                     'success': True,
-                    'message': f'Already in CineBrain {item_type}'
+                    'message': f'Already in CineBrain {item_type}',
+                    'actual_content_id': actual_content_id  # FIX: Return actual ID
                 }), 200
         
-        # Create new interaction
+        # Create new interaction with actual content ID
         interaction = UserInteraction(
             user_id=current_user.id,
-            content_id=data['content_id'],
+            content_id=actual_content_id,  # FIX: Use actual_content_id
             interaction_type=data['interaction_type'],
             rating=data.get('rating'),
             interaction_metadata=json.dumps(data.get('metadata', {}))
@@ -164,16 +181,15 @@ def record_interaction(current_user):
         db.session.add(interaction)
         db.session.commit()
         
-        # Update all recommendation systems
+        # Update recommendation systems with actual content ID
         update_results = []
         
-        # Update new personalized system
         if profile_analyzer:
             try:
                 success = profile_analyzer.update_profile_realtime(
                     current_user.id,
                     {
-                        'content_id': data['content_id'],
+                        'content_id': actual_content_id,  # FIX: Use actual_content_id
                         'interaction_type': data['interaction_type'],
                         'rating': data.get('rating'),
                         'metadata': data.get('metadata', {})
@@ -185,15 +201,13 @@ def record_interaction(current_user):
             except Exception as e:
                 logger.warning(f"Failed to update CineBrain advanced profile: {e}")
         
-        # Update legacy system - check for correct method name
         if recommendation_engine:
             try:
-                # Check which method is available
                 if hasattr(recommendation_engine, 'update_user_preferences_realtime'):
                     recommendation_engine.update_user_preferences_realtime(
                         current_user.id,
                         {
-                            'content_id': data['content_id'],
+                            'content_id': actual_content_id,  # FIX: Use actual_content_id
                             'interaction_type': data['interaction_type'],
                             'rating': data.get('rating'),
                             'metadata': data.get('metadata', {})
@@ -204,7 +218,7 @@ def record_interaction(current_user):
                     recommendation_engine.update_user_profile(
                         current_user.id,
                         {
-                            'content_id': data['content_id'],
+                            'content_id': actual_content_id,  # FIX: Use actual_content_id
                             'interaction_type': data['interaction_type'],
                             'rating': data.get('rating'),
                             'metadata': data.get('metadata', {})
@@ -220,12 +234,12 @@ def record_interaction(current_user):
             'message': 'CineBrain interaction recorded successfully',
             'interaction_id': interaction.id,
             'real_time_updates': update_results,
-            'advanced_features_active': bool(profile_analyzer)
+            'advanced_features_active': bool(profile_analyzer),
+            'actual_content_id': actual_content_id  # FIX: Return actual ID
         }), 201
         
     except Exception as e:
         logger.error(f"CineBrain interaction recording error: {e}")
-        # Import db for rollback
         from .utils import db
         if db:
             db.session.rollback()

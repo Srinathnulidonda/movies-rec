@@ -81,26 +81,24 @@ def add_to_favorites(current_user):
         if not raw_content_id:
             return jsonify({'error': 'Content ID required'}), 400
         
-        # Fix: Validate and convert content_id to integer
+        # FIX: Validate and convert content_id to integer
         try:
-            # Handle string IDs like "tmdb_movie_768614" or "1381405"
             if isinstance(raw_content_id, str):
-                # Remove non-numeric parts if present
                 if raw_content_id.startswith(('tmdb_', 'mal_', 'imdb_')):
-                    # Extract numeric part or use TMDB ID for lookup
                     if 'tmdb_movie_' in raw_content_id or 'tmdb_tv_' in raw_content_id:
-                        tmdb_id = raw_content_id.split('_')[-1]
+                        tmdb_id = int(raw_content_id.split('_')[-1])
                         # Try to find existing content by TMDB ID
-                        existing_content = Content.query.filter_by(tmdb_id=int(tmdb_id)).first()
+                        existing_content = Content.query.filter_by(tmdb_id=tmdb_id).first()
                         if existing_content:
                             content_id = existing_content.id
+                            logger.info(f"Found existing content by TMDB ID: {tmdb_id} -> ID: {content_id}")
                         else:
-                            # Create new content from TMDB ID
-                            content_id = create_content_from_tmdb_id(tmdb_id, data)
+                            # Will create new content below
+                            content_id = None
+                            logger.info(f"Will create new content for TMDB ID: {tmdb_id}")
                     else:
                         return jsonify({'error': 'Invalid content ID format'}), 400
                 else:
-                    # Try to convert to integer
                     content_id = int(raw_content_id)
             else:
                 content_id = int(raw_content_id)
@@ -109,17 +107,19 @@ def add_to_favorites(current_user):
             logger.error(f"Invalid content ID format: {raw_content_id}, error: {e}")
             return jsonify({'error': 'Invalid content ID format'}), 400
         
-        # Check if content exists
-        content_exists = Content.query.filter_by(id=content_id).first()
+        # Check if content exists (if we have an ID)
+        content_exists = None
+        if content_id:
+            content_exists = Content.query.filter_by(id=content_id).first()
+        
         if not content_exists:
-            logger.warning(f"Content {content_id} not found, attempting to create from request data")
+            logger.warning(f"Content {content_id or raw_content_id} not found, attempting to create from request data")
             
-            # Try to create content from metadata if provided
             content_metadata = data.get('metadata', {})
             content_info = content_metadata.get('content_info')
             
             if content_info:
-                # First try to fetch from TMDB if we have tmdb_id
+                # Try to fetch from TMDB if we have tmdb_id
                 if content_service and content_info.get('tmdb_id'):
                     try:
                         from app import CineBrainTMDBService
@@ -131,34 +131,34 @@ def add_to_favorites(current_user):
                         if tmdb_data:
                             content_exists = content_service.save_content_from_tmdb(tmdb_data, content_type)
                             if content_exists:
-                                # Update the ID to match what was saved
-                                content_id = content_exists.id
+                                content_id = content_exists.id  # FIX: Use the actual generated ID
                                 logger.info(f"Created content from TMDB with new ID {content_id}")
                     except Exception as e:
                         logger.warning(f"Failed to fetch from TMDB: {e}")
                 
-                # If TMDB fetch failed or no tmdb_id, create minimal record
+                # If TMDB fetch failed, create minimal record
                 if not content_exists:
-                    content_exists = create_minimal_content_record(content_id, content_info)
+                    # FIX: Don't force the original ID, let it auto-generate
+                    content_exists = create_minimal_content_record(None, content_info)
                     if content_exists:
-                        content_id = content_exists.id
+                        content_id = content_exists.id  # FIX: Use the actual generated ID
+                        logger.info(f"Created minimal content record with new ID {content_id}")
             
             if not content_exists:
-                logger.error(f"Failed to create content record for ID {content_id}")
+                logger.error(f"Failed to create content record")
                 return jsonify({
                     'error': 'Content not available',
                     'message': 'Unable to add this content to favorites at this time'
                 }), 400
         
-        # Check if already in favorites
+        # Check if already in favorites (with actual content ID)
         existing = UserInteraction.query.filter_by(
             user_id=current_user.id,
-            content_id=content_id,
+            content_id=content_id,  # FIX: Use actual content_id
             interaction_type='favorite'
         ).first()
         
         if existing:
-            # Update rating if provided
             if rating:
                 existing.rating = rating
                 db.session.commit()
@@ -166,13 +166,14 @@ def add_to_favorites(current_user):
             return jsonify({
                 'success': True,
                 'message': 'Already in CineBrain favorites',
-                'content_id': content_id
+                'content_id': content_id,  # FIX: Return actual content_id
+                'actual_content_id': content_id
             }), 200
         
         # Add to favorites
         interaction = UserInteraction(
             user_id=current_user.id,
-            content_id=content_id,
+            content_id=content_id,  # FIX: Use actual content_id
             interaction_type='favorite',
             rating=rating
         )
@@ -180,15 +181,14 @@ def add_to_favorites(current_user):
         db.session.add(interaction)
         db.session.commit()
         
-        # Update recommendation engine
+        # Update recommendation engine with actual content ID
         if recommendation_engine:
             try:
-                # Check which method is available
                 if hasattr(recommendation_engine, 'update_user_preferences_realtime'):
                     recommendation_engine.update_user_preferences_realtime(
                         current_user.id,
                         {
-                            'content_id': content_id,
+                            'content_id': content_id,  # FIX: Use actual content_id
                             'interaction_type': 'favorite',
                             'rating': rating
                         }
@@ -197,7 +197,7 @@ def add_to_favorites(current_user):
                     recommendation_engine.update_user_profile(
                         current_user.id,
                         {
-                            'content_id': content_id,
+                            'content_id': content_id,  # FIX: Use actual content_id
                             'interaction_type': 'favorite',
                             'rating': rating
                         }
@@ -208,12 +208,12 @@ def add_to_favorites(current_user):
         return jsonify({
             'success': True,
             'message': 'Added to CineBrain favorites',
-            'content_id': content_id
+            'content_id': content_id,  # FIX: Return actual content_id
+            'actual_content_id': content_id
         }), 201
         
     except Exception as e:
         logger.error(f"Add to CineBrain favorites error: {e}")
-        # Import db here for rollback
         from .utils import db
         if db:
             db.session.rollback()

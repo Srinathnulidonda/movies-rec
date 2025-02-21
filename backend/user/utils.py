@@ -176,7 +176,7 @@ def create_minimal_content_record(content_id, content_info):
             title = 'Unknown Title'
         
         timestamp = int(datetime.utcnow().timestamp())
-        slug = f"content-{content_id}-{timestamp}"
+        slug = f"content-{timestamp}-{hash(title) % 10000}"
         if len(slug) > 150:
             slug = slug[:150]
         
@@ -186,8 +186,8 @@ def create_minimal_content_record(content_id, content_info):
         if poster_path and len(str(poster_path)) > 255:
             poster_path = str(poster_path)[:255]
         
+        # FIX: Don't force the ID, let it auto-generate
         content_record = Content(
-            id=content_id,
             title=title,
             content_type=content_type,
             poster_path=poster_path,
@@ -200,6 +200,10 @@ def create_minimal_content_record(content_id, content_info):
             slug=slug
         )
         
+        # FIX: Only set ID if specifically provided and valid
+        if content_id and isinstance(content_id, int) and content_id > 0:
+            content_record.id = content_id
+        
         if content_info.get('release_date'):
             try:
                 release_date_str = str(content_info['release_date'])[:10]
@@ -211,11 +215,11 @@ def create_minimal_content_record(content_id, content_info):
         
         db.session.add(content_record)
         db.session.commit()
-        logger.info(f"CineBrain: Created minimal content record for ID {content_id}")
+        logger.info(f"CineBrain: Created minimal content record with ID {content_record.id}")
         return content_record
         
     except Exception as e:
-        logger.error(f"Failed to create minimal content record for ID {content_id}: {e}")
+        logger.error(f"Failed to create minimal content record: {e}")
         db.session.rollback()
         return None
 
