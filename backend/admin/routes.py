@@ -22,6 +22,11 @@ Content = None
 UserInteraction = None
 AdminRecommendation = None
 AdminEmailPreferences = None
+SupportTicket = None
+ContactMessage = None
+IssueReport = None
+SupportCategory = None
+TicketActivity = None
 cache = None
 
 def get_user_from_token():
@@ -269,7 +274,7 @@ def send_recommendation_to_telegram(current_user, recommendation_id):
         logger.error(f"Send to Telegram error: {e}")
         return jsonify({'error': 'Failed to send to Telegram'}), 500
 
-# Template Management Routes (NEW)
+# Template Management Routes
 @admin_bp.route('/api/admin/telegram/templates', methods=['GET'])
 @require_admin
 def get_telegram_templates(current_user):
@@ -410,7 +415,7 @@ def send_recommendation_with_template(current_user, recommendation_id):
 @admin_bp.route('/api/admin/dashboard', methods=['GET'])
 @require_admin
 def get_admin_dashboard(current_user):
-    """Get admin dashboard data"""
+    """Get admin dashboard data with support integration"""
     try:
         if not dashboard_service:
             return jsonify({'error': 'Dashboard service not available'}), 503
@@ -517,6 +522,157 @@ def get_support_dashboard(current_user):
         logger.error(f"Support dashboard error: {e}")
         return jsonify({'error': 'Failed to load support dashboard'}), 500
 
+@admin_bp.route('/api/admin/support/live-updates', methods=['GET'])
+@require_admin
+def get_support_live_updates(current_user):
+    """Get live support updates for dashboard refresh - NEW ROUTE"""
+    try:
+        if not dashboard_service:
+            return jsonify({'error': 'Dashboard service not available'}), 503
+        
+        # Get timestamp from last check (optional)
+        since = request.args.get('since')  # ISO timestamp
+        
+        support_data = dashboard_service._get_support_dashboard_data()
+        
+        # If 'since' timestamp provided, filter for newer items
+        if since:
+            try:
+                from datetime import datetime
+                since_dt = datetime.fromisoformat(since.replace('Z', '+00:00'))
+                
+                # Filter recent items
+                support_data['recent_tickets'] = [
+                    ticket for ticket in support_data['recent_tickets']
+                    if datetime.fromisoformat(ticket['created_at'].replace('Z', '+00:00')) > since_dt
+                ]
+                
+                support_data['unread_contacts'] = [
+                    contact for contact in support_data['unread_contacts']
+                    if datetime.fromisoformat(contact['created_at'].replace('Z', '+00:00')) > since_dt
+                ]
+                
+                support_data['critical_issues'] = [
+                    issue for issue in support_data['critical_issues']
+                    if datetime.fromisoformat(issue['created_at'].replace('Z', '+00:00')) > since_dt
+                ]
+                
+            except Exception as e:
+                logger.warning(f"Error filtering by timestamp: {e}")
+        
+        # Add notification counts for quick reference
+        support_data['notification_counts'] = {
+            'new_tickets': len([t for t in support_data['recent_tickets'] if t.get('is_new')]),
+            'new_contacts': len([c for c in support_data['unread_contacts'] if c.get('is_new')]),
+            'new_issues': len([i for i in support_data['critical_issues'] if i.get('is_new')]),
+            'total_new': 0
+        }
+        
+        support_data['notification_counts']['total_new'] = (
+            support_data['notification_counts']['new_tickets'] +
+            support_data['notification_counts']['new_contacts'] +
+            support_data['notification_counts']['new_issues']
+        )
+        
+        return jsonify({
+            'success': True,
+            'support_data': support_data,
+            'timestamp': datetime.utcnow().isoformat(),
+            'has_new_items': support_data['notification_counts']['total_new'] > 0
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Support live updates error: {e}")
+        return jsonify({'error': 'Failed to get support updates'}), 500
+
+@admin_bp.route('/api/admin/support/mark-seen', methods=['POST'])
+@require_admin
+def mark_support_items_seen(current_user):
+    """Mark support items as seen by admin - NEW ROUTE"""
+    try:
+        data = request.get_json()
+        item_type = data.get('type')  # 'ticket', 'contact', 'issue'
+        item_ids = data.get('ids', [])
+        
+        if not item_type or not item_ids:
+            return jsonify({'error': 'Type and IDs required'}), 400
+        
+        marked_count = 0
+        current_time = datetime.utcnow()
+        
+        if item_type == 'contact' and ContactMessage:
+            # Mark contact messages as read and admin viewed
+            for contact_id in item_ids:
+                try:
+                    contact = ContactMessage.query.get(contact_id)
+                    if contact:
+                        contact.is_read = True
+                        contact.admin_viewed = True
+                        contact.admin_viewed_at = current_time
+                        contact.admin_viewed_by = current_user.id
+                        marked_count += 1
+                except Exception as e:
+                    logger.error(f"Error marking contact {contact_id}: {e}")
+                    continue
+        
+        elif item_type == 'issue' and IssueReport:
+            # Mark issue reports as admin viewed
+            for issue_id in item_ids:
+                try:
+                    issue = IssueReport.query.get(issue_id)
+                    if issue:
+                        issue.admin_viewed = True
+                        issue.admin_viewed_at = current_time
+                        issue.admin_viewed_by = current_user.id
+                        marked_count += 1
+                except Exception as e:
+                    logger.error(f"Error marking issue {issue_id}: {e}")
+                    continue
+        
+        elif item_type == 'ticket' and SupportTicket:
+            # Mark tickets as admin viewed
+            for ticket_id in item_ids:
+                try:
+                    ticket = SupportTicket.query.get(ticket_id)
+                    if ticket:
+                        ticket.admin_viewed = True
+                        ticket.admin_viewed_at = current_time
+                        ticket.admin_viewed_by = current_user.id
+                        marked_count += 1
+                        
+                        # Add activity log
+                        if TicketActivity:
+                            activity = TicketActivity(
+                                ticket_id=ticket.id,
+                                action='admin_viewed',
+                                description=f'Viewed by admin {current_user.username}',
+                                actor_type='admin',
+                                actor_id=current_user.id,
+                                actor_name=current_user.username
+                            )
+                            db.session.add(activity)
+                except Exception as e:
+                    logger.error(f"Error marking ticket {ticket_id}: {e}")
+                    continue
+        
+        if marked_count > 0:
+            db.session.commit()
+            logger.info(f"✅ Admin {current_user.username} marked {marked_count} {item_type}s as seen")
+        
+        return jsonify({
+            'success': True,
+            'marked_count': marked_count,
+            'message': f'Marked {marked_count} {item_type}s as seen'
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Mark items seen error: {e}")
+        try:
+            db.session.rollback()
+        except:
+            pass
+        return jsonify({'error': 'Failed to mark items as seen'}), 500
+
 @admin_bp.route('/api/admin/support/tickets', methods=['GET'])
 @require_admin
 def get_support_tickets(current_user):
@@ -563,6 +719,162 @@ def get_feedback_list(current_user):
     except Exception as e:
         logger.error(f"Get feedback list error: {e}")
         return jsonify({'error': 'Failed to get feedback list'}), 500
+
+@admin_bp.route('/api/admin/support/ticket/<int:ticket_id>/quick-update', methods=['POST'])
+@require_admin
+def quick_update_ticket(current_user, ticket_id):
+    """Quick update ticket status from dashboard - NEW ROUTE"""
+    try:
+        data = request.get_json()
+        action = data.get('action')  # 'assign', 'priority', 'status'
+        value = data.get('value')
+        
+        if not action or not value:
+            return jsonify({'error': 'Action and value required'}), 400
+        
+        if not SupportTicket:
+            return jsonify({'error': 'Support system not available'}), 503
+        
+        ticket = SupportTicket.query.get_or_404(ticket_id)
+        old_value = None
+        
+        if action == 'status':
+            old_value = ticket.status
+            ticket.status = value
+            if value == 'resolved' and not ticket.resolved_at:
+                ticket.resolved_at = datetime.utcnow()
+            elif value == 'closed' and not ticket.closed_at:
+                ticket.closed_at = datetime.utcnow()
+        
+        elif action == 'priority':
+            old_value = ticket.priority
+            ticket.priority = value
+        
+        elif action == 'assign':
+            old_value = ticket.assigned_to
+            if value == 'self':
+                ticket.assigned_to = current_user.id
+                value = current_user.username
+            elif value == 'unassign':
+                ticket.assigned_to = None
+                value = None
+            else:
+                # Assume it's a user ID
+                try:
+                    user_id = int(value)
+                    user = User.query.get(user_id)
+                    if user:
+                        ticket.assigned_to = user_id
+                        value = user.username
+                    else:
+                        return jsonify({'error': 'User not found'}), 404
+                except ValueError:
+                    return jsonify({'error': 'Invalid user ID'}), 400
+        
+        # Add activity log
+        if TicketActivity:
+            activity = TicketActivity(
+                ticket_id=ticket.id,
+                action=f'{action}_updated',
+                description=f'{action.title()} changed from {old_value} to {value}',
+                old_value=str(old_value) if old_value else None,
+                new_value=str(value) if value else None,
+                actor_type='admin',
+                actor_id=current_user.id,
+                actor_name=current_user.username
+            )
+            db.session.add(activity)
+        
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': f'Ticket {action} updated successfully',
+            'ticket': {
+                'id': ticket.id,
+                'ticket_number': ticket.ticket_number,
+                'status': ticket.status,
+                'priority': ticket.priority,
+                'assigned_to': ticket.assigned_to,
+                'updated_at': datetime.utcnow().isoformat()
+            }
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Quick update ticket error: {e}")
+        try:
+            db.session.rollback()
+        except:
+            pass
+        return jsonify({'error': 'Failed to update ticket'}), 500
+
+@admin_bp.route('/api/admin/support/contact/<int:contact_id>/quick-reply', methods=['POST'])
+@require_admin
+def quick_reply_contact(current_user, contact_id):
+    """Quick reply to contact message - NEW ROUTE"""
+    try:
+        data = request.get_json()
+        reply_message = data.get('message')
+        
+        if not reply_message:
+            return jsonify({'error': 'Reply message required'}), 400
+        
+        if not ContactMessage:
+            return jsonify({'error': 'Support system not available'}), 503
+        
+        contact = ContactMessage.query.get_or_404(contact_id)
+        
+        # Mark as read and viewed
+        contact.is_read = True
+        contact.admin_viewed = True
+        contact.admin_viewed_at = datetime.utcnow()
+        contact.admin_viewed_by = current_user.id
+        
+        # Send reply email
+        try:
+            from auth.service import email_service
+            from auth.support_mail_templates import get_support_template
+            
+            if email_service:
+                html, text = get_support_template(
+                    'admin_reply',
+                    user_name=contact.name,
+                    admin_name=current_user.username,
+                    original_subject=contact.subject,
+                    reply_message=reply_message,
+                    contact_id=contact.id
+                )
+                
+                email_service.queue_email(
+                    to=contact.email,
+                    subject=f"Re: {contact.subject} - CineBrain Support",
+                    html=html,
+                    text=text,
+                    priority='high',
+                    to_name=contact.name
+                )
+                
+                db.session.commit()
+                
+                return jsonify({
+                    'success': True,
+                    'message': 'Reply sent successfully',
+                    'contact_id': contact.id
+                }), 200
+            else:
+                return jsonify({'error': 'Email service not available'}), 503
+                
+        except Exception as e:
+            logger.error(f"Error sending reply email: {e}")
+            return jsonify({'error': 'Failed to send reply'}), 500
+        
+    except Exception as e:
+        logger.error(f"Quick reply error: {e}")
+        try:
+            db.session.rollback()
+        except:
+            pass
+        return jsonify({'error': 'Failed to send reply'}), 500
 
 # User Management Routes
 @admin_bp.route('/api/admin/users', methods=['GET'])
@@ -788,7 +1100,7 @@ def get_cache_stats(current_user):
         logger.error(f"Cache stats error: {e}")
         return jsonify({'error': 'Failed to get cache stats'}), 500
 
-# Slug Management Routes (moved from app.py)
+# Slug Management Routes
 @admin_bp.route('/api/admin/slugs/migrate', methods=['POST'])
 @require_admin
 def migrate_all_slugs(current_user):
@@ -893,7 +1205,12 @@ def get_services_status(current_user):
             'telegram_service': 'available' if telegram_service else 'unavailable',
             'database': 'connected' if db else 'disconnected',
             'cache': 'available' if cache else 'unavailable',
-            'email_preferences': 'available' if AdminEmailPreferences else 'unavailable'
+            'email_preferences': 'available' if AdminEmailPreferences else 'unavailable',
+            'support_models': {
+                'tickets': 'available' if SupportTicket else 'unavailable',
+                'contacts': 'available' if ContactMessage else 'unavailable',
+                'issues': 'available' if IssueReport else 'unavailable'
+            }
         }
         
         return jsonify({
@@ -926,9 +1243,7 @@ def after_request(response):
     allowed_origins = [
         'https://cinebrain.vercel.app',
         'http://127.0.0.1:5500', 
-        'http://127.0.0.1:5501',
-        'http://localhost:3000',
-        'http://localhost:5173'
+        'http://127.0.0.1:5501'
     ]
     
     if origin in allowed_origins:
@@ -943,7 +1258,8 @@ def after_request(response):
 def init_admin_routes(flask_app, database, models, services):
     """Initialize admin routes with dependencies"""
     global admin_service, dashboard_service, telegram_service
-    global app, db, User, Content, UserInteraction, AdminRecommendation, AdminEmailPreferences, cache
+    global app, db, User, Content, UserInteraction, AdminRecommendation, AdminEmailPreferences
+    global SupportTicket, ContactMessage, IssueReport, SupportCategory, TicketActivity, cache
     
     app = flask_app
     db = database
@@ -952,6 +1268,14 @@ def init_admin_routes(flask_app, database, models, services):
     UserInteraction = models.get('UserInteraction')
     AdminRecommendation = models.get('AdminRecommendation')
     AdminEmailPreferences = models.get('AdminEmailPreferences')
+    
+    # Support models
+    SupportTicket = models.get('SupportTicket')
+    ContactMessage = models.get('ContactMessage')
+    IssueReport = models.get('IssueReport')
+    SupportCategory = models.get('SupportCategory')
+    TicketActivity = models.get('TicketActivity')
+    
     cache = services.get('cache')
     
     # Initialize individual services
@@ -969,6 +1293,7 @@ def init_admin_routes(flask_app, database, models, services):
         logger.info(f"   - Dashboard service: {'✓' if dashboard_service else '✗'}")
         logger.info(f"   - Telegram service: {'✓' if telegram_service else '✗'}")
         logger.info(f"   - Email preferences: {'✓' if AdminEmailPreferences else '✗'}")
+        logger.info(f"   - Support integration: {'✓' if SupportTicket and ContactMessage and IssueReport else '✗'}")
         logger.info(f"   - Template system: {'✓'}")
         
     except Exception as e:

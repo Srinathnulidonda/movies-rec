@@ -217,7 +217,7 @@ def auth_required(f):
     
     return decorated_function
 
-# Database Models - Fixed with String-based Enums
+# Database Models - Enhanced with Admin Viewing Support
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
@@ -298,16 +298,16 @@ class AdminRecommendation(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
-    # NEW: Template-specific fields
-    template_type = db.Column(db.String(50))  # mind_bending, hidden_gem, etc.
-    template_data = db.Column(db.JSON)  # Full template data object
-    hook_text = db.Column(db.Text)  # For hidden_gem template
-    if_you_like = db.Column(db.String(500))  # For multiple templates
-    custom_overview = db.Column(db.Text)  # For mind_bending, anime_gem
-    emotion_hook = db.Column(db.String(200))  # For anime_gem
-    scene_caption = db.Column(db.String(200))  # For scene_clip
-    list_title = db.Column(db.String(200))  # For top_list
-    list_items = db.Column(db.JSON)  # For top_list items array
+    # Template-specific fields
+    template_type = db.Column(db.String(50))
+    template_data = db.Column(db.JSON)
+    hook_text = db.Column(db.Text)
+    if_you_like = db.Column(db.String(500))
+    custom_overview = db.Column(db.Text)
+    emotion_hook = db.Column(db.String(200))
+    scene_caption = db.Column(db.String(200))
+    list_title = db.Column(db.String(200))
+    list_items = db.Column(db.JSON)
     telegram_sent = db.Column(db.Boolean, default=False)
     telegram_sent_at = db.Column(db.DateTime)
     last_template_edit = db.Column(db.DateTime)  
@@ -374,7 +374,7 @@ class Review(db.Model):
         db.UniqueConstraint('content_id', 'user_id'),
     )
 
-# Support System Models - Fixed to use strings instead of enums
+# Enhanced Support System Models with Admin Viewing Support
 class SupportCategory(db.Model):
     __tablename__ = 'support_categories'
     
@@ -402,7 +402,7 @@ class SupportTicket(db.Model):
     
     category_id = db.Column(db.Integer, db.ForeignKey('support_categories.id'), nullable=False)
     
-    # Fixed: Use string columns instead of enums
+    # String columns instead of enums
     ticket_type = db.Column(db.String(20), nullable=False, default='general')
     priority = db.Column(db.String(20), default='normal')
     status = db.Column(db.String(20), default='open')
@@ -421,6 +421,11 @@ class SupportTicket(db.Model):
     sla_breached = db.Column(db.Boolean, default=False)
     
     assigned_to = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    
+    # NEW: Admin viewing tracking
+    admin_viewed = db.Column(db.Boolean, default=False)
+    admin_viewed_at = db.Column(db.DateTime)
+    admin_viewed_by = db.Column(db.Integer, db.ForeignKey('user.id'))
     
     activities = db.relationship('TicketActivity', backref='ticket', lazy='dynamic', cascade='all, delete-orphan')
 
@@ -461,6 +466,11 @@ class ContactMessage(db.Model):
     is_read = db.Column(db.Boolean, default=False)
     admin_notes = db.Column(db.Text)
     
+    # NEW: Admin viewing tracking
+    admin_viewed = db.Column(db.Boolean, default=False)
+    admin_viewed_at = db.Column(db.DateTime)
+    admin_viewed_by = db.Column(db.Integer, db.ForeignKey('user.id'))
+    
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 class IssueReport(db.Model):
@@ -494,10 +504,15 @@ class IssueReport(db.Model):
     is_resolved = db.Column(db.Boolean, default=False)
     admin_notes = db.Column(db.Text)
     
+    # NEW: Admin viewing tracking
+    admin_viewed = db.Column(db.Boolean, default=False)
+    admin_viewed_at = db.Column(db.DateTime)
+    admin_viewed_by = db.Column(db.Integer, db.ForeignKey('user.id'))
+    
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     resolved_at = db.Column(db.DateTime)
 
-# Admin System Models - Fixed
+# Admin System Models
 class AdminNotification(db.Model):
     __tablename__ = 'admin_notifications'
     
@@ -534,13 +549,13 @@ class AdminEmailPreferences(db.Model):
     # Content Management Alerts (Configurable)
     content_added = db.Column(db.Boolean, default=True)
     recommendation_created = db.Column(db.Boolean, default=True)
-    recommendation_updated = db.Column(db.Boolean, default=False)  # OFF by default
-    recommendation_deleted = db.Column(db.Boolean, default=False)  # OFF by default
+    recommendation_updated = db.Column(db.Boolean, default=False)
+    recommendation_deleted = db.Column(db.Boolean, default=False)
     recommendation_published = db.Column(db.Boolean, default=True)
     
     # User Activity Alerts (Configurable)
     user_feedback = db.Column(db.Boolean, default=True)
-    regular_tickets = db.Column(db.Boolean, default=False)  # OFF by default
+    regular_tickets = db.Column(db.Boolean, default=False)
     
     # System Operations (Usually OFF)
     cache_operations = db.Column(db.Boolean, default=False)
@@ -981,13 +996,13 @@ try:
 except Exception as e:
     logger.error(f"❌ Failed to initialize CineBrain new releases service: {e}")
 
-# Initialize Authentication System - FIXED: Removed url_prefix
+# Initialize Authentication System
 try:
     from auth.service import init_auth, email_service as auth_email_service
     from auth.routes import auth_bp
     
     init_auth(app, db, User)
-    app.register_blueprint(auth_bp)  # FIXED: No url_prefix
+    app.register_blueprint(auth_bp)
     
     email_service = auth_email_service
     services['email_service'] = email_service
@@ -996,13 +1011,13 @@ try:
 except Exception as e:
     logger.error(f"❌ Failed to initialize CineBrain authentication service: {e}")
 
-# Initialize Support System - FIXED: Removed url_prefix
+# Initialize Support System
 try:
     if 'email_service' not in services and email_service:
         services['email_service'] = email_service
     
     support_models = init_support(app, db, models, services)
-    app.register_blueprint(support_bp)  # FIXED: No url_prefix
+    app.register_blueprint(support_bp)
     
     if support_models:
         logger.info("✅ CineBrain Support System initialized successfully")
@@ -1013,13 +1028,13 @@ try:
 except Exception as e:
     logger.error(f"❌ Failed to initialize CineBrain Support System: {e}")
 
-# Initialize Admin System - FIXED: Removed url_prefix
+# Initialize Admin System
 try:
     if email_service:
         services['email_service'] = email_service
     
     admin_models = init_admin(app, db, models, services)
-    app.register_blueprint(admin_bp)  # FIXED: No url_prefix
+    app.register_blueprint(admin_bp)
     
     if 'admin_notification_service' not in services:
         try:
@@ -1045,7 +1060,7 @@ try:
         logger.info("✅ CineBrain Advanced Personalized Recommendation System initialized successfully")
         services['profile_analyzer'] = profile_analyzer
         services['personalized_recommendation_engine'] = personalized_recommendation_engine
-        app.register_blueprint(personalized_bp)  # FIXED: No url_prefix
+        app.register_blueprint(personalized_bp)
         logger.info("✅ CineBrain Personalized routes registered")
     else:
         logger.warning("⚠️ CineBrain Personalized Recommendation System failed to initialize fully")
@@ -1056,7 +1071,7 @@ except Exception as e:
 # Initialize User Routes
 try:
     init_user_routes(app, db, models, {**services, 'cache': cache})
-    app.register_blueprint(user_bp)  # FIXED: No url_prefix
+    app.register_blueprint(user_bp)
     logger.info("✅ CineBrain user module initialized successfully")
 except Exception as e:
     logger.error(f"❌ Failed to initialize CineBrain user module: {e}")
@@ -1064,7 +1079,7 @@ except Exception as e:
 # Initialize Critics Choice Service
 try:
     critics_choice_service = init_critics_choice_service(app, db, models, services, cache)
-    app.register_blueprint(critics_choice_bp)  # FIXED: No url_prefix
+    app.register_blueprint(critics_choice_bp)
     if critics_choice_service:
         logger.info("✅ CineBrain Critics Choice service integrated successfully")
         services['critics_choice_service'] = critics_choice_service
@@ -1084,7 +1099,7 @@ except Exception as e:
 # Initialize Recommendation Routes
 try:
     init_recommendation_routes(app, db, models, services, cache)
-    app.register_blueprint(recommendation_bp)  # FIXED: No url_prefix
+    app.register_blueprint(recommendation_bp)
     logger.info("✅ CineBrain recommendation routes initialized successfully")
 except Exception as e:
     logger.error(f"❌ Failed to initialize CineBrain recommendation routes: {e}")
@@ -1092,7 +1107,7 @@ except Exception as e:
 # Initialize System Routes
 try:
     init_system_routes(app, db, models, services)
-    app.register_blueprint(system_bp)  # FIXED: No url_prefix
+    app.register_blueprint(system_bp)
     logger.info("✅ CineBrain system monitoring service initialized successfully")
     services['system_service'] = True
 except Exception as e:
@@ -1101,14 +1116,14 @@ except Exception as e:
 # Initialize Operations Routes
 try:
     init_operations_routes(app, db, models, services)
-    app.register_blueprint(operations_bp)  # FIXED: No url_prefix
+    app.register_blueprint(operations_bp)
     logger.info("✅ CineBrain operations service initialized successfully")
     services['operations_service'] = True
 except Exception as e:
     logger.error(f"❌ Failed to initialize CineBrain operations service: {e}")
 
 def setup_support_monitoring():
-    """Enhanced support monitoring - EMAIL ONLY, NO TELEGRAM - FIXED FOR STRINGS"""
+    """Enhanced support monitoring - EMAIL ONLY, NO TELEGRAM"""
     def support_monitor():
         while True:
             try:
@@ -1118,7 +1133,6 @@ def setup_support_monitoring():
                 
                 with app.app_context():
                     try:
-                        # FIXED: Use SQLAlchemy ORM instead of raw SQL to handle enum/string mismatch
                         current_time = datetime.utcnow()
                         
                         # Use ORM query instead of raw SQL
@@ -1139,7 +1153,7 @@ def setup_support_monitoring():
                             
                             logger.warning(f"SLA breached for ticket #{ticket.ticket_number}")
                             
-                            # ONLY EMAIL notification to admin - NO TELEGRAM
+                            # ONLY EMAIL notification to admin
                             try:
                                 if admin_notification_service:
                                     admin_notification_service.notify_sla_breach(ticket)
