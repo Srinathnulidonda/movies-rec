@@ -144,16 +144,23 @@ class ContactService:
             self.db.session.add(contact_message)
             self.db.session.commit()
             
+            # Get the timestamp for response
+            submitted_at = contact_message.created_at
+            formatted_time = submitted_at.strftime('%Y-%m-%d at %H:%M UTC')
+            
             # Send notifications
             self._send_user_confirmation(data)
             self._send_admin_notification_enhanced(contact_message, data)
             
-            logger.info(f"✅ Contact form submitted by {data['email']}")
+            logger.info(f"✅ Contact form submitted by {data['email']} at {formatted_time}")
             
             return jsonify({
                 'success': True,
                 'message': 'Thank you for your message! We will get back to you soon.',
-                'contact_id': contact_message.id
+                'contact_id': contact_message.id,
+                'submitted_at': submitted_at.isoformat(),
+                'submitted_time': formatted_time,
+                'reference_number': f"CB-CONTACT-{contact_message.id:06d}"
             }), 201
             
         except Exception as e:
@@ -328,6 +335,7 @@ class ContactService:
 def init_contact_service(app, db, models, services):
     """Initialize contact service"""
     return ContactService(app, db, models, services)
+
 
 
 
@@ -555,6 +563,10 @@ class IssueReportService:
             self.db.session.add(issue_report)
             self.db.session.flush()
             
+            # Get the timestamp for response
+            submitted_at = issue_report.created_at
+            formatted_time = submitted_at.strftime('%Y-%m-%d at %H:%M UTC')
+            
             # Create corresponding support ticket
             ticket_number = self._generate_ticket_number()
             
@@ -570,28 +582,29 @@ class IssueReportService:
             
             # Create detailed description for ticket
             detailed_description = f"""
-ISSUE REPORT DETAILS:
+    ISSUE REPORT DETAILS:
 
-🐛 Issue Type: {data['issue_type'].replace('_', ' ').title()}
-⚡ Severity: {data['severity'].title()}
+    🐛 Issue Type: {data['issue_type'].replace('_', ' ').title()}
+    ⚡ Severity: {data['severity'].title()}
+    📅 Reported: {formatted_time}
 
-📝 Description:
-{data['description']}
+    📝 Description:
+    {data['description']}
 
-🔄 Steps to Reproduce:
-{data['steps_to_reproduce'] or 'Not provided'}
+    🔄 Steps to Reproduce:
+    {data['steps_to_reproduce'] or 'Not provided'}
 
-✅ Expected Behavior:
-{data['expected_behavior'] or 'Not provided'}
+    ✅ Expected Behavior:
+    {data['expected_behavior'] or 'Not provided'}
 
-🌐 Technical Details:
-• Browser: {data['browser_version'] or 'Not provided'}
-• Device/OS: {data['device_os'] or 'Not provided'}
-• Page URL: {data['page_url'] or 'Not provided'}
-• User Agent: {request_info['user_agent']}
-• IP Address: {request_info['ip_address']}
+    🌐 Technical Details:
+    • Browser: {data['browser_version'] or 'Not provided'}
+    • Device/OS: {data['device_os'] or 'Not provided'}
+    • Page URL: {data['page_url'] or 'Not provided'}
+    • User Agent: {request_info['user_agent']}
+    • IP Address: {request_info['ip_address']}
 
-📎 Screenshots: {len(uploaded_files)} file(s) attached
+    📎 Screenshots: {len(uploaded_files)} file(s) attached
             """.strip()
             
             # Create support ticket
@@ -616,11 +629,11 @@ ISSUE REPORT DETAILS:
             # Link issue report to ticket
             issue_report.ticket_id = ticket.id
             
-            # Add activity log
+            # Add activity log with timestamp
             activity = self.TicketActivity(
                 ticket_id=ticket.id,
                 action='created',
-                description=f'Issue report submitted by {data["name"]} - {data["issue_type"]} ({data["severity"]} severity)',
+                description=f'Issue report submitted by {data["name"]} at {formatted_time} - {data["issue_type"]} ({data["severity"]} severity)',
                 actor_type='user',
                 actor_id=user.id if user else None,
                 actor_name=data['name']
@@ -633,20 +646,34 @@ ISSUE REPORT DETAILS:
             self._send_user_confirmation(issue_report, ticket, data)
             self._send_admin_notification(issue_report, ticket, data)
             
-            logger.info(f"✅ Issue report {issue_id} submitted by {data['email']}")
+            logger.info(f"✅ Issue report {issue_id} submitted by {data['email']} at {formatted_time}")
             
             return jsonify({
                 'success': True,
                 'message': 'Issue report submitted successfully. Thank you for helping us improve CineBrain!',
                 'issue_id': issue_id,
                 'ticket_number': ticket_number,
-                'files_uploaded': len(uploaded_files)
+                'submitted_at': submitted_at.isoformat(),
+                'submitted_time': formatted_time,
+                'files_uploaded': len(uploaded_files),
+                'severity': data['severity'],
+                'estimated_response_time': self._get_estimated_response_time(priority)
             }), 201
             
         except Exception as e:
             self.db.session.rollback()
             logger.error(f"❌ Error processing issue report: {e}")
             return jsonify({'error': 'Failed to submit issue report. Please try again.'}), 500
+
+    def _get_estimated_response_time(self, priority: str) -> str:
+        """Get estimated response time based on priority"""
+        response_times = {
+            'urgent': '4 hours',
+            'high': '24 hours', 
+            'normal': '48 hours',
+            'low': '72 hours'
+        }
+        return response_times.get(priority, '48 hours')
     
     def _generate_ticket_number(self):
         """Generate unique ticket number"""
@@ -830,7 +857,8 @@ def init_issue_service(app, db, models, services):
 
 
 
-4.# support/routes.py
+
+4. # support/routes.py
 
 from flask import Blueprint, request, jsonify
 from datetime import datetime
@@ -1678,8 +1706,9 @@ def init_support_routes(flask_app, database, models, services):
         
     except Exception as e:
         logger.error(f"❌ Failed to initialize support routes: {e}")
-        raise e 
-    
+        raise e
+
+
 
 5. # support/tickets.py
 
@@ -1913,11 +1942,15 @@ class TicketService:
             self.db.session.add(ticket)
             self.db.session.flush()
             
+            # Get the timestamp for response
+            submitted_at = ticket.created_at
+            formatted_time = submitted_at.strftime('%Y-%m-%d at %H:%M UTC')
+            
             # Add activity log
             activity = self.TicketActivity(
                 ticket_id=ticket.id,
                 action='created',
-                description=f'Ticket created by {data["name"]}',
+                description=f'Ticket created by {data["name"]} at {formatted_time}',
                 actor_type='user',
                 actor_id=user.id if user else None,
                 actor_name=data['name']
@@ -1929,20 +1962,34 @@ class TicketService:
             self._send_user_confirmation(ticket, data)
             self._send_admin_notification_enhanced(ticket, data)
             
-            logger.info(f"✅ Support ticket {ticket_number} created for {data['email']}")
+            logger.info(f"✅ Support ticket {ticket_number} created for {data['email']} at {formatted_time}")
             
             return jsonify({
                 'success': True,
                 'message': 'Support ticket created successfully. You will receive a confirmation email shortly.',
                 'ticket_number': ticket_number,
                 'ticket_id': ticket.id,
-                'sla_deadline': ticket.sla_deadline.isoformat() if ticket.sla_deadline else None
+                'submitted_at': submitted_at.isoformat(),
+                'submitted_time': formatted_time,
+                'sla_deadline': ticket.sla_deadline.isoformat() if ticket.sla_deadline else None,
+                'priority': priority_value,
+                'estimated_response_time': self._get_estimated_response_time(priority_value)
             }), 201
             
         except Exception as e:
             self.db.session.rollback()
             logger.error(f"❌ Error creating support ticket: {e}")
             return jsonify({'error': 'Failed to create support ticket. Please try again.'}), 500
+
+    def _get_estimated_response_time(self, priority: str) -> str:
+        """Get estimated response time based on priority"""
+        response_times = {
+            'urgent': '4 hours',
+            'high': '24 hours', 
+            'normal': '48 hours',
+            'low': '72 hours'
+        }
+        return response_times.get(priority, '48 hours')
     
     def get_ticket(self, ticket_number):
         """Get ticket details by number"""
@@ -2039,7 +2086,7 @@ class TicketService:
             return True
     
     def _send_user_confirmation(self, ticket, data):
-        """Send confirmation email to user"""
+        """Send confirmation email to user with timestamp"""
         try:
             if not self.email_service:
                 logger.warning("Email service not available - cannot send user confirmation")
@@ -2048,6 +2095,7 @@ class TicketService:
             from auth.support_mail_templates import get_support_template
             
             category = self.SupportCategory.query.get(ticket.category_id)
+            submitted_time = ticket.created_at.strftime('%Y-%m-%d at %H:%M UTC')
             
             html, text = get_support_template(
                 'ticket_created',
@@ -2055,7 +2103,9 @@ class TicketService:
                 user_name=data['name'],
                 subject=ticket.subject,
                 priority=ticket.priority,
-                category=category.name if category else 'General Support'
+                category=category.name if category else 'General Support',
+                submitted_time=submitted_time,
+                estimated_response_time=self._get_estimated_response_time(ticket.priority)
             )
             
             self.email_service.queue_email(
@@ -2067,7 +2117,7 @@ class TicketService:
                 to_name=data['name']
             )
             
-            logger.info(f"✅ User confirmation email queued for {data['email']}")
+            logger.info(f"✅ User confirmation email queued for {data['email']} - submitted {submitted_time}")
             
         except Exception as e:
             logger.error(f"❌ Error sending user confirmation: {e}")
@@ -2169,3 +2219,4 @@ class TicketService:
 
 def init_ticket_service(app, db, models, services):
     """Initialize ticket service"""
+    return TicketService(app, db, models, services)

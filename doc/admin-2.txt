@@ -1,1679 +1,2379 @@
-4. # admin/service.py
+memorize my admin folder files
+
+3. # admin/routes.py
+
+from flask import Blueprint, request, jsonify
+from datetime import datetime, timedelta
+import json
+import logging
+import jwt
+from functools import wraps
+
+logger = logging.getLogger(__name__)
+
+admin_bp = Blueprint('admin', __name__)
+
+# Global services - initialized by init_admin_routes
+admin_service = None
+dashboard_service = None
+telegram_service = None
+app = None
+db = None
+User = None
+Content = None
+UserInteraction = None
+AdminRecommendation = None
+AdminEmailPreferences = None
+SupportTicket = None
+ContactMessage = None
+IssueReport = None
+SupportCategory = None
+TicketActivity = None
+cache = None
+
+def get_user_from_token():
+    """Extract user from JWT token"""
+    auth_header = request.headers.get('Authorization')
+    if not auth_header or not auth_header.startswith('Bearer '):
+        return None
+    
+    token = auth_header.split(' ')[1]
+    try:
+        payload = jwt.decode(token, app.secret_key, algorithms=['HS256'])
+        return User.query.get(payload.get('user_id'))
+    except:
+        return None
+
+def require_admin(f):
+    """Decorator for admin-only endpoints"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        user = get_user_from_token()
+        if not user or not getattr(user, 'is_admin', False):
+            return jsonify({'error': 'Admin access required'}), 403
+        return f(user, *args, **kwargs)
+    return decorated_function
+
+# =============================================================================
+# REAL-TIME MONITORING ENDPOINTS (4 Main Endpoints)
+# =============================================================================
+
+@admin_bp.route('/api/system-monitoring', methods=['GET'])
+@require_admin
+def get_system_monitoring(current_user):
+    """Real-time system monitoring - /api/system-monitoring/"""
+    try:
+        if not dashboard_service:
+            return jsonify({'error': 'Dashboard service not available'}), 503
+
+        monitoring_data = dashboard_service.get_system_monitoring()
+        
+        return jsonify({
+            'success': True,
+            'data': monitoring_data,
+            'timestamp': datetime.utcnow().isoformat(),
+            'refresh_interval': 30
+        }), 200
+
+    except Exception as e:
+        logger.error(f"System monitoring error: {e}")
+        return jsonify({
+            'success': False,
+            'error': 'Failed to get system monitoring data'
+        }), 500
+
+@admin_bp.route('/api/overview', methods=['GET'])
+@require_admin
+def get_overview_stats(current_user):
+    """Real-time overview statistics - /api/overview/"""
+    try:
+        if not dashboard_service:
+            return jsonify({'error': 'Dashboard service not available'}), 503
+
+        overview_data = dashboard_service.get_overview_stats()
+        
+        return jsonify({
+            'success': True,
+            'data': overview_data,
+            'timestamp': datetime.utcnow().isoformat(),
+            'refresh_interval': 60
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Overview stats error: {e}")
+        return jsonify({
+            'success': False,
+            'error': 'Failed to get overview statistics'
+        }), 500
+
+@admin_bp.route('/api/service-status', methods=['GET'])
+@require_admin
+def get_service_status(current_user):
+    """Real-time service status - /api/service-status/"""
+    try:
+        if not dashboard_service:
+            return jsonify({'error': 'Dashboard service not available'}), 503
+
+        service_status = dashboard_service.get_service_status()
+        
+        return jsonify({
+            'success': True,
+            'data': service_status,
+            'timestamp': datetime.utcnow().isoformat(),
+            'refresh_interval': 15
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Service status error: {e}")
+        return jsonify({
+            'success': False,
+            'error': 'Failed to get service status'
+        }), 500
+
+@admin_bp.route('/api/admin-activity', methods=['GET'])
+@require_admin
+def get_admin_activity(current_user):
+    """Real-time admin activity - /api/admin-activity/"""
+    try:
+        if not dashboard_service:
+            return jsonify({'error': 'Dashboard service not available'}), 503
+
+        admin_activity = dashboard_service.get_admin_activity()
+        
+        return jsonify({
+            'success': True,
+            'data': admin_activity,
+            'timestamp': datetime.utcnow().isoformat(),
+            'refresh_interval': 45
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Admin activity error: {e}")
+        return jsonify({
+            'success': False,
+            'error': 'Failed to get admin activity data'
+        }), 500
+
+# =============================================================================
+# CONTENT MANAGEMENT ROUTES
+# =============================================================================
+
+@admin_bp.route('/api/admin/search', methods=['GET'])
+@require_admin
+def admin_search(current_user):
+    """Search external content from TMDB/Jikan"""
+    try:
+        query = request.args.get('query', '')
+        source = request.args.get('source', 'tmdb')
+        page = int(request.args.get('page', 1))
+        
+        if not query:
+            return jsonify({'error': 'Query parameter required'}), 400
+        
+        if not admin_service:
+            return jsonify({'error': 'Admin service not available'}), 503
+        
+        results = admin_service.search_external_content(query, source, page)
+        return jsonify({'results': results}), 200
+        
+    except Exception as e:
+        logger.error(f"Admin search error: {e}")
+        return jsonify({'error': 'Search failed'}), 500
+
+@admin_bp.route('/api/admin/content', methods=['POST'])
+@require_admin
+def save_external_content(current_user):
+    """Save external content to database"""
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({'error': 'No content data provided'}), 400
+        
+        if not admin_service:
+            return jsonify({'error': 'Admin service not available'}), 503
+        
+        result = admin_service.save_external_content(data)
+        return jsonify(result), 201 if result.get('created') else 200
+        
+    except Exception as e:
+        logger.error(f"Save content error: {e}")
+        return jsonify({'error': 'Failed to process content'}), 500
+
+@admin_bp.route('/api/admin/content/manage', methods=['GET'])
+@require_admin
+def get_content_management(current_user):
+    """Get content management data"""
+    try:
+        page = int(request.args.get('page', 1))
+        per_page = int(request.args.get('per_page', 20))
+        content_type = request.args.get('type', 'all')
+        search = request.args.get('search', '')
+        
+        if not dashboard_service:
+            return jsonify({'error': 'Dashboard service not available'}), 503
+        
+        content_data = dashboard_service.get_content_management(
+            page, per_page, content_type, search
+        )
+        return jsonify(content_data), 200
+        
+    except Exception as e:
+        logger.error(f"Content management error: {e}")
+        return jsonify({'error': 'Failed to get content'}), 500
+
+@admin_bp.route('/api/admin/content/<int:content_id>/slug', methods=['PUT'])
+@require_admin
+def update_content_slug(current_user, content_id):
+    """Update content slug"""
+    try:
+        if not admin_service:
+            return jsonify({'error': 'Admin service not available'}), 503
+        
+        data = request.get_json() or {}
+        force_update = data.get('force_update', False)
+        result = admin_service.update_content_slug(content_id, force_update)
+        
+        if result:
+            return jsonify({
+                'success': True,
+                'new_slug': result,
+                'service': 'slug_update'
+            }), 200
+        else:
+            return jsonify({'error': 'Content not found or update failed'}), 404
+            
+    except Exception as e:
+        logger.error(f"Error updating content slug: {e}")
+        return jsonify({'error': 'Failed to update slug'}), 500
+
+# =============================================================================
+# RECOMMENDATION MANAGEMENT ROUTES
+# =============================================================================
+
+@admin_bp.route('/api/admin/recommendations', methods=['POST'])
+@require_admin
+def create_admin_recommendation(current_user):
+    """Create admin recommendation with template support"""
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+        
+        if not admin_service:
+            return jsonify({'error': 'Admin service not available'}), 503
+        
+        template_type = data.get('template_type', 'auto')
+        template_params = data.get('template_params', {})
+        
+        if 'content_data' in data:
+            result = admin_service.create_recommendation_from_external_content(
+                current_user, 
+                data['content_data'],
+                data.get('recommendation_type'),
+                data.get('description'),
+                data.get('status', 'draft'),
+                data.get('publish_to_telegram', False),
+                template_type,
+                template_params
+            )
+        else:
+            required_fields = ['content_id', 'recommendation_type', 'description']
+            if not all(field in data for field in required_fields):
+                return jsonify({'error': 'Missing required fields'}), 400
+            
+            result = admin_service.create_recommendation(
+                current_user, 
+                data['content_id'],
+                data['recommendation_type'],
+                data['description'],
+                template_type,
+                template_params
+            )
+        
+        return jsonify(result), 201
+        
+    except Exception as e:
+        logger.error(f"Admin recommendation error: {e}")
+        return jsonify({'error': 'Failed to create recommendation'}), 500
+
+@admin_bp.route('/api/admin/recommendations', methods=['GET'])
+@require_admin
+def get_admin_recommendations(current_user):
+    """Get admin recommendations list"""
+    try:
+        page = int(request.args.get('page', 1))
+        per_page = int(request.args.get('per_page', 20))
+        filter_type = request.args.get('filter', 'all')
+        status = request.args.get('status')
+        
+        if not admin_service:
+            return jsonify({'error': 'Admin service not available'}), 503
+        
+        result = admin_service.get_recommendations(page, per_page, filter_type, status)
+        return jsonify(result), 200
+        
+    except Exception as e:
+        logger.error(f"Get admin recommendations error: {e}")
+        try:
+            db.session.rollback()
+        except:
+            pass
+        return jsonify({'error': 'Failed to get recommendations'}), 500
+
+@admin_bp.route('/api/admin/recommendations/<int:recommendation_id>', methods=['GET'])
+@require_admin
+def get_recommendation_details(current_user, recommendation_id):
+    """Get recommendation details"""
+    try:
+        if not admin_service:
+            return jsonify({'error': 'Admin service not available'}), 503
+        
+        result = admin_service.get_recommendation_details(recommendation_id)
+        if not result:
+            return jsonify({'error': 'Recommendation not found'}), 404
+        
+        return jsonify(result), 200
+        
+    except Exception as e:
+        logger.error(f"Get recommendation details error: {e}")
+        return jsonify({'error': 'Failed to get recommendation details'}), 500
+
+@admin_bp.route('/api/admin/recommendations/<int:recommendation_id>', methods=['PUT'])
+@require_admin
+def update_recommendation(current_user, recommendation_id):
+    """Update recommendation"""
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+        
+        if not admin_service:
+            return jsonify({'error': 'Admin service not available'}), 503
+        
+        result = admin_service.update_recommendation(current_user, recommendation_id, data)
+        if not result:
+            return jsonify({'error': 'Recommendation not found'}), 404
+        
+        return jsonify(result), 200
+        
+    except Exception as e:
+        logger.error(f"Update recommendation error: {e}")
+        return jsonify({'error': 'Failed to update recommendation'}), 500
+
+@admin_bp.route('/api/admin/recommendations/<int:recommendation_id>', methods=['DELETE'])
+@require_admin
+def delete_recommendation(current_user, recommendation_id):
+    """Delete recommendation"""
+    try:
+        if not admin_service:
+            return jsonify({'error': 'Admin service not available'}), 503
+        
+        result = admin_service.delete_recommendation(current_user, recommendation_id)
+        if not result:
+            return jsonify({'error': 'Recommendation not found'}), 404
+        
+        return jsonify(result), 200
+        
+    except Exception as e:
+        logger.error(f"Delete recommendation error: {e}")
+        return jsonify({'error': 'Failed to delete recommendation'}), 500
+
+@admin_bp.route('/api/admin/recommendations/<int:recommendation_id>/publish', methods=['POST'])
+@require_admin
+def publish_recommendation(current_user, recommendation_id):
+    """Publish recommendation"""
+    try:
+        data = request.get_json() or {}
+        template_type = data.get('template_type', 'auto')
+        template_params = data.get('template_params', {})
+        
+        if not admin_service:
+            return jsonify({'error': 'Admin service not available'}), 503
+        
+        result = admin_service.publish_recommendation(current_user, recommendation_id, template_type, template_params)
+        if not result:
+            return jsonify({'error': 'Recommendation not found'}), 404
+        
+        return jsonify(result), 200
+        
+    except Exception as e:
+        logger.error(f"Publish recommendation error: {e}")
+        return jsonify({'error': 'Failed to publish recommendation'}), 500
+
+@admin_bp.route('/api/admin/recommendations/<int:recommendation_id>/send', methods=['POST'])
+@require_admin
+def send_recommendation_to_telegram(current_user, recommendation_id):
+    """Send recommendation to Telegram"""
+    try:
+        data = request.get_json() or {}
+        template_type = data.get('template_type', 'auto')
+        template_params = data.get('template_params', {})
+        
+        if not admin_service:
+            return jsonify({'error': 'Admin service not available'}), 503
+        
+        result = admin_service.send_recommendation_to_telegram(current_user, recommendation_id, template_type, template_params)
+        if not result:
+            return jsonify({'error': 'Recommendation not found'}), 404
+        
+        return jsonify(result), 200
+        
+    except Exception as e:
+        logger.error(f"Send to Telegram error: {e}")
+        return jsonify({'error': 'Failed to send to Telegram'}), 500
+
+@admin_bp.route('/api/admin/recommendations/create-with-template', methods=['POST'])
+@require_admin
+def create_recommendation_with_template(current_user):
+    """Create recommendation with specific template"""
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+        
+        if not admin_service:
+            return jsonify({'error': 'Admin service not available'}), 503
+        
+        template_type = data.get('template_type', 'auto')
+        template_params = data.get('template_params', {})
+        
+        if 'content_data' in data:
+            result = admin_service.create_recommendation_from_external_content(
+                current_user, 
+                data['content_data'],
+                data.get('recommendation_type'),
+                data.get('description'),
+                data.get('status', 'draft'),
+                data.get('publish_to_telegram', False),
+                template_type,
+                template_params
+            )
+        else:
+            return jsonify({'error': 'Content data required for template-based recommendations'}), 400
+        
+        return jsonify(result), 201
+        
+    except Exception as e:
+        logger.error(f"Create recommendation with template error: {e}")
+        return jsonify({'error': 'Failed to create recommendation with template'}), 500
+
+@admin_bp.route('/api/admin/recommendations/<int:recommendation_id>/send-custom', methods=['POST'])
+@require_admin
+def send_recommendation_with_template(current_user, recommendation_id):
+    """Send recommendation with custom template"""
+    try:
+        data = request.get_json()
+        template_type = data.get('template_type', 'auto')
+        template_params = data.get('template_params', {})
+        
+        if not admin_service:
+            return jsonify({'error': 'Admin service not available'}), 503
+        
+        result = admin_service.send_recommendation_to_telegram(
+            current_user, recommendation_id, template_type, template_params
+        )
+        if not result:
+            return jsonify({'error': 'Recommendation not found'}), 404
+        
+        return jsonify(result), 200
+        
+    except Exception as e:
+        logger.error(f"Send with template error: {e}")
+        return jsonify({'error': 'Failed to send with custom template'}), 500
+
+# =============================================================================
+# TELEGRAM INTEGRATION ROUTES
+# =============================================================================
+
+@admin_bp.route('/api/admin/telegram/templates', methods=['GET'])
+@require_admin
+def get_telegram_templates(current_user):
+    """Get available Telegram templates"""
+    try:
+        from admin.telegram import TelegramTemplates
+        templates = TelegramTemplates.get_available_templates()
+        return jsonify({
+            'templates': templates,
+            'default': 'auto'
+        }), 200
+    except Exception as e:
+        logger.error(f"Get templates error: {e}")
+        return jsonify({'error': 'Failed to get templates'}), 500
+
+@admin_bp.route('/api/admin/telegram/templates/prompts', methods=['GET'])
+@require_admin
+def get_telegram_template_prompts(current_user):
+    """Get template prompts for AI generation"""
+    try:
+        from admin.telegram import TelegramTemplates
+        
+        template_type = request.args.get('template')
+        
+        if template_type:
+            prompts = TelegramTemplates.get_template_prompts()
+            fields = TelegramTemplates.get_template_fields(template_type)
+            
+            if template_type in prompts:
+                return jsonify({
+                    'template': template_type,
+                    'prompt_info': prompts[template_type],
+                    'field_specs': fields
+                }), 200
+            else:
+                return jsonify({'error': 'Template not found'}), 404
+        else:
+            return jsonify({
+                'prompts': TelegramTemplates.get_template_prompts(),
+                'available_templates': TelegramTemplates.get_available_templates()
+            }), 200
+            
+    except Exception as e:
+        logger.error(f"Get template prompts error: {e}")
+        return jsonify({'error': 'Failed to get template prompts'}), 500
+
+@admin_bp.route('/api/admin/telegram/custom-message', methods=['POST'])
+@require_admin
+def send_custom_telegram_message(current_user):
+    """Send custom Telegram message"""
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+        
+        template_type = data.get('template_type')
+        template_params = data.get('template_params', {})
+        
+        if not template_type:
+            return jsonify({'error': 'Template type required'}), 400
+        
+        if not admin_service:
+            return jsonify({'error': 'Admin service not available'}), 503
+        
+        result = admin_service.send_custom_telegram_message(current_user, template_type, template_params)
+        return jsonify(result), 200
+        
+    except Exception as e:
+        logger.error(f"Send custom message error: {e}")
+        return jsonify({'error': 'Failed to send custom message'}), 500
+
+# =============================================================================
+# DASHBOARD ROUTES
+# =============================================================================
+
+@admin_bp.route('/api/admin/dashboard', methods=['GET'])
+@require_admin
+def get_admin_dashboard(current_user):
+    """Get comprehensive admin dashboard"""
+    try:
+        if not dashboard_service:
+            return jsonify({'error': 'Dashboard service not available'}), 503
+        
+        include_support = request.args.get('include_support', 'true').lower() == 'true'
+        
+        dashboard_data = dashboard_service.get_overview()
+        
+        if include_support:
+            try:
+                since = request.args.get('since')
+                real_time_support = dashboard_service.get_real_time_support_data(since)
+                dashboard_data['real_time_support'] = real_time_support
+                
+                summary_stats = dashboard_service.get_support_summary_stats()
+                dashboard_data['support_summary'] = summary_stats
+                
+            except Exception as e:
+                logger.warning(f"Failed to get real-time support data: {e}")
+                dashboard_data['real_time_support'] = {'error': str(e)}
+
+        return jsonify({
+            'success': True,
+            'dashboard': dashboard_data,
+            'timestamp': datetime.utcnow().isoformat()
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Enhanced dashboard error: {e}")
+        try:
+            db.session.rollback()
+        except:
+            pass
+        return jsonify({
+            'success': False,
+            'error': 'Failed to load dashboard'
+        }), 500
+
+@admin_bp.route('/api/admin/dashboard/stats', methods=['GET'])
+@require_admin
+def get_dashboard_stats(current_user):
+    """Get basic dashboard statistics"""
+    try:
+        if not dashboard_service:
+            return jsonify({'error': 'Dashboard service not available'}), 503
+        
+        stats = {}
+        
+        try:
+            stats['total_users'] = User.query.count() if User else 0
+        except Exception as e:
+            logger.error(f"Error getting user count: {e}")
+            stats['total_users'] = 0
+        
+        try:
+            stats['total_content'] = Content.query.count() if Content else 0
+        except Exception as e:
+            logger.error(f"Error getting content count: {e}")
+            stats['total_content'] = 0
+        
+        try:
+            stats['total_interactions'] = UserInteraction.query.count() if UserInteraction else 0
+        except Exception as e:
+            logger.error(f"Error getting interaction count: {e}")
+            stats['total_interactions'] = 0
+        
+        try:
+            stats['active_recommendations'] = AdminRecommendation.query.filter_by(is_active=True).count() if AdminRecommendation else 0
+        except Exception as e:
+            logger.error(f"Error getting recommendation count: {e}")
+            stats['active_recommendations'] = 0
+        
+        return jsonify(stats), 200
+        
+    except Exception as e:
+        logger.error(f"Dashboard stats error: {e}")
+        return jsonify({'error': 'Failed to load dashboard stats'}), 500
+
+@admin_bp.route('/api/admin/analytics', methods=['GET'])
+@require_admin
+def get_analytics(current_user):
+    """Get comprehensive analytics data"""
+    try:
+        if not dashboard_service:
+            return jsonify({'error': 'Dashboard service not available'}), 503
+        
+        analytics_data = dashboard_service.get_analytics()
+        return jsonify(analytics_data), 200
+        
+    except Exception as e:
+        logger.error(f"Analytics error: {e}")
+        return jsonify({'error': 'Failed to get analytics'}), 500
+
+@admin_bp.route('/api/admin/system-health', methods=['GET'])
+@require_admin
+def get_system_health(current_user):
+    """Get system health status"""
+    try:
+        if not dashboard_service:
+            return jsonify({'error': 'Dashboard service not available'}), 503
+        
+        health_data = dashboard_service.get_system_health()
+        return jsonify(health_data), 200
+        
+    except Exception as e:
+        logger.error(f"System health check error: {e}")
+        return jsonify({
+            'status': 'unhealthy',
+            'error': str(e),
+            'timestamp': datetime.utcnow().isoformat()
+        }), 500
+
+# =============================================================================
+# SUPPORT INTEGRATION ROUTES
+# =============================================================================
+
+@admin_bp.route('/api/admin/support/real-time', methods=['GET'])
+@require_admin
+def get_real_time_support_data(current_user):
+    """Get real-time support data"""
+    try:
+        if not dashboard_service:
+            return jsonify({'error': 'Dashboard service not available'}), 503
+
+        since = request.args.get('since')
+        include_stats = request.args.get('include_stats', 'true').lower() == 'true'
+
+        real_time_data = dashboard_service.get_real_time_support_data(since)
+        
+        if include_stats:
+            summary_stats = dashboard_service.get_support_summary_stats()
+            real_time_data['summary_stats'] = summary_stats
+
+        return jsonify({
+            'success': True,
+            'data': real_time_data,
+            'server_time': datetime.utcnow().isoformat(),
+            'has_new_items': real_time_data['new_items_count'] > 0
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Real-time support data error: {e}")
+        return jsonify({
+            'success': False,
+            'error': 'Failed to get real-time support data',
+            'server_time': datetime.utcnow().isoformat()
+        }), 500
+
+@admin_bp.route('/api/admin/support/summary-stats', methods=['GET'])
+@require_admin  
+def get_support_summary_stats(current_user):
+    """Get support summary statistics"""
+    try:
+        if not dashboard_service:
+            return jsonify({'error': 'Dashboard service not available'}), 503
+
+        stats = dashboard_service.get_support_summary_stats()
+        
+        return jsonify({
+            'success': True,
+            'stats': stats,
+            'timestamp': datetime.utcnow().isoformat()
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Support summary stats error: {e}")
+        return jsonify({
+            'success': False,
+            'error': 'Failed to get support summary statistics'
+        }), 500
+
+@admin_bp.route('/api/admin/support/alerts', methods=['GET'])
+@require_admin
+def get_support_alerts(current_user):
+    """Get support alerts"""
+    try:
+        if not dashboard_service:
+            return jsonify({'error': 'Dashboard service not available'}), 503
+
+        since = (datetime.utcnow() - timedelta(hours=4)).isoformat()
+        real_time_data = dashboard_service.get_real_time_support_data(since)
+        
+        alerts = real_time_data.get('urgent_alerts', [])
+        
+        try:
+            health_data = dashboard_service.get_system_health()
+            if health_data.get('status') != 'healthy':
+                alerts.append({
+                    'type': 'system_health',
+                    'message': 'System health issues detected',
+                    'url': '/admin/system-health',
+                    'created_at': datetime.utcnow().isoformat()
+                })
+        except Exception as e:
+            logger.warning(f"Health check failed: {e}")
+
+        return jsonify({
+            'success': True,
+            'alerts': alerts[:10],
+            'alert_count': len(alerts),
+            'timestamp': datetime.utcnow().isoformat()
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Support alerts error: {e}")
+        return jsonify({
+            'success': False,
+            'error': 'Failed to get support alerts'
+        }), 500
+
+@admin_bp.route('/api/admin/support/mark-seen', methods=['POST'])
+@require_admin
+def mark_support_items_seen(current_user):
+    """Mark support items as seen by admin"""
+    try:
+        data = request.get_json()
+        item_type = data.get('type')
+        item_ids = data.get('ids', [])
+        
+        if not item_type or not item_ids:
+            return jsonify({'error': 'Type and IDs required'}), 400
+        
+        marked_count = 0
+        current_time = datetime.utcnow()
+        
+        if item_type == 'contact' and ContactMessage:
+            for contact_id in item_ids:
+                try:
+                    contact = ContactMessage.query.get(contact_id)
+                    if contact:
+                        contact.is_read = True
+                        contact.admin_viewed = True
+                        contact.admin_viewed_at = current_time
+                        contact.admin_viewed_by = current_user.id
+                        marked_count += 1
+                except Exception as e:
+                    logger.error(f"Error marking contact {contact_id}: {e}")
+                    continue
+        
+        elif item_type == 'issue' and IssueReport:
+            for issue_id in item_ids:
+                try:
+                    issue = IssueReport.query.get(issue_id)
+                    if issue:
+                        issue.admin_viewed = True
+                        issue.admin_viewed_at = current_time
+                        issue.admin_viewed_by = current_user.id
+                        marked_count += 1
+                except Exception as e:
+                    logger.error(f"Error marking issue {issue_id}: {e}")
+                    continue
+        
+        elif item_type == 'ticket' and SupportTicket:
+            for ticket_id in item_ids:
+                try:
+                    ticket = SupportTicket.query.get(ticket_id)
+                    if ticket:
+                        ticket.admin_viewed = True
+                        ticket.admin_viewed_at = current_time
+                        ticket.admin_viewed_by = current_user.id
+                        marked_count += 1
+                        
+                        if TicketActivity:
+                            activity = TicketActivity(
+                                ticket_id=ticket.id,
+                                action='admin_viewed',
+                                description=f'Viewed by admin {current_user.username}',
+                                actor_type='admin',
+                                actor_id=current_user.id,
+                                actor_name=current_user.username
+                            )
+                            db.session.add(activity)
+                except Exception as e:
+                    logger.error(f"Error marking ticket {ticket_id}: {e}")
+                    continue
+        
+        if marked_count > 0:
+            db.session.commit()
+            logger.info(f"✅ Admin {current_user.username} marked {marked_count} {item_type}s as seen")
+        
+        return jsonify({
+            'success': True,
+            'marked_count': marked_count,
+            'message': f'Marked {marked_count} {item_type}s as seen'
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Mark items seen error: {e}")
+        try:
+            db.session.rollback()
+        except:
+            pass
+        return jsonify({'error': 'Failed to mark items as seen'}), 500
+
+@admin_bp.route('/api/admin/support/ticket/<int:ticket_id>/quick-update', methods=['POST'])
+@require_admin
+def quick_update_ticket(current_user, ticket_id):
+    """Quick update ticket status/priority"""
+    try:
+        data = request.get_json()
+        action = data.get('action')
+        value = data.get('value')
+        
+        if not action or not value:
+            return jsonify({'error': 'Action and value required'}), 400
+        
+        if not SupportTicket:
+            return jsonify({'error': 'Support system not available'}), 503
+        
+        ticket = SupportTicket.query.get_or_404(ticket_id)
+        old_value = None
+        
+        if action == 'status':
+            old_value = ticket.status
+            ticket.status = value
+            if value == 'resolved' and not ticket.resolved_at:
+                ticket.resolved_at = datetime.utcnow()
+            elif value == 'closed' and not ticket.closed_at:
+                ticket.closed_at = datetime.utcnow()
+        
+        elif action == 'priority':
+            old_value = ticket.priority
+            ticket.priority = value
+        
+        elif action == 'assign':
+            old_value = ticket.assigned_to
+            if value == 'self':
+                ticket.assigned_to = current_user.id
+                value = current_user.username
+            elif value == 'unassign':
+                ticket.assigned_to = None
+                value = None
+            else:
+                try:
+                    user_id = int(value)
+                    user = User.query.get(user_id)
+                    if user:
+                        ticket.assigned_to = user_id
+                        value = user.username
+                    else:
+                        return jsonify({'error': 'User not found'}), 404
+                except ValueError:
+                    return jsonify({'error': 'Invalid user ID'}), 400
+        
+        if TicketActivity:
+            activity = TicketActivity(
+                ticket_id=ticket.id,
+                action=f'{action}_updated',
+                description=f'{action.title()} changed from {old_value} to {value}',
+                old_value=str(old_value) if old_value else None,
+                new_value=str(value) if value else None,
+                actor_type='admin',
+                actor_id=current_user.id,
+                actor_name=current_user.username
+            )
+            db.session.add(activity)
+        
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': f'Ticket {action} updated successfully',
+            'ticket': {
+                'id': ticket.id,
+                'ticket_number': ticket.ticket_number,
+                'status': ticket.status,
+                'priority': ticket.priority,
+                'assigned_to': ticket.assigned_to,
+                'updated_at': datetime.utcnow().isoformat()
+            }
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Quick update ticket error: {e}")
+        try:
+            db.session.rollback()
+        except:
+            pass
+        return jsonify({'error': 'Failed to update ticket'}), 500
+
+@admin_bp.route('/api/admin/support/contact/<int:contact_id>/quick-reply', methods=['POST'])
+@require_admin
+def quick_reply_contact(current_user, contact_id):
+    """Quick reply to contact message"""
+    try:
+        data = request.get_json()
+        reply_message = data.get('message')
+        
+        if not reply_message:
+            return jsonify({'error': 'Reply message required'}), 400
+        
+        if not ContactMessage:
+            return jsonify({'error': 'Support system not available'}), 503
+        
+        contact = ContactMessage.query.get_or_404(contact_id)
+        
+        contact.is_read = True
+        contact.admin_viewed = True
+        contact.admin_viewed_at = datetime.utcnow()
+        contact.admin_viewed_by = current_user.id
+        
+        try:
+            from auth.service import email_service
+            from auth.support_mail_templates import get_support_template
+            
+            if email_service:
+                html, text = get_support_template(
+                    'admin_reply',
+                    user_name=contact.name,
+                    admin_name=current_user.username,
+                    original_subject=contact.subject,
+                    reply_message=reply_message,
+                    contact_id=contact.id
+                )
+                
+                email_service.queue_email(
+                    to=contact.email,
+                    subject=f"Re: {contact.subject} - CineBrain Support",
+                    html=html,
+                    text=text,
+                    priority='high',
+                    to_name=contact.name
+                )
+                
+                db.session.commit()
+                
+                return jsonify({
+                    'success': True,
+                    'message': 'Reply sent successfully',
+                    'contact_id': contact.id
+                }), 200
+            else:
+                return jsonify({'error': 'Email service not available'}), 503
+                
+        except Exception as e:
+            logger.error(f"Error sending reply email: {e}")
+            return jsonify({'error': 'Failed to send reply'}), 500
+        
+    except Exception as e:
+        logger.error(f"Quick reply error: {e}")
+        try:
+            db.session.rollback()
+        except:
+            pass
+        return jsonify({'error': 'Failed to send reply'}), 500
+
+# =============================================================================
+# USER MANAGEMENT ROUTES
+# =============================================================================
+
+@admin_bp.route('/api/admin/users', methods=['GET'])
+@require_admin
+def get_users_management(current_user):
+    """Get users management data"""
+    try:
+        page = int(request.args.get('page', 1))
+        per_page = int(request.args.get('per_page', 20))
+        search = request.args.get('search', '')
+        
+        if not dashboard_service:
+            return jsonify({'error': 'Dashboard service not available'}), 503
+        
+        users_data = dashboard_service.get_users_management(page, per_page, search)
+        return jsonify(users_data), 200
+        
+    except Exception as e:
+        logger.error(f"Users management error: {e}")
+        return jsonify({'error': 'Failed to get users'}), 500
+
+# =============================================================================
+# EMAIL PREFERENCES ROUTES
+# =============================================================================
+
+@admin_bp.route('/api/admin/email-preferences', methods=['GET'])
+@require_admin
+def get_email_preferences(current_user):
+    """Get admin email preferences"""
+    try:
+        if not AdminEmailPreferences:
+            return jsonify({'error': 'Email preferences not available'}), 503
+        
+        preferences = AdminEmailPreferences.query.filter_by(admin_id=current_user.id).first()
+        if not preferences:
+            preferences = AdminEmailPreferences(admin_id=current_user.id)
+            db.session.add(preferences)
+            db.session.commit()
+        
+        return jsonify({
+            'preferences': {
+                'critical_alerts': {
+                    'urgent_tickets': preferences.urgent_tickets,
+                    'sla_breaches': preferences.sla_breaches,
+                    'system_alerts': preferences.system_alerts
+                },
+                'content_management': {
+                    'content_added': preferences.content_added,
+                    'recommendation_created': preferences.recommendation_created,
+                    'recommendation_updated': preferences.recommendation_updated,
+                    'recommendation_deleted': preferences.recommendation_deleted,
+                    'recommendation_published': preferences.recommendation_published
+                },
+                'user_activity': {
+                    'user_feedback': preferences.user_feedback,
+                    'regular_tickets': preferences.regular_tickets
+                },
+                'system_operations': {
+                    'cache_operations': preferences.cache_operations,
+                    'bulk_operations': preferences.bulk_operations,
+                    'slug_updates': preferences.slug_updates
+                }
+            },
+            'updated_at': preferences.updated_at.isoformat()
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Get email preferences error: {e}")
+        return jsonify({'error': 'Failed to get email preferences'}), 500
+
+@admin_bp.route('/api/admin/email-preferences', methods=['PUT'])
+@require_admin
+def update_email_preferences(current_user):
+    """Update admin email preferences"""
+    try:
+        if not AdminEmailPreferences:
+            return jsonify({'error': 'Email preferences not available'}), 503
+        
+        data = request.get_json()
+        if not data or 'preferences' not in data:
+            return jsonify({'error': 'Invalid request data'}), 400
+        
+        preferences = AdminEmailPreferences.query.filter_by(admin_id=current_user.id).first()
+        if not preferences:
+            preferences = AdminEmailPreferences(admin_id=current_user.id)
+            db.session.add(preferences)
+        
+        prefs = data['preferences']
+        
+        if 'critical_alerts' in prefs:
+            critical = prefs['critical_alerts']
+            preferences.urgent_tickets = critical.get('urgent_tickets', preferences.urgent_tickets)
+            preferences.sla_breaches = critical.get('sla_breaches', preferences.sla_breaches)
+            preferences.system_alerts = critical.get('system_alerts', preferences.system_alerts)
+        
+        if 'content_management' in prefs:
+            content = prefs['content_management']
+            preferences.content_added = content.get('content_added', preferences.content_added)
+            preferences.recommendation_created = content.get('recommendation_created', preferences.recommendation_created)
+            preferences.recommendation_updated = content.get('recommendation_updated', preferences.recommendation_updated)
+            preferences.recommendation_deleted = content.get('recommendation_deleted', preferences.recommendation_deleted)
+            preferences.recommendation_published = content.get('recommendation_published', preferences.recommendation_published)
+        
+        if 'user_activity' in prefs:
+            user = prefs['user_activity']
+            preferences.user_feedback = user.get('user_feedback', preferences.user_feedback)
+            preferences.regular_tickets = user.get('regular_tickets', preferences.regular_tickets)
+        
+        if 'system_operations' in prefs:
+            system = prefs['system_operations']
+            preferences.cache_operations = system.get('cache_operations', preferences.cache_operations)
+            preferences.bulk_operations = system.get('bulk_operations', preferences.bulk_operations)
+            preferences.slug_updates = system.get('slug_updates', preferences.slug_updates)
+        
+        preferences.updated_at = datetime.utcnow()
+        db.session.commit()
+        
+        logger.info(f"✅ Email preferences updated for admin {current_user.username}")
+        return jsonify({
+            'success': True,
+            'message': 'Email preferences updated successfully',
+            'updated_at': preferences.updated_at.isoformat()
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Update email preferences error: {e}")
+        try:
+            db.session.rollback()
+        except:
+            pass
+        return jsonify({'error': 'Failed to update email preferences'}), 500
+
+# =============================================================================
+# NOTIFICATIONS ROUTES
+# =============================================================================
+
+@admin_bp.route('/api/admin/notifications', methods=['GET'])
+@require_admin
+def get_admin_notifications(current_user):
+    """Get admin notifications"""
+    try:
+        page = int(request.args.get('page', 1))
+        per_page = min(int(request.args.get('per_page', 20)), 100)
+        unread_only = request.args.get('unread_only', 'false').lower() == 'true'
+        
+        if not admin_service:
+            return jsonify({'error': 'Admin service not available'}), 503
+        
+        notifications_data = admin_service.get_notifications(page, per_page, unread_only)
+        return jsonify(notifications_data), 200
+        
+    except Exception as e:
+        logger.error(f"Get admin notifications error: {e}")
+        return jsonify({'error': 'Failed to get notifications'}), 500
+
+@admin_bp.route('/api/admin/notifications/mark-all-read', methods=['PUT'])
+@require_admin
+def mark_all_notifications_read(current_user):
+    """Mark all notifications as read"""
+    try:
+        if not admin_service:
+            return jsonify({'error': 'Admin service not available'}), 503
+        
+        result = admin_service.mark_all_notifications_read()
+        return jsonify(result), 200
+        
+    except Exception as e:
+        logger.error(f"Mark all notifications read error: {e}")
+        return jsonify({'error': 'Failed to mark all notifications as read'}), 500
+
+# =============================================================================
+# CACHE MANAGEMENT ROUTES
+# =============================================================================
+
+@admin_bp.route('/api/admin/cache/clear', methods=['POST'])
+@require_admin
+def clear_cache(current_user):
+    """Clear cache"""
+    try:
+        cache_type = request.args.get('type', 'all')
+        
+        if not admin_service:
+            return jsonify({'error': 'Admin service not available'}), 503
+        
+        result = admin_service.clear_cache(cache_type)
+        return jsonify(result), 200
+        
+    except Exception as e:
+        logger.error(f"Cache clear error: {e}")
+        return jsonify({'error': 'Failed to clear cache'}), 500
+
+@admin_bp.route('/api/admin/cache/stats', methods=['GET'])
+@require_admin
+def get_cache_stats(current_user):
+    """Get cache statistics"""
+    try:
+        if not dashboard_service:
+            return jsonify({'error': 'Dashboard service not available'}), 503
+        
+        cache_stats = dashboard_service.get_cache_stats()
+        return jsonify(cache_stats), 200
+        
+    except Exception as e:
+        logger.error(f"Cache stats error: {e}")
+        return jsonify({'error': 'Failed to get cache stats'}), 500
+
+# =============================================================================
+# SYSTEM OPERATIONS ROUTES
+# =============================================================================
+
+@admin_bp.route('/api/admin/slugs/migrate', methods=['POST'])
+@require_admin
+def migrate_all_slugs(current_user):
+    """Migrate all content slugs"""
+    try:
+        if not admin_service:
+            return jsonify({'error': 'Admin service not available'}), 503
+        
+        data = request.get_json() or {}
+        batch_size = int(data.get('batch_size', 50))
+        
+        result = admin_service.migrate_all_slugs(batch_size)
+        
+        return jsonify({
+            'success': True,
+            'migration_stats': result,
+            'service': 'slug_migration'
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error migrating slugs: {e}")
+        return jsonify({'error': 'Failed to migrate slugs'}), 500
+
+@admin_bp.route('/api/admin/populate-cast-crew', methods=['POST'])
+@require_admin
+def populate_all_cast_crew(current_user):
+    """Populate cast and crew data"""
+    try:
+        if not admin_service:
+            return jsonify({'error': 'Admin service not available'}), 503
+        
+        data = request.get_json() or {}
+        batch_size = int(data.get('batch_size', 10))
+        result = admin_service.populate_cast_crew(batch_size)
+        
+        return jsonify({
+            'success': True,
+            'processed': result.get('processed', 0),
+            'errors': result.get('errors', 0),
+            'message': f"Successfully populated cast/crew for {result.get('processed', 0)} content items",
+            'service': 'cast_crew_population'
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error in bulk cast/crew population: {e}")
+        return jsonify({'error': 'Failed to populate cast/crew'}), 500
+
+# =============================================================================
+# UTILITY ROUTES
+# =============================================================================
+
+@admin_bp.route('/api/admin/health', methods=['GET'])
+def admin_health_check():
+    """Admin service health check"""
+    return jsonify({
+        'status': 'healthy',
+        'service': 'CineBrain Admin',
+        'timestamp': datetime.utcnow().isoformat(),
+        'version': '4.0'
+    }), 200
+
+@admin_bp.route('/api/admin/ping', methods=['GET'])
+def admin_ping():
+    """Admin service ping"""
+    return jsonify({
+        'message': 'pong',
+        'service': 'admin',
+        'timestamp': datetime.utcnow().isoformat()
+    }), 200
+
+@admin_bp.route('/api/admin/services/status', methods=['GET'])
+@require_admin
+def get_services_status(current_user):
+    """Get services status"""
+    try:
+        status = {
+            'admin_service': 'available' if admin_service else 'unavailable',
+            'dashboard_service': 'available' if dashboard_service else 'unavailable',
+            'telegram_service': 'available' if telegram_service else 'unavailable',
+            'database': 'connected' if db else 'disconnected',
+            'cache': 'available' if cache else 'unavailable',
+            'email_preferences': 'available' if AdminEmailPreferences else 'unavailable',
+            'support_models': {
+                'tickets': 'available' if SupportTicket else 'unavailable',
+                'contacts': 'available' if ContactMessage else 'unavailable',
+                'issues': 'available' if IssueReport else 'unavailable'
+            }
+        }
+        
+        return jsonify({
+            'status': status,
+            'timestamp': datetime.utcnow().isoformat()
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Services status error: {e}")
+        return jsonify({'error': 'Failed to get services status'}), 500
+
+# =============================================================================
+# ERROR HANDLERS
+# =============================================================================
+
+@admin_bp.errorhandler(404)
+def not_found(error):
+    """404 error handler"""
+    return jsonify({'error': 'Admin endpoint not found'}), 404
+
+@admin_bp.errorhandler(500)
+def internal_error(error):
+    """500 error handler"""
+    try:
+        db.session.rollback()
+    except:
+        pass
+    return jsonify({'error': 'Internal server error in admin service'}), 500
+
+@admin_bp.after_request
+def after_request(response):
+    """Add CORS headers"""
+    origin = request.headers.get('Origin')
+    allowed_origins = [
+        'https://cinebrain.vercel.app',
+        'http://127.0.0.1:5500', 
+        'http://127.0.0.1:5501'
+    ]
+    
+    if origin in allowed_origins:
+        response.headers['Access-Control-Allow-Origin'] = origin
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type,Authorization'
+        response.headers['Access-Control-Allow-Methods'] = 'GET,PUT,POST,DELETE,OPTIONS'
+        response.headers['Access-Control-Allow-Credentials'] = 'true'
+    
+    return response
+
+# =============================================================================
+# INITIALIZATION FUNCTION
+# =============================================================================
+
+def init_admin_routes(flask_app, database, models, services):
+    """Initialize admin routes with dependencies"""
+    global admin_service, dashboard_service, telegram_service
+    global app, db, User, Content, UserInteraction, AdminRecommendation, AdminEmailPreferences
+    global SupportTicket, ContactMessage, IssueReport, SupportCategory, TicketActivity, cache
+    
+    app = flask_app
+    db = database
+    User = models.get('User')
+    Content = models.get('Content')
+    UserInteraction = models.get('UserInteraction')
+    AdminRecommendation = models.get('AdminRecommendation')
+    AdminEmailPreferences = models.get('AdminEmailPreferences')
+    
+    SupportTicket = models.get('SupportTicket')
+    ContactMessage = models.get('ContactMessage')
+    IssueReport = models.get('IssueReport')
+    SupportCategory = models.get('SupportCategory')
+    TicketActivity = models.get('TicketActivity')
+    
+    cache = services.get('cache')
+    
+    try:
+        from .service import init_admin_service
+        from .dashboard import init_dashboard_service
+        from .telegram import init_telegram_service
+        
+        admin_service = init_admin_service(app, db, models, services)
+        dashboard_service = init_dashboard_service(app, db, models, services)
+        telegram_service = init_telegram_service(app, db, models, services)
+        
+        logger.info("✅ Admin routes initialized successfully")
+        logger.info(f"   - Admin service: {'✓' if admin_service else '✗'}")
+        logger.info(f"   - Dashboard service: {'✓' if dashboard_service else '✗'}")
+        logger.info(f"   - Telegram service: {'✓' if telegram_service else '✗'}")
+        logger.info(f"   - Email preferences: {'✓' if AdminEmailPreferences else '✗'}")
+        logger.info(f"   - Support integration: {'✓' if SupportTicket and ContactMessage and IssueReport else '✗'}")
+        logger.info(f"   - 4 Real-time monitoring endpoints: ✓")
+        logger.info(f"   - Content management: ✓")
+        logger.info(f"   - Recommendation system: ✓")
+        logger.info(f"   - Telegram integration: ✓")
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize admin routes: {e}")
+        raise e
+
+
+
+4. # admin/telegram.py
+
+"""
+CineBrain Telegram Integration
+Premium cinematic messaging for intelligent movie discovery
+"""
 
 import os
 import json
 import logging
-import redis
-import uuid
+import threading
+import time
+import telebot
 from datetime import datetime, timedelta
-from urllib.parse import urlparse
-from sqlalchemy import func, desc, and_, or_
-from collections import defaultdict
+from dotenv import load_dotenv
+from telebot import types
+from typing import Optional, List, Dict, Any
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-REDIS_URL = os.environ.get('REDIS_URL')
+# Telegram Configuration
+TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
+TELEGRAM_CHANNEL_ID = os.environ.get('TELEGRAM_CHANNEL_ID')
+TELEGRAM_ADMIN_CHAT_ID = os.environ.get('TELEGRAM_ADMIN_CHAT_ID')
 
-class NotificationType:
-    NEW_TICKET = "NEW_TICKET"
-    URGENT_TICKET = "URGENT_TICKET"
-    TICKET_ESCALATION = "TICKET_ESCALATION"
-    SLA_BREACH = "SLA_BREACH"
-    FEEDBACK_RECEIVED = "FEEDBACK_RECEIVED"
-    SYSTEM_ALERT = "SYSTEM_ALERT"
-    USER_ACTIVITY = "user_activity"
-    CONTENT_ADDED = "content_added"
+# Visual Constants
+DIVIDER = "━━━━━━━━━━━━━━━━━━━"
+CINEBRAIN_FOOTER = "<b><i>🎥 Recommended by CineBrain</i></b>"
 
-class AdminEmailPreferences:
-    """Email preference model for database integration"""
-    def __init__(self, db):
-        self.db = db
-        
-        class AdminEmailPreferencesModel(db.Model):
-            __tablename__ = 'admin_email_preferences'
-            
-            id = db.Column(db.Integer, primary_key=True)
-            admin_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-            
-            # Support System Alerts (Critical - usually ON)
-            urgent_tickets = db.Column(db.Boolean, default=True)
-            sla_breaches = db.Column(db.Boolean, default=True)
-            system_alerts = db.Column(db.Boolean, default=True)
-            
-            # Content Management Alerts (Configurable)
-            content_added = db.Column(db.Boolean, default=True)
-            recommendation_created = db.Column(db.Boolean, default=True)
-            recommendation_updated = db.Column(db.Boolean, default=False)  # OFF by default
-            recommendation_deleted = db.Column(db.Boolean, default=False)  # OFF by default
-            recommendation_published = db.Column(db.Boolean, default=True)
-            
-            # User Activity Alerts (Configurable)
-            user_feedback = db.Column(db.Boolean, default=True)
-            regular_tickets = db.Column(db.Boolean, default=False)  # OFF by default
-            
-            # System Operations (Usually OFF)
-            cache_operations = db.Column(db.Boolean, default=False)
-            bulk_operations = db.Column(db.Boolean, default=False)
-            slug_updates = db.Column(db.Boolean, default=False)
-            
-            created_at = db.Column(db.DateTime, default=datetime.utcnow)
-            updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-            
-            __table_args__ = (db.UniqueConstraint('admin_id'),)
-        
-        self.Model = AdminEmailPreferencesModel
+# Initialize bot
+bot = None
+if TELEGRAM_BOT_TOKEN:
+    try:
+        bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN, parse_mode='HTML')
+        logger.info("✅ Telegram bot initialized successfully")
+    except Exception as e:
+        logger.warning(f"Failed to initialize Telegram bot: {e}")
+        bot = None
+else:
+    logger.warning("TELEGRAM_BOT_TOKEN not set - Telegram notifications disabled")
 
-class AdminEmailService:
-    def __init__(self, services):
-        self.email_service = services.get('email_service')
-        
-        if not self.email_service:
-            try:
-                from auth.service import email_service as auth_email_service
-                self.email_service = auth_email_service
-                logger.info("✅ Email service loaded from auth module for admin")
-            except Exception as e:
-                logger.warning(f"Could not load auth email service for admin: {e}")
-        
-        self.is_configured = (
-            self.email_service is not None and 
-            hasattr(self.email_service, 'email_enabled') and 
-            self.email_service.email_enabled and
-            hasattr(self.email_service, 'queue_email')
-        )
-        
-        if self.is_configured:
-            logger.info("✅ Admin email service configured successfully with Brevo")
-        else:
-            logger.warning("⚠️ Admin email service not configured - using fallback mode")
+
+def cinebrain_tracking_url(slug: str, campaign: str, content: Optional[str] = None) -> str:
+    """
+    Generate CineBrain URL with UTM tracking parameters for Google Analytics
     
-    def send_admin_notification(self, subject: str, content: str, admin_emails: list, is_urgent: bool = False):
+    @param slug: Content slug for the detail page
+    @param campaign: Campaign name (e.g., "movie_recommendation", "anime_recommendation")
+    @param content: Optional content identifier for more detailed tracking
+    @return: Full URL with tracking parameters
+    """
+    base = f"https://cinebrain.vercel.app/explore/details.html?{slug}"
+    utm = {
+        "utm_source": "telegram",
+        "utm_medium": "bot",
+        "utm_campaign": campaign,
+    }
+    if content:
+        utm["utm_content"] = content
+
+    params = "&".join([f"{k}={v}" for k, v in utm.items()])
+    return f"{base}&{params}"
+
+
+class TelegramTemplates:
+    """
+    Premium cinematic templates for CineBrain's Telegram channel
+    Every message is a mini movie poster in text form
+    """
+    
+    @staticmethod
+    def get_rating_display(rating: Optional[float]) -> str:
+        """Format rating display"""
+        if not rating:
+            return "N/A"
+        return f"{rating}/10"
+    
+    @staticmethod
+    def format_runtime(runtime: Optional[int]) -> Optional[str]:
+        """Format runtime into human-readable format"""
+        if not runtime:
+            return None
+        hours = runtime // 60
+        minutes = runtime % 60
+        if hours > 0:
+            return f"{hours}h {minutes}m"
+        return f"{minutes}m"
+    
+    @staticmethod
+    def format_genres(genres_list: Optional[List[str]], limit: int = 3) -> str:
+        """Format genres with bullet separator"""
+        if not genres_list:
+            return "Drama"
+        return " • ".join(genres_list[:limit])
+    
+    @staticmethod
+    def format_year(release_date: Any) -> str:
+        """Extract and format year from release date"""
+        if not release_date:
+            return ""
         try:
-            if not self.is_configured:
-                logger.warning("Email service not configured, skipping admin email notification")
-                return False
-            
-            if not admin_emails:
-                logger.warning("No admin emails provided")
-                return False
-            
-            from auth.admin_mail_templates import get_admin_template
-            
-            html, text = get_admin_template(
-                'admin_notification',
-                subject=subject,
-                content=content,
-                is_urgent=is_urgent,
-                timestamp=datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
+            if hasattr(release_date, 'year'):
+                return f" ({release_date.year})"
+            return f" ({str(release_date)[:4]})"
+        except:
+            return ""
+    
+    @staticmethod
+    def truncate_synopsis(text: Optional[str], limit: int = 150) -> str:
+        """Elegantly truncate synopsis at word boundary"""
+        if not text:
+            return "A cinematic experience awaits your discovery on CineBrain."
+        if len(text) <= limit:
+            return text
+        return text[:limit].rsplit(' ', 1)[0] + "..."
+    
+    @staticmethod
+    def get_content_type_prefix(content_type: str) -> str:
+        """Get content type prefix for templates"""
+        content_type_lower = content_type.lower()
+        
+        if content_type_lower == 'anime':
+            return "Anime:"
+        elif content_type_lower in ['tv', 'series', 'tv_show', 'tv-show']:
+            return "TV Show/Series:"
+        else:  # movie or any other type
+            return "Movie:"
+    
+    @staticmethod
+    def get_cinebrain_url(slug: str) -> str:
+        """
+        Generate CineBrain detail page URL
+        @deprecated Use cinebrain_tracking_url() for tracked URLs
+        """
+        return f"https://cinebrain.vercel.app/explore/details.html?{slug}"
+    
+    @staticmethod
+    def movie_recommendation_template(content: Any, admin_name: str, description: str, genres_list: Optional[List[str]] = None) -> str:
+        """
+        Premium movie recommendation with minimalist design
+        """
+        
+        # Parse genres if needed
+        if not genres_list and content.genres:
+            try:
+                genres_list = json.loads(content.genres)
+            except:
+                genres_list = []
+        
+        # Format components
+        content_prefix = TelegramTemplates.get_content_type_prefix(content.content_type)
+        year = TelegramTemplates.format_year(content.release_date)
+        rating = TelegramTemplates.get_rating_display(content.rating)
+        runtime = TelegramTemplates.format_runtime(content.runtime)
+        genres = TelegramTemplates.format_genres(genres_list)
+        synopsis = TelegramTemplates.truncate_synopsis(content.overview)
+        
+        # Build runtime display
+        runtime_str = f" | ⏱ {runtime}" if runtime else ""
+        
+        message = f"""<b>🎞️ {content_prefix} {content.title}{year}</b>
+<b>✨ Ratings:</b> {rating}{runtime_str}
+<b>🎭 Genre:</b> {genres}
+{DIVIDER}
+💬 <b>Synopsis</b>
+<blockquote><i>{synopsis}</i></blockquote>
+{DIVIDER}
+<i>🍿 Smart recommendations • Upcoming updates • Latest updates • New releases • Trending updates — visit <a href="https://cinebrain.vercel.app/">CineBrain</a></i>
+
+{CINEBRAIN_FOOTER}"""
+        
+        return message
+    
+    @staticmethod
+    def tv_show_recommendation_template(content: Any, admin_name: str, description: str, genres_list: Optional[List[str]] = None) -> str:
+        """
+        Premium TV series template with minimalist design
+        """
+        
+        # Parse genres if needed
+        if not genres_list and content.genres:
+            try:
+                genres_list = json.loads(content.genres)
+            except:
+                genres_list = []
+        
+        # Format components
+        content_prefix = TelegramTemplates.get_content_type_prefix(content.content_type)
+        year = TelegramTemplates.format_year(content.release_date)
+        rating = TelegramTemplates.get_rating_display(content.rating)
+        genres = TelegramTemplates.format_genres(genres_list)
+        synopsis = TelegramTemplates.truncate_synopsis(content.overview)
+        
+        # For TV shows, show seasons if available
+        runtime_str = ""
+        if hasattr(content, 'seasons') and content.seasons:
+            runtime_str = f" | ⏱ {content.seasons} Seasons"
+        
+        message = f"""<b>🎞️ {content_prefix} {content.title}{year}</b>
+<b>✨ Ratings:</b> {rating}{runtime_str}
+<b>🎭 Genre:</b> {genres}
+{DIVIDER}
+💬 <b>Synopsis</b>
+<blockquote><i>{synopsis}</i></blockquote>
+{DIVIDER}
+<i>🍿 Smart recommendations • Upcoming updates • Latest updates • New releases • Trending updates — visit <a href="https://cinebrain.vercel.app/">CineBrain</a></i>
+
+{CINEBRAIN_FOOTER}"""
+        
+        return message
+    
+    @staticmethod
+    def anime_recommendation_template(content: Any, admin_name: str, description: str, genres_list: Optional[List[str]] = None, anime_genres_list: Optional[List[str]] = None) -> str:
+        """
+        Premium anime template with minimalist design
+        """
+        
+        # Combine all genres
+        all_genres = []
+        if genres_list:
+            all_genres.extend(genres_list)
+        elif content.genres:
+            try:
+                all_genres.extend(json.loads(content.genres))
+            except:
+                pass
+        
+        if anime_genres_list:
+            all_genres.extend(anime_genres_list)
+        elif hasattr(content, 'anime_genres') and content.anime_genres:
+            try:
+                all_genres.extend(json.loads(content.anime_genres))
+            except:
+                pass
+        
+        # Format components
+        content_prefix = TelegramTemplates.get_content_type_prefix(content.content_type)
+        year = TelegramTemplates.format_year(content.release_date)
+        rating = TelegramTemplates.get_rating_display(content.rating)
+        genres = TelegramTemplates.format_genres(all_genres)
+        synopsis = TelegramTemplates.truncate_synopsis(content.overview)
+        
+        # For anime, show status if available
+        runtime_str = ""
+        if hasattr(content, 'status') and content.status:
+            runtime_str = f" | ⏱ {content.status}"
+        else:
+            runtime_str = " | ⏱ Ongoing"
+        
+        message = f"""<b>🎞️ {content_prefix} {content.title}{year}</b>
+<b>✨ Ratings:</b> {rating}{runtime_str}
+<b>🎭 Genre:</b> {genres}
+{DIVIDER}
+💬 <b>Synopsis</b>
+<blockquote><i>{synopsis}</i></blockquote>
+{DIVIDER}
+<i>🍿 Smart recommendations • Upcoming updates • Latest updates • New releases • Trending updates — visit <a href="https://cinebrain.vercel.app/">CineBrain</a></i>
+{CINEBRAIN_FOOTER}"""
+        
+        return message
+    
+    @staticmethod
+    def mind_bending_template(content: Any, admin_name: str, description: str, genres_list: Optional[List[str]] = None, overview: Optional[str] = None, if_you_like: Optional[str] = None) -> str:
+        """
+        🔥 Mind-bending movie template for confusing, reality-breaking, psychological, sci-fi, or twist movies
+        Use when: The movie is genius, underrated, brain-melting
+        
+        Fields: Title, Year, Genres, Rating, Runtime, Overview, If_you_like
+        """
+        # Parse genres if needed
+        if not genres_list and content.genres:
+            try:
+                genres_list = json.loads(content.genres)
+            except:
+                genres_list = []
+        
+        # Format components
+        content_prefix = TelegramTemplates.get_content_type_prefix(content.content_type)
+        year = TelegramTemplates.format_year(content.release_date)
+        rating = TelegramTemplates.get_rating_display(content.rating)
+        runtime = TelegramTemplates.format_runtime(content.runtime)
+        genres = TelegramTemplates.format_genres(genres_list, limit=3)
+        
+        # Use provided overview or fallback to content overview (2-3 sentences, mysterious)
+        overview_text = overview or TelegramTemplates.truncate_synopsis(content.overview, 200)
+        
+        # Runtime formatting for mind-bending template
+        runtime_str = f" • ⏱ {runtime}" if runtime else ""
+        
+        message = f"""🔥 <b>THIS MOVIE WILL MELT YOUR BRAIN</b>
+<b>{content_prefix} {content.title}{year}</b>
+<i>{genres} • ⭐ {rating}{runtime_str}</i>
+{DIVIDER}
+<b>Why this will break your reality:</b>
+<blockquote><i>{overview_text}</i></blockquote>
+• A concept that bends reality
+• A twist that rewrites the whole story
+{DIVIDER}"""
+        
+        # Add if_you_like section if provided (FIXED: proper line breaks)
+        if if_you_like:
+            message += f"\n<b>If you like:</b> {if_you_like}\n"
+        
+        message += f"""
+🔎 <i>More hidden gems — @cinebrain</i>
+<i>🧠 CineBrain — Hidden Gems • Mind-Bending Sci-Fi • Rare Anime</i>
+
+{CINEBRAIN_FOOTER}"""
+        
+        return message
+    
+    @staticmethod
+    def hidden_gem_template(content: Any, admin_name: str, description: str, genres_list: Optional[List[str]] = None, hook: Optional[str] = None, if_you_like: Optional[str] = None) -> str:
+        """
+        💎 Hidden gem template for underrated or lesser-known movies/series
+        Use when: Movies are not mainstream but excellent
+        
+        Fields: Title, Year, Genres, Rating, Hook/catch-line, If_you_like (optional)
+        """
+        # Parse genres if needed
+        if not genres_list and content.genres:
+            try:
+                genres_list = json.loads(content.genres)
+            except:
+                genres_list = []
+        
+        # Format components
+        content_prefix = TelegramTemplates.get_content_type_prefix(content.content_type)
+        year = TelegramTemplates.format_year(content.release_date)
+        rating = TelegramTemplates.get_rating_display(content.rating)
+        genres = TelegramTemplates.format_genres(genres_list, limit=3)
+        
+        # Hook: 1-2 lines, "why nobody talks about this" feel
+        hook_text = hook or "A beautifully crafted gem buried under the algorithm."
+        
+        message = f"""💎 <b>Hidden Gem — {content_prefix} {content.title}{year}</b>
+<i>{genres} • ⭐ {rating}</i>
+
+{hook_text}"""
+        
+        # Add optional if_you_like section (FIXED: proper formatting)
+        if if_you_like:
+            message += f"\n\n<b>If you like:</b> {if_you_like}"
+        
+        message += f"""
+
+🔎 <i>More hidden gems — @cinebrain</i>
+<i>🧠 CineBrain — Hidden Gems • Mind-Bending Sci-Fi • Rare Anime</i>
+
+{CINEBRAIN_FOOTER}"""
+        
+        return message
+    
+    @staticmethod
+    def anime_gem_template(content: Any, admin_name: str, description: str, genres_list: Optional[List[str]] = None, anime_genres_list: Optional[List[str]] = None, overview: Optional[str] = None, emotion_hook: Optional[str] = None) -> str:
+        """
+        🎐 Anime gem template for emotional, psychological, sci-fi, or plot-heavy anime
+        Use when: The anime has depth, philosophy, or a big emotional theme
+        
+        Fields: Title, Year, Genres, Status, Rating, Overview, Emotion_hook
+        """
+        # Combine all genres (2-4 combined genres)
+        all_genres = []
+        if genres_list:
+            all_genres.extend(genres_list)
+        elif content.genres:
+            try:
+                all_genres.extend(json.loads(content.genres))
+            except:
+                pass
+        
+        if anime_genres_list:
+            all_genres.extend(anime_genres_list)
+        elif hasattr(content, 'anime_genres') and content.anime_genres:
+            try:
+                all_genres.extend(json.loads(content.anime_genres))
+            except:
+                pass
+        
+        # Format components
+        content_prefix = TelegramTemplates.get_content_type_prefix(content.content_type)
+        year = TelegramTemplates.format_year(content.release_date)
+        rating = TelegramTemplates.get_rating_display(content.rating)
+        genres = TelegramTemplates.format_genres(all_genres, limit=4)
+        
+        # Status: Completed or Ongoing
+        status = "Completed"
+        if hasattr(content, 'status') and content.status:
+            status = content.status
+        elif hasattr(content, 'release_date') and content.release_date:
+            # Simple heuristic: if recent, probably ongoing
+            from datetime import datetime, timedelta
+            if content.release_date > datetime.now().date() - timedelta(days=365):
+                status = "Ongoing"
+        
+        # Overview: 2-3 lines, emotional and philosophical core, focus on themes not plot
+        overview_text = overview or TelegramTemplates.truncate_synopsis(content.overview, 180)
+        
+        # Emotion_hook: 1 strong emotional line
+        emotion_hook_text = emotion_hook or "A time-loop tragedy that hits harder the more you think about it."
+        
+        message = f"""🔥 <b>THIS ANIME WILL BLOW YOUR MIND</b>
+🎐 <b>Anime Gem — {content_prefix} {content.title}{year}</b>
+<i>{genres} • {status} • ⭐ {rating}</i>
+{DIVIDER}
+<b>Why this hits hard:</b>
+<blockquote><i>{overview_text}</i></blockquote>
+• {emotion_hook_text}
+{DIVIDER}
+🔎 <i>More rare anime — @cinebrain</i>
+<i>🧠 CineBrain — Hidden Gems • Mind-Bending Sci-Fi • Rare Anime</i>
+
+{CINEBRAIN_FOOTER}"""
+        
+        return message
+    
+    @staticmethod
+    def top_list_template(list_title: str, items: List[tuple], admin_name: str = "", description: str = "", poster_url: Optional[str] = None) -> str:
+        """
+        🧠 Top-list template for list-style posts (Top 5, Top 10)
+        Use when: You want a viral post full of mini recommendations
+        
+        Fields per item: Movie Title, Year, Hook (short, punchy)
+        Max: 5-10 items
+        List Title: catchy and niche-based
+        """
+        # Limit to 10 items MAX as specified
+        limited_items = items[:10]
+        
+        # Build numbered list with short, punchy hooks
+        body = "\n".join([
+            f"{i+1}. <b>{title}</b> ({year}) — {hook}"
+            for i, (title, year, hook) in enumerate(limited_items)
+        ])
+        
+        message = f"""🧠 <b>{list_title}</b>
+
+{body}
+{DIVIDER}
+📌 <i>Save this list — @cinebrain</i>
+<i>🧠 CineBrain — Hidden Gems • Mind-Bending Sci-Fi • Rare Anime</i>
+
+{CINEBRAIN_FOOTER}"""
+        
+        return message
+    
+    @staticmethod
+    def scene_clip_template(content: Any, admin_name: str, description: str, caption: str, genres_list: Optional[List[str]] = None) -> str:
+        """
+        🎥 Scene clip template for posting a clip/video from a movie or anime
+        Use when: You upload a 10-30 sec clip to Telegram
+        
+        Fields: Caption, Title, Year, Genres
+        Caption: punchy line creating curiosity
+        Keep minimal because video is main attraction
+        NO POSTER SUPPORT - video is the main media
+        """
+        # Parse genres if needed (2-3 genres that define the tone)
+        if not genres_list and content.genres:
+            try:
+                genres_list = json.loads(content.genres)
+            except:
+                genres_list = []
+        
+        # Format components
+        content_prefix = TelegramTemplates.get_content_type_prefix(content.content_type)
+        year = TelegramTemplates.format_year(content.release_date)
+        genres = TelegramTemplates.format_genres(genres_list, limit=3)
+        
+        # Caption: punchy line creating curiosity
+        caption_text = caption or "This scene will hook you instantly"
+        
+        message = f"""<b>{caption_text}</b>
+🎥 <b>{content_prefix} {content.title}{year}</b>
+<i>{genres}</i>
+{DIVIDER}
+⚡ Watch the clip above.
+If this hooks you, the full movie will blow your mind.
+
+🔎 <i>More scenes — @cinebrain</i>
+<i>🧠 CineBrain — Hidden Gems • Mind-Bending Sci-Fi • Rare Anime</i>
+
+{CINEBRAIN_FOOTER}"""
+        
+        return message
+    
+    @staticmethod
+    def get_template_prompts() -> Dict[str, Dict[str, str]]:
+        """
+        Get template prompts for AI content generation or admin guidance
+        """
+        return {
+            'mind_bending': {
+                'purpose': 'For movies that are confusing, reality-breaking, psychological, sci-fi, or have a big twist.',
+                'use_when': 'The movie is genius, underrated, brain-melting.',
+                'poster_support': True,
+                'prompt': '''Generate a mind-bending movie recommendation.
+Fill these fields with strong, intense, viral-quality text:
+• Title: The exact movie title
+• Year: The release year in brackets (example: (2013))
+• Genres: 2–3 genres (example: Sci-Fi • Thriller • Mystery)
+• Rating: IMDb or TMDB rating like 7.6/10
+• Runtime: Format inside (⏱ 1h 32m)
+• Overview: 2–3 sentences, mysterious, raise questions, never spoil twists
+• If_you_like: 2–4 similar brain-breaking movies (example: Inception, Dark, Predestination)
+Make the overview gripping, non-generic, focused on tension, confusion, and mystery.'''
+            },
+            'hidden_gem': {
+                'purpose': 'For underrated or lesser-known movies/series.',
+                'use_when': 'Movies are not mainstream but excellent.',
+                'poster_support': True,
+                'prompt': '''Generate a hidden gem recommendation.
+Fill these fields with sharp, concise descriptions:
+• Title: Movie title
+• Year: Release year in brackets
+• Genres: 2–3 max
+• Rating: IMDb or TMDB rating
+• Hook/catch-line: 1–2 lines, "why nobody talks about this" feel
+• If_you_like (optional): 2–3 movies with similar tone
+The hook must be extremely catchy. Avoid long explanations. Focus on uniqueness, vibe, style.'''
+            },
+            'anime_gem': {
+                'purpose': 'For emotional, psychological, sci-fi, or plot-heavy anime.',
+                'use_when': 'The anime has depth, philosophy, or a big emotional theme.',
+                'poster_support': True,
+                'prompt': '''Generate an anime gem recommendation.
+Fill these fields with emotional and engaging detail:
+• Title: Name of the anime
+• Year: Release year in brackets
+• Genres: 2–4 combined genres
+• Status: Completed or Ongoing
+• Rating: Anime rating (MyAnimeList / TMDB)
+• Overview: 2–3 lines, emotional and philosophical core, focus on themes not plot
+• Emotion_hook: 1 strong emotional line (example: "A time-loop tragedy that hits harder the more you think about it.")
+Make the tone emotional, powerful, and intense.'''
+            },
+            'top_list': {
+                'purpose': 'For list-style posts (Top 5, Top 10).',
+                'use_when': 'You want a viral post full of mini recommendations.',
+                'poster_support': True,
+                'prompt': '''Generate a top-list for CineBrain.
+Fill each item with:
+• Movie Title
+• Year  
+• Hook (example: "A mind-bending paradox that will fry your brain")
+Provide 5–10 items MAX. Hooks should be short, punchy, and scroll-stopping.
+Also provide:
+• List Title: Make it catchy and niche-based
+Examples: "Top 5 Mind-Bending Sci-Fi Gems", "Top 7 Psychological Thrillers You Missed"
+No long paragraphs. Just title + year + short hook.'''
+            },
+            'scene_clip': {
+                'purpose': 'For posting a clip/video from a movie or anime.',
+                'use_when': 'You upload a 10–30 sec clip to Telegram.',
+                'poster_support': False,
+                'prompt': '''Generate text for a scene-clip post.
+Fill these fields:
+• Caption: A punchy line creating curiosity (example: "This scene will hook you instantly")
+• Title: Movie or Anime title
+• Year: Release year in brackets
+• Genres: 2–3 genres that define the tone
+The tone must be exciting and suspenseful. Keep text minimal because video is main attraction.'''
+            }
+        }
+    
+    @staticmethod
+    def get_available_templates() -> Dict[str, str]:
+        """
+        Get list of available templates for frontend selection
+        """
+        return {
+            'standard_movie': 'Standard Movie Recommendation',
+            'standard_tv': 'Standard TV Show Recommendation', 
+            'standard_anime': 'Standard Anime Recommendation',
+            'mind_bending': '🔥 Mind-Bending Movie',
+            'hidden_gem': '💎 Hidden Gem',
+            'anime_gem': '🎐 Anime Gem',
+            'top_list': '🧠 Top List/Curation',
+            'scene_clip': '🎥 Scene Clip with Video'
+        }
+    
+    @staticmethod
+    def get_template_fields(template_type: str) -> Dict[str, Any]:
+        """
+        Get required fields for each template type
+        """
+        field_definitions = {
+            'mind_bending': {
+                'required': ['title', 'year', 'genres', 'rating', 'runtime', 'overview'],
+                'optional': ['if_you_like'],
+                'poster_support': True,
+                'field_specs': {
+                    'genres': '2-3 genres (Sci-Fi • Thriller • Mystery)',
+                    'overview': '2-3 sentences, mysterious, never spoil twists',
+                    'if_you_like': '2-4 similar brain-breaking movies'
+                }
+            },
+            'hidden_gem': {
+                'required': ['title', 'year', 'genres', 'rating', 'hook'],
+                'optional': ['if_you_like'],
+                'poster_support': True,
+                'field_specs': {
+                    'genres': '2-3 genres max',
+                    'hook': '1-2 lines, "why nobody talks about this" feel',
+                    'if_you_like': '2-3 movies with similar tone'
+                }
+            },
+            'anime_gem': {
+                'required': ['title', 'year', 'genres', 'status', 'rating', 'overview', 'emotion_hook'],
+                'optional': [],
+                'poster_support': True,
+                'field_specs': {
+                    'genres': '2-4 combined genres',
+                    'status': 'Completed or Ongoing',
+                    'overview': '2-3 lines, emotional/philosophical core, themes not plot',
+                    'emotion_hook': '1 strong emotional line'
+                }
+            },
+            'top_list': {
+                'required': ['list_title', 'items'],
+                'optional': ['poster_url'],
+                'poster_support': True,
+                'field_specs': {
+                    'list_title': 'Catchy and niche-based',
+                    'items': '5-10 items MAX, each with title, year, short punchy hook',
+                    'poster_url': 'Optional custom poster for the list'
+                }
+            },
+            'scene_clip': {
+                'required': ['caption', 'title', 'year', 'genres'],
+                'optional': [],
+                'poster_support': False,
+                'field_specs': {
+                    'caption': 'Punchy line creating curiosity',
+                    'genres': '2-3 genres that define the tone'
+                }
+            }
+        }
+        
+        return field_definitions.get(template_type, {})
+    
+    @staticmethod
+    def render_template(template_type: str, content: Any = None, admin_name: str = "", description: str = "", **kwargs) -> str:
+        """
+        Dynamic template renderer for frontend integration
+        
+        @param template_type: Template identifier
+        @param content: Content object
+        @param admin_name: Admin name
+        @param description: Description/hook text
+        @param kwargs: Additional template-specific parameters
+        """
+        template_map = {
+            'standard_movie': TelegramTemplates.movie_recommendation_template,
+            'standard_tv': TelegramTemplates.tv_show_recommendation_template,
+            'standard_anime': TelegramTemplates.anime_recommendation_template,
+            'mind_bending': TelegramTemplates.mind_bending_template,
+            'hidden_gem': TelegramTemplates.hidden_gem_template,
+            'anime_gem': TelegramTemplates.anime_gem_template,
+            'scene_clip': TelegramTemplates.scene_clip_template
+        }
+        
+        if template_type == 'top_list':
+            return TelegramTemplates.top_list_template(
+                kwargs.get('list_title', 'Curated List'),
+                kwargs.get('items', []),
+                admin_name,
+                description,
+                kwargs.get('poster_url')
             )
-            
-            success_count = 0
-            for email in admin_emails:
-                try:
-                    admin_name = email.split('@')[0].replace('.', ' ').title()
-                    
-                    self.email_service.queue_email(
-                        to=email,
-                        subject=f"[CineBrain Admin] {subject}",
-                        html=html,
-                        text=text,
-                        priority='urgent' if is_urgent else 'high',
-                        to_name=admin_name
-                    )
-                    success_count += 1
-                    logger.info(f"✅ Admin notification email queued for {email}: {subject}")
-                except Exception as e:
-                    logger.error(f"❌ Failed to queue email for {email}: {e}")
-            
-            if success_count > 0:
-                logger.info(f"✅ Admin notification emails queued successfully: {subject} ({success_count}/{len(admin_emails)})")
-                return True
+        
+        template_func = template_map.get(template_type)
+        if not template_func:
+            # Fallback to standard template based on content type
+            if content and content.content_type == 'anime':
+                template_func = TelegramTemplates.anime_recommendation_template
+            elif content and content.content_type in ['tv', 'series']:
+                template_func = TelegramTemplates.tv_show_recommendation_template
             else:
-                logger.error(f"❌ Failed to queue any admin notification emails")
+                template_func = TelegramTemplates.movie_recommendation_template
+        
+        return template_func(content, admin_name, description, **kwargs)
+
+
+class TelegramService:
+    """
+    Service for sending beautifully formatted Telegram notifications
+    Handles all public channel communications
+    """
+    
+    @staticmethod
+    def send_admin_recommendation(content: Any, admin_name: str, description: str, template_type: str = 'auto', template_params: Dict = None) -> bool:
+        """
+        Send admin-curated recommendation with selectable template
+        
+        @param content: Content object with movie/show details
+        @param admin_name: Name of the admin making recommendation
+        @param description: CineBrain Insight text
+        @param template_type: Template to use ('auto' for automatic selection)
+        @param template_params: Additional parameters for specific templates
+        @return: Success status
+        """
+        try:
+            if not bot or not TELEGRAM_CHANNEL_ID:
+                logger.warning("Telegram recommendation skipped - channel not configured")
                 return False
+            
+            template_params = template_params or {}
+            
+            # Auto-select template if not specified
+            if template_type == 'auto':
+                if content and content.content_type == 'anime':
+                    template_type = 'standard_anime'
+                elif content and content.content_type in ['tv', 'series']:
+                    template_type = 'standard_tv'
+                else:
+                    template_type = 'standard_movie'
+            
+            # Check if template supports posters
+            template_info = TelegramTemplates.get_template_fields(template_type)
+            poster_support = template_info.get('poster_support', True)
+            
+            # Special handling for list template (no content object needed)
+            if template_type == 'top_list':
+                message = TelegramTemplates.top_list_template(
+                    template_params.get('list_title', 'Curated List'),
+                    template_params.get('items', []),
+                    admin_name,
+                    description,
+                    template_params.get('poster_url')
+                )
+                poster_url = template_params.get('poster_url')
+            else:
+                # Render the selected template
+                message = TelegramTemplates.render_template(
+                    template_type, 
+                    content, 
+                    admin_name, 
+                    description,
+                    **template_params
+                )
+                
+                # Get poster URL from content only if template supports it
+                poster_url = None
+                if poster_support and content and content.poster_path:
+                    if content.poster_path.startswith('http'):
+                        poster_url = content.poster_path
+                    else:
+                        poster_url = f"https://image.tmdb.org/t/p/w500{content.poster_path}"
+            
+            # Create inline keyboard with buttons SIDE BY SIDE
+            keyboard = types.InlineKeyboardMarkup(row_width=2)
+            
+            buttons = []
+            
+            # Add Details button for content-based templates
+            if template_type != 'top_list' and content and hasattr(content, 'slug') and content.slug:
+                campaign_type = f"{content.content_type}_recommendation"
+                content_identifier = content.slug.replace('-', '_')
+                
+                detail_url = cinebrain_tracking_url(
+                    content.slug, 
+                    campaign_type, 
+                    content_identifier
+                )
+                
+                details_btn = types.InlineKeyboardButton(
+                    text="Full Details",
+                    url=detail_url
+                )
+                buttons.append(details_btn)
+            
+            # Always add explore button
+            explore_btn = types.InlineKeyboardButton(
+                text="Explore More",
+                url=f"https://cinebrain.vercel.app/?utm_source=telegram&utm_medium=bot&utm_campaign=recommendation&utm_content=explore_more"
+            )
+            buttons.append(explore_btn)
+            
+            # Add buttons in a single row (side by side)
+            if len(buttons) == 2:
+                keyboard.row(buttons[0], buttons[1])  # Side by side
+            elif len(buttons) == 1:
+                keyboard.add(buttons[0])  # Single button
+            
+            # Send message with or without poster based on template support
+            if poster_url and poster_support and template_type != 'scene_clip':
+                try:
+                    bot.send_photo(
+                        chat_id=TELEGRAM_CHANNEL_ID,
+                        photo=poster_url,
+                        caption=message,
+                        parse_mode='HTML',
+                        reply_markup=keyboard
+                    )
+                    logger.info(f"✅ {template_type} recommendation with poster sent: {content.title if content else 'List'}")
+                except Exception as e:
+                    logger.error(f"Photo send failed: {e}, sending text only")
+                    bot.send_message(
+                        chat_id=TELEGRAM_CHANNEL_ID,
+                        text=message,
+                        parse_mode='HTML',
+                        reply_markup=keyboard
+                    )
+                    logger.info(f"✅ {template_type} recommendation sent (text only): {content.title if content else 'List'}")
+            else:
+                bot.send_message(
+                    chat_id=TELEGRAM_CHANNEL_ID,
+                    text=message,
+                    parse_mode='HTML',
+                    reply_markup=keyboard
+                )
+                logger.info(f"✅ {template_type} recommendation sent: {content.title if content else 'List'}")
+            
+            return True
             
         except Exception as e:
-            logger.error(f"❌ Admin email error: {e}")
+            logger.error(f"❌ Telegram send error: {e}")
             return False
 
-class AdminNotificationService:
-    def __init__(self, app, db, models, services):
-        self.app = app
-        self.db = db
-        self.User = models['User']
-        self.email_service = AdminEmailService(services)
-        self.redis_client = self._init_redis()
-        
-        self.AdminNotification = models.get('AdminNotification')
-        self.CannedResponse = models.get('CannedResponse')
-        self.SupportMetrics = models.get('SupportMetrics')
-        self.AdminEmailPreferences = models.get('AdminEmailPreferences')
-        
-        # Create AdminEmailPreferences model if not provided
-        if not self.AdminEmailPreferences:
-            try:
-                email_prefs = AdminEmailPreferences(db)
-                self.AdminEmailPreferences = email_prefs.Model
-                logger.info("✅ AdminEmailPreferences model created dynamically")
-            except Exception as e:
-                logger.error(f"❌ Failed to create AdminEmailPreferences model: {e}")
-                self.AdminEmailPreferences = None
-        
-        if not self.AdminNotification:
-            logger.warning("⚠️ AdminNotification model not available")
-        if not self.CannedResponse:
-            logger.warning("⚠️ CannedResponse model not available")
-        if not self.SupportMetrics:
-            logger.warning("⚠️ SupportMetrics model not available")
-        if not self.AdminEmailPreferences:
-            logger.warning("⚠️ AdminEmailPreferences model not available")
-        
-        logger.info("✅ Admin notification service initialized (EMAIL ONLY)")
-    
-    def _init_redis(self):
-        try:
-            if not REDIS_URL:
-                logger.warning("Redis URL not configured for admin notifications")
-                return None
-            
-            url = urlparse(REDIS_URL)
-            redis_client = redis.StrictRedis(
-                host=url.hostname,
-                port=url.port,
-                password=url.password,
-                decode_responses=True,
-                socket_connect_timeout=5,
-                socket_timeout=5,
-                retry_on_timeout=True,
-                health_check_interval=30
-            )
-            redis_client.ping()
-            logger.info("✅ Admin Redis connected successfully")
-            return redis_client
-            
-        except Exception as e:
-            logger.error(f"❌ Admin Redis connection failed: {e}")
-            return None
-    
-    def _should_send_email(self, admin_id: int, alert_type: str) -> bool:
-        """Check if email should be sent based on admin preferences"""
-        try:
-            if not self.AdminEmailPreferences:
-                return True  # Default to sending if preferences not available
-            
-            preferences = self.AdminEmailPreferences.query.filter_by(admin_id=admin_id).first()
-            if not preferences:
-                # Create default preferences for new admin
-                preferences = self._create_default_preferences(admin_id)
-                if not preferences:
-                    return True  # Default to sending if creation failed
-            
-            # Map alert types to preference fields
-            alert_mapping = {
-                'urgent_ticket': preferences.urgent_tickets,
-                'new_ticket': preferences.regular_tickets,
-                'sla_breach': preferences.sla_breaches,
-                'system_alert': preferences.system_alerts,
-                'content_added': preferences.content_added,
-                'recommendation_created': preferences.recommendation_created,
-                'recommendation_updated': preferences.recommendation_updated,
-                'recommendation_deleted': preferences.recommendation_deleted,
-                'recommendation_published': preferences.recommendation_published,
-                'feedback_received': preferences.user_feedback,
-                'cache_operation': preferences.cache_operations,
-                'bulk_operation': preferences.bulk_operations,
-                'slug_update': preferences.slug_updates
-            }
-            
-            return alert_mapping.get(alert_type, True)  # Default to True for unknown types
-            
-        except Exception as e:
-            logger.error(f"Error checking email preferences: {e}")
-            return True  # Default to sending on error
-    
-    def _create_default_preferences(self, admin_id: int):
-        """Create default preferences for new admin"""
-        try:
-            preferences = self.AdminEmailPreferences(admin_id=admin_id)
-            self.db.session.add(preferences)
-            self.db.session.commit()
-            logger.info(f"✅ Default email preferences created for admin {admin_id}")
-            return preferences
-        except Exception as e:
-            logger.error(f"Error creating default preferences for admin {admin_id}: {e}")
-            try:
-                self.db.session.rollback()
-            except:
-                pass
-            return None
-    
-    def create_notification(self, notification_type: str, title: str, message: str, 
-                          admin_id: int = None, related_ticket_id: int = None, 
-                          related_content_id: int = None, is_urgent: bool = False,
-                          action_required: bool = False, action_url: str = None,
-                          metadata: dict = None, alert_type: str = None):
-        """Enhanced notification creation with email preferences"""
-        try:
-            notification = None
-            if not self.AdminNotification:
-                logger.warning("AdminNotification model not available, skipping database notification")
-            else:
-                try:
-                    notification = self.AdminNotification(
-                        notification_type=notification_type,
-                        title=title,
-                        message=message,
-                        admin_id=admin_id,
-                        related_ticket_id=related_ticket_id,
-                        related_content_id=related_content_id,
-                        is_urgent=is_urgent,
-                        action_required=action_required,
-                        action_url=action_url,
-                        notification_metadata=metadata or {}
-                    )
-                    
-                    self.db.session.add(notification)
-                    self.db.session.commit()
-                    logger.info(f"✅ Database notification created: {title}")
-                except Exception as e:
-                    logger.error(f"Database notification creation failed: {e}")
-                    try:
-                        self.db.session.rollback()
-                    except:
-                        pass
-            
-            # Email notifications with preference checking
-            if self.email_service and self.email_service.is_configured:
-                try:
-                    admin_users = self.User.query.filter_by(is_admin=True).all()
-                    
-                    # Filter admins based on their email preferences
-                    admins_to_notify = []
-                    for admin in admin_users:
-                        if admin.email and self._should_send_email(admin.id, alert_type or notification_type.lower()):
-                            admins_to_notify.append(admin.email)
-                    
-                    # Add environment admin email if configured
-                    env_admin_email = os.environ.get('ADMIN_EMAIL')
-                    if env_admin_email and env_admin_email not in admins_to_notify:
-                        # Check preferences for environment admin too
-                        env_admin = self.User.query.filter_by(email=env_admin_email).first()
-                        if env_admin and self._should_send_email(env_admin.id, alert_type or notification_type.lower()):
-                            admins_to_notify.append(env_admin_email)
-                        elif not env_admin:
-                            # Environment admin not in database, send for critical alerts only
-                            critical_alerts = ['urgent_ticket', 'sla_breach', 'system_alert']
-                            if (alert_type or notification_type.lower()) in critical_alerts:
-                                admins_to_notify.append(env_admin_email)
-                    
-                    if admins_to_notify:
-                        self.email_service.send_admin_notification(title, message, admins_to_notify, is_urgent)
-                        logger.info(f"✅ Email notifications sent to {len(admins_to_notify)} admins: {title}")
-                    else:
-                        logger.info(f"📧 No admins configured to receive '{alert_type or notification_type}' emails")
-                        
-                except Exception as e:
-                    logger.warning(f"Admin email notification failed: {e}")
-            
-            if self.redis_client:
-                try:
-                    notification_data = {
-                        'id': notification.id if notification else f"temp_{int(datetime.utcnow().timestamp())}",
-                        'type': notification_type,
-                        'title': title,
-                        'message': message,
-                        'is_urgent': is_urgent,
-                        'action_required': action_required,
-                        'action_url': action_url,
-                        'timestamp': datetime.utcnow().isoformat()
-                    }
-                    self.redis_client.lpush('admin_notifications', json.dumps(notification_data))
-                    self.redis_client.ltrim('admin_notifications', 0, 99)
-                    self.redis_client.expire('admin_notifications', 86400)
-                    logger.info(f"✅ Redis notification stored: {title}")
-                except Exception as e:
-                    logger.error(f"Redis notification error: {e}")
-            
-            logger.info(f"✅ Admin notification created successfully (EMAIL ONLY): {title}")
-            return notification if notification else True
-            
-        except Exception as e:
-            logger.error(f"❌ Error creating admin notification: {e}")
-            try:
-                self.db.session.rollback()
-            except:
-                pass
-            return None
-    
-    def notify_new_ticket(self, ticket):
-        try:
-            is_urgent = ticket.priority == 'urgent'
-            alert_type = 'urgent_ticket' if is_urgent else 'new_ticket'
-            
-            self.create_notification(
-                NotificationType.NEW_TICKET if not is_urgent else NotificationType.URGENT_TICKET,
-                f"New {'Urgent ' if is_urgent else ''}Support Ticket",
-                f"Ticket #{ticket.ticket_number} created by {ticket.user_name}\n"
-                f"Subject: {ticket.subject}\n"
-                f"Priority: {ticket.priority.upper()}\n"
-                f"Category: {ticket.category.name if hasattr(ticket, 'category') and ticket.category else 'Unknown'}",
-                related_ticket_id=ticket.id,
-                is_urgent=is_urgent,
-                action_required=True,
-                action_url=f"/admin/support/tickets/{ticket.id}",
-                metadata={
-                    'ticket_number': ticket.ticket_number,
-                    'priority': ticket.priority,
-                    'user_email': ticket.user_email
-                },
-                alert_type=alert_type
-            )
-            logger.info(f"✅ New ticket notification sent (EMAIL): #{ticket.ticket_number}")
-        except Exception as e:
-            logger.error(f"❌ Error notifying new ticket: {e}")
-    
-    def notify_sla_breach(self, ticket):
-        try:
-            self.create_notification(
-                NotificationType.SLA_BREACH,
-                f"SLA Breach - Ticket #{ticket.ticket_number}",
-                f"Ticket #{ticket.ticket_number} has exceeded its SLA deadline\n"
-                f"Created: {ticket.created_at.strftime('%Y-%m-%d %H:%M UTC')}\n"
-                f"Deadline: {ticket.sla_deadline.strftime('%Y-%m-%d %H:%M UTC') if ticket.sla_deadline else 'N/A'}\n"
-                f"Priority: {ticket.priority.upper()}",
-                related_ticket_id=ticket.id,
-                is_urgent=True,
-                action_required=True,
-                action_url=f"/admin/support/tickets/{ticket.id}",
-                metadata={
-                    'ticket_number': ticket.ticket_number,
-                    'sla_deadline': ticket.sla_deadline.isoformat() if ticket.sla_deadline else None
-                },
-                alert_type='sla_breach'
-            )
-            logger.info(f"✅ SLA breach notification sent (EMAIL): #{ticket.ticket_number}")
-        except Exception as e:
-            logger.error(f"❌ Error notifying SLA breach: {e}")
-    
-    def notify_feedback_received(self, feedback):
-        try:
-            feedback_type = getattr(feedback, 'feedback_type', 'general')
-            rating = getattr(feedback, 'rating', 0)
-            
-            self.create_notification(
-                NotificationType.FEEDBACK_RECEIVED,
-                "New User Feedback Received",
-                f"Feedback from {feedback.user_name}\n"
-                f"Type: {feedback_type.replace('_', ' ').title() if isinstance(feedback_type, str) else 'General'}\n"
-                f"Subject: {feedback.subject}\n"
-                f"Rating: {'⭐' * rating if rating else 'No rating'}",
-                action_required=False,
-                action_url=f"/admin/support/feedback/{feedback.id}",
-                metadata={
-                    'feedback_type': feedback_type if isinstance(feedback_type, str) else 'general',
-                    'user_email': feedback.user_email,
-                    'rating': rating
-                },
-                alert_type='feedback_received'
-            )
-            logger.info(f"✅ Feedback notification sent (EMAIL): feedback #{feedback.id}")
-        except Exception as e:
-            logger.error(f"❌ Error notifying feedback: {e}")
-    
-    def notify_system_alert(self, alert_type_param: str, title: str, details: str, is_urgent: bool = False):
-        try:
-            self.create_notification(
-                NotificationType.SYSTEM_ALERT,
-                f"System Alert: {title}",
-                f"Alert Type: {alert_type_param}\n"
-                f"Details: {details}\n"
-                f"Time: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}",
-                is_urgent=is_urgent,
-                action_required=True,
-                action_url="/admin/system-health",
-                metadata={
-                    'alert_type': alert_type_param,
-                    'timestamp': datetime.utcnow().isoformat()
-                },
-                alert_type='system_alert'
-            )
-            logger.info(f"✅ System alert notification sent (EMAIL): {title}")
-        except Exception as e:
-            logger.error(f"❌ Error notifying system alert: {e}")
 
-class AdminService:
-    def __init__(self, app, db, models, services):
-        self.app = app
-        self.db = db
-        self.User = models['User']
-        self.Content = models['Content']
-        self.UserInteraction = models['UserInteraction']
-        self.AdminRecommendation = models['AdminRecommendation']
-        
-        self.AdminNotification = models.get('AdminNotification')
-        self.CannedResponse = models.get('CannedResponse')
-        self.SupportMetrics = models.get('SupportMetrics')
-        self.AdminEmailPreferences = models.get('AdminEmailPreferences')
-        
-        self.TMDBService = services.get('TMDBService')
-        self.JikanService = services.get('JikanService')
-        self.ContentService = services.get('ContentService')
-        self.cache = services.get('cache')
-        
-        try:
-            from admin.telegram import TelegramService
-            self.telegram_service = TelegramService
-        except ImportError:
-            self.telegram_service = None
-        
-        self.notification_service = AdminNotificationService(app, db, models, services)
-        
-        logger.info("✅ Admin service initialized")
+class TelegramAdminService:
+    """
+    Admin notification service for internal updates
+    Handles admin-only communications
+    """
     
-    def search_external_content(self, query: str, source: str, page: int = 1):
+    @staticmethod
+    def send_content_notification(content_title: str, admin_name: str, action_type: str = "added") -> bool:
+        """
+        Send admin action notification to admin chat
+        
+        @param content_title: Title of the content
+        @param admin_name: Admin who performed action
+        @param action_type: Type of action performed
+        @return: Success status
+        """
         try:
-            results = []
+            if not bot or not TELEGRAM_ADMIN_CHAT_ID:
+                return False
             
-            if source == 'tmdb':
-                tmdb_results = self.TMDBService.search_content(query, page=page)
-                if tmdb_results:
-                    for item in tmdb_results.get('results', []):
-                        # FIX: Add safe data extraction with defaults
-                        content_item = {
-                            'id': item.get('id'),
-                            'title': item.get('title') or item.get('name') or 'Unknown Title',
-                            'content_type': 'movie' if 'title' in item else 'tv',
-                            'release_date': item.get('release_date') or item.get('first_air_date'),
-                            'poster_path': f"https://image.tmdb.org/t/p/w300{item['poster_path']}" if item.get('poster_path') else None,
-                            'overview': item.get('overview') or '',
-                            'rating': item.get('vote_average') or 0,
-                            'vote_average': item.get('vote_average') or 0,
-                            'vote_count': item.get('vote_count') or 0,
-                            'popularity': item.get('popularity') or 0,
-                            'genre_ids': item.get('genre_ids', []),
-                            'original_language': item.get('original_language') or 'en',
-                            'backdrop_path': item.get('backdrop_path'),
-                            'source': 'tmdb'
-                        }
-                        results.append(content_item)
+            action_emoji = {
+                'added': '➕',
+                'updated': '✏️',
+                'deleted': '🗑️',
+                'recommended': '⭐'
+            }.get(action_type, '📝')
             
-            elif source == 'anime':
-                anime_results = self.JikanService.search_anime(query, page=page)
-                if anime_results:
-                    for anime in anime_results.get('data', []):
-                        # FIX: Add safe data extraction with defaults
-                        content_item = {
-                            'id': anime.get('mal_id'),
-                            'title': anime.get('title') or 'Unknown Title',
-                            'content_type': 'anime',
-                            'release_date': anime.get('aired', {}).get('from') if anime.get('aired') else None,
-                            'poster_path': anime.get('images', {}).get('jpg', {}).get('image_url') if anime.get('images') else None,
-                            'overview': anime.get('synopsis') or '',
-                            'rating': anime.get('score') or 0,
-                            'vote_average': anime.get('score') or 0,
-                            'vote_count': anime.get('scored_by') or 0,
-                            'popularity': anime.get('popularity') or 0,
-                            'genres': [genre.get('name', 'Unknown') for genre in anime.get('genres', [])],
-                            'source': 'anime'
-                        }
-                        results.append(content_item)
-            
-            logger.info(f"✅ External content search completed: {len(results)} results for '{query}'")
-            return results
-            
-        except Exception as e:
-            logger.error(f"External search error: {e}")
-            return []
-    
-    def save_external_content(self, data):
-        try:
-            existing_content = None
-            
-            # FIX: Better data validation
-            if not data or not data.get('id'):
-                logger.error("Invalid content data: missing ID")
-                return {'error': 'Invalid content data: missing ID'}
-            
-            if data.get('source') == 'anime' and data.get('id'):
-                mal_id = int(data['id']) if isinstance(data['id'], str) and data['id'].isdigit() else data['id']
-                existing_content = self.Content.query.filter_by(mal_id=mal_id).first()
-            elif data.get('id'):
-                tmdb_id = int(data['id']) if isinstance(data['id'], str) and data['id'].isdigit() else data['id']
-                existing_content = self.Content.query.filter_by(tmdb_id=tmdb_id).first()
-            
-            if existing_content:
-                logger.info(f"Content already exists: {existing_content.title}")
-                return {
-                    'message': 'Content already exists',
-                    'content_id': existing_content.id,
-                    'created': False
-                }
-            
-            release_date = None
-            if data.get('release_date'):
-                try:
-                    from datetime import datetime
-                    release_date = datetime.strptime(data['release_date'][:10], '%Y-%m-%d').date()
-                except:
-                    release_date = None
-            
-            # YouTube trailer lookup with proper error handling
-            youtube_trailer_id = None
-            try:
-                if self.ContentService and hasattr(self.ContentService, 'get_youtube_trailer'):
-                    youtube_trailer_id = self.ContentService.get_youtube_trailer(
-                        data.get('title'), 
-                        data.get('content_type')
-                    )
-                else:
-                    # Fallback: try to extract from data or set to None
-                    youtube_trailer_id = data.get('youtube_trailer_id') or None
-                    logger.info(f"YouTube trailer lookup skipped - ContentService not available or method missing")
-            except Exception as e:
-                logger.warning(f"YouTube trailer lookup failed for '{data.get('title')}': {e}")
-                youtube_trailer_id = None
-            
-            # FIX: Add better data validation and defaults
-            content_title = data.get('title') or data.get('name') or 'Unknown Title'
-            
-            if data.get('source') == 'anime':
-                mal_id = int(data['id']) if isinstance(data['id'], str) and data['id'].isdigit() else data['id']
-                content = self.Content(
-                    mal_id=mal_id,
-                    title=content_title,
-                    original_title=data.get('original_title') or content_title,
-                    content_type='anime',
-                    genres=json.dumps(data.get('genres', [])),
-                    anime_genres=json.dumps(data.get('anime_genres', [])),
-                    languages=json.dumps(['japanese']),
-                    release_date=release_date,
-                    rating=data.get('rating') or 0,
-                    overview=data.get('overview') or '',
-                    poster_path=data.get('poster_path'),
-                    youtube_trailer_id=youtube_trailer_id
-                )
-            else:
-                tmdb_id = int(data['id']) if isinstance(data['id'], str) and data['id'].isdigit() else data['id']
-                content = self.Content(
-                    tmdb_id=tmdb_id,
-                    title=content_title,
-                    original_title=data.get('original_title') or content_title,
-                    content_type=data.get('content_type', 'movie'),
-                    genres=json.dumps(data.get('genres', [])),
-                    languages=json.dumps(data.get('languages', ['en'])),
-                    release_date=release_date,
-                    runtime=data.get('runtime'),
-                    rating=data.get('rating') or data.get('vote_average') or 0,
-                    vote_count=data.get('vote_count') or 0,
-                    popularity=data.get('popularity') or 0,
-                    overview=data.get('overview') or '',
-                    poster_path=data.get('poster_path'),
-                    backdrop_path=data.get('backdrop_path'),
-                    youtube_trailer_id=youtube_trailer_id
-                )
-            
-            # Ensure slug generation with proper error handling
-            try:
-                if hasattr(content, 'ensure_slug'):
-                    content.ensure_slug()
-                else:
-                    # Fallback slug generation
-                    if content.title:
-                        import re
-                        slug = re.sub(r'[^\w\s-]', '', content.title.lower())
-                        slug = re.sub(r'[-\s]+', '-', slug).strip('-')
-                        content.slug = slug[:150] if slug else f"content-{content.tmdb_id or content.mal_id or 'unknown'}"
-                    logger.info(f"Generated fallback slug: {content.slug}")
-            except Exception as e:
-                logger.warning(f"Slug generation failed for '{content.title}': {e}")
-                # Set a basic slug as fallback
-                content.slug = f"content-{content.tmdb_id or content.mal_id or int(datetime.utcnow().timestamp())}"
-            
-            self.db.session.add(content)
-            self.db.session.commit()
-            
-            if self.notification_service:
-                try:
-                    self.notification_service.create_notification(
-                        NotificationType.CONTENT_ADDED,
-                        f"New {content.content_type.title()} Added",
-                        f"'{content.title}' has been added to CineBrain\n"
-                        f"Rating: {content.rating or 'N/A'}/10\n"
-                        f"Type: {content.content_type}",
-                        related_content_id=content.id,
-                        action_url=f"/admin/content/{content.id}",
-                        alert_type='content_added'
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to create content notification: {e}")
-            
-            logger.info(f"✅ External content saved: {content.title}")
-            return {
-                'message': 'Content saved successfully',
-                'content_id': content.id,
-                'created': True
-            }
-            
-        except Exception as e:
-            try:
-                self.db.session.rollback()
-            except:
-                pass
-            logger.error(f"Error saving content: {e}")
-            raise e
-    
-    def create_recommendation_from_external_content(self, admin_user, content_data, recommendation_type, description, status='draft', publish_to_telegram=False, template_type='auto', template_params=None):
-        """Enhanced method with proper template field saving"""
-        try:
-            content = None
-            
-            # FIX: Better content validation
-            if not content_data or not content_data.get('id'):
-                logger.error("Invalid content data for recommendation creation")
-                return {'error': 'Invalid content data'}
-            
-            if content_data.get('source') == 'anime' and content_data.get('id'):
-                mal_id = content_data['id']
-                content = self.Content.query.filter_by(mal_id=mal_id).first()
-            elif content_data.get('id'):
-                tmdb_id = content_data['id']
-                content = self.Content.query.filter_by(tmdb_id=tmdb_id).first()
-            
-            if not content:
-                content_result = self.save_external_content(content_data)
-                if content_result.get('error'):
-                    return content_result
-                
-                content_id = content_result.get('content_id')
-                content = self.Content.query.get(content_id)
-            
-            if not content:
-                logger.error("Failed to create or find content for recommendation")
-                return {'error': 'Failed to create content'}
-            
-            # FIX: Add defaults for missing fields
-            recommendation_type = recommendation_type or 'general'
-            description = description or f"Recommended: {content.title}"
-            template_params = template_params or {}
+            message = f"""{action_emoji} <b>Admin Action</b>
+{DIVIDER}
 
-            admin_rec = self.AdminRecommendation(
-                content_id=content.id,
-                admin_id=admin_user.id,
-                recommendation_type=recommendation_type,
-                description=description,
-                is_active=(status == 'active')
+<b>Content:</b> {content_title}
+<b>Admin:</b> {admin_name}
+<b>Action:</b> {action_type.upper()}
+<b>Time:</b> {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}
+
+{DIVIDER}
+#AdminAction #CineBrain"""
+            
+            bot.send_message(
+                chat_id=TELEGRAM_ADMIN_CHAT_ID,
+                text=message,
+                parse_mode='HTML'
             )
             
-            # NEW: Save template type and data
-            if hasattr(admin_rec, 'template_type'):
-                admin_rec.template_type = template_type
-            if hasattr(admin_rec, 'template_data'):
-                admin_rec.template_data = template_params
-            
-            # NEW: Save individual template fields to dedicated columns
-            if hasattr(admin_rec, 'hook_text') and template_params.get('hook'):
-                admin_rec.hook_text = template_params.get('hook', '')[:500] if template_params.get('hook') else None
-            if hasattr(admin_rec, 'if_you_like') and template_params.get('if_you_like'):
-                admin_rec.if_you_like = template_params.get('if_you_like', '')[:500] if template_params.get('if_you_like') else None
-            if hasattr(admin_rec, 'custom_overview') and template_params.get('overview'):
-                admin_rec.custom_overview = template_params.get('overview', '')[:1000] if template_params.get('overview') else None
-            if hasattr(admin_rec, 'emotion_hook') and template_params.get('emotion_hook'):
-                admin_rec.emotion_hook = template_params.get('emotion_hook', '')[:200] if template_params.get('emotion_hook') else None
-            if hasattr(admin_rec, 'scene_caption') and template_params.get('caption'):
-                admin_rec.scene_caption = template_params.get('caption', '')[:200] if template_params.get('caption') else None
-            if hasattr(admin_rec, 'list_title') and template_params.get('list_title'):
-                admin_rec.list_title = template_params.get('list_title', '')[:200] if template_params.get('list_title') else None
-            if hasattr(admin_rec, 'list_items') and template_params.get('items'):
-                admin_rec.list_items = template_params.get('items', []) if template_params.get('items') else None
-            
-            # Set timestamp for template editing tracking
-            if hasattr(admin_rec, 'last_template_edit'):
-                admin_rec.last_template_edit = datetime.utcnow()
-            
-            self.db.session.add(admin_rec)
-            self.db.session.commit()
-
-            telegram_sent = False
-            if publish_to_telegram and status == 'active':
-                if self.telegram_service:
-                    try:
-                        template_params = template_params or {}
-                        telegram_sent = self.telegram_service.send_admin_recommendation(
-                            content, admin_user.username, description, template_type, template_params
-                        )
-                        logger.info(f"✅ Telegram recommendation sent with {template_type} template: {content.title}")
-                    except Exception as e:
-                        logger.warning(f"Telegram send failed: {e}")
-            
-            if self.notification_service:
-                try:
-                    self.notification_service.create_notification(
-                        NotificationType.CONTENT_ADDED,
-                        f"New {'Published' if status == 'active' else 'Draft'} Recommendation Created",
-                        f"Admin {admin_user.username} created a recommendation for '{content.title}'\n"
-                        f"Type: {recommendation_type}\n"
-                        f"Status: {status}\n"
-                        f"Template: {template_type}\n"
-                        f"Description: {description[:100]}...",
-                        admin_id=admin_user.id,
-                        related_content_id=content.id,
-                        action_url=f"/admin/recommendations/{admin_rec.id}",
-                        metadata={
-                            'template_type': template_type,
-                            'template_params': template_params
-                        },
-                        alert_type='recommendation_created'
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to create recommendation notification: {e}")
-            
-            logger.info(f"✅ Recommendation created with template fields saved: {content.title} by {admin_user.username}")
-            return {
-                'success': True,
-                'message': f'Recommendation {"published" if status == "active" else "saved as draft"}',
-                'template_fields_saved': len(template_params),
-                'telegram_sent': telegram_sent,
-                'recommendation_id': admin_rec.id,
-                'content_id': content.id,
-                'status': status,
-                'template_type': template_type
-            }
+            logger.info(f"✅ Admin notification sent: {action_type} - {content_title}")
+            return True
             
         except Exception as e:
-            try:
-                self.db.session.rollback()
-            except:
-                pass
-            logger.error(f"Create recommendation from external content error: {e}")
-            raise e
+            logger.error(f"❌ Admin notification error: {e}")
+            return False
     
-    def create_recommendation(self, admin_user, content_id, recommendation_type, description, template_type='auto', template_params=None):
-        """Enhanced method with template support and better validation"""
+    @staticmethod
+    def send_recommendation_stats(stats_data: Dict[str, Any]) -> bool:
+        """
+        Send recommendation statistics to admin chat
+        
+        @param stats_data: Dictionary containing stats
+        @return: Success status
+        """
         try:
-            content = self.Content.query.get(content_id)
-            if not content:
-                content = self.Content.query.filter_by(tmdb_id=content_id).first()
+            if not bot or not TELEGRAM_ADMIN_CHAT_ID:
+                return False
             
-            if not content:
-                logger.warning(f"Content not found for ID: {content_id}")
-                return {'error': 'Content not found. Please save content first.'}
+            message = f"""📊 <b>CineBrain Analytics</b>
+{DIVIDER}
+<b>📈 Recommendation Overview</b>
+• Total Recommendations: <b>{stats_data.get('total', 0):,}</b>
+• This Week: <b>{stats_data.get('this_week', 0):,}</b>
+• Top Admin: <b>{stats_data.get('top_admin', 'N/A')}</b>
+• Top Genre: <b>{stats_data.get('top_genre', 'N/A')}</b>
+
+<b>🎯 Engagement Metrics</b>
+• Total Views: <b>{stats_data.get('views', 0):,}</b>
+• Total Clicks: <b>{stats_data.get('clicks', 0):,}</b>
+• Click-Through Rate: <b>{stats_data.get('ctr', 0):.2f}%</b>
+• Avg. Engagement: <b>{stats_data.get('avg_engagement', 0):.1f}%</b>
+{DIVIDER}
+<i>Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}</i>
+
+#Analytics #CineBrain"""
             
-            # FIX: Add defaults for missing fields
-            recommendation_type = recommendation_type or 'general'
-            description = description or f"Recommended: {content.title}"
-            
-            admin_rec = self.AdminRecommendation(
-                content_id=content.id,
-                admin_id=admin_user.id,
-                recommendation_type=recommendation_type,
-                description=description
+            bot.send_message(
+                chat_id=TELEGRAM_ADMIN_CHAT_ID,
+                text=message,
+                parse_mode='HTML'
             )
             
-            self.db.session.add(admin_rec)
-            self.db.session.commit()
-            
-            telegram_success = False
-            if self.telegram_service:
-                try:
-                    template_params = template_params or {}
-                    telegram_success = self.telegram_service.send_admin_recommendation(
-                        content, admin_user.username, description, template_type, template_params
-                    )
-                    logger.info(f"✅ Telegram recommendation sent with {template_type} template: {content.title}")
-                except Exception as e:
-                    logger.warning(f"Telegram send failed: {e}")
-            
-            if self.notification_service:
-                try:
-                    self.notification_service.create_notification(
-                        NotificationType.CONTENT_ADDED,
-                        f"New Admin Recommendation Created",
-                        f"Admin {admin_user.username} recommended '{content.title}'\n"
-                        f"Type: {recommendation_type}\n"
-                        f"Template: {template_type}\n"
-                        f"Description: {description[:100]}...",
-                        admin_id=admin_user.id,
-                        related_content_id=content.id,
-                        action_url=f"/admin/recommendations/{admin_rec.id}",
-                        metadata={
-                            'template_type': template_type,
-                            'template_params': template_params
-                        },
-                        alert_type='recommendation_created'
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to create recommendation notification: {e}")
-            
-            logger.info(f"✅ Admin recommendation created with {template_type} template: {content.title} by {admin_user.username}")
-            return {
-                'message': 'Admin recommendation created successfully',
-                'telegram_sent': telegram_success,
-                'recommendation_id': admin_rec.id,
-                'template_type': template_type
-            }
+            logger.info("✅ Analytics stats sent to admin")
+            return True
             
         except Exception as e:
-            try:
-                self.db.session.rollback()
-            except:
-                pass
-            logger.error(f"Admin recommendation error: {e}")
-            raise e
-    
-    def get_recommendations(self, page=1, per_page=20, filter_type='all', status=None):
-        """Get admin recommendations with comprehensive error handling and defaults"""
-        try:
-            query = self.AdminRecommendation.query
-            
-            if status == 'draft':
-                query = query.filter_by(is_active=False)
-            elif status == 'active':
-                query = query.filter_by(is_active=True)
-            elif filter_type == 'active':
-                query = query.filter_by(is_active=True)
-            elif filter_type == 'inactive':
-                query = query.filter_by(is_active=False)
-            
-            admin_recs = query.order_by(
-                self.AdminRecommendation.created_at.desc()
-            ).paginate(page=page, per_page=per_page, error_out=False)
-            
-            result = []
-            for rec in admin_recs.items:
-                try:
-                    content = self.Content.query.get(rec.content_id)
-                    admin = self.User.query.get(rec.admin_id)
-                    
-                    if content and admin:
-                        # Safe access to updated_at field
-                        updated_at = getattr(rec, 'updated_at', None)
-                        if updated_at is None:
-                            updated_at = rec.created_at
-                        
-                        # FIX: Ensure all required fields have defaults
-                        recommendation_data = {
-                            'id': rec.id,
-                            'recommendation_type': rec.recommendation_type or 'general',  # Add default
-                            'description': rec.description or '',  # Add default
-                            'is_active': rec.is_active if rec.is_active is not None else False,  # Add default
-                            'created_at': rec.created_at.isoformat(),
-                            'updated_at': updated_at.isoformat(),
-                            'admin_name': admin.username or 'Unknown Admin',  # Add default
-                            'admin_id': admin.id,
-                            'content': {
-                                'id': content.id,
-                                'title': content.title or 'Unknown Title',  # Add default
-                                'content_type': content.content_type or 'movie',  # Add default
-                                'rating': content.rating or 0,  # Add default
-                                'release_date': content.release_date.isoformat() if content.release_date else None,
-                                'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
-                                'overview': content.overview or ''  # Add default
-                            }
-                        }
-                        result.append(recommendation_data)
-                except Exception as e:
-                    logger.error(f"Error processing recommendation {rec.id}: {e}")
-                    continue
-            
-            logger.info(f"✅ Retrieved {len(result)} admin recommendations")
-            return {
-                'recommendations': result,
-                'total': admin_recs.total,
-                'pages': admin_recs.pages,
-                'current_page': page,
-                'per_page': per_page,
-                'has_prev': admin_recs.has_prev,
-                'has_next': admin_recs.has_next
-            }
-            
-        except Exception as e:
-            logger.error(f"Get admin recommendations error: {e}")
-            try:
-                self.db.session.rollback()
-            except:
-                pass
-            return {
-                'recommendations': [],
-                'total': 0,
-                'pages': 0,
-                'current_page': page,
-                'per_page': per_page,
-                'has_prev': False,
-                'has_next': False,
-                'error': 'Failed to get recommendations'
-            }
-    
-    def get_recommendation_details(self, recommendation_id):
-        """Get recommendation details with enhanced template field data"""
-        try:
-            recommendation = self.AdminRecommendation.query.get(recommendation_id)
-            if not recommendation:
-                logger.warning(f"Recommendation not found: {recommendation_id}")
-                return None
+            logger.error(f"❌ Stats notification error: {e}")
+            return False
 
-            content = self.Content.query.get(recommendation.content_id)
-            admin = self.User.query.get(recommendation.admin_id)
 
-            if not content or not admin:
-                logger.warning(f"Missing content or admin for recommendation {recommendation_id}")
-                return None
-
-            # Safe access to updated_at field
-            updated_at = getattr(recommendation, 'updated_at', None)
-            if updated_at is None:
-                updated_at = recommendation.created_at
-
-            # NEW: Collect template field data from database columns
-            template_fields = {}
-            
-            # Add individual template fields if they exist
-            if hasattr(recommendation, 'hook_text') and recommendation.hook_text:
-                template_fields['hook'] = recommendation.hook_text
-            if hasattr(recommendation, 'if_you_like') and recommendation.if_you_like:
-                template_fields['if_you_like'] = recommendation.if_you_like
-            if hasattr(recommendation, 'custom_overview') and recommendation.custom_overview:
-                template_fields['overview'] = recommendation.custom_overview
-            if hasattr(recommendation, 'emotion_hook') and recommendation.emotion_hook:
-                template_fields['emotion_hook'] = recommendation.emotion_hook
-            if hasattr(recommendation, 'scene_caption') and recommendation.scene_caption:
-                template_fields['caption'] = recommendation.scene_caption
-            if hasattr(recommendation, 'list_title') and recommendation.list_title:
-                template_fields['list_title'] = recommendation.list_title
-            if hasattr(recommendation, 'list_items') and recommendation.list_items:
-                template_fields['items'] = recommendation.list_items
-
-            # Merge with template_data JSON if available
-            if hasattr(recommendation, 'template_data') and recommendation.template_data:
-                template_fields.update(recommendation.template_data)
-
-            return {
-                'id': recommendation.id,
-                'recommendation_type': recommendation.recommendation_type or 'general',
-                'description': recommendation.description or '',
-                'is_active': recommendation.is_active if recommendation.is_active is not None else False,
-                'created_at': recommendation.created_at.isoformat(),
-                'updated_at': updated_at.isoformat(),
-                'admin_name': admin.username or 'Unknown Admin',
-                'admin_id': admin.id,
-                
-                # NEW: Enhanced template data
-                'template_type': getattr(recommendation, 'template_type', None),
-                'template_fields': template_fields,
-                'template_data': {
-                    'selected_template': getattr(recommendation, 'template_type', None),
-                    'template_fields': template_fields,
-                    'last_edited': getattr(recommendation, 'last_template_edit', recommendation.updated_at).isoformat() if hasattr(recommendation, 'last_template_edit') else updated_at.isoformat()
-                },
-                
-                'content': {
-                    'id': content.id,
-                    'title': content.title or 'Unknown Title',
-                    'content_type': content.content_type or 'movie',
-                    'rating': content.rating or 0,
-                    'release_date': content.release_date.isoformat() if content.release_date else None,
-                    'poster_path': f"https://image.tmdb.org/t/p/w500{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
-                    'overview': content.overview or ''
-                }
-            }
-            
-        except Exception as e:
-            logger.error(f"Get recommendation details error: {e}")
-            return None
+def init_telegram_service(app, db, models, services) -> Optional[Dict[str, Any]]:
+    """
+    Initialize Telegram service with all components
     
-    def update_recommendation(self, admin_user, recommendation_id, data):
-        """Enhanced update with template field saving"""
-        try:
-            recommendation = self.AdminRecommendation.query.get(recommendation_id)
-            if not recommendation:
-                logger.warning(f"Recommendation not found for update: {recommendation_id}")
-                return None
-
-            # FIX: Safe updates with validation
-            if 'recommendation_type' in data:
-                recommendation.recommendation_type = data['recommendation_type'] or 'general'
-            if 'description' in data:
-                recommendation.description = data['description'] or ''
-            if 'is_active' in data:
-                recommendation.is_active = data['is_active'] if data['is_active'] is not None else False
-
-            # NEW: Update template data if provided
-            if 'template_data' in data and data['template_data']:
-                template_data = data['template_data']
-                
-                # Update template_type and template_data JSON
-                if 'selected_template' in template_data:
-                    if hasattr(recommendation, 'template_type'):
-                        recommendation.template_type = template_data['selected_template']
-                if 'template_fields' in template_data:
-                    if hasattr(recommendation, 'template_data'):
-                        recommendation.template_data = template_data['template_fields']
-                    
-                    # Update individual template field columns
-                    template_fields = template_data['template_fields']
-                    
-                    if 'hook' in template_fields and hasattr(recommendation, 'hook_text'):
-                        recommendation.hook_text = template_fields['hook'][:500] if template_fields['hook'] else None
-                    if 'if_you_like' in template_fields and hasattr(recommendation, 'if_you_like'):
-                        recommendation.if_you_like = template_fields['if_you_like'][:500] if template_fields['if_you_like'] else None
-                    if 'overview' in template_fields and hasattr(recommendation, 'custom_overview'):
-                        recommendation.custom_overview = template_fields['overview'][:1000] if template_fields['overview'] else None
-                    if 'emotion_hook' in template_fields and hasattr(recommendation, 'emotion_hook'):
-                        recommendation.emotion_hook = template_fields['emotion_hook'][:200] if template_fields['emotion_hook'] else None
-                    if 'caption' in template_fields and hasattr(recommendation, 'scene_caption'):
-                        recommendation.scene_caption = template_fields['caption'][:200] if template_fields['caption'] else None
-                    if 'list_title' in template_fields and hasattr(recommendation, 'list_title'):
-                        recommendation.list_title = template_fields['list_title'][:200] if template_fields['list_title'] else None
-                    if 'items' in template_fields and hasattr(recommendation, 'list_items'):
-                        recommendation.list_items = template_fields['items'] if template_fields['items'] else None
-                    
-                    # Update last template edit timestamp
-                    if hasattr(recommendation, 'last_template_edit'):
-                        recommendation.last_template_edit = datetime.utcnow()
-
-            # Safe update of updated_at field
-            if hasattr(recommendation, 'updated_at'):
-                recommendation.updated_at = datetime.utcnow()
-
-            self.db.session.commit()
-
-            if self.notification_service:
-                try:
-                    content = self.Content.query.get(recommendation.content_id)
-                    content_title = content.title if content else 'Unknown'
-                    self.notification_service.create_notification(
-                        NotificationType.CONTENT_ADDED,
-                        f"Recommendation Updated",
-                        f"Admin {admin_user.username} updated recommendation for '{content_title}'\nTemplate fields updated: {len(data.get('template_data', {}).get('template_fields', {}))} fields",
-                        admin_id=admin_user.id,
-                        related_content_id=recommendation.content_id,
-                        action_url=f"/admin/recommendations/{recommendation.id}",
-                        alert_type='recommendation_updated'
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to create update notification: {e}")
-
-            logger.info(f"✅ Recommendation updated with template fields: {recommendation.id} by {admin_user.username}")
-            return {
-                'success': True,
-                'message': 'Recommendation updated successfully',
-                'recommendation_id': recommendation.id,
-                'template_fields_updated': len(data.get('template_data', {}).get('template_fields', {}))
-            }
-            
-        except Exception as e:
-            try:
-                self.db.session.rollback()
-            except:
-                pass
-            logger.error(f"Update recommendation error: {e}")
-            raise e
-    
-    def delete_recommendation(self, admin_user, recommendation_id):
-        try:
-            recommendation = self.AdminRecommendation.query.get(recommendation_id)
-            if not recommendation:
-                logger.warning(f"Recommendation not found for deletion: {recommendation_id}")
-                return None
-            
-            content = self.Content.query.get(recommendation.content_id)
-            content_title = content.title if content else 'Unknown'
-            
-            self.db.session.delete(recommendation)
-            self.db.session.commit()
-            
-            if self.notification_service:
-                try:
-                    self.notification_service.create_notification(
-                        NotificationType.CONTENT_ADDED,
-                        f"Recommendation Deleted",
-                        f"Admin {admin_user.username} deleted recommendation for '{content_title}'",
-                        admin_id=admin_user.id,
-                        related_content_id=recommendation.content_id if content else None,
-                        alert_type='recommendation_deleted'
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to create delete notification: {e}")
-            
-            logger.info(f"✅ Recommendation deleted: {recommendation_id} by {admin_user.username}")
-            return {
-                'success': True,
-                'message': 'Recommendation deleted successfully'
-            }
-            
-        except Exception as e:
-            try:
-                self.db.session.rollback()
-            except:
-                pass
-            logger.error(f"Delete recommendation error: {e}")
-            raise e
-    
-    def publish_recommendation(self, admin_user, recommendation_id, template_type='auto', template_params=None):
-        """Enhanced method with template support and better validation"""
-        try:
-            recommendation = self.AdminRecommendation.query.get(recommendation_id)
-            if not recommendation:
-                logger.warning(f"Recommendation not found for publish: {recommendation_id}")
-                return None
-            
-            content = self.Content.query.get(recommendation.content_id)
-            if not content:
-                logger.error(f"Associated content not found for recommendation: {recommendation_id}")
-                return {'error': 'Associated content not found'}
-            
-            recommendation.is_active = True
-            # Safe update of updated_at field
-            if hasattr(recommendation, 'updated_at'):
-                recommendation.updated_at = datetime.utcnow()
-            
-            self.db.session.commit()
-            
-            telegram_sent = False
-            if self.telegram_service:
-                try:
-                    template_params = template_params or {}
-                    telegram_sent = self.telegram_service.send_admin_recommendation(
-                        content, admin_user.username, recommendation.description, template_type, template_params
-                    )
-                    logger.info(f"✅ Telegram recommendation sent with {template_type} template: {content.title}")
-                except Exception as e:
-                    logger.warning(f"Telegram send failed: {e}")
-            
-            if self.notification_service:
-                try:
-                    self.notification_service.create_notification(
-                        NotificationType.CONTENT_ADDED,
-                        f"Recommendation Published",
-                        f"Admin {admin_user.username} published recommendation for '{content.title}'\n"
-                        f"Type: {recommendation.recommendation_type}\n"
-                        f"Template: {template_type}\n"
-                        f"Telegram sent: {'Yes' if telegram_sent else 'No'}",
-                        admin_id=admin_user.id,
-                        related_content_id=content.id,
-                        action_url=f"/admin/recommendations/{recommendation.id}",
-                        metadata={
-                            'template_type': template_type,
-                            'template_params': template_params
-                        },
-                        alert_type='recommendation_published'
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to create publish notification: {e}")
-            
-            logger.info(f"✅ Recommendation published with {template_type} template: {content.title} by {admin_user.username}")
-            return {
-                'success': True,
-                'message': 'Recommendation published successfully',
-                'telegram_sent': telegram_sent,
-                'recommendation_id': recommendation.id,
-                'template_type': template_type
-            }
-            
-        except Exception as e:
-            try:
-                self.db.session.rollback()
-            except:
-                pass
-            logger.error(f"Publish recommendation error: {e}")
-            raise e
-    
-    def send_recommendation_to_telegram(self, admin_user, recommendation_id, template_type='auto', template_params=None):
-        """Enhanced method with template support"""
-        try:
-            recommendation = self.AdminRecommendation.query.get(recommendation_id)
-            if not recommendation:
-                logger.warning(f"Recommendation not found for Telegram send: {recommendation_id}")
-                return None
-            
-            content = self.Content.query.get(recommendation.content_id)
-            if not content:
-                logger.error(f"Associated content not found for recommendation: {recommendation_id}")
-                return {'error': 'Associated content not found'}
-            
-            telegram_sent = False
-            if self.telegram_service:
-                try:
-                    template_params = template_params or {}
-                    telegram_sent = self.telegram_service.send_admin_recommendation(
-                        content, admin_user.username, recommendation.description, template_type, template_params
-                    )
-                    logger.info(f"✅ Telegram recommendation sent with {template_type} template: {content.title}")
-                except Exception as e:
-                    logger.warning(f"Telegram send failed: {e}")
-                    return {'error': f'Failed to send to Telegram: {str(e)}'}
-            else:
-                return {'error': 'Telegram service not configured'}
-            
-            if self.notification_service:
-                try:
-                    self.notification_service.create_notification(
-                        NotificationType.CONTENT_ADDED,
-                        f"Recommendation Sent to Telegram",
-                        f"Admin {admin_user.username} sent recommendation for '{content.title}' to Telegram\n"
-                        f"Template: {template_type}",
-                        admin_id=admin_user.id,
-                        related_content_id=content.id,
-                        action_url=f"/admin/recommendations/{recommendation.id}",
-                        metadata={
-                            'template_type': template_type,
-                            'template_params': template_params
-                        },
-                        alert_type='recommendation_published'
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to create send notification: {e}")
-            
-            logger.info(f"✅ Recommendation sent to Telegram with {template_type} template: {content.title} by {admin_user.username}")
-            return {
-                'success': True,
-                'message': 'Recommendation sent to Telegram successfully',
-                'telegram_sent': telegram_sent,
-                'template_type': template_type
-            }
-            
-        except Exception as e:
-            logger.error(f"Send recommendation to Telegram error: {e}")
-            raise e
-    
-    def send_custom_telegram_message(self, admin_user, template_type, template_params):
-        """Send custom Telegram message (for lists, etc.)"""
-        try:
-            if not self.telegram_service:
-                return {'error': 'Telegram service not configured'}
-            
-            # FIX: Validate template params
-            if not template_params:
-                return {'error': 'Template parameters are required'}
-            
-            if template_type == 'top_list':
-                # Handle list template without content object
-                telegram_sent = self.telegram_service.send_admin_recommendation(
-                    None, admin_user.username, '', template_type, template_params
-                )
-            else:
-                return {'error': 'Invalid template type for custom message'}
-            
-            if self.notification_service:
-                try:
-                    self.notification_service.create_notification(
-                        NotificationType.CONTENT_ADDED,
-                        f"Custom {template_type.replace('_', ' ').title()} Sent",
-                        f"Admin {admin_user.username} sent custom {template_type} message to Telegram\n"
-                        f"Title: {template_params.get('list_title', 'Custom List')}",
-                        admin_id=admin_user.id,
-                        action_url="/admin/telegram/templates",
-                        metadata={
-                            'template_type': template_type,
-                            'template_params': template_params
-                        },
-                        alert_type='recommendation_published'
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to create custom message notification: {e}")
-            
-            logger.info(f"✅ Custom {template_type} message sent by {admin_user.username}")
-            return {
-                'success': True,
-                'message': f'Custom {template_type.replace("_", " ").title()} sent successfully',
-                'telegram_sent': telegram_sent,
-                'template_type': template_type
-            }
-            
-        except Exception as e:
-            logger.error(f"Send custom telegram message error: {e}")
-            return {'error': 'Failed to send custom message'}
-    
-    def migrate_all_slugs(self, batch_size=50):
-        try:
-            from services.details import SlugManager
-            
-            stats = {
-                'content_updated': 0,
-                'persons_updated': 0,
-                'total_processed': 0,
-                'errors': 0
-            }
-            
-            content_items = self.Content.query.filter(
-                or_(self.Content.slug == None, self.Content.slug == '')
-            ).limit(batch_size).all()
-            
-            for content in content_items:
-                try:
-                    if hasattr(content, 'ensure_slug'):
-                        content.ensure_slug()
-                        stats['content_updated'] += 1
-                    else:
-                        if content.title:
-                            import re
-                            slug = re.sub(r'[^\w\s-]', '', content.title.lower())
-                            slug = re.sub(r'[-\s]+', '-', slug)
-                            content.slug = slug[:150]
-                            stats['content_updated'] += 1
-                except Exception as e:
-                    logger.error(f"Error updating slug for content {content.id}: {e}")
-                    stats['errors'] += 1
-            
-            self.db.session.commit()
-            stats['total_processed'] = stats['content_updated'] + stats['persons_updated']
-            
-            if self.notification_service:
-                try:
-                    self.notification_service.create_notification(
-                        NotificationType.SYSTEM_ALERT,
-                        f"Slug Migration Completed",
-                        f"Migrated {stats['content_updated']} content slugs\n"
-                        f"Errors: {stats['errors']}\n"
-                        f"Total processed: {stats['total_processed']}",
-                        action_url="/admin/content/manage",
-                        alert_type='bulk_operation'
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to create slug migration notification: {e}")
-            
-            logger.info(f"✅ Slug migration completed: {stats['content_updated']} content items updated")
-            return stats
-            
-        except Exception as e:
-            logger.error(f"Slug migration error: {e}")
-            try:
-                self.db.session.rollback()
-            except:
-                pass
-            raise e
-    
-    def update_content_slug(self, content_id, force_update=False):
-        try:
-            content = self.Content.query.get(content_id)
-            if not content:
-                logger.warning(f"Content not found for slug update: {content_id}")
-                return None
-            
-            if content.slug and not force_update:
-                return content.slug
-            
-            if hasattr(content, 'ensure_slug'):
-                content.ensure_slug()
-            else:
-                if content.title:
-                    import re
-                    slug = re.sub(r'[^\w\s-]', '', content.title.lower())
-                    slug = re.sub(r'[-\s]+', '-', slug)
-                    content.slug = slug[:150]
-            
-            self.db.session.commit()
-            
-            if self.notification_service:
-                try:
-                    self.notification_service.create_notification(
-                        NotificationType.SYSTEM_ALERT,
-                        f"Content Slug Updated",
-                        f"Updated slug for '{content.title}'\n"
-                        f"New slug: {content.slug}",
-                        related_content_id=content.id,
-                        action_url=f"/admin/content/{content.id}",
-                        alert_type='slug_update'
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to create slug update notification: {e}")
-            
-            logger.info(f"✅ Content slug updated: {content.title} -> {content.slug}")
-            return content.slug
-            
-        except Exception as e:
-            logger.error(f"Error updating content slug: {e}")
-            try:
-                self.db.session.rollback()
-            except:
-                pass
-            return None
-    
-    def populate_cast_crew(self, batch_size=10):
-        try:
-            result = {
-                'processed': 0,
-                'errors': 0
-            }
-            content_items = self.Content.query.filter(
-                self.Content.tmdb_id.isnot(None)
-            ).limit(batch_size).all()
-            
-            for content in content_items:
-                try:
-                    result['processed'] += 1
-                    logger.info(f"Would populate cast/crew for {content.title}")
-                except Exception as e:
-                    logger.error(f"Error processing cast/crew for {content.title}: {e}")
-                    result['errors'] += 1
-            
-            if self.notification_service:
-                try:
-                    self.notification_service.create_notification(
-                        NotificationType.SYSTEM_ALERT,
-                        f"Cast/Crew Population Completed",
-                        f"Processed {result['processed']} content items\n"
-                        f"Errors: {result['errors']}",
-                        action_url="/admin/content/manage",
-                        alert_type='bulk_operation'
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to create cast/crew notification: {e}")
-            
-            logger.info(f"✅ Cast/crew population completed: {result['processed']} items processed")
-            return result
-            
-        except Exception as e:
-            logger.error(f"Cast/crew population error: {e}")
-            raise e
-    
-    def get_notifications(self, page=1, per_page=20, unread_only=False):
-        try:
-            recent_notifications = []
-            if self.notification_service.redis_client:
-                try:
-                    notifications_json = self.notification_service.redis_client.lrange('admin_notifications', 0, 19)
-                    for notif_json in notifications_json:
-                        recent_notifications.append(json.loads(notif_json))
-                    logger.info(f"✅ Retrieved {len(recent_notifications)} recent notifications from Redis")
-                except Exception as e:
-                    logger.error(f"Redis notification retrieval error: {e}")
-            
-            db_notifications = []
-            pagination_info = {
-                'current_page': 1,
-                'per_page': per_page,
-                'total': 0,
-                'pages': 0,
-                'has_prev': False,
-                'has_next': False
-            }
-            
-            if self.AdminNotification:
-                try:
-                    query = self.AdminNotification.query
-                    
-                    if unread_only:
-                        query = query.filter_by(is_read=False)
-                    
-                    notifications = query.order_by(
-                        self.AdminNotification.created_at.desc()
-                    ).paginate(page=page, per_page=per_page, error_out=False)
-                    
-                    for notif in notifications.items:
-                        db_notifications.append({
-                            'id': notif.id,
-                            'type': notif.notification_type,
-                            'title': notif.title,
-                            'message': notif.message,
-                            'is_read': notif.is_read,
-                            'is_urgent': notif.is_urgent,
-                            'action_required': notif.action_required,
-                            'action_url': notif.action_url,
-                            'metadata': notif.notification_metadata,
-                            'created_at': notif.created_at.isoformat(),
-                            'read_at': notif.read_at.isoformat() if notif.read_at else None
-                        })
-                    
-                    pagination_info = {
-                        'current_page': page,
-                        'per_page': per_page,
-                        'total': notifications.total,
-                        'pages': notifications.pages,
-                        'has_prev': notifications.has_prev,
-                        'has_next': notifications.has_next
-                    }
-                    
-                    logger.info(f"✅ Retrieved {len(db_notifications)} database notifications")
-                    
-                except Exception as e:
-                    logger.error(f"Database notification retrieval error: {e}")
-                    try:
-                        self.db.session.rollback()
-                    except:
-                        pass
-            
-            return {
-                'recent_notifications': recent_notifications,
-                'notifications': db_notifications,
-                'pagination': pagination_info
-            }
-            
-        except Exception as e:
-            logger.error(f"Get admin notifications error: {e}")
-            return {'error': 'Failed to get notifications'}
-    
-    def mark_all_notifications_read(self):
-        try:
-            if not self.AdminNotification:
-                logger.warning("AdminNotification model not available")
-                return {'error': 'Notification system not available'}
-            
-            updated_count = self.AdminNotification.query.filter_by(is_read=False).update({
-                'is_read': True,
-                'read_at': datetime.utcnow()
-            })
-            
-            self.db.session.commit()
-            
-            logger.info(f"✅ Marked {updated_count} notifications as read")
-            return {
-                'success': True,
-                'message': f'Marked {updated_count} notifications as read'
-            }
-            
-        except Exception as e:
-            logger.error(f"Mark all notifications read error: {e}")
-            try:
-                self.db.session.rollback()
-            except:
-                pass
-            return {'error': 'Failed to mark all notifications as read'}
-    
-    def clear_cache(self, cache_type='all'):
-        try:
-            if cache_type == 'all':
-                self.cache.clear()
-                message = 'All cache cleared'
-            elif cache_type == 'search':
-                self.cache.delete_memoized(self.TMDBService.search_content)
-                self.cache.delete_memoized(self.JikanService.search_anime)
-                message = 'Search cache cleared'
-            elif cache_type == 'recommendations':
-                message = 'Recommendations cache cleared'
-            else:
-                return {'error': 'Invalid cache type'}
-            
-            if self.notification_service:
-                try:
-                    self.notification_service.create_notification(
-                        NotificationType.SYSTEM_ALERT,
-                        f"Cache Cleared",
-                        f"Cache type '{cache_type}' has been cleared\n"
-                        f"Time: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}",
-                        action_url="/admin/cache/stats",
-                        alert_type='cache_operation'
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to create cache clear notification: {e}")
-            
-            logger.info(f"✅ Cache cleared: {cache_type}")
-            return {
-                'success': True,
-                'message': message,
-                'timestamp': datetime.utcnow().isoformat()
-            }
-            
-        except Exception as e:
-            logger.error(f"Cache clear error: {e}")
-            return {'error': 'Failed to clear cache'}
-    
-    def get_canned_responses(self, category_id=None):
-        try:
-            if not self.CannedResponse:
-                logger.warning("CannedResponse model not available")
-                return []
-            
-            query = self.CannedResponse.query.filter_by(is_active=True)
-            
-            if category_id:
-                query = query.filter_by(category_id=category_id)
-            
-            responses = query.order_by(self.CannedResponse.usage_count.desc()).all()
-            
-            result = []
-            for response in responses:
-                result.append({
-                    'id': response.id,
-                    'title': response.title,
-                    'content': response.content,
-                    'tags': response.tags or [],
-                    'usage_count': response.usage_count,
-                    'created_at': response.created_at.isoformat()
-                })
-            
-            logger.info(f"✅ Retrieved {len(result)} canned responses")
-            return result
-            
-        except Exception as e:
-            logger.error(f"Get canned responses error: {e}")
-            return []
-    
-    def create_canned_response(self, admin_user, title, content, category_id=None, tags=None):
-        try:
-            if not self.CannedResponse:
-                return {'error': 'Canned response system not available'}
-            
-            response = self.CannedResponse(
-                title=title,
-                content=content,
-                category_id=category_id,
-                tags=tags or [],
-                created_by=admin_user.id
-            )
-            
-            self.db.session.add(response)
-            self.db.session.commit()
-            
-            logger.info(f"✅ Canned response created: {title}")
-            return {
-                'success': True,
-                'response_id': response.id,
-                'message': 'Canned response created successfully'
-            }
-            
-        except Exception as e:
-            logger.error(f"Create canned response error: {e}")
-            try:
-                self.db.session.rollback()
-            except:
-                pass
-            return {'error': 'Failed to create canned response'}
-
-def init_admin_service(app, db, models, services):
+    @param app: Flask application instance
+    @param db: Database instance
+    @param models: Database models
+    @param services: Service dependencies
+    @return: Dictionary of initialized services or None
+    """
     try:
-        admin_service = AdminService(app, db, models, services)
-        logger.info("✅ Admin service initialized successfully")
-        return admin_service
+        if bot:
+            logger.info("✅ CineBrain Telegram service initialized successfully")
+            logger.info("   ├─ Content type prefixes: ✓")
+            logger.info("   ├─ Poster support (all except scene_clip): ✓")
+            logger.info("   ├─ 5 custom templates: ✓")
+            logger.info("   ├─ Fixed button layout (side by side): ✓")
+            logger.info("   ├─ Fixed divider formatting: ✓")
+            logger.info("   ├─ Mobile-optimized layouts: ✓")
+            logger.info("   ├─ Google Analytics tracking: ✓")
+            logger.info("   ├─ Content recommendations: ✓")
+            logger.info("   └─ Admin notifications: ✓")
+        else:
+            logger.warning("⚠️ Telegram bot not configured - service disabled")
+            logger.warning("   Set TELEGRAM_BOT_TOKEN to enable Telegram features")
+        
+        return {
+            'telegram_service': TelegramService,
+            'telegram_admin_service': TelegramAdminService,
+            'telegram_templates': TelegramTemplates,
+            'cinebrain_tracking_url': cinebrain_tracking_url
+        }
+        
     except Exception as e:
-        logger.error(f"❌ Failed to initialize admin service: {e}")
+        logger.error(f"❌ Telegram initialization failed: {e}")
         return None
+
+
+# Export public API
+__all__ = [
+    'TelegramTemplates',
+    'TelegramService', 
+    'TelegramAdminService',
+    'cinebrain_tracking_url',
+    'init_telegram_service'
+]
