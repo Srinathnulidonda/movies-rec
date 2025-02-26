@@ -230,11 +230,15 @@ class TicketService:
             self.db.session.add(ticket)
             self.db.session.flush()
             
+            # Get the timestamp for response
+            submitted_at = ticket.created_at
+            formatted_time = submitted_at.strftime('%Y-%m-%d at %H:%M UTC')
+            
             # Add activity log
             activity = self.TicketActivity(
                 ticket_id=ticket.id,
                 action='created',
-                description=f'Ticket created by {data["name"]}',
+                description=f'Ticket created by {data["name"]} at {formatted_time}',
                 actor_type='user',
                 actor_id=user.id if user else None,
                 actor_name=data['name']
@@ -246,20 +250,34 @@ class TicketService:
             self._send_user_confirmation(ticket, data)
             self._send_admin_notification_enhanced(ticket, data)
             
-            logger.info(f"✅ Support ticket {ticket_number} created for {data['email']}")
+            logger.info(f"✅ Support ticket {ticket_number} created for {data['email']} at {formatted_time}")
             
             return jsonify({
                 'success': True,
                 'message': 'Support ticket created successfully. You will receive a confirmation email shortly.',
                 'ticket_number': ticket_number,
                 'ticket_id': ticket.id,
-                'sla_deadline': ticket.sla_deadline.isoformat() if ticket.sla_deadline else None
+                'submitted_at': submitted_at.isoformat(),
+                'submitted_time': formatted_time,
+                'sla_deadline': ticket.sla_deadline.isoformat() if ticket.sla_deadline else None,
+                'priority': priority_value,
+                'estimated_response_time': self._get_estimated_response_time(priority_value)
             }), 201
             
         except Exception as e:
             self.db.session.rollback()
             logger.error(f"❌ Error creating support ticket: {e}")
             return jsonify({'error': 'Failed to create support ticket. Please try again.'}), 500
+
+    def _get_estimated_response_time(self, priority: str) -> str:
+        """Get estimated response time based on priority"""
+        response_times = {
+            'urgent': '4 hours',
+            'high': '24 hours', 
+            'normal': '48 hours',
+            'low': '72 hours'
+        }
+        return response_times.get(priority, '48 hours')
     
     def get_ticket(self, ticket_number):
         """Get ticket details by number"""
@@ -356,7 +374,7 @@ class TicketService:
             return True
     
     def _send_user_confirmation(self, ticket, data):
-        """Send confirmation email to user"""
+        """Send confirmation email to user with timestamp"""
         try:
             if not self.email_service:
                 logger.warning("Email service not available - cannot send user confirmation")
@@ -365,6 +383,7 @@ class TicketService:
             from auth.support_mail_templates import get_support_template
             
             category = self.SupportCategory.query.get(ticket.category_id)
+            submitted_time = ticket.created_at.strftime('%Y-%m-%d at %H:%M UTC')
             
             html, text = get_support_template(
                 'ticket_created',
@@ -372,7 +391,9 @@ class TicketService:
                 user_name=data['name'],
                 subject=ticket.subject,
                 priority=ticket.priority,
-                category=category.name if category else 'General Support'
+                category=category.name if category else 'General Support',
+                submitted_time=submitted_time,
+                estimated_response_time=self._get_estimated_response_time(ticket.priority)
             )
             
             self.email_service.queue_email(
@@ -384,7 +405,7 @@ class TicketService:
                 to_name=data['name']
             )
             
-            logger.info(f"✅ User confirmation email queued for {data['email']}")
+            logger.info(f"✅ User confirmation email queued for {data['email']} - submitted {submitted_time}")
             
         except Exception as e:
             logger.error(f"❌ Error sending user confirmation: {e}")

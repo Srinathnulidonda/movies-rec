@@ -31,3 +31,54 @@ in the Create Recommendation with Template the Hook Text, If You Like, Custom Ov
 and in the draft sections there should be saved data and can edited that saved data
 
 add some colonms in database because i will add some 100 of movies in save as draft when i open in the draft there should be saved data in that 
+
+
+
+
+make in this format proper way
+
+/api/system monitoring/
+Database
+Status: --
+Response: --ms
+Connections: --
+Cache
+Type:
+redis
+Hit Rate: --
+Memory: --
+External APIs
+TMDB: ✓
+YouTube: ✓
+Cloudinary: ✓
+Performance
+CPU: --
+Memory: --
+Disk:--
+
+/api/overview/
+Total Users --
+Total Content --
+Active Users --
+Support Tickets --
+All handled --
+Interactions --
+Recommendations --
+
+/api/service status/
+there should be real time Offline or Online for this
+Auth 
+Admin
+Support
+Content
+Analytics
+Cache
+
+/api/admin activity/
+Active --
+Active Admins --
+Total Admins --
+Recommendations --
+Active Rate --
+
+make in this format there should be real-time data only
