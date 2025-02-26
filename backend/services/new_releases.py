@@ -3,7 +3,6 @@ import asyncio
 import json
 import threading
 import time
-import atexit
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass, asdict
@@ -70,8 +69,6 @@ class CineBrainNewReleasesService:
         self._should_stop = threading.Event()
         self._cache_data = None
         self._last_update = None
-        self._service_healthy = True
-        self._retry_count = 0
         
         self.tmdb_api_key = app.config.get('TMDB_API_KEY') if app else None
         self.http_session = self._create_session()
@@ -123,114 +120,45 @@ class CineBrainNewReleasesService:
             return False
             
     def start_background_refresh(self):
-        """Start background refresh with improved error handling"""
-        # Stop existing thread if running
         if self._refresh_thread and self._refresh_thread.is_alive():
-            logger.info("CineBrain: Existing background thread active, skipping start")
             return
             
         self._should_stop.clear()
-        self._service_healthy = True
-        self._retry_count = 0
         self._refresh_thread = threading.Thread(
-            target=self._robust_background_worker,
+            target=self._background_refresh_worker,
             daemon=True,
             name='CineBrain45DayNewReleases'
         )
         self._refresh_thread.start()
         logger.info("CineBrain 45-day new releases background refresh started")
-
-    def _robust_background_worker(self):
-        """Enhanced background worker with proper error handling and recovery"""
+        
+    def stop_background_refresh(self):
+        if self._refresh_thread:
+            self._should_stop.set()
+            self._refresh_thread.join(timeout=10)
+            logger.info("CineBrain new releases background refresh stopped")
+            
+    def _background_refresh_worker(self):
         initial_delay = 45
-        max_retries = 5
+        time.sleep(initial_delay)
         
-        # Initial delay
-        if self._should_stop.wait(initial_delay):
-            return
-        
-        while not self._should_stop.is_set() and self._retry_count < max_retries and self._service_healthy:
+        while not self._should_stop.is_set():
             try:
                 logger.info("CineBrain: Starting scheduled 45-day new releases refresh")
                 self.refresh_new_releases()
-                self._retry_count = 0  # Reset on success
                 
-                # Wait for next refresh cycle
                 wait_time = self.config.refresh_interval_minutes * 60
                 for _ in range(wait_time):
                     if self._should_stop.wait(1):
-                        logger.info("CineBrain: Background refresh worker stopped gracefully")
                         return
                         
             except Exception as e:
-                self._retry_count += 1
-                logger.error(f"CineBrain background refresh error (attempt {self._retry_count}/{max_retries}): {e}")
-                
-                if self._retry_count >= max_retries:
-                    logger.critical(f"CineBrain: Background refresh failed {max_retries} times, stopping worker")
-                    self._service_healthy = False
-                    break
-                
-                # Exponential backoff
-                backoff_time = min(60 * (2 ** (self._retry_count - 1)), 300)  # Max 5 minutes
-                logger.warning(f"CineBrain: Retrying in {backoff_time} seconds...")
-                
-                if self._should_stop.wait(backoff_time):
-                    logger.info("CineBrain: Background refresh worker stopped during retry backoff")
+                logger.error(f"CineBrain new releases background refresh error: {e}")
+                if self._should_stop.wait(180):
                     return
-        
-        if not self._service_healthy:
-            logger.error("CineBrain: Background refresh service marked as unhealthy")
-        else:
-            logger.info("CineBrain: Background refresh worker exited normally")
-
-    def stop_background_refresh(self):
-        """Enhanced stop method with timeout handling"""
-        if not self._refresh_thread:
-            return
-            
-        logger.info("CineBrain: Stopping background refresh...")
-        self._should_stop.set()
-        
-        # Give thread time to stop gracefully
-        if self._refresh_thread.is_alive():
-            self._refresh_thread.join(timeout=15)
-            
-            if self._refresh_thread.is_alive():
-                logger.warning("CineBrain: Background thread didn't stop gracefully within timeout")
-            else:
-                logger.info("CineBrain new releases background refresh stopped")
-
-    def get_background_status(self) -> Dict[str, Any]:
-        """Get background service status for monitoring"""
-        return {
-            'background_active': self._refresh_thread.is_alive() if self._refresh_thread else False,
-            'thread_name': self._refresh_thread.name if self._refresh_thread else None,
-            'should_stop_flag': self._should_stop.is_set(),
-            'service_healthy': self._service_healthy,
-            'retry_count': self._retry_count,
-            'max_retries': 5,
-            'last_update': self._last_update.isoformat() if self._last_update else None,
-            'cache_age_minutes': (datetime.now() - self._last_update).total_seconds() / 60 if self._last_update else None
-        }
-
-    def restart_background_service(self):
-        """Restart the background service if it's unhealthy"""
-        if not self._service_healthy or not (self._refresh_thread and self._refresh_thread.is_alive()):
-            logger.info("CineBrain: Restarting background service...")
-            self.stop_background_refresh()
-            time.sleep(2)  # Brief pause
-            self.start_background_refresh()
-            return True
-        return False
-            
+                    
     def get_new_releases(self, force_refresh: bool = False) -> Dict[str, Any]:
         with self._cache_lock:
-            # Check if service needs restart
-            if not self._service_healthy:
-                logger.warning("CineBrain: Service unhealthy, attempting restart...")
-                self.restart_background_service()
-            
             if force_refresh or self._should_refresh():
                 logger.info("CineBrain: Triggering 45-day new releases refresh")
                 self.refresh_new_releases()
@@ -245,70 +173,59 @@ class CineBrainNewReleasesService:
         return age_minutes >= self.config.refresh_interval_minutes
         
     def refresh_new_releases(self):
-        """Enhanced refresh with better error handling"""
         try:
-            start_time = datetime.now()
             start_date, end_date = self._get_strict_date_range()
             logger.info(f"CineBrain: STRICT date range - {start_date} to {end_date} (last 45 days ONLY)")
+            logger.info(f"CineBrain: Fetching ONLY releases from {start_date} to {end_date} (last 45 days)")
+            logger.info(f"CineBrain: Using language priority order: {self.config.language_priorities}")
             
             all_content = []
             
-            with ThreadPoolExecutor(max_workers=6) as executor:  # Reduced workers for stability
+            with ThreadPoolExecutor(max_workers=8) as executor:
                 futures = []
                 
-                # Submit tasks with error handling
-                try:
+                futures.append(executor.submit(
+                    self._fetch_enhanced_telugu_releases, start_date, end_date
+                ))
+                
+                futures.append(executor.submit(
+                    self._fetch_tmdb_releases, 'movie', start_date, end_date
+                ))
+                futures.append(executor.submit(
+                    self._fetch_tmdb_releases, 'tv', start_date, end_date
+                ))
+                
+                for language_code in ['te', 'hi', 'ta', 'kn', 'ml']:
                     futures.append(executor.submit(
-                        self._fetch_enhanced_telugu_releases, start_date, end_date
+                        self._fetch_enhanced_language_specific_releases, language_code, start_date, end_date
                     ))
-                    
+                
+                futures.append(executor.submit(
+                    self._fetch_anime_releases, start_date, end_date
+                ))
+                
+                for region in ['IN', 'US']:
                     futures.append(executor.submit(
-                        self._fetch_tmdb_releases, 'movie', start_date, end_date
+                        self._fetch_regional_releases, region, start_date, end_date
                     ))
-                    futures.append(executor.submit(
-                        self._fetch_tmdb_releases, 'tv', start_date, end_date
-                    ))
-                    
-                    for language_code in ['te', 'hi', 'ta', 'kn', 'ml']:
-                        futures.append(executor.submit(
-                            self._fetch_enhanced_language_specific_releases, language_code, start_date, end_date
-                        ))
-                    
-                    futures.append(executor.submit(
-                        self._fetch_anime_releases, start_date, end_date
-                    ))
-                    
-                    for region in ['IN', 'US']:
-                        futures.append(executor.submit(
-                            self._fetch_regional_releases, region, start_date, end_date
-                        ))
-                    
-                    # Process results with timeout and error handling
-                    completed_tasks = 0
-                    failed_tasks = 0
-                    
-                    for future in as_completed(futures, timeout=280):  # Reduced timeout
-                        try:
-                            content_batch = future.result()
-                            if content_batch:
-                                valid_content = [
-                                    content for content in content_batch 
-                                    if self._is_within_strict_date_range(content.release_date)
-                                ]
-                                all_content.extend(valid_content)
-                                completed_tasks += 1
-                                logger.debug(f"CineBrain: Completed task {completed_tasks}, got {len(valid_content)} valid items")
-                        except Exception as e:
-                            failed_tasks += 1
-                            logger.warning(f"CineBrain: Content batch fetch error: {e}")
-                            continue
-                    
-                    logger.info(f"CineBrain: Refresh completed - {completed_tasks} successful, {failed_tasks} failed tasks")
-                            
-                except Exception as e:
-                    logger.error(f"CineBrain: Executor error: {e}")
-                    # Continue with whatever content we have
-            
+                
+                for future in as_completed(futures, timeout=300):
+                    try:
+                        content_batch = future.result()
+                        if content_batch:
+                            valid_content = [
+                                content for content in content_batch 
+                                if self._is_within_strict_date_range(content.release_date)
+                            ]
+                            all_content.extend(valid_content)
+                            filtered_count = len(content_batch) - len(valid_content)
+                            if filtered_count > 0:
+                                logger.info(f"CineBrain: Filtered out {filtered_count} items older than 45 days")
+                            logger.info(f"CineBrain: Collected {len(valid_content)} valid items from batch")
+                    except Exception as e:
+                        logger.error(f"CineBrain: Content batch fetch error: {e}")
+                        continue
+                        
             if not all_content:
                 logger.warning("CineBrain: No new releases found within last 45 days, keeping existing cache")
                 return
@@ -331,14 +248,12 @@ class CineBrainNewReleasesService:
                 self._cache_data = processed_data
                 self._last_update = datetime.now()
                 self._save_cache_to_disk()
-            
-            duration = (datetime.now() - start_time).total_seconds()
+                
             telugu_count = sum(1 for item in unique_content if 'telugu' in [lang.lower() for lang in item.languages])
-            logger.info(f"CineBrain: Successfully refreshed {len(unique_content)} releases in {duration:.1f}s ({telugu_count} Telugu)")
+            logger.info(f"CineBrain: Successfully refreshed {len(unique_content)} releases from last 45 days ({telugu_count} Telugu)")
             
         except Exception as e:
             logger.error(f"CineBrain: New releases refresh failed: {e}")
-            # Don't re-raise - let the background worker handle retries
             
     def _fetch_enhanced_telugu_releases(self, start_date, end_date) -> List[CineBrainContent]:
         if not self.tmdb_api_key:
@@ -1152,9 +1067,6 @@ class CineBrainNewReleasesService:
             telugu_stats = self._calculate_telugu_stats()
             start_date, end_date = self._get_strict_date_range()
             
-            # Enhanced background service monitoring
-            background_status = self.get_background_status()
-            
             base_stats = {
                 'status': 'active',
                 'cinebrain_service': 'new_releases',
@@ -1173,9 +1085,8 @@ class CineBrainNewReleasesService:
                 'tv_shows': len(self._cache_data.get('all_content', {}).get('tv_shows', [])),
                 'anime': len(self._cache_data.get('all_content', {}).get('anime', [])),
                 'telugu_content': telugu_stats,
-                'background_service': background_status,
-                'service_health': 'healthy' if background_status['background_active'] and background_status['service_healthy'] else 'degraded',
-                'cache_age_minutes': background_status['cache_age_minutes'],
+                'background_refresh': self._refresh_thread.is_alive() if self._refresh_thread else False,
+                'cache_age_minutes': (datetime.now() - self._last_update).total_seconds() / 60 if self._last_update else None,
                 'language_priorities': self.config.language_priorities,
                 'refresh_interval': self.config.refresh_interval_minutes
             }
@@ -1213,15 +1124,11 @@ def init_cinebrain_new_releases_service(app, db, models, services):
         service = CineBrainNewReleasesService(app, db, models, services)
         service.start_background_refresh()
         
-        # ✅ FIX: Use atexit instead of teardown_appcontext
-        # This runs only on app shutdown, not on every request
-        def cleanup_service():
+        @app.teardown_appcontext
+        def cleanup_cinebrain_service(error):
             if hasattr(app, '_cinebrain_new_releases_service'):
-                logger.info("CineBrain: Shutting down new releases service...")
                 app._cinebrain_new_releases_service.stop_background_refresh()
-        
-        atexit.register(cleanup_service)
-        
+                
         app._cinebrain_new_releases_service = service
         logger.info("CineBrain 45-day strict new releases service initialized successfully")
         return service
