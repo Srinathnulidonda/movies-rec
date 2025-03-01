@@ -1018,7 +1018,7 @@ def quick_reply_contact(current_user, contact_id):
         return jsonify({'error': 'Failed to send reply'}), 500
 
 # =============================================================================
-# USER MANAGEMENT ROUTES
+# USER MANAGEMENT ROUTES (EXISTING + NEW)
 # =============================================================================
 
 @admin_bp.route('/api/admin/users', methods=['GET'])
@@ -1230,6 +1230,189 @@ def export_users(current_user):
     except Exception as e:
         logger.error(f"Export users error: {e}")
         return jsonify({'success': False, 'error': 'Failed to export users'}), 500
+
+# ========== NEW USER MANAGEMENT ROUTES ==========
+
+@admin_bp.route('/api/admin/users/segmentation', methods=['GET'])
+@require_admin
+def get_user_segmentation_route(current_user):
+    """Get user segmentation analysis"""
+    try:
+        if not user_service:
+            return jsonify({'error': 'User management service not available'}), 503
+        
+        result = user_service.get_user_segmentation()
+        
+        return jsonify(result), 200 if result['success'] else 400
+        
+    except Exception as e:
+        logger.error(f"Get user segmentation error: {e}")
+        return jsonify({'success': False, 'error': 'Failed to get user segmentation'}), 500
+
+@admin_bp.route('/api/admin/users/lifecycle-analysis', methods=['GET'])
+@require_admin
+def get_user_lifecycle_analysis_route(current_user):
+    """Get user lifecycle analysis"""
+    try:
+        if not user_service:
+            return jsonify({'error': 'User management service not available'}), 503
+        
+        period_days = int(request.args.get('period_days', 90))
+        result = user_service.get_user_lifecycle_analysis(period_days)
+        
+        return jsonify(result), 200 if result['success'] else 400
+        
+    except Exception as e:
+        logger.error(f"Get user lifecycle analysis error: {e}")
+        return jsonify({'success': False, 'error': 'Failed to get lifecycle analysis'}), 500
+
+@admin_bp.route('/api/admin/users/<int:user_id>/behavior-intelligence', methods=['GET'])
+@require_admin
+def get_user_behavior_intelligence_route(current_user, user_id):
+    """Get user behavior intelligence"""
+    try:
+        if not user_service:
+            return jsonify({'error': 'User management service not available'}), 503
+        
+        result = user_service.get_user_behavior_intelligence(user_id)
+        
+        return jsonify(result), 200 if result['success'] else 400
+        
+    except Exception as e:
+        logger.error(f"Get user behavior intelligence error: {e}")
+        return jsonify({'success': False, 'error': 'Failed to get behavior intelligence'}), 500
+
+@admin_bp.route('/api/admin/users/advanced-search', methods=['POST'])
+@require_admin
+def advanced_user_search_route(current_user):
+    """Advanced user search with multiple criteria"""
+    try:
+        if not user_service:
+            return jsonify({'error': 'User management service not available'}), 503
+        
+        search_params = request.get_json() or {}
+        result = user_service.advanced_user_search(search_params)
+        
+        return jsonify(result), 200 if result['success'] else 400
+        
+    except Exception as e:
+        logger.error(f"Advanced user search error: {e}")
+        return jsonify({'success': False, 'error': 'Failed to perform advanced search'}), 500
+
+@admin_bp.route('/api/admin/users/targeted-communication', methods=['POST'])
+@require_admin
+def send_targeted_communication_route(current_user):
+    """Send targeted communication to users"""
+    try:
+        if not user_service:
+            return jsonify({'error': 'User management service not available'}), 503
+        
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+        
+        recipient_params = data.get('recipients', {})
+        message_data = data.get('message', {})
+        
+        if not recipient_params or not message_data:
+            return jsonify({'error': 'Recipients and message data required'}), 400
+        
+        result = user_service.send_targeted_communication(recipient_params, message_data)
+        
+        return jsonify(result), 200 if result['success'] else 400
+        
+    except Exception as e:
+        logger.error(f"Send targeted communication error: {e}")
+        return jsonify({'success': False, 'error': 'Failed to send targeted communication'}), 500
+
+@admin_bp.route('/api/admin/users/value-scores', methods=['GET'])
+@require_admin
+def get_user_value_scores_route(current_user):
+    """Calculate user value scores"""
+    try:
+        if not user_service:
+            return jsonify({'error': 'User management service not available'}), 503
+        
+        result = user_service.calculate_user_value_scores()
+        
+        return jsonify(result), 200 if result['success'] else 400
+        
+    except Exception as e:
+        logger.error(f"Calculate user value scores error: {e}")
+        return jsonify({'success': False, 'error': 'Failed to calculate user value scores'}), 500
+
+@admin_bp.route('/api/admin/users/anomalies', methods=['GET'])
+@require_admin
+def detect_user_anomalies_route(current_user):
+    """Detect user anomalies"""
+    try:
+        if not user_service:
+            return jsonify({'error': 'User management service not available'}), 503
+        
+        period_days = int(request.args.get('period_days', 30))
+        result = user_service.detect_user_anomalies(period_days)
+        
+        return jsonify(result), 200 if result['success'] else 400
+        
+    except Exception as e:
+        logger.error(f"Detect user anomalies error: {e}")
+        return jsonify({'success': False, 'error': 'Failed to detect user anomalies'}), 500
+
+@admin_bp.route('/api/admin/users/cohort-analysis', methods=['GET'])
+@require_admin
+def analyze_user_cohorts_route(current_user):
+    """Analyze user cohorts"""
+    try:
+        if not user_service:
+            return jsonify({'error': 'User management service not available'}), 503
+        
+        cohort_period = request.args.get('cohort_period', 'monthly')
+        result = user_service.analyze_user_cohorts(cohort_period)
+        
+        return jsonify(result), 200 if result['success'] else 400
+        
+    except Exception as e:
+        logger.error(f"Analyze user cohorts error: {e}")
+        return jsonify({'success': False, 'error': 'Failed to analyze user cohorts'}), 500
+
+@admin_bp.route('/api/admin/users/<int:user_id>/support-profile', methods=['GET'])
+@require_admin
+def get_user_support_profile_route(current_user, user_id):
+    """Get user support profile"""
+    try:
+        if not user_service:
+            return jsonify({'error': 'User management service not available'}), 503
+        
+        result = user_service.get_user_support_profile(user_id)
+        
+        return jsonify(result), 200 if result['success'] else 400
+        
+    except Exception as e:
+        logger.error(f"Get user support profile error: {e}")
+        return jsonify({'success': False, 'error': 'Failed to get user support profile'}), 500
+
+@admin_bp.route('/api/admin/users/compare', methods=['POST'])
+@require_admin
+def compare_users_route(current_user):
+    """Compare multiple users"""
+    try:
+        if not user_service:
+            return jsonify({'error': 'User management service not available'}), 503
+        
+        data = request.get_json()
+        user_ids = data.get('user_ids', []) if data else []
+        
+        if not user_ids or not isinstance(user_ids, list):
+            return jsonify({'error': 'List of user IDs required'}), 400
+        
+        result = user_service.compare_users(user_ids)
+        
+        return jsonify(result), 200 if result['success'] else 400
+        
+    except Exception as e:
+        logger.error(f"Compare users error: {e}")
+        return jsonify({'success': False, 'error': 'Failed to compare users'}), 500
 
 # =============================================================================
 # EMAIL PREFERENCES ROUTES
@@ -1520,6 +1703,25 @@ def get_services_status(current_user):
         return jsonify({'error': 'Failed to get services status'}), 500
 
 # =============================================================================
+# OPTIONS SUPPORT FOR ALL ROUTES
+# =============================================================================
+
+# OPTIONS support for new user routes
+@admin_bp.route('/api/admin/users/segmentation', methods=['OPTIONS'])
+@admin_bp.route('/api/admin/users/lifecycle-analysis', methods=['OPTIONS'])
+@admin_bp.route('/api/admin/users/<int:user_id>/behavior-intelligence', methods=['OPTIONS'])
+@admin_bp.route('/api/admin/users/advanced-search', methods=['OPTIONS'])
+@admin_bp.route('/api/admin/users/targeted-communication', methods=['OPTIONS'])
+@admin_bp.route('/api/admin/users/value-scores', methods=['OPTIONS'])
+@admin_bp.route('/api/admin/users/anomalies', methods=['OPTIONS'])
+@admin_bp.route('/api/admin/users/cohort-analysis', methods=['OPTIONS'])
+@admin_bp.route('/api/admin/users/<int:user_id>/support-profile', methods=['OPTIONS'])
+@admin_bp.route('/api/admin/users/compare', methods=['OPTIONS'])
+def handle_user_options(*args, **kwargs):
+    """Handle OPTIONS requests for new user endpoints"""
+    return '', 200
+
+# =============================================================================
 # ERROR HANDLERS
 # =============================================================================
 
@@ -1609,6 +1811,7 @@ def init_admin_routes(flask_app, database, models, services):
         logger.info(f"   - Content management: ✓")
         logger.info(f"   - Recommendation system: ✓")
         logger.info(f"   - Telegram integration: ✓")
+        logger.info(f"   - 10 NEW user management endpoints: ✓")
         
     except Exception as e:
         logger.error(f"❌ Failed to initialize admin routes: {e}")
