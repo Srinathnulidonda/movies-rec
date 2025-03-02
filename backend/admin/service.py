@@ -25,7 +25,6 @@ class NotificationType:
     CONTENT_ADDED = "content_added"
 
 class AdminEmailPreferences:
-    """Email preference model for database integration"""
     def __init__(self, db):
         self.db = db
         
@@ -35,23 +34,19 @@ class AdminEmailPreferences:
             id = db.Column(db.Integer, primary_key=True)
             admin_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
             
-            # Support System Alerts (Critical - usually ON)
             urgent_tickets = db.Column(db.Boolean, default=True)
             sla_breaches = db.Column(db.Boolean, default=True)
             system_alerts = db.Column(db.Boolean, default=True)
             
-            # Content Management Alerts (Configurable)
             content_added = db.Column(db.Boolean, default=True)
             recommendation_created = db.Column(db.Boolean, default=True)
-            recommendation_updated = db.Column(db.Boolean, default=False)  # OFF by default
-            recommendation_deleted = db.Column(db.Boolean, default=False)  # OFF by default
+            recommendation_updated = db.Column(db.Boolean, default=False)
+            recommendation_deleted = db.Column(db.Boolean, default=False)
             recommendation_published = db.Column(db.Boolean, default=True)
             
-            # User Activity Alerts (Configurable)
             user_feedback = db.Column(db.Boolean, default=True)
-            regular_tickets = db.Column(db.Boolean, default=False)  # OFF by default
+            regular_tickets = db.Column(db.Boolean, default=False)
             
-            # System Operations (Usually OFF)
             cache_operations = db.Column(db.Boolean, default=False)
             bulk_operations = db.Column(db.Boolean, default=False)
             slug_updates = db.Column(db.Boolean, default=False)
@@ -149,7 +144,6 @@ class AdminNotificationService:
         self.SupportMetrics = models.get('SupportMetrics')
         self.AdminEmailPreferences = models.get('AdminEmailPreferences')
         
-        # Create AdminEmailPreferences model if not provided
         if not self.AdminEmailPreferences:
             try:
                 email_prefs = AdminEmailPreferences(db)
@@ -196,19 +190,16 @@ class AdminNotificationService:
             return None
     
     def _should_send_email(self, admin_id: int, alert_type: str) -> bool:
-        """Check if email should be sent based on admin preferences"""
         try:
             if not self.AdminEmailPreferences:
-                return True  # Default to sending if preferences not available
+                return True
             
             preferences = self.AdminEmailPreferences.query.filter_by(admin_id=admin_id).first()
             if not preferences:
-                # Create default preferences for new admin
                 preferences = self._create_default_preferences(admin_id)
                 if not preferences:
-                    return True  # Default to sending if creation failed
+                    return True
             
-            # Map alert types to preference fields
             alert_mapping = {
                 'urgent_ticket': preferences.urgent_tickets,
                 'new_ticket': preferences.regular_tickets,
@@ -225,14 +216,13 @@ class AdminNotificationService:
                 'slug_update': preferences.slug_updates
             }
             
-            return alert_mapping.get(alert_type, True)  # Default to True for unknown types
+            return alert_mapping.get(alert_type, True)
             
         except Exception as e:
             logger.error(f"Error checking email preferences: {e}")
-            return True  # Default to sending on error
+            return True
     
     def _create_default_preferences(self, admin_id: int):
-        """Create default preferences for new admin"""
         try:
             preferences = self.AdminEmailPreferences(admin_id=admin_id)
             self.db.session.add(preferences)
@@ -252,7 +242,6 @@ class AdminNotificationService:
                           related_content_id: int = None, is_urgent: bool = False,
                           action_required: bool = False, action_url: str = None,
                           metadata: dict = None, alert_type: str = None):
-        """Enhanced notification creation with email preferences"""
         try:
             notification = None
             if not self.AdminNotification:
@@ -282,26 +271,21 @@ class AdminNotificationService:
                     except:
                         pass
             
-            # Email notifications with preference checking
             if self.email_service and self.email_service.is_configured:
                 try:
                     admin_users = self.User.query.filter_by(is_admin=True).all()
                     
-                    # Filter admins based on their email preferences
                     admins_to_notify = []
                     for admin in admin_users:
                         if admin.email and self._should_send_email(admin.id, alert_type or notification_type.lower()):
                             admins_to_notify.append(admin.email)
                     
-                    # Add environment admin email if configured
                     env_admin_email = os.environ.get('ADMIN_EMAIL')
                     if env_admin_email and env_admin_email not in admins_to_notify:
-                        # Check preferences for environment admin too
                         env_admin = self.User.query.filter_by(email=env_admin_email).first()
                         if env_admin and self._should_send_email(env_admin.id, alert_type or notification_type.lower()):
                             admins_to_notify.append(env_admin_email)
                         elif not env_admin:
-                            # Environment admin not in database, send for critical alerts only
                             critical_alerts = ['urgent_ticket', 'sla_breach', 'system_alert']
                             if (alert_type or notification_type.lower()) in critical_alerts:
                                 admins_to_notify.append(env_admin_email)
@@ -470,6 +454,23 @@ class AdminService:
         
         logger.info("✅ Admin service initialized")
     
+    def _map_genre_ids_to_names(self, genre_ids):
+        genre_map = {
+            28: "Action", 12: "Adventure", 16: "Animation", 35: "Comedy", 80: "Crime",
+            99: "Documentary", 18: "Drama", 10751: "Family", 14: "Fantasy", 36: "History",
+            27: "Horror", 10402: "Music", 9648: "Mystery", 10749: "Romance", 878: "Science Fiction",
+            10770: "TV Movie", 53: "Thriller", 10752: "War", 37: "Western"
+        }
+        
+        genre_names = []
+        for genre_id in genre_ids:
+            if isinstance(genre_id, int) and genre_id in genre_map:
+                genre_names.append(genre_map[genre_id])
+            elif isinstance(genre_id, str):
+                genre_names.append(genre_id)
+        
+        return genre_names or ["Drama"]
+    
     def search_external_content(self, query: str, source: str, page: int = 1):
         try:
             results = []
@@ -478,7 +479,6 @@ class AdminService:
                 tmdb_results = self.TMDBService.search_content(query, page=page)
                 if tmdb_results:
                     for item in tmdb_results.get('results', []):
-                        # FIX: Add safe data extraction with defaults
                         content_item = {
                             'id': item.get('id'),
                             'title': item.get('title') or item.get('name') or 'Unknown Title',
@@ -501,7 +501,6 @@ class AdminService:
                 anime_results = self.JikanService.search_anime(query, page=page)
                 if anime_results:
                     for anime in anime_results.get('data', []):
-                        # FIX: Add safe data extraction with defaults
                         content_item = {
                             'id': anime.get('mal_id'),
                             'title': anime.get('title') or 'Unknown Title',
@@ -529,7 +528,6 @@ class AdminService:
         try:
             existing_content = None
             
-            # FIX: Better data validation
             if not data or not data.get('id'):
                 logger.error("Invalid content data: missing ID")
                 return {'error': 'Invalid content data: missing ID'}
@@ -557,7 +555,6 @@ class AdminService:
                 except:
                     release_date = None
             
-            # YouTube trailer lookup with proper error handling
             youtube_trailer_id = None
             try:
                 if self.ContentService and hasattr(self.ContentService, 'get_youtube_trailer'):
@@ -566,25 +563,25 @@ class AdminService:
                         data.get('content_type')
                     )
                 else:
-                    # Fallback: try to extract from data or set to None
                     youtube_trailer_id = data.get('youtube_trailer_id') or None
                     logger.info(f"YouTube trailer lookup skipped - ContentService not available or method missing")
             except Exception as e:
                 logger.warning(f"YouTube trailer lookup failed for '{data.get('title')}': {e}")
                 youtube_trailer_id = None
             
-            # FIX: Add better data validation and defaults
             content_title = data.get('title') or data.get('name') or 'Unknown Title'
             
             if data.get('source') == 'anime':
+                genres = data.get('genres', [])
+                anime_genres = data.get('anime_genres', [])
                 mal_id = int(data['id']) if isinstance(data['id'], str) and data['id'].isdigit() else data['id']
                 content = self.Content(
                     mal_id=mal_id,
                     title=content_title,
                     original_title=data.get('original_title') or content_title,
                     content_type='anime',
-                    genres=json.dumps(data.get('genres', [])),
-                    anime_genres=json.dumps(data.get('anime_genres', [])),
+                    genres=json.dumps(genres),
+                    anime_genres=json.dumps(anime_genres),
                     languages=json.dumps(['japanese']),
                     release_date=release_date,
                     rating=data.get('rating') or 0,
@@ -593,13 +590,23 @@ class AdminService:
                     youtube_trailer_id=youtube_trailer_id
                 )
             else:
+                raw_genres = data.get('genres', [])
+                genre_ids = data.get('genre_ids', [])
+                
+                if raw_genres and all(isinstance(g, str) for g in raw_genres):
+                    genres = raw_genres
+                elif genre_ids:
+                    genres = self._map_genre_ids_to_names(genre_ids)
+                else:
+                    genres = []
+                
                 tmdb_id = int(data['id']) if isinstance(data['id'], str) and data['id'].isdigit() else data['id']
                 content = self.Content(
                     tmdb_id=tmdb_id,
                     title=content_title,
                     original_title=data.get('original_title') or content_title,
                     content_type=data.get('content_type', 'movie'),
-                    genres=json.dumps(data.get('genres', [])),
+                    genres=json.dumps(genres),
                     languages=json.dumps(data.get('languages', ['en'])),
                     release_date=release_date,
                     runtime=data.get('runtime'),
@@ -612,12 +619,10 @@ class AdminService:
                     youtube_trailer_id=youtube_trailer_id
                 )
             
-            # Ensure slug generation with proper error handling
             try:
                 if hasattr(content, 'ensure_slug'):
                     content.ensure_slug()
                 else:
-                    # Fallback slug generation
                     if content.title:
                         import re
                         slug = re.sub(r'[^\w\s-]', '', content.title.lower())
@@ -626,7 +631,6 @@ class AdminService:
                     logger.info(f"Generated fallback slug: {content.slug}")
             except Exception as e:
                 logger.warning(f"Slug generation failed for '{content.title}': {e}")
-                # Set a basic slug as fallback
                 content.slug = f"content-{content.tmdb_id or content.mal_id or int(datetime.utcnow().timestamp())}"
             
             self.db.session.add(content)
@@ -663,11 +667,9 @@ class AdminService:
             raise e
     
     def create_recommendation_from_external_content(self, admin_user, content_data, recommendation_type, description, status='draft', publish_to_telegram=False, template_type='auto', template_params=None):
-        """Enhanced method with proper template field saving"""
         try:
             content = None
             
-            # FIX: Better content validation
             if not content_data or not content_data.get('id'):
                 logger.error("Invalid content data for recommendation creation")
                 return {'error': 'Invalid content data'}
@@ -691,7 +693,6 @@ class AdminService:
                 logger.error("Failed to create or find content for recommendation")
                 return {'error': 'Failed to create content'}
             
-            # FIX: Add defaults for missing fields
             recommendation_type = recommendation_type or 'general'
             description = description or f"Recommended: {content.title}"
             template_params = template_params or {}
@@ -704,13 +705,11 @@ class AdminService:
                 is_active=(status == 'active')
             )
             
-            # NEW: Save template type and data
             if hasattr(admin_rec, 'template_type'):
                 admin_rec.template_type = template_type
             if hasattr(admin_rec, 'template_data'):
                 admin_rec.template_data = template_params
             
-            # NEW: Save individual template fields to dedicated columns
             if hasattr(admin_rec, 'hook_text') and template_params.get('hook'):
                 admin_rec.hook_text = template_params.get('hook', '')[:500] if template_params.get('hook') else None
             if hasattr(admin_rec, 'if_you_like') and template_params.get('if_you_like'):
@@ -726,7 +725,6 @@ class AdminService:
             if hasattr(admin_rec, 'list_items') and template_params.get('items'):
                 admin_rec.list_items = template_params.get('items', []) if template_params.get('items') else None
             
-            # Set timestamp for template editing tracking
             if hasattr(admin_rec, 'last_template_edit'):
                 admin_rec.last_template_edit = datetime.utcnow()
             
@@ -788,7 +786,6 @@ class AdminService:
             raise e
     
     def create_recommendation(self, admin_user, content_id, recommendation_type, description, template_type='auto', template_params=None):
-        """Enhanced method with template support and better validation"""
         try:
             content = self.Content.query.get(content_id)
             if not content:
@@ -798,7 +795,6 @@ class AdminService:
                 logger.warning(f"Content not found for ID: {content_id}")
                 return {'error': 'Content not found. Please save content first.'}
             
-            # FIX: Add defaults for missing fields
             recommendation_type = recommendation_type or 'general'
             description = description or f"Recommended: {content.title}"
             
@@ -861,7 +857,6 @@ class AdminService:
             raise e
     
     def get_recommendations(self, page=1, per_page=20, filter_type='all', status=None):
-        """Get admin recommendations with comprehensive error handling and defaults"""
         try:
             query = self.AdminRecommendation.query
             
@@ -885,29 +880,27 @@ class AdminService:
                     admin = self.User.query.get(rec.admin_id)
                     
                     if content and admin:
-                        # Safe access to updated_at field
                         updated_at = getattr(rec, 'updated_at', None)
                         if updated_at is None:
                             updated_at = rec.created_at
                         
-                        # FIX: Ensure all required fields have defaults
                         recommendation_data = {
                             'id': rec.id,
-                            'recommendation_type': rec.recommendation_type or 'general',  # Add default
-                            'description': rec.description or '',  # Add default
-                            'is_active': rec.is_active if rec.is_active is not None else False,  # Add default
+                            'recommendation_type': rec.recommendation_type or 'general',
+                            'description': rec.description or '',
+                            'is_active': rec.is_active if rec.is_active is not None else False,
                             'created_at': rec.created_at.isoformat(),
                             'updated_at': updated_at.isoformat(),
-                            'admin_name': admin.username or 'Unknown Admin',  # Add default
+                            'admin_name': admin.username or 'Unknown Admin',
                             'admin_id': admin.id,
                             'content': {
                                 'id': content.id,
-                                'title': content.title or 'Unknown Title',  # Add default
-                                'content_type': content.content_type or 'movie',  # Add default
-                                'rating': content.rating or 0,  # Add default
+                                'title': content.title or 'Unknown Title',
+                                'content_type': content.content_type or 'movie',
+                                'rating': content.rating or 0,
                                 'release_date': content.release_date.isoformat() if content.release_date else None,
                                 'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
-                                'overview': content.overview or ''  # Add default
+                                'overview': content.overview or ''
                             }
                         }
                         result.append(recommendation_data)
@@ -944,7 +937,6 @@ class AdminService:
             }
     
     def get_recommendation_details(self, recommendation_id):
-        """Get recommendation details with enhanced template field data"""
         try:
             recommendation = self.AdminRecommendation.query.get(recommendation_id)
             if not recommendation:
@@ -958,15 +950,12 @@ class AdminService:
                 logger.warning(f"Missing content or admin for recommendation {recommendation_id}")
                 return None
 
-            # Safe access to updated_at field
             updated_at = getattr(recommendation, 'updated_at', None)
             if updated_at is None:
                 updated_at = recommendation.created_at
 
-            # NEW: Collect template field data from database columns
             template_fields = {}
             
-            # Add individual template fields if they exist
             if hasattr(recommendation, 'hook_text') and recommendation.hook_text:
                 template_fields['hook'] = recommendation.hook_text
             if hasattr(recommendation, 'if_you_like') and recommendation.if_you_like:
@@ -982,7 +971,6 @@ class AdminService:
             if hasattr(recommendation, 'list_items') and recommendation.list_items:
                 template_fields['items'] = recommendation.list_items
 
-            # Merge with template_data JSON if available
             if hasattr(recommendation, 'template_data') and recommendation.template_data:
                 template_fields.update(recommendation.template_data)
 
@@ -996,7 +984,6 @@ class AdminService:
                 'admin_name': admin.username or 'Unknown Admin',
                 'admin_id': admin.id,
                 
-                # NEW: Enhanced template data
                 'template_type': getattr(recommendation, 'template_type', None),
                 'template_fields': template_fields,
                 'template_data': {
@@ -1021,14 +1008,12 @@ class AdminService:
             return None
     
     def update_recommendation(self, admin_user, recommendation_id, data):
-        """Enhanced update with template field saving"""
         try:
             recommendation = self.AdminRecommendation.query.get(recommendation_id)
             if not recommendation:
                 logger.warning(f"Recommendation not found for update: {recommendation_id}")
                 return None
 
-            # FIX: Safe updates with validation
             if 'recommendation_type' in data:
                 recommendation.recommendation_type = data['recommendation_type'] or 'general'
             if 'description' in data:
@@ -1036,11 +1021,9 @@ class AdminService:
             if 'is_active' in data:
                 recommendation.is_active = data['is_active'] if data['is_active'] is not None else False
 
-            # NEW: Update template data if provided
             if 'template_data' in data and data['template_data']:
                 template_data = data['template_data']
                 
-                # Update template_type and template_data JSON
                 if 'selected_template' in template_data:
                     if hasattr(recommendation, 'template_type'):
                         recommendation.template_type = template_data['selected_template']
@@ -1048,7 +1031,6 @@ class AdminService:
                     if hasattr(recommendation, 'template_data'):
                         recommendation.template_data = template_data['template_fields']
                     
-                    # Update individual template field columns
                     template_fields = template_data['template_fields']
                     
                     if 'hook' in template_fields and hasattr(recommendation, 'hook_text'):
@@ -1066,11 +1048,9 @@ class AdminService:
                     if 'items' in template_fields and hasattr(recommendation, 'list_items'):
                         recommendation.list_items = template_fields['items'] if template_fields['items'] else None
                     
-                    # Update last template edit timestamp
                     if hasattr(recommendation, 'last_template_edit'):
                         recommendation.last_template_edit = datetime.utcnow()
 
-            # Safe update of updated_at field
             if hasattr(recommendation, 'updated_at'):
                 recommendation.updated_at = datetime.utcnow()
 
@@ -1149,7 +1129,6 @@ class AdminService:
             raise e
     
     def publish_recommendation(self, admin_user, recommendation_id, template_type='auto', template_params=None):
-        """Enhanced method with template support and better validation"""
         try:
             recommendation = self.AdminRecommendation.query.get(recommendation_id)
             if not recommendation:
@@ -1162,7 +1141,6 @@ class AdminService:
                 return {'error': 'Associated content not found'}
             
             recommendation.is_active = True
-            # Safe update of updated_at field
             if hasattr(recommendation, 'updated_at'):
                 recommendation.updated_at = datetime.utcnow()
             
@@ -1218,7 +1196,6 @@ class AdminService:
             raise e
     
     def send_recommendation_to_telegram(self, admin_user, recommendation_id, template_type='auto', template_params=None):
-        """Enhanced method with template support"""
         try:
             recommendation = self.AdminRecommendation.query.get(recommendation_id)
             if not recommendation:
@@ -1276,17 +1253,14 @@ class AdminService:
             raise e
     
     def send_custom_telegram_message(self, admin_user, template_type, template_params):
-        """Send custom Telegram message (for lists, etc.)"""
         try:
             if not self.telegram_service:
                 return {'error': 'Telegram service not configured'}
             
-            # FIX: Validate template params
             if not template_params:
                 return {'error': 'Template parameters are required'}
             
             if template_type == 'top_list':
-                # Handle list template without content object
                 telegram_sent = self.telegram_service.send_admin_recommendation(
                     None, admin_user.username, '', template_type, template_params
                 )
