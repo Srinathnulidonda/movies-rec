@@ -84,6 +84,20 @@ class TelegramTemplates:
         return " • ".join(safe_genres)
     
     @staticmethod
+    def format_hashtags(hashtags: Optional[str]) -> str:
+        if not hashtags:
+            return ""
+        
+        hashtags_clean = hashtags.strip()
+        if not hashtags_clean:
+            return ""
+        
+        if not hashtags_clean.startswith('\n'):
+            hashtags_clean = '\n' + hashtags_clean
+            
+        return hashtags_clean
+    
+    @staticmethod
     def format_year(release_date: Any) -> str:
         if not release_date:
             return ""
@@ -118,7 +132,7 @@ class TelegramTemplates:
         return f"https://cinebrain.vercel.app/explore/details.html?{slug}"
     
     @staticmethod
-    def movie_recommendation_template(content: Any, admin_name: str, description: str, genres_list: Optional[List[str]] = None) -> str:
+    def movie_recommendation_template(content: Any, admin_name: str, description: str, genres_list: Optional[List[str]] = None, hashtags: Optional[str] = None) -> str:
         if not genres_list and content.genres:
             try:
                 genres_list = json.loads(content.genres)
@@ -131,6 +145,7 @@ class TelegramTemplates:
         runtime = TelegramTemplates.format_runtime(content.runtime)
         genres = TelegramTemplates.format_genres(genres_list)
         synopsis = TelegramTemplates.truncate_synopsis(content.overview)
+        hashtags_formatted = TelegramTemplates.format_hashtags(hashtags)
         
         runtime_str = f" | ⏱ {runtime}" if runtime else ""
         
@@ -143,12 +158,12 @@ class TelegramTemplates:
 {DIVIDER}
 <i>🍿 Smart recommendations • Upcoming updates • Latest updates • New releases • Trending updates — visit <a href="https://cinebrain.vercel.app/">CineBrain</a></i>
 
-{CINEBRAIN_FOOTER}"""
+{CINEBRAIN_FOOTER}{hashtags_formatted}"""
         
         return message
     
     @staticmethod
-    def tv_show_recommendation_template(content: Any, admin_name: str, description: str, genres_list: Optional[List[str]] = None) -> str:
+    def tv_show_recommendation_template(content: Any, admin_name: str, description: str, genres_list: Optional[List[str]] = None, hashtags: Optional[str] = None) -> str:
         if not genres_list and content.genres:
             try:
                 genres_list = json.loads(content.genres)
@@ -160,6 +175,7 @@ class TelegramTemplates:
         rating = TelegramTemplates.get_rating_display(content.rating)
         genres = TelegramTemplates.format_genres(genres_list)
         synopsis = TelegramTemplates.truncate_synopsis(content.overview)
+        hashtags_formatted = TelegramTemplates.format_hashtags(hashtags)
         
         runtime_str = ""
         if hasattr(content, 'seasons') and content.seasons:
@@ -174,12 +190,12 @@ class TelegramTemplates:
 {DIVIDER}
 <i>🍿 Smart recommendations • Upcoming updates • Latest updates • New releases • Trending updates — visit <a href="https://cinebrain.vercel.app/">CineBrain</a></i>
 
-{CINEBRAIN_FOOTER}"""
+{CINEBRAIN_FOOTER}{hashtags_formatted}"""
         
         return message
     
     @staticmethod
-    def anime_recommendation_template(content: Any, admin_name: str, description: str, genres_list: Optional[List[str]] = None, anime_genres_list: Optional[List[str]] = None) -> str:
+    def anime_recommendation_template(content: Any, admin_name: str, description: str, genres_list: Optional[List[str]] = None, anime_genres_list: Optional[List[str]] = None, hashtags: Optional[str] = None) -> str:
         all_genres = []
         if genres_list:
             all_genres.extend(genres_list)
@@ -202,6 +218,7 @@ class TelegramTemplates:
         rating = TelegramTemplates.get_rating_display(content.rating)
         genres = TelegramTemplates.format_genres(all_genres)
         synopsis = TelegramTemplates.truncate_synopsis(content.overview)
+        hashtags_formatted = TelegramTemplates.format_hashtags(hashtags)
         
         runtime_str = ""
         if hasattr(content, 'status') and content.status:
@@ -217,12 +234,12 @@ class TelegramTemplates:
 <blockquote><i>{synopsis}</i></blockquote>
 {DIVIDER}
 <i>🍿 Smart recommendations • Upcoming updates • Latest updates • New releases • Trending updates — visit <a href="https://cinebrain.vercel.app/">CineBrain</a></i>
-{CINEBRAIN_FOOTER}"""
+{CINEBRAIN_FOOTER}{hashtags_formatted}"""
         
         return message
     
     @staticmethod
-    def mind_bending_template(content: Any, admin_name: str, description: str, genres_list: Optional[List[str]] = None, overview: Optional[str] = None, if_you_like: Optional[str] = None) -> str:
+    def mind_bending_template(content: Any, admin_name: str, description: str, genres_list: Optional[List[str]] = None, overview: Optional[str] = None, if_you_like: Optional[str] = None, hashtags: Optional[str] = None) -> str:
         if not genres_list and content.genres:
             try:
                 genres_list = json.loads(content.genres)
@@ -234,6 +251,7 @@ class TelegramTemplates:
         rating = TelegramTemplates.get_rating_display(content.rating)
         runtime = TelegramTemplates.format_runtime(content.runtime)
         genres = TelegramTemplates.format_genres(genres_list, limit=3)
+        hashtags_formatted = TelegramTemplates.format_hashtags(hashtags)
         
         overview_text = overview or TelegramTemplates.truncate_synopsis(content.overview, 200)
         
@@ -245,8 +263,6 @@ class TelegramTemplates:
 {DIVIDER}
 <b>Why this will break your reality:</b>
 <blockquote><i>{overview_text}</i></blockquote>
-• A concept that bends reality
-• A twist that rewrites the whole story
 {DIVIDER}"""
         
         if if_you_like:
@@ -256,12 +272,12 @@ class TelegramTemplates:
 🔎 <i>More hidden gems — @cinebrain</i>
 <i>🧠 CineBrain — Hidden Gems • Mind-Bending Sci-Fi • Rare Anime</i>
 
-{CINEBRAIN_FOOTER}"""
+{CINEBRAIN_FOOTER}{hashtags_formatted}"""
         
         return message
     
     @staticmethod
-    def hidden_gem_template(content: Any, admin_name: str, description: str, genres_list: Optional[List[str]] = None, hook: Optional[str] = None, if_you_like: Optional[str] = None) -> str:
+    def hidden_gem_template(content: Any, admin_name: str, description: str, genres_list: Optional[List[str]] = None, hook: Optional[str] = None, if_you_like: Optional[str] = None, hashtags: Optional[str] = None) -> str:
         if not genres_list and content.genres:
             try:
                 genres_list = json.loads(content.genres)
@@ -272,6 +288,7 @@ class TelegramTemplates:
         year = TelegramTemplates.format_year(content.release_date)
         rating = TelegramTemplates.get_rating_display(content.rating)
         genres = TelegramTemplates.format_genres(genres_list, limit=3)
+        hashtags_formatted = TelegramTemplates.format_hashtags(hashtags)
         
         hook_text = hook or "A beautifully crafted gem buried under the algorithm."
         
@@ -288,12 +305,12 @@ class TelegramTemplates:
 🔎 <i>More hidden gems — @cinebrain</i>
 <i>🧠 CineBrain — Hidden Gems • Mind-Bending Sci-Fi • Rare Anime</i>
 
-{CINEBRAIN_FOOTER}"""
+{CINEBRAIN_FOOTER}{hashtags_formatted}"""
         
         return message
     
     @staticmethod
-    def anime_gem_template(content: Any, admin_name: str, description: str, genres_list: Optional[List[str]] = None, anime_genres_list: Optional[List[str]] = None, overview: Optional[str] = None, emotion_hook: Optional[str] = None) -> str:
+    def anime_gem_template(content: Any, admin_name: str, description: str, genres_list: Optional[List[str]] = None, anime_genres_list: Optional[List[str]] = None, overview: Optional[str] = None, emotion_hook: Optional[str] = None, hashtags: Optional[str] = None) -> str:
         all_genres = []
         if genres_list:
             all_genres.extend(genres_list)
@@ -315,6 +332,7 @@ class TelegramTemplates:
         year = TelegramTemplates.format_year(content.release_date)
         rating = TelegramTemplates.get_rating_display(content.rating)
         genres = TelegramTemplates.format_genres(all_genres, limit=4)
+        hashtags_formatted = TelegramTemplates.format_hashtags(hashtags)
         
         status = "Completed"
         if hasattr(content, 'status') and content.status:
@@ -339,13 +357,14 @@ class TelegramTemplates:
 🔎 <i>More rare anime — @cinebrain</i>
 <i>🧠 CineBrain — Hidden Gems • Mind-Bending Sci-Fi • Rare Anime</i>
 
-{CINEBRAIN_FOOTER}"""
+{CINEBRAIN_FOOTER}{hashtags_formatted}"""
         
         return message
     
     @staticmethod
-    def top_list_template(list_title: str, items: List[tuple], admin_name: str = "", description: str = "", poster_url: Optional[str] = None) -> str:
+    def top_list_template(list_title: str, items: List[tuple], admin_name: str = "", description: str = "", poster_url: Optional[str] = None, hashtags: Optional[str] = None) -> str:
         limited_items = items[:10]
+        hashtags_formatted = TelegramTemplates.format_hashtags(hashtags)
         
         body = "\n".join([
             f"{i+1}. <b>{title}</b> ({year}) — {hook}"
@@ -359,12 +378,12 @@ class TelegramTemplates:
 📌 <i>Save this list — @cinebrain</i>
 <i>🧠 CineBrain — Hidden Gems • Mind-Bending Sci-Fi • Rare Anime</i>
 
-{CINEBRAIN_FOOTER}"""
+{CINEBRAIN_FOOTER}{hashtags_formatted}"""
         
         return message
     
     @staticmethod
-    def scene_clip_template(content: Any, admin_name: str, description: str, caption: str, genres_list: Optional[List[str]] = None) -> str:
+    def scene_clip_template(content: Any, admin_name: str, description: str, caption: str, genres_list: Optional[List[str]] = None, hashtags: Optional[str] = None) -> str:
         if not genres_list and content.genres:
             try:
                 genres_list = json.loads(content.genres)
@@ -374,6 +393,7 @@ class TelegramTemplates:
         content_prefix = TelegramTemplates.get_content_type_prefix(content.content_type)
         year = TelegramTemplates.format_year(content.release_date)
         genres = TelegramTemplates.format_genres(genres_list, limit=3)
+        hashtags_formatted = TelegramTemplates.format_hashtags(hashtags)
         
         caption_text = caption or "This scene will hook you instantly"
         
@@ -387,7 +407,7 @@ If this hooks you, the full movie will blow your mind.
 🔎 <i>More scenes — @cinebrain</i>
 <i>🧠 CineBrain — Hidden Gems • Mind-Bending Sci-Fi • Rare Anime</i>
 
-{CINEBRAIN_FOOTER}"""
+{CINEBRAIN_FOOTER}{hashtags_formatted}"""
         
         return message
     
@@ -407,6 +427,7 @@ Fill these fields with strong, intense, viral-quality text:
 • Runtime: Format inside (⏱ 1h 32m)
 • Overview: 2–3 sentences, mysterious, raise questions, never spoil twists
 • If_you_like: 2–4 similar brain-breaking movies (example: Inception, Dark, Predestination)
+• Hashtags: Relevant hashtags for the movie (example: #MindBending #SciFi #Thriller)
 Make the overview gripping, non-generic, focused on tension, confusion, and mystery.'''
             },
             'hidden_gem': {
@@ -421,6 +442,7 @@ Fill these fields with sharp, concise descriptions:
 • Rating: IMDb or TMDB rating
 • Hook/catch-line: 1–2 lines, "why nobody talks about this" feel
 • If_you_like (optional): 2–3 movies with similar tone
+• Hashtags: Relevant hashtags for the movie (example: #HiddenGem #Underrated #Drama)
 The hook must be extremely catchy. Avoid long explanations. Focus on uniqueness, vibe, style.'''
             },
             'anime_gem': {
@@ -436,6 +458,7 @@ Fill these fields with emotional and engaging detail:
 • Rating: Anime rating (MyAnimeList / TMDB)
 • Overview: 2–3 lines, emotional and philosophical core, focus on themes not plot
 • Emotion_hook: 1 strong emotional line (example: "A time-loop tragedy that hits harder the more you think about it.")
+• Hashtags: Relevant hashtags for the anime (example: #AnimeGem #Psychological #Drama)
 Make the tone emotional, powerful, and intense.'''
             },
             'top_list': {
@@ -450,6 +473,7 @@ Fill each item with:
 Provide 5–10 items MAX. Hooks should be short, punchy, and scroll-stopping.
 Also provide:
 • List Title: Make it catchy and niche-based
+• Hashtags: Relevant hashtags for the list (example: #TopList #MustWatch #Cinema)
 Examples: "Top 5 Mind-Bending Sci-Fi Gems", "Top 7 Psychological Thrillers You Missed"
 No long paragraphs. Just title + year + short hook.'''
             },
@@ -463,6 +487,7 @@ Fill these fields:
 • Title: Movie or Anime title
 • Year: Release year in brackets
 • Genres: 2–3 genres that define the tone
+• Hashtags: Relevant hashtags for the clip (example: #SceneClip #Epic #Viral)
 The tone must be exciting and suspenseful. Keep text minimal because video is main attraction.'''
             }
         }
@@ -485,52 +510,57 @@ The tone must be exciting and suspenseful. Keep text minimal because video is ma
         field_definitions = {
             'mind_bending': {
                 'required': ['title', 'year', 'genres', 'rating', 'runtime', 'overview'],
-                'optional': ['if_you_like'],
+                'optional': ['if_you_like', 'hashtags'],
                 'poster_support': True,
                 'field_specs': {
                     'genres': '2-3 genres (Sci-Fi • Thriller • Mystery)',
                     'overview': '2-3 sentences, mysterious, never spoil twists',
-                    'if_you_like': '2-4 similar brain-breaking movies'
+                    'if_you_like': '2-4 similar brain-breaking movies',
+                    'hashtags': 'Relevant hashtags (example: #MindBending #SciFi)'
                 }
             },
             'hidden_gem': {
                 'required': ['title', 'year', 'genres', 'rating', 'hook'],
-                'optional': ['if_you_like'],
+                'optional': ['if_you_like', 'hashtags'],
                 'poster_support': True,
                 'field_specs': {
                     'genres': '2-3 genres max',
                     'hook': '1-2 lines, "why nobody talks about this" feel',
-                    'if_you_like': '2-3 movies with similar tone'
+                    'if_you_like': '2-3 movies with similar tone',
+                    'hashtags': 'Relevant hashtags (example: #HiddenGem #Underrated)'
                 }
             },
             'anime_gem': {
                 'required': ['title', 'year', 'genres', 'status', 'rating', 'overview', 'emotion_hook'],
-                'optional': [],
+                'optional': ['hashtags'],
                 'poster_support': True,
                 'field_specs': {
                     'genres': '2-4 combined genres',
                     'status': 'Completed or Ongoing',
                     'overview': '2-3 lines, emotional/philosophical core, themes not plot',
-                    'emotion_hook': '1 strong emotional line'
+                    'emotion_hook': '1 strong emotional line',
+                    'hashtags': 'Relevant hashtags (example: #AnimeGem #Psychological)'
                 }
             },
             'top_list': {
                 'required': ['list_title', 'items'],
-                'optional': ['poster_url'],
+                'optional': ['poster_url', 'hashtags'],
                 'poster_support': True,
                 'field_specs': {
                     'list_title': 'Catchy and niche-based',
                     'items': '5-10 items MAX, each with title, year, short punchy hook',
-                    'poster_url': 'Optional custom poster for the list'
+                    'poster_url': 'Optional custom poster for the list',
+                    'hashtags': 'Relevant hashtags (example: #TopList #MustWatch)'
                 }
             },
             'scene_clip': {
                 'required': ['caption', 'title', 'year', 'genres'],
-                'optional': [],
+                'optional': ['hashtags'],
                 'poster_support': False,
                 'field_specs': {
                     'caption': 'Punchy line creating curiosity',
-                    'genres': '2-3 genres that define the tone'
+                    'genres': '2-3 genres that define the tone',
+                    'hashtags': 'Relevant hashtags (example: #SceneClip #Epic)'
                 }
             }
         }
@@ -555,7 +585,8 @@ The tone must be exciting and suspenseful. Keep text minimal because video is ma
                 kwargs.get('items', []),
                 admin_name,
                 description,
-                kwargs.get('poster_url')
+                kwargs.get('poster_url'),
+                kwargs.get('hashtags')
             )
         
         template_func = template_map.get(template_type)
@@ -598,7 +629,8 @@ class TelegramService:
                     template_params.get('items', []),
                     admin_name,
                     description,
-                    template_params.get('poster_url')
+                    template_params.get('poster_url'),
+                    template_params.get('hashtags')
                 )
                 poster_url = template_params.get('poster_url')
             else:
@@ -772,6 +804,7 @@ def init_telegram_service(app, db, models, services) -> Optional[Dict[str, Any]]
             logger.info("   ├─ Mobile-optimized layouts: ✓")
             logger.info("   ├─ Google Analytics tracking: ✓")
             logger.info("   ├─ Content recommendations: ✓")
+            logger.info("   ├─ Hashtags support: ✓")
             logger.info("   └─ Admin notifications: ✓")
         else:
             logger.warning("⚠️ Telegram bot not configured - service disabled")

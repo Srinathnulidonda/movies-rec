@@ -724,6 +724,8 @@ class AdminService:
                 admin_rec.list_title = template_params.get('list_title', '')[:200] if template_params.get('list_title') else None
             if hasattr(admin_rec, 'list_items') and template_params.get('items'):
                 admin_rec.list_items = template_params.get('items', []) if template_params.get('items') else None
+            if hasattr(admin_rec, 'hashtags') and template_params.get('hashtags'):
+                admin_rec.hashtags = template_params.get('hashtags', '')[:500] if template_params.get('hashtags') else None
             
             if hasattr(admin_rec, 'last_template_edit'):
                 admin_rec.last_template_edit = datetime.utcnow()
@@ -970,6 +972,8 @@ class AdminService:
                 template_fields['list_title'] = recommendation.list_title
             if hasattr(recommendation, 'list_items') and recommendation.list_items:
                 template_fields['items'] = recommendation.list_items
+            if hasattr(recommendation, 'hashtags') and recommendation.hashtags:
+                template_fields['hashtags'] = recommendation.hashtags
 
             if hasattr(recommendation, 'template_data') and recommendation.template_data:
                 template_fields.update(recommendation.template_data)
@@ -1047,6 +1051,8 @@ class AdminService:
                         recommendation.list_title = template_fields['list_title'][:200] if template_fields['list_title'] else None
                     if 'items' in template_fields and hasattr(recommendation, 'list_items'):
                         recommendation.list_items = template_fields['items'] if template_fields['items'] else None
+                    if 'hashtags' in template_fields and hasattr(recommendation, 'hashtags'):
+                        recommendation.hashtags = template_fields['hashtags'][:500] if template_fields['hashtags'] else None
                     
                     if hasattr(recommendation, 'last_template_edit'):
                         recommendation.last_template_edit = datetime.utcnow()
