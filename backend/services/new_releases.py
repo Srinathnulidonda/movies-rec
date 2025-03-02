@@ -427,8 +427,9 @@ class CineBrainNewReleasesService:
         return any(indicator in title_lower for indicator in telugu_indicators)
         
     def _deduplicate_content(self, content_list: List[CineBrainContent]) -> List[CineBrainContent]:
-        seen_titles = set()
         seen_ids = set()
+        seen_tmdb_ids = set()
+        seen_titles = set()
         unique_content = []
         
         content_list.sort(key=lambda x: (-x.popularity, -x.rating, -x.vote_count))
@@ -436,19 +437,27 @@ class CineBrainNewReleasesService:
         for content in content_list:
             if not self._is_within_strict_date_range(content.release_date):
                 continue
-                
+            
+            is_duplicate = False
+            
+            if content.id and content.id in seen_ids:
+                is_duplicate = True
+            
+            if not is_duplicate and content.tmdb_id and content.tmdb_id in seen_tmdb_ids:
+                is_duplicate = True
+            
             title_key = f"{content.title.lower().strip()}_{content.content_type}"
-            id_key = f"{content.tmdb_id or content.mal_id or 0}_{content.content_type}"
+            if not is_duplicate and title_key in seen_titles:
+                is_duplicate = True
             
-            is_telugu = self._is_telugu_content(content)
-            
-            if title_key not in seen_titles and id_key not in seen_ids:
+            if not is_duplicate:
+                seen_ids.add(content.id)
+                if content.tmdb_id:
+                    seen_tmdb_ids.add(content.tmdb_id)
                 seen_titles.add(title_key)
-                seen_ids.add(id_key)
                 unique_content.append(content)
-            elif is_telugu and len(unique_content) < 100:
-                unique_content.append(content)
-                
+        
+        logger.info(f"CineBrain: Deduplicated {len(content_list)} to {len(unique_content)} unique items")
         return unique_content
         
     def _fetch_tmdb_releases(self, content_type: str, start_date, end_date) -> List[CineBrainContent]:

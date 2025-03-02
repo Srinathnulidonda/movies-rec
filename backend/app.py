@@ -1600,7 +1600,15 @@ create_tables()
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('FLASK_ENV') == 'development'
+    
+    print("🎬 Starting CineBrain server...")
+    print(f"   Port: {port}")
+    print(f"   Mode: {'Development' if debug else 'Production'}")
+    print("="*40)
+    
     app.run(host='0.0.0.0', port=port, debug=debug)
+    
     for rule in app.url_map.iter_rules():
         print(f"{rule.endpoint}: {rule.rule} [{', '.join(rule.methods)}]")
+    
     print("=== CINEBRAIN ===\n")

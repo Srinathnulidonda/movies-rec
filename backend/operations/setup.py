@@ -13,7 +13,7 @@ def generate_cinebrain_tokens():
     auth_token = hashlib.sha256(operation_key.encode()).hexdigest()[:32]
     
     # Your app URL (replace with your actual URL)
-    app_url = "https://cinebrain.onrender.com"
+    app_url = "https://cinebrain-server-1.onrender.com"
     
     # Generate complete UptimeRobot URLs
     basic_url = f"{app_url}/api/operation/refresh?token={auth_token}"
