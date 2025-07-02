@@ -3,173 +3,448 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Movie Recommendations</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <style>body{font-family:Arial,sans-serif;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);min-height:100vh}.card{backdrop-filter:blur(10px);background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:15px;box-shadow:0 8px 32px rgba(31,38,135,0.37)}.btn-primary{background:linear-gradient(45deg,#667eea,#764ba2);transition:all 0.3s ease}.btn-primary:hover{transform:translateY(-2px);box-shadow:0 10px 25px rgba(0,0,0,0.2)}.movie-card{transition:transform 0.3s ease}.movie-card:hover{transform:scale(1.05)}</style>
+    <title>MovieHub - Your Personal Movie Companion</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; } body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; } .glass { background: rgba(255, 255, 255, 0.1); backdrop-filter: blur(10px); border-radius: 20px; border: 1px solid rgba(255, 255, 255, 0.2); } .movie-card { transition: all 0.3s ease; cursor: pointer; } .movie-card:hover { transform: translateY(-10px); box-shadow: 0 20px 40px rgba(0,0,0,0.3); } .auth-container { min-height: 100vh; display: flex; align-items: center; justify-content: center; } .main-nav { background: rgba(0,0,0,0.1); backdrop-filter: blur(10px); } .hero-section { background: linear-gradient(45deg, rgba(102, 126, 234, 0.8), rgba(118, 75, 162, 0.8)); min-height: 60vh; display: flex; align-items: center; } .btn-gradient { background: linear-gradient(45deg, #667eea, #764ba2); border: none; color: white; transition: all 0.3s ease; } .btn-gradient:hover { transform: translateY(-2px); box-shadow: 0 10px 20px rgba(0,0,0,0.2); color: white; } .search-bar { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.3); border-radius: 50px; color: white; } .search-bar::placeholder { color: rgba(255,255,255,0.7); } .search-bar:focus { background: rgba(255,255,255,0.3); border-color: rgba(255,255,255,0.5); color: white; box-shadow: none; } .category-pill { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.3); color: white; border-radius: 25px; padding: 8px 20px; margin: 5px; cursor: pointer; transition: all 0.3s ease; } .category-pill.active, .category-pill:hover { background: rgba(255,255,255,0.9); color: #667eea; } .loading { display: none; } .poster-img { width: 100%; height: 300px; object-fit: cover; border-radius: 15px; } @media (max-width: 768px) { .hero-section { min-height: 40vh; } .poster-img { height: 200px; } }
+    </style>
 </head>
 <body>
-    <nav class="bg-black bg-opacity-20 backdrop-blur-md p-4">
-        <div class="container mx-auto flex justify-between items-center">
-            <h1 class="text-white text-2xl font-bold">🎬 MovieRec</h1>
-            <div class="space-x-4">
-                <button onclick="showPage('home')" class="text-white hover:text-blue-300">Home</button>
-                <button onclick="showPage('recommendations')" class="text-white hover:text-blue-300">Recommendations</button>
-                <button onclick="showPage('wishlist')" class="text-white hover:text-blue-300">Wishlist</button>
-                <button onclick="showPage('favorites')" class="text-white hover:text-blue-300">Favorites</button>
-                <button onclick="showPage('admin')" class="text-white hover:text-blue-300">Admin</button>
+    <!-- Navigation -->
+    <nav class="navbar navbar-expand-lg main-nav fixed-top">
+        <div class="container">
+            <a class="navbar-brand text-white fw-bold" href="#"><i class="fas fa-film me-2"></i>MovieHub</a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav ms-auto">
+                    <li class="nav-item d-none" id="nav-home"><a class="nav-link text-white" href="#" onclick="showHome()">Home</a></li>
+                    <li class="nav-item d-none" id="nav-wishlist"><a class="nav-link text-white" href="#" onclick="showWishlist()">Wishlist</a></li>
+                    <li class="nav-item d-none" id="nav-favorites"><a class="nav-link text-white" href="#" onclick="showFavorites()">Favorites</a></li>
+                    <li class="nav-item d-none" id="nav-logout"><a class="nav-link text-white" href="#" onclick="logout()">Logout</a></li>
+                    <li class="nav-item" id="nav-login"><a class="nav-link text-white" href="#" onclick="showLogin()">Login</a></li>
+                </ul>
             </div>
         </div>
     </nav>
 
-    <div class="container mx-auto p-6">
-        <div id="home" class="page">
-            <div class="text-center mb-8">
-                <h2 class="text-white text-4xl font-bold mb-4">Discover Your Next Favorite</h2>
-                <p class="text-white text-lg">Movies • Anime • Series</p>
-            </div>
-            <div class="card p-8 max-w-md mx-auto">
-                <input type="text" id="searchInput" placeholder="Search movies, anime, series..." class="w-full p-3 rounded-lg bg-white bg-opacity-20 text-white placeholder-white placeholder-opacity-70 border border-white border-opacity-30">
-                <button onclick="search()" class="btn-primary w-full mt-4 p-3 text-white rounded-lg">Search</button>
-            </div>
-            <div id="searchResults" class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6 mt-8"></div>
-        </div>
-
-        <div id="recommendations" class="page hidden">
-            <h2 class="text-white text-3xl font-bold text-center mb-8">Your Recommendations</h2>
-            <div id="recommendationsGrid" class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6"></div>
-        </div>
-
-        <div id="wishlist" class="page hidden">
-            <h2 class="text-white text-3xl font-bold text-center mb-8">Your Wishlist</h2>
-            <div id="wishlistGrid" class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6"></div>
-        </div>
-
-        <div id="favorites" class="page hidden">
-            <h2 class="text-white text-3xl font-bold text-center mb-8">Your Favorites</h2>
-            <div id="favoritesGrid" class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6"></div>
-        </div>
-
-        <div id="admin" class="page hidden">
-            <h2 class="text-white text-3xl font-bold text-center mb-8">Admin Panel</h2>
-            <div class="card p-6 max-w-2xl mx-auto">
-                <textarea id="adminPost" placeholder="Post suggestion..." class="w-full p-3 rounded-lg bg-white bg-opacity-20 text-white placeholder-white placeholder-opacity-70 border border-white border-opacity-30 h-32"></textarea>
-                <button onclick="postSuggestion()" class="btn-primary w-full mt-4 p-3 text-white rounded-lg">Post to Telegram</button>
+    <!-- Auth Section -->
+    <div id="auth-section" class="auth-container">
+        <div class="container">
+            <div class="row justify-content-center">
+                <div class="col-md-6 col-lg-4">
+                    <div class="glass p-4">
+                        <div id="login-form">
+                            <h3 class="text-white text-center mb-4">Welcome Back</h3>
+                            <form onsubmit="login(event)">
+                                <div class="mb-3">
+                                    <input type="text" class="form-control search-bar" id="loginUsername" placeholder="Username" required>
+                                </div>
+                                <div class="mb-3">
+                                    <input type="password" class="form-control search-bar" id="loginPassword" placeholder="Password" required>
+                                </div>
+                                <button type="submit" class="btn btn-gradient w-100 mb-3">Login</button>
+                            </form>
+                            <p class="text-white text-center">Don't have an account? <a href="#" class="text-warning" onclick="showRegister()">Register</a></p>
+                        </div>
+                        <div id="register-form" class="d-none">
+                            <h3 class="text-white text-center mb-4">Join MovieHub</h3>
+                            <form onsubmit="register(event)">
+                                <div class="mb-3">
+                                    <input type="text" class="form-control search-bar" id="regUsername" placeholder="Username" required>
+                                </div>
+                                <div class="mb-3">
+                                    <input type="email" class="form-control search-bar" id="regEmail" placeholder="Email" required>
+                                </div>
+                                <div class="mb-3">
+                                    <input type="password" class="form-control search-bar" id="regPassword" placeholder="Password" required>
+                                </div>
+                                <button type="submit" class="btn btn-gradient w-100 mb-3">Register</button>
+                            </form>
+                            <p class="text-white text-center">Already have an account? <a href="#" class="text-warning" onclick="showLogin()">Login</a></p>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
 
-    <script>
-        const API_BASE = 'https://movies-rec-1hcv.onrender.com/api';
-        let currentUser = null;
+    <!-- Main Content -->
+    <div id="main-content" class="d-none">
+        <!-- Hero Section -->
+        <section class="hero-section">
+            <div class="container text-center text-white">
+                <h1 class="display-4 fw-bold mb-4">Discover Your Next Favorite Movie</h1>
+                <p class="lead mb-4">Personalized recommendations just for you</p>
+                <div class="row justify-content-center">
+                    <div class="col-md-6">
+                        <div class="input-group">
+                            <input type="text" class="form-control search-bar" id="searchInput" placeholder="Search movies, anime, series...">
+                            <button class="btn btn-gradient" onclick="searchMovies()"><i class="fas fa-search"></i></button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
 
-        function showPage(page) {
-            document.querySelectorAll('.page').forEach(p => p.classList.add('hidden'));
-            document.getElementById(page).classList.remove('hidden');
-            if (page === 'recommendations') loadRecommendations();
-            if (page === 'wishlist') loadWishlist();
-            if (page === 'favorites') loadFavorites();
+        <!-- Categories -->
+        <section class="py-4">
+            <div class="container">
+                <div class="text-center mb-4">
+                    <span class="category-pill active" onclick="loadContent('popular')">Popular Movies</span>
+                    <span class="category-pill" onclick="loadContent('anime')">Anime</span>
+                    <span class="category-pill" onclick="loadContent('series')">TV Series</span>
+                    <span class="category-pill" onclick="loadContent('recommendations')">For You</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- Content Section -->
+        <section class="py-5">
+            <div class="container">
+                <div id="loading" class="text-center loading">
+                    <div class="spinner-border text-light" role="status"></div>
+                    <p class="text-white mt-2">Loading...</p>
+                </div>
+                <div id="content-grid" class="row"></div>
+            </div>
+        </section>
+    </div>
+
+    <!-- Movie Modal -->
+    <div class="modal fade" id="movieModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content glass text-white">
+                <div class="modal-header border-0">
+                    <h5 class="modal-title" id="movieTitle"></h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row">
+                        <div class="col-md-4">
+                            <img id="moviePoster" class="poster-img" src="" alt="">
+                        </div>
+                        <div class="col-md-8">
+                            <p id="movieOverview"></p>
+                            <p><strong>Rating:</strong> <span id="movieRating"></span></p>
+                            <p><strong>Release Date:</strong> <span id="movieDate"></span></p>
+                            <div class="mt-3">
+                                <button class="btn btn-gradient me-2" onclick="addToWishlist()"><i class="fas fa-heart me-1"></i>Wishlist</button>
+                                <button class="btn btn-outline-light" onclick="addToFavorites()"><i class="fas fa-star me-1"></i>Favorite</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        const API_BASE = 'https://movies-rec-1hcv.onrender.com';
+        let currentUser = null;
+        let currentMovie = null;
+
+        // Check if user is logged in
+        window.onload = function() {
+            const token = localStorage.getItem('token');
+            if (token) {
+                currentUser = { id: localStorage.getItem('userId'), token: token };
+                showMainContent();
+            }
+        };
+
+        function showLogin() {
+            document.getElementById('login-form').classList.remove('d-none');
+            document.getElementById('register-form').classList.add('d-none');
         }
 
-        async function search() {
-            const query = document.getElementById('searchInput').value;
-            if (!query) return;
-            
+        function showRegister() {
+            document.getElementById('login-form').classList.add('d-none');
+            document.getElementById('register-form').classList.remove('d-none');
+        }
+
+        function showMainContent() {
+            document.getElementById('auth-section').classList.add('d-none');
+            document.getElementById('main-content').classList.remove('d-none');
+            document.querySelectorAll('#nav-home, #nav-wishlist, #nav-favorites, #nav-logout').forEach(el => el.classList.remove('d-none'));
+            document.getElementById('nav-login').classList.add('d-none');
+            loadContent('popular');
+        }
+
+        async function login(event) {
+            event.preventDefault();
+            const username = document.getElementById('loginUsername').value;
+            const password = document.getElementById('loginPassword').value;
+
             try {
-                const response = await fetch(`${API_BASE}/search?q=${query}`);
+                const response = await fetch(`${API_BASE}/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+
                 const data = await response.json();
-                displayResults(data.results, 'searchResults');
+                if (response.ok) {
+                    localStorage.setItem('token', data.access_token);
+                    localStorage.setItem('userId', data.user_id);
+                    currentUser = { id: data.user_id, token: data.access_token };
+                    showMainContent();
+                } else {
+                    alert(data.error || 'Login failed');
+                }
+            } catch (error) {
+                alert('Network error. Please try again.');
+            }
+        }
+
+        async function register(event) {
+            event.preventDefault();
+            const username = document.getElementById('regUsername').value;
+            const email = document.getElementById('regEmail').value;
+            const password = document.getElementById('regPassword').value;
+
+            try {
+                const response = await fetch(`${API_BASE}/register`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, email, password })
+                });
+
+                const data = await response.json();
+                if (response.ok) {
+                    localStorage.setItem('token', data.access_token);
+                    localStorage.setItem('userId', data.user_id);
+                    currentUser = { id: data.user_id, token: data.access_token };
+                    showMainContent();
+                } else {
+                    alert(data.error || 'Registration failed');
+                }
+            } catch (error) {
+                alert('Network error. Please try again.');
+            }
+        }
+
+        function logout() {
+            localStorage.removeItem('token');
+            localStorage.removeItem('userId');
+            currentUser = null;
+            location.reload();
+        }
+
+        async function loadContent(type) {
+            document.querySelectorAll('.category-pill').forEach(pill => pill.classList.remove('active'));
+            event.target.classList.add('active');
+
+            showLoading(true);
+            let endpoint = '';
+
+            switch(type) {
+                case 'popular': endpoint = '/movies/popular'; break;
+                case 'anime': endpoint = '/anime/popular'; break;
+                case 'series': endpoint = '/series/popular'; break;
+                case 'recommendations': endpoint = '/recommendations'; break;
+            }
+
+            try {
+                const headers = { 'Content-Type': 'application/json' };
+                if (type === 'recommendations' && currentUser) {
+                    headers['Authorization'] = `Bearer ${currentUser.token}`;
+                }
+
+                const response = await fetch(`${API_BASE}${endpoint}`, { headers });
+                const data = await response.json();
+                
+                if (response.ok) {
+                    displayMovies(data.results || data.recommendations || data);
+                } else {
+                    console.error('Failed to load content');
+                }
+            } catch (error) {
+                console.error('Network error:', error);
+            }
+            showLoading(false);
+        }
+
+        async function searchMovies() {
+            const query = document.getElementById('searchInput').value.trim();
+            if (!query) return;
+
+            showLoading(true);
+            try {
+                const response = await fetch(`${API_BASE}/movies/search?q=${encodeURIComponent(query)}`);
+                const data = await response.json();
+                
+                if (response.ok) {
+                    displayMovies(data.results || []);
+                }
             } catch (error) {
                 console.error('Search error:', error);
             }
+            showLoading(false);
         }
 
-        async function loadRecommendations() {
-            try {
-                const response = await fetch(`${API_BASE}/recommendations`);
-                const data = await response.json();
-                displayResults(data.recommendations, 'recommendationsGrid');
-            } catch (error) {
-                console.error('Recommendations error:', error);
+        function displayMovies(movies) {
+            const grid = document.getElementById('content-grid');
+            grid.innerHTML = '';
+
+            if (!movies || movies.length === 0) {
+                grid.innerHTML = '<div class="col-12 text-center text-white"><p>No movies found</p></div>';
+                return;
             }
-        }
 
-        async function loadWishlist() {
-            try {
-                const response = await fetch(`${API_BASE}/wishlist`);
-                const data = await response.json();
-                displayResults(data.wishlist, 'wishlistGrid');
-            } catch (error) {
-                console.error('Wishlist error:', error);
-            }
-        }
+            movies.forEach(movie => {
+                const posterUrl = movie.poster_path ? 
+                    (movie.poster_path.startsWith('http') ? movie.poster_path : `https://image.tmdb.org/t/p/w500${movie.poster_path}`) : 
+                    'https://via.placeholder.com/300x450/667eea/white?text=No+Image';
 
-        async function loadFavorites() {
-            try {
-                const response = await fetch(`${API_BASE}/favorites`);
-                const data = await response.json();
-                displayResults(data.favorites, 'favoritesGrid');
-            } catch (error) {
-                console.error('Favorites error:', error);
-            }
-        }
-
-        function displayResults(items, containerId) {
-            const container = document.getElementById(containerId);
-            container.innerHTML = items.map(item => `
-                <div class="movie-card card p-4">
-                    <img src="${item.poster || 'https://via.placeholder.com/300x450'}" alt="${item.title}" class="w-full rounded-lg mb-4">
-                    <h3 class="text-white font-bold text-lg mb-2">${item.title}</h3>
-                    <p class="text-white text-sm opacity-80 mb-4">${item.overview || 'No description available'}</p>
-                    <div class="flex space-x-2">
-                        <button onclick="addToWishlist(${item.id})" class="bg-blue-500 text-white px-3 py-1 rounded text-sm">Wishlist</button>
-                        <button onclick="addToFavorites(${item.id})" class="bg-red-500 text-white px-3 py-1 rounded text-sm">Favorite</button>
+                const movieCard = `
+                    <div class="col-md-3 col-sm-6 mb-4">
+                        <div class="movie-card glass p-3 h-100" onclick="showMovieDetails(${JSON.stringify(movie).replace(/"/g, '&quot;')})">
+                            <img src="${posterUrl}" class="poster-img mb-3" alt="${movie.title || movie.name}">
+                            <h6 class="text-white fw-bold">${movie.title || movie.name}</h6>
+                            <p class="text-light small mb-2">${(movie.overview || '').substring(0, 100)}...</p>
+                            <div class="d-flex justify-content-between align-items-center">
+                                <span class="text-warning"><i class="fas fa-star"></i> ${movie.vote_average || movie.rating || 'N/A'}</span>
+                                <small class="text-light">${movie.release_date || movie.first_air_date || ''}</small>
+                            </div>
+                        </div>
                     </div>
-                </div>
-            `).join('');
+                `;
+                grid.innerHTML += movieCard;
+            });
         }
 
-        async function addToWishlist(id) {
-            try {
-                await fetch(`${API_BASE}/wishlist`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ movie_id: id })
-                });
-                alert('Added to wishlist!');
-            } catch (error) {
-                console.error('Wishlist error:', error);
-            }
-        }
-
-        async function addToFavorites(id) {
-            try {
-                await fetch(`${API_BASE}/favorites`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ movie_id: id })
-                });
-                alert('Added to favorites!');
-            } catch (error) {
-                console.error('Favorites error:', error);
-            }
-        }
-
-        async function postSuggestion() {
-            const content = document.getElementById('adminPost').value;
-            if (!content) return;
+        function showMovieDetails(movie) {
+            currentMovie = movie;
+            document.getElementById('movieTitle').textContent = movie.title || movie.name;
+            document.getElementById('movieOverview').textContent = movie.overview || 'No overview available';
+            document.getElementById('movieRating').textContent = movie.vote_average || movie.rating || 'N/A';
+            document.getElementById('movieDate').textContent = movie.release_date || movie.first_air_date || 'Unknown';
             
+            const posterUrl = movie.poster_path ? 
+                (movie.poster_path.startsWith('http') ? movie.poster_path : `https://image.tmdb.org/t/p/w500${movie.poster_path}`) : 
+                'https://via.placeholder.com/300x450/667eea/white?text=No+Image';
+            document.getElementById('moviePoster').src = posterUrl;
+
+            new bootstrap.Modal(document.getElementById('movieModal')).show();
+        }
+
+        async function addToWishlist() {
+            if (!currentUser || !currentMovie) return;
+
             try {
-                await fetch(`${API_BASE}/admin/post`, {
+                const response = await fetch(`${API_BASE}/wishlist`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ content })
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${currentUser.token}`
+                    },
+                    body: JSON.stringify({
+                        tmdb_id: currentMovie.id,
+                        title: currentMovie.title || currentMovie.name,
+                        overview: currentMovie.overview,
+                        poster_path: currentMovie.poster_path,
+                        release_date: currentMovie.release_date || currentMovie.first_air_date,
+                        rating: currentMovie.vote_average || currentMovie.rating
+                    })
                 });
-                alert('Posted to Telegram!');
-                document.getElementById('adminPost').value = '';
+
+                if (response.ok) {
+                    alert('Added to wishlist!');
+                } else {
+                    alert('Failed to add to wishlist');
+                }
             } catch (error) {
-                console.error('Post error:', error);
+                alert('Network error');
             }
         }
+
+        async function addToFavorites() {
+            if (!currentUser || !currentMovie) return;
+
+            try {
+                const response = await fetch(`${API_BASE}/favorites`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${currentUser.token}`
+                    },
+                    body: JSON.stringify({
+                        tmdb_id: currentMovie.id,
+                        title: currentMovie.title || currentMovie.name,
+                        overview: currentMovie.overview,
+                        poster_path: currentMovie.poster_path,
+                        release_date: currentMovie.release_date || currentMovie.first_air_date,
+                        rating: currentMovie.vote_average || currentMovie.rating
+                    })
+                });
+
+                if (response.ok) {
+                    alert('Added to favorites!');
+                } else {
+                    alert('Failed to add to favorites');
+                }
+            } catch (error) {
+                alert('Network error');
+            }
+        }
+
+        async function showWishlist() {
+            if (!currentUser) return;
+            showLoading(true);
+
+            try {
+                const response = await fetch(`${API_BASE}/wishlist`, {
+                    headers: { 'Authorization': `Bearer ${currentUser.token}` }
+                });
+                const data = await response.json();
+                
+                if (response.ok) {
+                    displayMovies(data);
+                }
+            } catch (error) {
+                console.error('Error loading wishlist:', error);
+            }
+            showLoading(false);
+        }
+
+        async function showFavorites() {
+            if (!currentUser) return;
+            showLoading(true);
+
+            try {
+                const response = await fetch(`${API_BASE}/favorites`, {
+                    headers: { 'Authorization': `Bearer ${currentUser.token}` }
+                });
+                const data = await response.json();
+                
+                if (response.ok) {
+                    displayMovies(data);
+                }
+            } catch (error) {
+                console.error('Error loading favorites:', error);
+            }
+            showLoading(false);
+        }
+
+        function showHome() {
+            loadContent('popular');
+        }
+
+        function showLoading(show) {
+            document.getElementById('loading').style.display = show ? 'block' : 'none';
+        }
+
+        // Search on Enter key
+        document.getElementById('searchInput').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                searchMovies();
+            }
+        });
     </script>
 </body>
 </html>
