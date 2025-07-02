@@ -1,5 +1,9 @@
 Flask
 Flask-CORS
+Flask-SQLAlchemy
+Flask-Bcrypt
+Flask-JWT-Extended
 requests
 python-dotenv
 gunicorn
+psycopg2-binary
