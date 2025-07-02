@@ -1,385 +1,258 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import os
 import requests
+import pandas as pd
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.decomposition import TruncatedSVD
-import pandas as pd
 import pickle
-import logging
+import os
 from datetime import datetime
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+import logging
 
 app = Flask(__name__)
-CORS(app, origins=["*"])
+CORS(app)
 
 # Configuration
 TMDB_API_KEY = os.getenv('TMDB_API_KEY', '1cf86635f20bb2aff8e70940e7c3ddd5')
-MODEL_PATH = 'recommendation_model.pkl'
 
-class MovieRecommendationModel:
+# In-memory storage for demo (use Redis/database in production)
+movie_features = {}
+user_profiles = {}
+similarity_matrix = None
+movie_index_map = {}
+
+class MovieRecommender:
     def __init__(self):
-        self.tfidf_vectorizer = TfidfVectorizer(
-            max_features=5000,
-            stop_words='english',
-            ngram_range=(1, 2)
-        )
-        self.svd = TruncatedSVD(n_components=100, random_state=42)
-        self.movie_features = None
-        self.movie_ids = None
+        self.tfidf = TfidfVectorizer(max_features=5000, stop_words='english')
+        self.svd = TruncatedSVD(n_components=100)
         self.movies_df = None
-        self.is_trained = False
+        self.content_matrix = None
         
-    def fetch_movie_data(self, num_pages=20):
-        """Fetch popular movies from TMDB for training"""
-        movies = []
-        
+    def load_movie_data(self):
+        """Load and prepare movie data from TMDB"""
         try:
-            for page in range(1, num_pages + 1):
-                response = requests.get(
-                    'https://api.themoviedb.org/3/movie/popular',
-                    params={
-                        'api_key': TMDB_API_KEY,
-                        'page': page,
-                        'language': 'en-US'
-                    }
-                )
+            # Get popular movies for initial dataset
+            movies_data = []
+            for page in range(1, 6):  # Get 5 pages of popular movies
+                url = f"https://api.themoviedb.org/3/movie/popular"
+                params = {'api_key': TMDB_API_KEY, 'page': page}
+                response = requests.get(url, params=params)
                 
                 if response.status_code == 200:
                     data = response.json()
                     for movie in data.get('results', []):
-                        # Get detailed movie info
-                        detail_response = requests.get(
-                            f'https://api.themoviedb.org/3/movie/{movie["id"]}',
-                            params={'api_key': TMDB_API_KEY}
-                        )
+                        # Get detailed info for each movie
+                        detail_url = f"https://api.themoviedb.org/3/movie/{movie['id']}"
+                        detail_params = {'api_key': TMDB_API_KEY, 'append_to_response': 'credits,keywords'}
+                        detail_response = requests.get(detail_url, params=detail_params)
                         
                         if detail_response.status_code == 200:
-                            detail = detail_response.json()
+                            detailed_movie = detail_response.json()
                             
-                            movies.append({
+                            # Extract features
+                            genres = ' '.join([g['name'] for g in detailed_movie.get('genres', [])])
+                            keywords = ' '.join([k['name'] for k in detailed_movie.get('keywords', {}).get('keywords', [])])
+                            cast = ' '.join([c['name'] for c in detailed_movie.get('credits', {}).get('cast', [])[:5]])
+                            director = ''
+                            crew = detailed_movie.get('credits', {}).get('crew', [])
+                            for member in crew:
+                                if member.get('job') == 'Director':
+                                    director = member.get('name', '')
+                                    break
+                            
+                            movies_data.append({
                                 'id': movie['id'],
                                 'title': movie['title'],
                                 'overview': movie.get('overview', ''),
-                                'genres': ' '.join([g['name'] for g in detail.get('genres', [])]),
-                                'vote_average': movie.get('vote_average', 0),
+                                'genres': genres,
+                                'keywords': keywords,
+                                'cast': cast,
+                                'director': director,
+                                'rating': movie.get('vote_average', 0),
                                 'popularity': movie.get('popularity', 0),
-                                'release_year': movie.get('release_date', '')[:4] if movie.get('release_date') else '',
-                                'runtime': detail.get('runtime', 0),
-                                'budget': detail.get('budget', 0),
-                                'revenue': detail.get('revenue', 0)
+                                'release_date': movie.get('release_date', ''),
+                                'poster_path': movie.get('poster_path', ''),
+                                'combined_features': f"{movie.get('overview', '')} {genres} {keywords} {cast} {director}"
                             })
-                else:
-                    logger.error(f"Error fetching movies page {page}: {response.status_code}")
-                    
-        except Exception as e:
-            logger.error(f"Error fetching movie data: {e}")
             
-        return movies
-    
-    def train_model(self):
-        """Train the recommendation model"""
-        try:
-            logger.info("Fetching movie data for training...")
-            movies_data = self.fetch_movie_data()
-            
-            if not movies_data:
-                logger.error("No movie data available for training")
-                return False
-            
-            # Create DataFrame
             self.movies_df = pd.DataFrame(movies_data)
-            logger.info(f"Training on {len(self.movies_df)} movies")
+            logging.info(f"Loaded {len(self.movies_df)} movies")
             
-            # Create feature text combining overview, genres, and other features
-            self.movies_df['features'] = (
-                self.movies_df['overview'].fillna('') + ' ' +
-                self.movies_df['genres'].fillna('') + ' ' +
-                self.movies_df['release_year'].astype(str) + ' ' +
-                (self.movies_df['vote_average'] >= 7).astype(str)  # High rating indicator
-            )
-            
-            # Create TF-IDF features
-            tfidf_matrix = self.tfidf_vectorizer.fit_transform(self.movies_df['features'])
-            
-            # Apply SVD for dimensionality reduction
-            self.movie_features = self.svd.fit_transform(tfidf_matrix)
-            self.movie_ids = self.movies_df['id'].values
-            
-            self.is_trained = True
-            logger.info("Model training completed successfully")
-            
-            # Save model
-            self.save_model()
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"Training error: {e}")
-            return False
-    
-    def save_model(self):
-        """Save the trained model"""
-        try:
-            model_data = {
-                'tfidf_vectorizer': self.tfidf_vectorizer,
-                'svd': self.svd,
-                'movie_features': self.movie_features,
-                'movie_ids': self.movie_ids,
-                'movies_df': self.movies_df,
-                'is_trained': self.is_trained
-            }
-            
-            with open(MODEL_PATH, 'wb') as f:
-                pickle.dump(model_data, f)
-            
-            logger.info("Model saved successfully")
-            
-        except Exception as e:
-            logger.error(f"Error saving model: {e}")
-    
-    def load_model(self):
-        """Load the trained model"""
-        try:
-            if os.path.exists(MODEL_PATH):
-                with open(MODEL_PATH, 'rb') as f:
-                    model_data = pickle.load(f)
-                
-                self.tfidf_vectorizer = model_data['tfidf_vectorizer']
-                self.svd = model_data['svd']
-                self.movie_features = model_data['movie_features']
-                self.movie_ids = model_data['movie_ids']
-                self.movies_df = model_data['movies_df']
-                self.is_trained = model_data['is_trained']
-                
-                logger.info("Model loaded successfully")
-                return True
-            else:
-                logger.info("No saved model found, training new model...")
-                return self.train_model()
+            # Create content-based features
+            if not self.movies_df.empty:
+                self.content_matrix = self.tfidf.fit_transform(self.movies_df['combined_features'].fillna(''))
+                logging.info("Content matrix created successfully")
                 
         except Exception as e:
-            logger.error(f"Error loading model: {e}")
-            return self.train_model()
-    
-    def get_recommendations(self, user_movie_ids, num_recommendations=12):
-        """Get movie recommendations based on user's movie preferences"""
-        if not self.is_trained:
-            logger.error("Model not trained")
+            logging.error(f"Error loading movie data: {e}")
+            
+    def get_content_recommendations(self, movie_ids, n_recommendations=20):
+        """Get content-based recommendations"""
+        if self.movies_df is None or self.content_matrix is None:
             return []
-        
+            
         try:
-            # Find user movies in our dataset
-            user_indices = []
-            for movie_id in user_movie_ids:
-                indices = np.where(self.movie_ids == movie_id)[0]
-                if len(indices) > 0:
-                    user_indices.append(indices[0])
+            # Find movies in our dataset
+            user_movies = self.movies_df[self.movies_df['id'].isin(movie_ids)]
+            if user_movies.empty:
+                return self.get_popular_movies(n_recommendations)
             
-            if not user_indices:
-                # Return popular movies if no matches found
-                return self.get_popular_recommendations(num_recommendations)
+            # Calculate average feature vector for user's movies
+            user_indices = user_movies.index.tolist()
+            user_profile = self.content_matrix[user_indices].mean(axis=0)
             
-            # Calculate user profile as average of liked movies
-            user_profile = np.mean(self.movie_features[user_indices], axis=0).reshape(1, -1)
+            # Calculate similarity with all movies
+            similarities = cosine_similarity(user_profile, self.content_matrix).flatten()
             
-            # Calculate similarities with all movies
-            similarities = cosine_similarity(user_profile, self.movie_features).flatten()
+            # Get top recommendations (excluding already watched)
+            movie_scores = list(enumerate(similarities))
+            movie_scores = [score for score in movie_scores if score[0] not in user_indices]
+            movie_scores.sort(key=lambda x: x[1], reverse=True)
             
-            # Get movie indices sorted by similarity (excluding user's movies)
-            movie_indices = np.argsort(similarities)[::-1]
-            
-            # Filter out movies user has already seen
             recommendations = []
-            for idx in movie_indices:
-                movie_id = int(self.movie_ids[idx])
-                if movie_id not in user_movie_ids:
-                    recommendations.append(movie_id)
-                    if len(recommendations) >= num_recommendations:
-                        break
+            for idx, score in movie_scores[:n_recommendations]:
+                movie = self.movies_df.iloc[idx]
+                recommendations.append({
+                    'id': int(movie['id']),
+                    'title': movie['title'],
+                    'overview': movie['overview'],
+                    'poster_path': movie['poster_path'],
+                    'vote_average': movie['rating'],
+                    'release_date': movie['release_date'],
+                    'score': float(score)
+                })
             
             return recommendations
             
         except Exception as e:
-            logger.error(f"Error generating recommendations: {e}")
-            return self.get_popular_recommendations(num_recommendations)
+            logging.error(f"Error in content recommendations: {e}")
+            return self.get_popular_movies(n_recommendations)
     
-    def get_popular_recommendations(self, num_recommendations=12):
-        """Get popular movie recommendations as fallback"""
-        if not self.is_trained or self.movies_df is None:
+    def get_popular_movies(self, n_recommendations=20):
+        """Fallback to popular movies"""
+        if self.movies_df is None:
             return []
+            
+        popular = self.movies_df.nlargest(n_recommendations, 'popularity')
+        recommendations = []
         
-        try:
-            # Sort by popularity and rating
-            popular_movies = self.movies_df.nlargest(num_recommendations, ['popularity', 'vote_average'])
-            return popular_movies['id'].tolist()
-            
-        except Exception as e:
-            logger.error(f"Error getting popular recommendations: {e}")
-            return []
-    
-    def get_similar_movies(self, movie_id, num_recommendations=6):
-        """Get movies similar to a specific movie"""
-        if not self.is_trained:
-            return []
-        
-        try:
-            # Find movie index
-            movie_indices = np.where(self.movie_ids == movie_id)[0]
-            if len(movie_indices) == 0:
-                return []
-            
-            movie_idx = movie_indices[0]
-            movie_features = self.movie_features[movie_idx].reshape(1, -1)
-            
-            # Calculate similarities
-            similarities = cosine_similarity(movie_features, self.movie_features).flatten()
-            
-            # Get most similar movies (excluding the movie itself)
-            similar_indices = np.argsort(similarities)[::-1][1:num_recommendations+1]
-            
-            return [int(self.movie_ids[idx]) for idx in similar_indices]
-            
-        except Exception as e:
-            logger.error(f"Error finding similar movies: {e}")
-            return []
-
-# Initialize model
-model = MovieRecommendationModel()
-
-@app.route('/health', methods=['GET'])
-def health_check():
-    return jsonify({
-        'status': 'healthy',
-        'model_trained': model.is_trained,
-        'timestamp': datetime.now().isoformat()
-    })
-
-@app.route('/train', methods=['POST'])
-def train_model():
-    """Endpoint to trigger model training"""
-    try:
-        success = model.train_model()
-        
-        if success:
-            return jsonify({
-                'message': 'Model trained successfully',
-                'num_movies': len(model.movies_df) if model.movies_df is not None else 0
+        for _, movie in popular.iterrows():
+            recommendations.append({
+                'id': int(movie['id']),
+                'title': movie['title'],
+                'overview': movie['overview'],
+                'poster_path': movie['poster_path'],
+                'vote_average': movie['rating'],
+                'release_date': movie['release_date'],
+                'score': movie['popularity'] / 1000  # Normalize score
             })
-        else:
-            return jsonify({'error': 'Model training failed'}), 500
+        
+        return recommendations
+    
+    def get_hybrid_recommendations(self, watch_history, favorites, n_recommendations=20):
+        """Combine content-based and popularity-based recommendations"""
+        try:
+            # Weight favorites higher than watch history
+            all_movies = list(set(watch_history + favorites * 2))  # Favorites get double weight
             
-    except Exception as e:
-        logger.error(f"Training endpoint error: {e}")
-        return jsonify({'error': 'Training failed'}), 500
+            if not all_movies:
+                return self.get_popular_movies(n_recommendations)
+            
+            content_recs = self.get_content_recommendations(all_movies, n_recommendations * 2)
+            
+            # Boost scores for movies similar to favorites
+            if favorites:
+                favorite_boost = {}
+                favorite_recs = self.get_content_recommendations(favorites, n_recommendations)
+                for rec in favorite_recs:
+                    favorite_boost[rec['id']] = rec['score'] * 0.3  # 30% boost
+                
+                for rec in content_recs:
+                    if rec['id'] in favorite_boost:
+                        rec['score'] += favorite_boost[rec['id']]
+            
+            # Re-sort by score and return top N
+            content_recs.sort(key=lambda x: x['score'], reverse=True)
+            return content_recs[:n_recommendations]
+            
+        except Exception as e:
+            logging.error(f"Error in hybrid recommendations: {e}")
+            return self.get_popular_movies(n_recommendations)
 
-@app.route('/recommend', methods=['POST'])
+# Initialize recommender
+recommender = MovieRecommender()
+
+@app.before_first_request
+def initialize():
+    """Initialize the ML service"""
+    logging.info("Initializing ML service...")
+    recommender.load_movie_data()
+    logging.info("ML service initialized successfully")
+
+@app.route('/api/recommend', methods=['POST'])
 def get_recommendations():
-    """Get personalized movie recommendations"""
     try:
         data = request.get_json()
-        user_movie_ids = data.get('user_movies', [])
-        num_recommendations = data.get('num_recommendations', 12)
+        user_id = data.get('user_id')
+        watch_history = data.get('watch_history', [])
+        favorites = data.get('favorites', [])
         
-        if not model.is_trained:
-            # Try to load model first
-            if not model.load_model():
-                return jsonify({'error': 'Model not available'}), 503
+        # Get recommendations
+        recommendations = recommender.get_hybrid_recommendations(watch_history, favorites)
         
-        recommendations = model.get_recommendations(user_movie_ids, num_recommendations)
+        # Store user profile for future improvements
+        user_profiles[user_id] = {
+            'watch_history': watch_history,
+            'favorites': favorites,
+            'last_updated': datetime.now().isoformat()
+        }
         
         return jsonify({
-            'recommendations': recommendations,
-            'count': len(recommendations)
+            'results': recommendations,
+            'total_results': len(recommendations),
+            'user_id': user_id
         })
         
     except Exception as e:
-        logger.error(f"Recommendation error: {e}")
+        logging.error(f"Error generating recommendations: {e}")
         return jsonify({'error': 'Failed to generate recommendations'}), 500
 
-@app.route('/similar/<int:movie_id>', methods=['GET'])
+@app.route('/api/similar/<int:movie_id>', methods=['GET'])
 def get_similar_movies(movie_id):
     """Get movies similar to a specific movie"""
     try:
-        num_recommendations = int(request.args.get('num_recommendations', 6))
-        
-        if not model.is_trained:
-            if not model.load_model():
-                return jsonify({'error': 'Model not available'}), 503
-        
-        similar_movies = model.get_similar_movies(movie_id, num_recommendations)
-        
+        similar_movies = recommender.get_content_recommendations([movie_id], 10)
         return jsonify({
-            'similar_movies': similar_movies,
-            'count': len(similar_movies)
+            'results': similar_movies,
+            'total_results': len(similar_movies)
         })
-        
     except Exception as e:
-        logger.error(f"Similar movies error: {e}")
-        return jsonify({'error': 'Failed to find similar movies'}), 500
+        logging.error(f"Error getting similar movies: {e}")
+        return jsonify({'error': 'Failed to get similar movies'}), 500
 
-@app.route('/popular', methods=['GET'])
+@app.route('/api/popular', methods=['GET'])
 def get_popular():
-    """Get popular movie recommendations"""
+    """Get popular movies"""
     try:
-        num_recommendations = int(request.args.get('num_recommendations', 12))
-        
-        if not model.is_trained:
-            if not model.load_model():
-                return jsonify({'error': 'Model not available'}), 503
-        
-        popular_movies = model.get_popular_recommendations(num_recommendations)
-        
+        popular_movies = recommender.get_popular_movies(20)
         return jsonify({
-            'popular_movies': popular_movies,
-            'count': len(popular_movies)
+            'results': popular_movies,
+            'total_results': len(popular_movies)
         })
-        
     except Exception as e:
-        logger.error(f"Popular movies error: {e}")
+        logging.error(f"Error getting popular movies: {e}")
         return jsonify({'error': 'Failed to get popular movies'}), 500
 
-@app.route('/model-info', methods=['GET'])
-def get_model_info():
-    """Get information about the current model"""
-    try:
-        info = {
-            'is_trained': model.is_trained,
-            'num_movies': len(model.movies_df) if model.movies_df is not None else 0,
-            'model_exists': os.path.exists(MODEL_PATH)
-        }
-        
-        if model.is_trained and model.movies_df is not None:
-            info.update({
-                'avg_rating': float(model.movies_df['vote_average'].mean()),
-                'genres_available': len(set(' '.join(model.movies_df['genres']).split())),
-                'year_range': f"{model.movies_df['release_year'].min()}-{model.movies_df['release_year'].max()}"
-            })
-        
-        return jsonify(info)
-        
-    except Exception as e:
-        logger.error(f"Model info error: {e}")
-        return jsonify({'error': 'Failed to get model info'}), 500
-
-# Error handlers
-@app.errorhandler(404)
-def not_found(error):
-    return jsonify({'error': 'Endpoint not found'}), 404
-
-@app.errorhandler(500)
-def internal_error(error):
-    return jsonify({'error': 'Internal server error'}), 500
+@app.route('/api/health', methods=['GET'])
+def health_check():
+    return jsonify({
+        'status': 'healthy',
+        'movies_loaded': len(recommender.movies_df) if recommender.movies_df is not None else 0,
+        'users_profiled': len(user_profiles)
+    })
 
 if __name__ == '__main__':
-    # Load or train model on startup
-    logger.info("Starting ML service...")
-    model.load_model()
-    
-    port = int(os.getenv('PORT', 5001))
-    app.run(host='0.0.0.0', port=port, debug=False)
+    logging.basicConfig(level=logging.INFO)
+    app.run(debug=True, host='0.0.0.0', port=5001)
