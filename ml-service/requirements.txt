@@ -1,7 +1,7 @@
 Flask
-Flask-CORS
-requests
 numpy
+pandas
 scikit-learn
-python-dotenv
+joblib
+requests
 gunicorn
