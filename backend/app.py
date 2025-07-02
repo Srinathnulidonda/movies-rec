@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 import logging
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'your-secret-key-here')
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'secret-key')
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///movies.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'jwt-secret-string')
@@ -21,10 +21,10 @@ jwt = JWTManager(app)
 CORS(app)
 
 # API Keys
-TMDB_API_KEY = os.getenv('TMDB_API_KEY', 'your-tmdb-api-key')
-JUSTWATCH_API_KEY = os.getenv('JUSTWATCH_API_KEY', 'your-justwatch-api-key')
-TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', 'your-telegram-bot-token')
-TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', 'your-telegram-chat-id')
+TMDB_API_KEY = os.getenv('TMDB_API_KEY', '1cf86635f20bb2aff8e70940e7c3ddd5')
+JUSTWATCH_API_KEY = os.getenv('JUSTWATCH_API_KEY', '7689567537:AAGvDtu94OlLlTiWpfjSfpl_dd_Osi_2W7c')
+TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '7689567537:AAGvDtu94OlLlTiWpfjSfpl_dd_Osi_2W7c')
+TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', '-1002566510721')
 ML_SERVICE_URL = os.getenv('ML_SERVICE_URL', 'http://localhost:5001')
 
 # Database Models
