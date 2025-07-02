@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Movie Recommendation App - Home</title>
+    <title>Wishlist - Movie App</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="/frontend/static/styles.css" rel="stylesheet">
     <script src="https://cdn.tailwindcss.com"></script>
@@ -30,20 +30,8 @@
     </nav>
 
     <div class="container py-8">
-        <h1 class="text-3xl font-bold mb-6 text-center">Find Movies, Anime & Series</h1>
-        <div class="mb-8">
-            <input type="text" id="searchInput" class="form-control mb-3" placeholder="Search for movies, anime, or series...">
-            <select id="contentType" class="form-select mb-3">
-                <option value="multi">All</option>
-                <option value="movie">Movies</option>
-                <option value="tv">Series</option>
-                <option value="anime">Anime</option>
-            </select>
-            <button id="searchBtn" class="btn btn-primary w-100">Search</button>
-        </div>
-
-        <h2 class="text-2xl font-semibold mb-4">Trending Content</h2>
-        <div id="trendingList" class="row"></div>
+        <h1 class="text-3xl font-bold mb-6 text-center">Your Wishlist</h1>
+        <div id="wishlist" class="row"></div>
     </div>
 
     <div class="modal fade" id="loginModal" tabindex="-1">
