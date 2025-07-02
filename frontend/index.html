@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Movie Recommendations</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>body{font-family:Arial,sans-serif;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);min-height:100vh}.card{backdrop-filter:blur(10px);background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:15px;box-shadow:0 8px 32px rgba(31,38,135,0.37)}.btn-primary{background:linear-gradient(45deg,#667eea,#764ba2);transition:all 0.3s ease}.btn-primary:hover{transform:translateY(-2px);box-shadow:0 10px 25px rgba(0,0,0,0.2)}.movie-card{transition:transform 0.3s ease}.movie-card:hover{transform:scale(1.05)}</style>
+</head>
+<body>
+    <nav class="bg-black bg-opacity-20 backdrop-blur-md p-4">
+        <div class="container mx-auto flex justify-between items-center">
+            <h1 class="text-white text-2xl font-bold">🎬 MovieRec</h1>
+            <div class="space-x-4">
+                <button onclick="showPage('home')" class="text-white hover:text-blue-300">Home</button>
+                <button onclick="showPage('recommendations')" class="text-white hover:text-blue-300">Recommendations</button>
+                <button onclick="showPage('wishlist')" class="text-white hover:text-blue-300">Wishlist</button>
+                <button onclick="showPage('favorites')" class="text-white hover:text-blue-300">Favorites</button>
+                <button onclick="showPage('admin')" class="text-white hover:text-blue-300">Admin</button>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mx-auto p-6">
+        <div id="home" class="page">
+            <div class="text-center mb-8">
+                <h2 class="text-white text-4xl font-bold mb-4">Discover Your Next Favorite</h2>
+                <p class="text-white text-lg">Movies • Anime • Series</p>
+            </div>
+            <div class="card p-8 max-w-md mx-auto">
+                <input type="text" id="searchInput" placeholder="Search movies, anime, series..." class="w-full p-3 rounded-lg bg-white bg-opacity-20 text-white placeholder-white placeholder-opacity-70 border border-white border-opacity-30">
+                <button onclick="search()" class="btn-primary w-full mt-4 p-3 text-white rounded-lg">Search</button>
+            </div>
+            <div id="searchResults" class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6 mt-8"></div>
+        </div>
+
+        <div id="recommendations" class="page hidden">
+            <h2 class="text-white text-3xl font-bold text-center mb-8">Your Recommendations</h2>
+            <div id="recommendationsGrid" class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6"></div>
+        </div>
+
+        <div id="wishlist" class="page hidden">
+            <h2 class="text-white text-3xl font-bold text-center mb-8">Your Wishlist</h2>
+            <div id="wishlistGrid" class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6"></div>
+        </div>
+
+        <div id="favorites" class="page hidden">
+            <h2 class="text-white text-3xl font-bold text-center mb-8">Your Favorites</h2>
+            <div id="favoritesGrid" class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6"></div>
+        </div>
+
+        <div id="admin" class="page hidden">
+            <h2 class="text-white text-3xl font-bold text-center mb-8">Admin Panel</h2>
+            <div class="card p-6 max-w-2xl mx-auto">
+                <textarea id="adminPost" placeholder="Post suggestion..." class="w-full p-3 rounded-lg bg-white bg-opacity-20 text-white placeholder-white placeholder-opacity-70 border border-white border-opacity-30 h-32"></textarea>
+                <button onclick="postSuggestion()" class="btn-primary w-full mt-4 p-3 text-white rounded-lg">Post to Telegram</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'https://your-backend.onrender.com/api';
+        let currentUser = null;
+
+        function showPage(page) {
+            document.querySelectorAll('.page').forEach(p => p.classList.add('hidden'));
+            document.getElementById(page).classList.remove('hidden');
+            if (page === 'recommendations') loadRecommendations();
+            if (page === 'wishlist') loadWishlist();
+            if (page === 'favorites') loadFavorites();
+        }
+
+        async function search() {
+            const query = document.getElementById('searchInput').value;
+            if (!query) return;
+            
+            try {
+                const response = await fetch(`${API_BASE}/search?q=${query}`);
+                const data = await response.json();
+                displayResults(data.results, 'searchResults');
+            } catch (error) {
+                console.error('Search error:', error);
+            }
+        }
+
+        async function loadRecommendations() {
+            try {
+                const response = await fetch(`${API_BASE}/recommendations`);
+                const data = await response.json();
+                displayResults(data.recommendations, 'recommendationsGrid');
+            } catch (error) {
+                console.error('Recommendations error:', error);
+            }
+        }
+
+        async function loadWishlist() {
+            try {
+                const response = await fetch(`${API_BASE}/wishlist`);
+                const data = await response.json();
+                displayResults(data.wishlist, 'wishlistGrid');
+            } catch (error) {
+                console.error('Wishlist error:', error);
+            }
+        }
+
+        async function loadFavorites() {
+            try {
+                const response = await fetch(`${API_BASE}/favorites`);
+                const data = await response.json();
+                displayResults(data.favorites, 'favoritesGrid');
+            } catch (error) {
+                console.error('Favorites error:', error);
+            }
+        }
+
+        function displayResults(items, containerId) {
+            const container = document.getElementById(containerId);
+            container.innerHTML = items.map(item => `
+                <div class="movie-card card p-4">
+                    <img src="${item.poster || 'https://via.placeholder.com/300x450'}" alt="${item.title}" class="w-full rounded-lg mb-4">
+                    <h3 class="text-white font-bold text-lg mb-2">${item.title}</h3>
+                    <p class="text-white text-sm opacity-80 mb-4">${item.overview || 'No description available'}</p>
+                    <div class="flex space-x-2">
+                        <button onclick="addToWishlist(${item.id})" class="bg-blue-500 text-white px-3 py-1 rounded text-sm">Wishlist</button>
+                        <button onclick="addToFavorites(${item.id})" class="bg-red-500 text-white px-3 py-1 rounded text-sm">Favorite</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        async function addToWishlist(id) {
+            try {
+                await fetch(`${API_BASE}/wishlist`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ movie_id: id })
+                });
+                alert('Added to wishlist!');
+            } catch (error) {
+                console.error('Wishlist error:', error);
+            }
+        }
+
+        async function addToFavorites(id) {
+            try {
+                await fetch(`${API_BASE}/favorites`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ movie_id: id })
+                });
+                alert('Added to favorites!');
+            } catch (error) {
+                console.error('Favorites error:', error);
+            }
+        }
+
+        async function postSuggestion() {
+            const content = document.getElementById('adminPost').value;
+            if (!content) return;
+            
+            try {
+                await fetch(`${API_BASE}/admin/post`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ content })
+                });
+                alert('Posted to Telegram!');
+                document.getElementById('adminPost').value = '';
+            } catch (error) {
+                console.error('Post error:', error);
+            }
+        }
+    </script>
+</body>
+</html>
