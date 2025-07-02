@@ -3,355 +3,439 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🎬 CineFlow - Movie Recommendations</title>
+    <title>🎬 Movie Recommendations</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
-    <style>body{background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);min-height:100vh;font-family:'Inter',sans-serif}.card{backdrop-filter:blur(10px);background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);transition:all 0.3s ease}.card:hover{transform:translateY(-5px);box-shadow:0 20px 40px rgba(0,0,0,0.1)}.movie-card{position:relative;overflow:hidden;border-radius:15px;cursor:pointer}.movie-card img{transition:transform 0.3s ease}.movie-card:hover img{transform:scale(1.1)}.search-box{background:rgba(255,255,255,0.2);border:none;backdrop-filter:blur(10px)}.btn-primary{background:linear-gradient(45deg,#ff6b6b,#ee5a52);border:none}.btn-primary:hover{background:linear-gradient(45deg,#ee5a52,#ff6b6b)}.navbar{background:rgba(255,255,255,0.1);backdrop-filter:blur(10px)}.loading{display:none}.genre-tag{background:rgba(255,255,255,0.2);backdrop-filter:blur(5px)}</style>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,segoe ui,roboto,sans-serif;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);min-height:100vh}.card{backdrop-filter:blur(10px);background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);transition:all 0.3s ease}.card:hover{transform:translateY(-5px);box-shadow:0 20px 40px rgba(0,0,0,0.3)}.movie-poster{border-radius:12px;transition:transform 0.3s ease}.movie-poster:hover{transform:scale(1.05)}.btn-gradient{background:linear-gradient(45deg,#667eea,#764ba2);border:none;transition:all 0.3s ease}.btn-gradient:hover{transform:translateY(-2px);box-shadow:0 10px 20px rgba(0,0,0,0.3)}.search-input{background:rgba(255,255,255,0.9);backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.3)}.modal{backdrop-filter:blur(10px);background:rgba(0,0,0,0.8)}.hidden{display:none!important}.spinner{border:2px solid rgba(255,255,255,0.3);border-top:2px solid white;border-radius:50%;width:20px;height:20px;animation:spin 1s linear infinite}@keyframes spin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}</style>
 </head>
-<body>
-    <nav class="navbar navbar-expand-lg navbar-dark sticky-top">
-        <div class="container">
-            <a class="navbar-brand fw-bold fs-3" href="#">🎬 CineFlow</a>
-            <div class="navbar-nav ms-auto">
-                <a class="nav-link" href="#" onclick="showPage('home')">Home</a>
-                <a class="nav-link" href="#" onclick="showPage('recommendations')">Recommendations</a>
-                <a class="nav-link" href="#" onclick="showPage('wishlist')">Wishlist</a>
-                <a class="nav-link" href="#" onclick="showPage('favorites')">Favorites</a>
-                <a class="nav-link" href="#" onclick="showPage('admin')">Admin</a>
-                <button class="btn btn-outline-light btn-sm ms-2" onclick="toggleAuth()">Login</button>
+<body class="min-h-screen">
+    <!-- Navigation -->
+    <nav class="bg-white bg-opacity-10 backdrop-filter backdrop-blur-lg border-b border-white border-opacity-20">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between items-center h-16">
+                <div class="flex items-center">
+                    <h1 class="text-2xl font-bold text-white">🎬 MovieFlix</h1>
+                </div>
+                <div class="flex items-center space-x-6">
+                    <div id="user-menu" class="hidden">
+                        <a href="recommendations.html" class="text-white hover:text-gray-200">For You</a>
+                        <a href="wishlist.html" class="text-white hover:text-gray-200 ml-4">Wishlist</a>
+                        <a href="favorites.html" class="text-white hover:text-gray-200 ml-4">Favorites</a>
+                        <button onclick="logout()" class="text-white hover:text-gray-200 ml-4">Logout</button>
+                    </div>
+                    <div id="auth-buttons">
+                        <button onclick="showLoginModal()" class="text-white hover:text-gray-200 mr-4">Login</button>
+                        <button onclick="showRegisterModal()" class="btn-gradient text-white px-4 py-2 rounded-lg">Sign Up</button>
+                    </div>
+                </div>
             </div>
         </div>
     </nav>
 
-    <div id="home-page" class="container mt-4">
-        <div class="text-center mb-5">
-            <h1 class="display-4 fw-bold text-white mb-3">Discover Your Next Favorite</h1>
-            <p class="lead text-white-50">Movies, Anime & Series personalized just for you</p>
-        </div>
-
-        <div class="row justify-content-center mb-5">
-            <div class="col-md-8">
-                <div class="input-group input-group-lg">
-                    <input type="text" id="searchInput" class="form-control search-box text-white" placeholder="Search movies, anime, or series..." style="color: white !important;">
-                    <button class="btn btn-primary" onclick="searchContent()">
-                        <i class="fas fa-search"></i> Search
-                    </button>
-                </div>
+    <!-- Hero Section -->
+    <div class="max-w-7xl mx-auto px-4 py-12">
+        <div class="text-center mb-12">
+            <h2 class="text-5xl font-bold text-white mb-4">Discover Your Next Favorite</h2>
+            <p class="text-xl text-gray-200 mb-8">AI-powered movie and series recommendations just for you</p>
+            
+            <!-- Search Bar -->
+            <div class="max-w-2xl mx-auto relative">
+                <input type="text" id="searchInput" placeholder="Search movies, series, anime..." 
+                       class="search-input w-full px-6 py-4 text-lg rounded-full focus:outline-none focus:ring-2 focus:ring-white focus:ring-opacity-50">
+                <button onclick="searchMovies()" class="absolute right-2 top-2 btn-gradient p-3 rounded-full text-white">
+                    <i class="fas fa-search"></i>
+                </button>
             </div>
         </div>
 
-        <div class="row mb-4">
-            <div class="col-12">
-                <div class="d-flex flex-wrap gap-2 justify-content-center">
-                    <button class="btn btn-sm genre-tag text-white" onclick="filterByGenre('action')">Action</button>
-                    <button class="btn btn-sm genre-tag text-white" onclick="filterByGenre('comedy')">Comedy</button>
-                    <button class="btn btn-sm genre-tag text-white" onclick="filterByGenre('drama')">Drama</button>
-                    <button class="btn btn-sm genre-tag text-white" onclick="filterByGenre('horror')">Horror</button>
-                    <button class="btn btn-sm genre-tag text-white" onclick="filterByGenre('anime')">Anime</button>
-                    <button class="btn btn-sm genre-tag text-white" onclick="filterByGenre('series')">Series</button>
-                </div>
-            </div>
+        <!-- Featured Movies -->
+        <div id="featured-section" class="mb-12">
+            <h3 class="text-3xl font-bold text-white mb-6">✨ Featured Picks</h3>
+            <div id="featured-movies" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-6"></div>
         </div>
 
-        <div class="loading text-center">
-            <div class="spinner-border text-light" role="status">
-                <span class="visually-hidden">Loading...</span>
-            </div>
+        <!-- Trending Movies -->
+        <div id="trending-section">
+            <h3 class="text-3xl font-bold text-white mb-6">🔥 Trending Now</h3>
+            <div id="trending-movies" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-6"></div>
         </div>
 
-        <div id="content-grid" class="row g-4">
-            <!-- Content will be loaded here -->
+        <!-- Search Results -->
+        <div id="search-results" class="hidden">
+            <h3 class="text-3xl font-bold text-white mb-6">Search Results</h3>
+            <div id="search-movies" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-6"></div>
         </div>
     </div>
 
-    <div id="other-pages" style="display: none;">
-        <div class="container mt-4">
-            <div id="page-content" class="text-white">
-                <!-- Dynamic content -->
-            </div>
+    <!-- Login Modal -->
+    <div id="login-modal" class="modal fixed inset-0 flex items-center justify-center hidden z-50">
+        <div class="card bg-white rounded-lg p-8 max-w-md w-full mx-4">
+            <h3 class="text-2xl font-bold mb-6 text-center">Login</h3>
+            <form id="login-form">
+                <input type="text" id="login-username" placeholder="Username" required
+                       class="w-full px-4 py-3 border rounded-lg mb-4 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <input type="password" id="login-password" placeholder="Password" required
+                       class="w-full px-4 py-3 border rounded-lg mb-6 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <button type="submit" class="btn-gradient w-full py-3 text-white rounded-lg font-semibold">
+                    <span id="login-spinner" class="spinner hidden inline-block mr-2"></span>
+                    Login
+                </button>
+            </form>
+            <button onclick="hideModals()" class="absolute top-4 right-4 text-gray-500 hover:text-gray-700">
+                <i class="fas fa-times"></i>
+            </button>
         </div>
     </div>
 
-    <!-- Movie Detail Modal -->
-    <div class="modal fade" id="movieModal" tabindex="-1">
-        <div class="modal-dialog modal-lg">
-            <div class="modal-content" style="background: rgba(0,0,0,0.9); color: white;">
-                <div class="modal-header border-0">
-                    <h5 class="modal-title" id="movieTitle"></h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body" id="movieDetails">
-                    <!-- Movie details will be loaded here -->
-                </div>
-            </div>
+    <!-- Register Modal -->
+    <div id="register-modal" class="modal fixed inset-0 flex items-center justify-center hidden z-50">
+        <div class="card bg-white rounded-lg p-8 max-w-md w-full mx-4">
+            <h3 class="text-2xl font-bold mb-6 text-center">Sign Up</h3>
+            <form id="register-form">
+                <input type="text" id="register-username" placeholder="Username" required
+                       class="w-full px-4 py-3 border rounded-lg mb-4 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <input type="email" id="register-email" placeholder="Email" required
+                       class="w-full px-4 py-3 border rounded-lg mb-4 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <input type="password" id="register-password" placeholder="Password" required
+                       class="w-full px-4 py-3 border rounded-lg mb-6 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <button type="submit" class="btn-gradient w-full py-3 text-white rounded-lg font-semibold">
+                    <span id="register-spinner" class="spinner hidden inline-block mr-2"></span>
+                    Sign Up
+                </button>
+            </form>
+            <button onclick="hideModals()" class="absolute top-4 right-4 text-gray-500 hover:text-gray-700">
+                <i class="fas fa-times"></i>
+            </button>
         </div>
     </div>
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/js/bootstrap.bundle.min.js"></script>
+    <!-- Movie Details Modal -->
+    <div id="movie-modal" class="modal fixed inset-0 flex items-center justify-center hidden z-50">
+        <div class="bg-white rounded-lg max-w-4xl max-h-screen overflow-y-auto mx-4 w-full">
+            <div id="movie-details" class="p-6">
+                <!-- Movie details will be loaded here -->
+            </div>
+            <button onclick="hideMovieModal()" class="absolute top-4 right-4 text-white bg-black bg-opacity-50 rounded-full p-2 hover:bg-opacity-70">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+    </div>
+
     <script>
-        const API_BASE = 'https://movies-rec-1hcv.onrender.com';
+        const API_BASE = 'https://movies-rec-1hcv.onrender.com/api'; // Replace with your Render backend URL
         let currentUser = null;
-        let currentPage = 'home';
 
         // Initialize app
         document.addEventListener('DOMContentLoaded', function() {
-            loadFeaturedContent();
+            checkAuth();
+            loadFeaturedMovies();
+            loadTrendingMovies();
+            
+            // Search on Enter key
+            document.getElementById('searchInput').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') searchMovies();
+            });
         });
 
-        // API calls
-        async function apiCall(endpoint, options = {}) {
+        function checkAuth() {
+            const token = localStorage.getItem('token');
+            if (token) {
+                currentUser = {token: token, username: localStorage.getItem('username')};
+                document.getElementById('auth-buttons').classList.add('hidden');
+                document.getElementById('user-menu').classList.remove('hidden');
+            }
+        }
+
+        async function loadFeaturedMovies() {
             try {
-                const response = await fetch(`${API_BASE}${endpoint}`, {
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': currentUser ? `Bearer ${currentUser.token}` : '',
-                        ...options.headers
-                    },
-                    ...options
-                });
-                return await response.json();
+                const response = await fetch(`${API_BASE}/featured`);
+                const data = await response.json();
+                displayMovies(data, 'featured-movies');
             } catch (error) {
-                console.error('API Error:', error);
-                return { error: 'Network error' };
+                console.error('Error loading featured movies:', error);
             }
         }
 
-        // Load featured content
-        async function loadFeaturedContent() {
-            document.querySelector('.loading').style.display = 'block';
-            const data = await apiCall('/api/featured');
-            document.querySelector('.loading').style.display = 'none';
-            
-            if (data.results) {
-                displayContent(data.results);
+        async function loadTrendingMovies() {
+            try {
+                const response = await fetch(`${API_BASE}/trending`);
+                const data = await response.json();
+                displayMovies(data.results || data, 'trending-movies');
+            } catch (error) {
+                console.error('Error loading trending movies:', error);
             }
         }
 
-        // Search functionality
-        async function searchContent() {
-            const query = document.getElementById('searchInput').value;
+        async function searchMovies() {
+            const query = document.getElementById('searchInput').value.trim();
             if (!query) return;
-            
-            document.querySelector('.loading').style.display = 'block';
-            const data = await apiCall(`/api/search?q=${encodeURIComponent(query)}`);
-            document.querySelector('.loading').style.display = 'none';
-            
-            if (data.results) {
-                displayContent(data.results);
+
+            try {
+                const response = await fetch(`${API_BASE}/search?q=${encodeURIComponent(query)}`);
+                const data = await response.json();
+                displayMovies(data.results || data, 'search-movies');
+                
+                document.getElementById('search-results').classList.remove('hidden');
+                document.getElementById('featured-section').classList.add('hidden');
+                document.getElementById('trending-section').classList.add('hidden');
+            } catch (error) {
+                console.error('Error searching movies:', error);
             }
         }
 
-        // Filter by genre
-        async function filterByGenre(genre) {
-            document.querySelector('.loading').style.display = 'block';
-            const data = await apiCall(`/api/filter?genre=${genre}`);
-            document.querySelector('.loading').style.display = 'none';
-            
-            if (data.results) {
-                displayContent(data.results);
+        function displayMovies(movies, containerId) {
+            const container = document.getElementById(containerId);
+            if (!movies || movies.length === 0) {
+                container.innerHTML = '<p class="text-white text-center col-span-full">No movies found</p>';
+                return;
             }
-        }
 
-        // Display content
-        function displayContent(items) {
-            const grid = document.getElementById('content-grid');
-            grid.innerHTML = items.map(item => `
-                <div class="col-md-3 col-sm-6">
-                    <div class="card movie-card h-100" onclick="showMovieDetails(${item.id}, '${item.type}')">
-                        <img src="${item.poster}" class="card-img-top" alt="${item.title}" style="height: 400px; object-fit: cover;">
-                        <div class="card-body">
-                            <h6 class="card-title text-white">${item.title}</h6>
-                            <p class="card-text text-white-50 small">${item.year} • ${item.rating}/10</p>
-                            <div class="d-flex justify-content-between">
-                                <button class="btn btn-sm btn-outline-light" onclick="event.stopPropagation(); addToWishlist(${item.id})">
-                                    <i class="fas fa-heart"></i>
-                                </button>
-                                <button class="btn btn-sm btn-outline-light" onclick="event.stopPropagation(); addToFavorites(${item.id})">
-                                    <i class="fas fa-star"></i>
-                                </button>
-                            </div>
+            container.innerHTML = movies.map(movie => `
+                <div class="card rounded-lg overflow-hidden cursor-pointer" onclick="showMovieDetails(${movie.id}, '${movie.media_type || 'movie'}')">
+                    <img src="https://image.tmdb.org/t/p/w300${movie.poster_path}" 
+                         alt="${movie.title || movie.name}" 
+                         class="movie-poster w-full h-64 object-cover"
+                         onerror="this.src='https://via.placeholder.com/300x450?text=No+Image'">
+                    <div class="p-4">
+                        <h4 class="text-white font-semibold text-sm mb-2 truncate">${movie.title || movie.name}</h4>
+                        <div class="flex items-center justify-between text-xs text-gray-300">
+                            <span>⭐ ${(movie.vote_average || 0).toFixed(1)}</span>
+                            <span>${(movie.release_date || movie.first_air_date || '').split('-')[0] || 'N/A'}</span>
                         </div>
                     </div>
                 </div>
             `).join('');
         }
 
-        // Show movie details
-        async function showMovieDetails(id, type) {
-            const data = await apiCall(`/api/details/${id}?type=${type}`);
-            if (data.error) return;
-            
-            document.getElementById('movieTitle').textContent = data.title;
-            document.getElementById('movieDetails').innerHTML = `
-                <div class="row">
-                    <div class="col-md-4">
-                        <img src="${data.poster}" class="img-fluid rounded" alt="${data.title}">
-                    </div>
-                    <div class="col-md-8">
-                        <h6>Overview</h6>
-                        <p>${data.overview}</p>
-                        <p><strong>Genre:</strong> ${data.genres.join(', ')}</p>
-                        <p><strong>Release Date:</strong> ${data.release_date}</p>
-                        <p><strong>Rating:</strong> ${data.rating}/10</p>
-                        <p><strong>Runtime:</strong> ${data.runtime} min</p>
-                        
-                        <h6 class="mt-3">Watch On</h6>
-                        <div class="d-flex flex-wrap gap-2">
-                            ${data.watch_providers.map(provider => `
-                                <a href="${provider.link}" target="_blank" class="btn btn-sm btn-primary">
-                                    ${provider.name}
-                                </a>
-                            `).join('')}
+        async function showMovieDetails(movieId, mediaType = 'movie') {
+            try {
+                const response = await fetch(`${API_BASE}/details/${movieId}?type=${mediaType}`);
+                const movie = await response.json();
+                
+                const genres = movie.genres ? movie.genres.map(g => g.name).join(', ') : 'N/A';
+                const runtime = movie.runtime ? `${movie.runtime} min` : (movie.episode_run_time ? `${movie.episode_run_time[0]} min/ep` : 'N/A');
+                const watchProviders = movie['watch/providers']?.results?.US?.flatrate || [];
+                const trailerKey = movie.videos?.results?.find(v => v.type === 'Trailer')?.key;
+
+                document.getElementById('movie-details').innerHTML = `
+                    <div class="flex flex-col md:flex-row gap-6">
+                        <img src="https://image.tmdb.org/t/p/w400${movie.poster_path}" 
+                             alt="${movie.title || movie.name}"
+                             class="w-full md:w-80 rounded-lg"
+                             onerror="this.src='https://via.placeholder.com/400x600?text=No+Image'">
+                        <div class="flex-1">
+                            <h2 class="text-3xl font-bold mb-4">${movie.title || movie.name}</h2>
+                            <div class="grid grid-cols-2 gap-4 mb-4 text-sm">
+                                <div><strong>Rating:</strong> ⭐ ${movie.vote_average?.toFixed(1)}/10</div>
+                                <div><strong>Duration:</strong> ${runtime}</div>
+                                <div><strong>Release:</strong> ${movie.release_date || movie.first_air_date || 'N/A'}</div>
+                                <div><strong>Genres:</strong> ${genres}</div>
+                            </div>
+                            <p class="text-gray-700 mb-6">${movie.overview || 'No description available.'}</p>
+                            
+                            ${watchProviders.length > 0 ? `
+                                <div class="mb-6">
+                                    <h3 class="font-semibold mb-2">🎬 Watch On:</h3>
+                                    <div class="flex flex-wrap gap-2">
+                                        ${watchProviders.map(provider => `
+                                            <span class="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm">
+                                                ${provider.provider_name}
+                                            </span>
+                                        `).join('')}
+                                    </div>
+                                </div>
+                            ` : ''}
+                            
+                            ${trailerKey ? `
+                                <div class="mb-6">
+                                    <iframe width="100%" height="300" 
+                                            src="https://www.youtube.com/embed/${trailerKey}" 
+                                            frameborder="0" allowfullscreen class="rounded-lg">
+                                    </iframe>
+                                </div>
+                            ` : ''}
+                            
+                            <div class="flex gap-4">
+                                ${currentUser ? `
+                                    <button onclick="addToWishlist(${movie.id}, '${(movie.title || movie.name).replace(/'/g, "\\'")}')" 
+                                            class="btn-gradient px-6 py-2 rounded-lg text-white">
+                                        <i class="fas fa-bookmark mr-2"></i>Wishlist
+                                    </button>
+                                    <button onclick="addToFavorites(${movie.id}, '${(movie.title || movie.name).replace(/'/g, "\\'")}')" 
+                                            class="bg-red-500 hover:bg-red-600 px-6 py-2 rounded-lg text-white">
+                                        <i class="fas fa-heart mr-2"></i>Favorite
+                                    </button>
+                                    <button onclick="addToWatchHistory(${movie.id}, '${(movie.title || movie.name).replace(/'/g, "\\'")}')" 
+                                            class="bg-green-500 hover:bg-green-600 px-6 py-2 rounded-lg text-white">
+                                        <i class="fas fa-check mr-2"></i>Watched
+                                    </button>
+                                ` : ''}
+                            </div>
                         </div>
-                        
-                        <div class="mt-3">
-                            <button class="btn btn-success me-2" onclick="addToWishlist(${id})">Add to Wishlist</button>
-                            <button class="btn btn-warning" onclick="addToFavorites(${id})">Add to Favorites</button>
-                        </div>
                     </div>
-                </div>
-            `;
-            
-            new bootstrap.Modal(document.getElementById('movieModal')).show();
+                `;
+                
+                document.getElementById('movie-modal').classList.remove('hidden');
+            } catch (error) {
+                console.error('Error loading movie details:', error);
+            }
         }
+
+        // Authentication functions
+        document.getElementById('login-form').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const spinner = document.getElementById('login-spinner');
+            spinner.classList.remove('hidden');
+            
+            try {
+                const response = await fetch(`${API_BASE}/login`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        username: document.getElementById('login-username').value,
+                        password: document.getElementById('login-password').value
+                    })
+                });
+                
+                const data = await response.json();
+                if (response.ok) {
+                    localStorage.setItem('token', data.token);
+                    localStorage.setItem('username', data.username);
+                    location.reload();
+                } else {
+                    alert(data.error || 'Login failed');
+                }
+            } catch (error) {
+                alert('Network error. Please try again.');
+            } finally {
+                spinner.classList.add('hidden');
+            }
+        });
+
+        document.getElementById('register-form').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const spinner = document.getElementById('register-spinner');
+            spinner.classList.remove('hidden');
+            
+            try {
+                const response = await fetch(`${API_BASE}/register`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        username: document.getElementById('register-username').value,
+                        email: document.getElementById('register-email').value,
+                        password: document.getElementById('register-password').value
+                    })
+                });
+                
+                const data = await response.json();
+                if (response.ok) {
+                    localStorage.setItem('token', data.token);
+                    localStorage.setItem('username', data.username);
+                    location.reload();
+                } else {
+                    alert(data.error || 'Registration failed');
+                }
+            } catch (error) {
+                alert('Network error. Please try again.');
+            } finally {
+                spinner.classList.add('hidden');
+            }
+        });
 
         // User actions
-        async function addToWishlist(id) {
-            if (!currentUser) {
-                alert('Please login first');
-                return;
-            }
-            await apiCall('/api/wishlist', {
-                method: 'POST',
-                body: JSON.stringify({ movie_id: id })
-            });
-        }
-
-        async function addToFavorites(id) {
-            if (!currentUser) {
-                alert('Please login first');
-                return;
-            }
-            await apiCall('/api/favorites', {
-                method: 'POST',
-                body: JSON.stringify({ movie_id: id })
-            });
-        }
-
-        // Navigation
-        function showPage(page) {
-            currentPage = page;
-            if (page === 'home') {
-                document.getElementById('home-page').style.display = 'block';
-                document.getElementById('other-pages').style.display = 'none';
-            } else {
-                document.getElementById('home-page').style.display = 'none';
-                document.getElementById('other-pages').style.display = 'block';
-                loadPageContent(page);
-            }
-        }
-
-        async function loadPageContent(page) {
-            const content = document.getElementById('page-content');
+        async function addToWishlist(movieId, title) {
+            if (!currentUser) return showLoginModal();
             
-            switch(page) {
-                case 'recommendations':
-                    const recs = await apiCall('/api/recommendations');
-                    content.innerHTML = `
-                        <h2>Personalized Recommendations</h2>
-                        <div class="row g-4">
-                            ${recs.results ? recs.results.map(item => `
-                                <div class="col-md-3">
-                                    <div class="card movie-card" onclick="showMovieDetails(${item.id}, '${item.type}')">
-                                        <img src="${item.poster}" class="card-img-top" alt="${item.title}">
-                                        <div class="card-body">
-                                            <h6 class="card-title">${item.title}</h6>
-                                            <p class="card-text small">${item.year} • ${item.rating}/10</p>
-                                        </div>
-                                    </div>
-                                </div>
-                            `).join('') : '<p>Please login to see recommendations</p>'}
-                        </div>
-                    `;
-                    break;
-                case 'wishlist':
-                    const wishlist = await apiCall('/api/wishlist');
-                    content.innerHTML = `<h2>My Wishlist</h2><div class="row g-4">${wishlist.results ? wishlist.results.map(item => `<div class="col-md-3"><div class="card movie-card"><img src="${item.poster}" class="card-img-top" alt="${item.title}"><div class="card-body"><h6 class="card-title">${item.title}</h6></div></div></div>`).join('') : '<p>Your wishlist is empty</p>'}</div>`;
-                    break;
-                case 'favorites':
-                    const favorites = await apiCall('/api/favorites');
-                    content.innerHTML = `<h2>My Favorites</h2><div class="row g-4">${favorites.results ? favorites.results.map(item => `<div class="col-md-3"><div class="card movie-card"><img src="${item.poster}" class="card-img-top" alt="${item.title}"><div class="card-body"><h6 class="card-title">${item.title}</h6></div></div></div>`).join('') : '<p>No favorites yet</p>'}</div>`;
-                    break;
-                case 'admin':
-                    content.innerHTML = `
-                        <h2>Admin Panel</h2>
-                        <div class="row">
-                            <div class="col-md-6">
-                                <div class="card">
-                                    <div class="card-body">
-                                        <h5>Post Featured Content</h5>
-                                        <form onsubmit="postFeatured(event)">
-                                            <input type="text" class="form-control mb-2" placeholder="Movie/Series ID" id="featuredId">
-                                            <textarea class="form-control mb-2" placeholder="Description" id="featuredDesc"></textarea>
-                                            <button type="submit" class="btn btn-primary">Post to Website</button>
-                                        </form>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="col-md-6">
-                                <div class="card">
-                                    <div class="card-body">
-                                        <h5>Post to Telegram</h5>
-                                        <form onsubmit="postToTelegram(event)">
-                                            <textarea class="form-control mb-2" placeholder="Message" id="telegramMsg"></textarea>
-                                            <button type="submit" class="btn btn-success">Send to Telegram</button>
-                                        </form>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    `;
-                    break;
+            try {
+                const response = await fetch(`${API_BASE}/wishlist`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${currentUser.token}`
+                    },
+                    body: JSON.stringify({movie_id: movieId, title: title, poster_path: ''})
+                });
+                
+                if (response.ok) {
+                    alert('Added to wishlist!');
+                } else {
+                    alert('Failed to add to wishlist');
+                }
+            } catch (error) {
+                alert('Network error');
             }
         }
 
-        // Admin functions
-        async function postFeatured(event) {
-            event.preventDefault();
-            const id = document.getElementById('featuredId').value;
-            const desc = document.getElementById('featuredDesc').value;
-            await apiCall('/api/admin/featured', {
-                method: 'POST',
-                body: JSON.stringify({ movie_id: id, description: desc })
-            });
-        }
-
-        async function postToTelegram(event) {
-            event.preventDefault();
-            const msg = document.getElementById('telegramMsg').value;
-            await apiCall('/api/admin/telegram', {
-                method: 'POST',
-                body: JSON.stringify({ message: msg })
-            });
-        }
-
-        // Auth
-        function toggleAuth() {
-            if (currentUser) {
-                currentUser = null;
-                document.querySelector('.navbar button').textContent = 'Login';
-            } else {
-                // Simple mock login
-                currentUser = { token: 'mock-token', id: 1 };
-                document.querySelector('.navbar button').textContent = 'Logout';
+        async function addToFavorites(movieId, title) {
+            if (!currentUser) return showLoginModal();
+            
+            try {
+                const response = await fetch(`${API_BASE}/favorites`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${currentUser.token}`
+                    },
+                    body: JSON.stringify({movie_id: movieId, title: title, poster_path: ''})
+                });
+                
+                if (response.ok) {
+                    alert('Added to favorites!');
+                } else {
+                    alert('Failed to add to favorites');
+                }
+            } catch (error) {
+                alert('Network error');
             }
         }
 
-        // Search on Enter
-        document.getElementById('searchInput').addEventListener('keypress', function(e) {
-            if (e.key === 'Enter') {
-                searchContent();
+        async function addToWatchHistory(movieId, title) {
+            if (!currentUser) return showLoginModal();
+            
+            try {
+                await fetch(`${API_BASE}/watch-history`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${currentUser.token}`
+                    },
+                    body: JSON.stringify({movie_id: movieId, title: title, poster_path: ''})
+                });
+            } catch (error) {
+                console.error('Failed to add to watch history');
+            }
+        }
+
+        // Modal functions
+        function showLoginModal() {
+            document.getElementById('login-modal').classList.remove('hidden');
+        }
+
+        function showRegisterModal() {
+            document.getElementById('register-modal').classList.remove('hidden');
+        }
+
+        function hideModals() {
+            document.getElementById('login-modal').classList.add('hidden');
+            document.getElementById('register-modal').classList.add('hidden');
+        }
+
+        function hideMovieModal() {
+            document.getElementById('movie-modal').classList.add('hidden');
+        }
+
+        function logout() {
+            localStorage.removeItem('token');
+            localStorage.removeItem('username');
+            location.reload();
+        }
+
+        // Close modals on outside click
+        document.addEventListener('click', function(e) {
+            if (e.target.classList.contains('modal')) {
+                hideModals();
+                hideMovieModal();
             }
         });
     </script>
