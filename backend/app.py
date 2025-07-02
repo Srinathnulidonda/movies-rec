@@ -21,9 +21,9 @@ jwt = JWTManager(app)
 CORS(app, origins=["*"])
 
 # API Keys
-TMDB_API_KEY = os.getenv('TMDB_API_KEY', 'your-tmdb-api-key')
+TMDB_API_KEY = os.getenv('TMDB_API_KEY', '1cf86635f20bb2aff8e70940e7c3ddd5')
 JUSTWATCH_API_KEY = os.getenv('JUSTWATCH_API_KEY', 'your-justwatch-api-key')
-ML_SERVICE_URL = os.getenv('ML_SERVICE_URL', 'https://your-ml-service.render.com')
+ML_SERVICE_URL = os.getenv('ML_SERVICE_URL', 'https://movies-rec-ml-service.onrender.com')
 
 # Database setup
 def init_db():
