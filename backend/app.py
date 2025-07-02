@@ -9,9 +9,9 @@ app = Flask(__name__)
 CORS(app)
 
 # Configuration
-TMDB_API_KEY = os.getenv('TMDB_API_KEY', 'your_tmdb_api_key')
-TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', 'your_telegram_token')
-TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', 'your_chat_id')
+TMDB_API_KEY = os.getenv('TMDB_API_KEY', '1cf86635f20bb2aff8e70940e7c3ddd5')
+TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '7689567537:AAGvDtu94OlLlTiWpfjSfpl_dd_Osi_2W7c')
+TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', '-1002566510721')
 ML_SERVICE_URL = os.getenv('ML_SERVICE_URL', 'http://127.0.0.1:5001/')
 
 # Database setup
