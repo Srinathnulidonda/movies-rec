@@ -19,7 +19,7 @@ app = Flask(__name__)
 CORS(app, origins=["*"])
 
 # Configuration
-TMDB_API_KEY = os.getenv('TMDB_API_KEY', 'your-tmdb-api-key')
+TMDB_API_KEY = os.getenv('TMDB_API_KEY', '1cf86635f20bb2aff8e70940e7c3ddd5')
 MODEL_PATH = 'recommendation_model.pkl'
 
 class MovieRecommendationModel:
