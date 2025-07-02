@@ -1,648 +1,636 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+from flask_sqlalchemy import SQLAlchemy
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
 from werkzeug.security import generate_password_hash, check_password_hash
-import os
 import requests
-import sqlite3
+import os
 from datetime import datetime, timedelta
 import logging
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
 app = Flask(__name__)
-app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'your-secret-key-change-this')
-app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=24)
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'your-secret-key-here')
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///movies.db')
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'jwt-secret-string')
+app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(days=30)
 
 # Initialize extensions
+db = SQLAlchemy(app)
 jwt = JWTManager(app)
-CORS(app, origins=["*"])
+CORS(app)
 
 # API Keys
-TMDB_API_KEY = os.getenv('TMDB_API_KEY', '1cf86635f20bb2aff8e70940e7c3ddd5')
+TMDB_API_KEY = os.getenv('TMDB_API_KEY', 'your-tmdb-api-key')
 JUSTWATCH_API_KEY = os.getenv('JUSTWATCH_API_KEY', 'your-justwatch-api-key')
-ML_SERVICE_URL = os.getenv('ML_SERVICE_URL', 'https://movies-rec-ml-service.onrender.com')
+TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', 'your-telegram-bot-token')
+TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', 'your-telegram-chat-id')
+ML_SERVICE_URL = os.getenv('ML_SERVICE_URL', 'http://localhost:5001')
 
-# Database setup
-def init_db():
-    conn = sqlite3.connect('cinema.db')
-    cursor = conn.cursor()
-    
-    # Users table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            email TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    
-    # Wishlist table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS wishlist (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            movie_id INTEGER NOT NULL,
-            movie_title TEXT NOT NULL,
-            movie_poster TEXT,
-            added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (user_id) REFERENCES users (id),
-            UNIQUE(user_id, movie_id)
-        )
-    ''')
-    
-    # Favorites table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS favorites (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            movie_id INTEGER NOT NULL,
-            movie_title TEXT NOT NULL,
-            movie_poster TEXT,
-            added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (user_id) REFERENCES users (id),
-            UNIQUE(user_id, movie_id)
-        )
-    ''')
-    
-    # Watch history table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS watch_history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            movie_id INTEGER NOT NULL,
-            movie_title TEXT NOT NULL,
-            watched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (user_id) REFERENCES users (id)
-        )
-    ''')
-    
-    # Admin suggestions table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS admin_suggestions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            movie_id INTEGER NOT NULL,
-            title TEXT NOT NULL,
-            description TEXT,
-            poster_url TEXT,
-            is_featured BOOLEAN DEFAULT 0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    
-    conn.commit()
-    conn.close()
+# Database Models
+class User(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(80), unique=True, nullable=False)
+    email = db.Column(db.String(120), unique=True, nullable=False)
+    password_hash = db.Column(db.String(120), nullable=False)
+    is_admin = db.Column(db.Boolean, default=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-# Initialize database
-init_db()
+class Movie(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    tmdb_id = db.Column(db.Integer, unique=True, nullable=False)
+    title = db.Column(db.String(200), nullable=False)
+    overview = db.Column(db.Text)
+    poster_path = db.Column(db.String(200))
+    release_date = db.Column(db.String(20))
+    rating = db.Column(db.Float)
+    genres = db.Column(db.String(500))
+    runtime = db.Column(db.Integer)
+    content_type = db.Column(db.String(20))  # movie, tv, anime
+    watch_providers = db.Column(db.Text)  # JSON string
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-# Helper functions
-def get_db_connection():
-    conn = sqlite3.connect('cinema.db')
-    conn.row_factory = sqlite3.Row
-    return conn
+class Wishlist(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    movie_id = db.Column(db.Integer, db.ForeignKey('movie.id'), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-def tmdb_request(endpoint, params=None):
-    """Make request to TMDB API"""
-    if params is None:
-        params = {}
-    params['api_key'] = TMDB_API_KEY
+class Favorites(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    movie_id = db.Column(db.Integer, db.ForeignKey('movie.id'), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+class WatchHistory(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    movie_id = db.Column(db.Integer, db.ForeignKey('movie.id'), nullable=False)
+    watched_at = db.Column(db.DateTime, default=datetime.utcnow)
+    rating = db.Column(db.Integer)  # 1-10
+
+class FeaturedContent(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    movie_id = db.Column(db.Integer, db.ForeignKey('movie.id'), nullable=False)
+    description = db.Column(db.Text)
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+# Helper Functions
+def get_movie_from_tmdb(tmdb_id, content_type='movie'):
+    """Fetch movie/TV show details from TMDb API"""
+    endpoint = 'movie' if content_type == 'movie' else 'tv'
+    url = f"https://api.themoviedb.org/3/{endpoint}/{tmdb_id}"
+    params = {'api_key': TMDB_API_KEY, 'append_to_response': 'watch/providers'}
     
     try:
-        response = requests.get(f'https://api.themoviedb.org/3{endpoint}', params=params)
-        response.raise_for_status()
-        return response.json()
-    except requests.RequestException as e:
-        logger.error(f"TMDB API error: {e}")
-        return None
-
-def get_watch_providers(movie_id):
-    """Get streaming providers for a movie"""
-    try:
-        # Using TMDB watch providers
-        providers = tmdb_request(f'/movie/{movie_id}/watch/providers')
-        if providers and 'results' in providers:
-            us_providers = providers['results'].get('US', {})
-            watch_providers = []
-            
-            # Get streaming providers
-            if 'flatrate' in us_providers:
-                for provider in us_providers['flatrate']:
-                    watch_providers.append({
-                        'provider': provider['provider_name'],
-                        'link': f"https://www.themoviedb.org/movie/{movie_id}/watch"
-                    })
-            
-            # Get rent/buy providers
-            if 'rent' in us_providers:
-                for provider in us_providers['rent'][:3]:  # Limit to 3
-                    watch_providers.append({
-                        'provider': f"{provider['provider_name']} (Rent)",
-                        'link': f"https://www.themoviedb.org/movie/{movie_id}/watch"
-                    })
-            
-            return watch_providers
-        
-        return []
+        response = requests.get(url, params=params)
+        if response.status_code == 200:
+            return response.json()
     except Exception as e:
-        logger.error(f"Error getting watch providers: {e}")
-        return []
+        logging.error(f"TMDb API error: {e}")
+    return None
 
-def format_movie_data(movie):
-    """Format movie data for frontend"""
+def get_watch_providers(tmdb_id, content_type='movie'):
+    """Get streaming providers for content"""
+    endpoint = 'movie' if content_type == 'movie' else 'tv'
+    url = f"https://api.themoviedb.org/3/{endpoint}/{tmdb_id}/watch/providers"
+    params = {'api_key': TMDB_API_KEY}
+    
+    try:
+        response = requests.get(url, params=params)
+        if response.status_code == 200:
+            data = response.json()
+            providers = []
+            us_providers = data.get('results', {}).get('US', {})
+            for provider_type in ['flatrate', 'buy', 'rent']:
+                if provider_type in us_providers:
+                    for provider in us_providers[provider_type]:
+                        providers.append({
+                            'name': provider['provider_name'],
+                            'logo': f"https://image.tmdb.org/t/p/w45{provider['logo_path']}",
+                            'link': us_providers.get('link', '#')
+                        })
+            return providers
+    except Exception as e:
+        logging.error(f"Watch providers API error: {e}")
+    return []
+
+def search_tmdb(query, page=1):
+    """Search movies and TV shows on TMDb"""
+    url = "https://api.themoviedb.org/3/search/multi"
+    params = {
+        'api_key': TMDB_API_KEY,
+        'query': query,
+        'page': page
+    }
+    
+    try:
+        response = requests.get(url, params=params)
+        if response.status_code == 200:
+            return response.json()
+    except Exception as e:
+        logging.error(f"TMDb search error: {e}")
+    return {'results': []}
+
+def get_trending_content():
+    """Get trending movies and TV shows"""
+    url = "https://api.themoviedb.org/3/trending/all/week"
+    params = {'api_key': TMDB_API_KEY}
+    
+    try:
+        response = requests.get(url, params=params)
+        if response.status_code == 200:
+            return response.json()
+    except Exception as e:
+        logging.error(f"TMDb trending error: {e}")
+    return {'results': []}
+
+def format_content_item(item, content_type=None):
+    """Format TMDb item for frontend"""
+    if not content_type:
+        content_type = item.get('media_type', 'movie')
+    
+    title = item.get('title') or item.get('name', 'Unknown Title')
+    poster_path = item.get('poster_path')
+    poster = f"https://image.tmdb.org/t/p/w500{poster_path}" if poster_path else '/static/placeholder.jpg'
+    
     return {
-        'id': movie.get('id'),
-        'title': movie.get('title') or movie.get('name', 'Unknown Title'),
-        'overview': movie.get('overview', 'No description available'),
-        'poster': f"https://image.tmdb.org/t/p/w500{movie.get('poster_path')}" if movie.get('poster_path') else None,
-        'backdrop': f"https://image.tmdb.org/t/p/w1280{movie.get('backdrop_path')}" if movie.get('backdrop_path') else None,
-        'year': movie.get('release_date', movie.get('first_air_date', ''))[:4] if movie.get('release_date') or movie.get('first_air_date') else 'Unknown',
-        'rating': round(movie.get('vote_average', 0), 1),
-        'genres': [genre['name'] for genre in movie.get('genres', [])] if movie.get('genres') else []
+        'id': item.get('id'),
+        'title': title,
+        'poster': poster,
+        'year': (item.get('release_date') or item.get('first_air_date', ''))[:4],
+        'rating': round(item.get('vote_average', 0), 1),
+        'type': content_type,
+        'overview': item.get('overview', '')[:200] + '...' if item.get('overview', '') else ''
     }
 
+def send_telegram_message(message):
+    """Send message to Telegram channel"""
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    data = {
+        'chat_id': TELEGRAM_CHAT_ID,
+        'text': message,
+        'parse_mode': 'HTML'
+    }
+    
+    try:
+        response = requests.post(url, data=data)
+        return response.status_code == 200
+    except Exception as e:
+        logging.error(f"Telegram API error: {e}")
+        return False
+
 # Routes
-@app.route('/api/health', methods=['GET'])
-def health_check():
-    return jsonify({'status': 'healthy', 'timestamp': datetime.now().isoformat()})
+@app.route('/')
+def home():
+    return jsonify({'message': 'Movie Recommendation API is running!'})
 
 @app.route('/api/register', methods=['POST'])
 def register():
-    try:
-        data = request.get_json()
-        email = data.get('email')
-        password = data.get('password')
-        
-        if not email or not password:
-            return jsonify({'error': 'Email and password required'}), 400
-        
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        # Check if user exists
-        cursor.execute('SELECT id FROM users WHERE email = ?', (email,))
-        if cursor.fetchone():
-            return jsonify({'error': 'Email already registered'}), 400
-        
-        # Create new user
-        password_hash = generate_password_hash(password)
-        cursor.execute('INSERT INTO users (email, password_hash) VALUES (?, ?)', 
-                      (email, password_hash))
-        conn.commit()
-        
-        user_id = cursor.lastrowid
-        conn.close()
-        
-        # Create token
-        token = create_access_token(identity=user_id)
-        
-        return jsonify({
-            'token': token,
-            'user': {'id': user_id, 'email': email}
-        })
-        
-    except Exception as e:
-        logger.error(f"Registration error: {e}")
-        return jsonify({'error': 'Registration failed'}), 500
+    data = request.get_json()
+    username = data.get('username')
+    email = data.get('email')
+    password = data.get('password')
+    
+    if User.query.filter_by(username=username).first():
+        return jsonify({'error': 'Username already exists'}), 400
+    
+    if User.query.filter_by(email=email).first():
+        return jsonify({'error': 'Email already exists'}), 400
+    
+    user = User(
+        username=username,
+        email=email,
+        password_hash=generate_password_hash(password)
+    )
+    db.session.add(user)
+    db.session.commit()
+    
+    token = create_access_token(identity=user.id)
+    return jsonify({'token': token, 'user_id': user.id})
 
 @app.route('/api/login', methods=['POST'])
 def login():
-    try:
-        data = request.get_json()
-        email = data.get('email')
-        password = data.get('password')
-        
-        if not email or not password:
-            return jsonify({'error': 'Email and password required'}), 400
-        
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('SELECT id, password_hash FROM users WHERE email = ?', (email,))
-        user = cursor.fetchone()
-        conn.close()
-        
-        if not user or not check_password_hash(user['password_hash'], password):
-            return jsonify({'error': 'Invalid credentials'}), 401
-        
-        token = create_access_token(identity=user['id'])
-        
-        return jsonify({
-            'token': token,
-            'user': {'id': user['id'], 'email': email}
-        })
-        
-    except Exception as e:
-        logger.error(f"Login error: {e}")
-        return jsonify({'error': 'Login failed'}), 500
+    data = request.get_json()
+    username = data.get('username')
+    password = data.get('password')
+    
+    user = User.query.filter_by(username=username).first()
+    if user and check_password_hash(user.password_hash, password):
+        token = create_access_token(identity=user.id)
+        return jsonify({'token': token, 'user_id': user.id})
+    
+    return jsonify({'error': 'Invalid credentials'}), 401
 
-@app.route('/api/featured', methods=['GET'])
+@app.route('/api/featured')
 def get_featured():
+    """Get featured content"""
     try:
-        # Get trending movies
-        trending = tmdb_request('/trending/movie/day')
+        # First check database for featured content
+        featured = FeaturedContent.query.filter_by(is_active=True).limit(20).all()
+        if featured:
+            results = []
+            for item in featured:
+                movie = Movie.query.get(item.movie_id)
+                if movie:
+                    results.append({
+                        'id': movie.tmdb_id,
+                        'title': movie.title,
+                        'poster': f"https://image.tmdb.org/t/p/w500{movie.poster_path}" if movie.poster_path else '/static/placeholder.jpg',
+                        'year': movie.release_date[:4] if movie.release_date else '',
+                        'rating': movie.rating or 0,
+                        'type': movie.content_type,
+                        'overview': movie.overview[:200] + '...' if movie.overview else ''
+                    })
+            if results:
+                return jsonify({'results': results})
         
-        if not trending or 'results' not in trending:
-            return jsonify({'error': 'Failed to fetch featured content'}), 500
-        
-        # Format movies
-        movies = [format_movie_data(movie) for movie in trending['results'][:12]]
-        
-        return jsonify({'results': movies})
-        
+        # Fallback to trending content from TMDb
+        trending = get_trending_content()
+        results = [format_content_item(item) for item in trending.get('results', [])[:20]]
+        return jsonify({'results': results})
+    
     except Exception as e:
-        logger.error(f"Featured content error: {e}")
+        logging.error(f"Featured content error: {e}")
         return jsonify({'error': 'Failed to fetch featured content'}), 500
 
-@app.route('/api/search', methods=['GET'])
-def search_content():
+@app.route('/api/search')
+def search():
+    """Search for movies, TV shows, and anime"""
+    query = request.args.get('q', '')
+    if not query:
+        return jsonify({'results': []})
+    
     try:
-        query = request.args.get('q', '').strip()
-        content_type = request.args.get('type', 'multi')
-        page = int(request.args.get('page', 1))
-        
-        if not query and content_type == 'multi':
-            return jsonify({'results': []})
-        
-        if query:
-            # Search by query
-            if content_type == 'anime':
-                # Search for anime using TV search with anime keywords
-                search_result = tmdb_request('/search/tv', {
-                    'query': f"{query} anime",
-                    'page': page
-                })
-            else:
-                endpoint = '/search/multi' if content_type == 'multi' else f'/search/{content_type}'
-                search_result = tmdb_request(endpoint, {
-                    'query': query,
-                    'page': page
-                })
-        else:
-            # Get popular content by type
-            if content_type == 'movie':
-                search_result = tmdb_request('/movie/popular', {'page': page})
-            elif content_type == 'tv':
-                search_result = tmdb_request('/tv/popular', {'page': page})
-            elif content_type == 'anime':
-                search_result = tmdb_request('/discover/tv', {
-                    'with_genres': '16',  # Animation genre
-                    'with_origin_country': 'JP',
-                    'page': page
-                })
-            else:
-                search_result = tmdb_request('/movie/popular', {'page': page})
-        
-        if not search_result or 'results' not in search_result:
-            return jsonify({'results': []})
-        
-        movies = [format_movie_data(movie) for movie in search_result['results']]
-        
-        return jsonify({
-            'results': movies,
-            'page': page,
-            'total_pages': search_result.get('total_pages', 1)
-        })
-        
+        search_results = search_tmdb(query)
+        results = [format_content_item(item) for item in search_results.get('results', [])[:20]]
+        return jsonify({'results': results})
+    
     except Exception as e:
-        logger.error(f"Search error: {e}")
+        logging.error(f"Search error: {e}")
         return jsonify({'error': 'Search failed'}), 500
 
-@app.route('/api/movie/<int:movie_id>', methods=['GET'])
-def get_movie_details(movie_id):
+@app.route('/api/filter')
+def filter_content():
+    """Filter content by genre"""
+    genre = request.args.get('genre', '')
+    
     try:
-        # Get movie details
-        movie = tmdb_request(f'/movie/{movie_id}')
+        if genre == 'anime':
+            # Search for anime content
+            url = "https://api.themoviedb.org/3/discover/tv"
+            params = {
+                'api_key': TMDB_API_KEY,
+                'with_keywords': '210024',  # Anime keyword ID
+                'sort_by': 'popularity.desc'
+            }
+        else:
+            # Search by genre
+            genre_map = {
+                'action': 28, 'comedy': 35, 'drama': 18, 'horror': 27,
+                'romance': 10749, 'thriller': 53, 'sci-fi': 878
+            }
+            genre_id = genre_map.get(genre.lower(), 28)
+            
+            url = "https://api.themoviedb.org/3/discover/movie"
+            params = {
+                'api_key': TMDB_API_KEY,
+                'with_genres': genre_id,
+                'sort_by': 'popularity.desc'
+            }
+        
+        response = requests.get(url, params=params)
+        if response.status_code == 200:
+            data = response.json()
+            content_type = 'tv' if genre == 'anime' else 'movie'
+            results = [format_content_item(item, content_type) for item in data.get('results', [])[:20]]
+            return jsonify({'results': results})
+        
+        return jsonify({'results': []})
+    
+    except Exception as e:
+        logging.error(f"Filter error: {e}")
+        return jsonify({'error': 'Filter failed'}), 500
+
+@app.route('/api/details/<int:tmdb_id>')
+def get_details(tmdb_id):
+    """Get detailed information about a movie/TV show"""
+    content_type = request.args.get('type', 'movie')
+    
+    try:
+        # Check if movie exists in database
+        movie = Movie.query.filter_by(tmdb_id=tmdb_id).first()
+        if not movie:
+            # Fetch from TMDb and save to database
+            tmdb_data = get_movie_from_tmdb(tmdb_id, content_type)
+            if not tmdb_data:
+                return jsonify({'error': 'Content not found'}), 404
+            
+            # Save to database
+            watch_providers = get_watch_providers(tmdb_id, content_type)
+            movie = Movie(
+                tmdb_id=tmdb_id,
+                title=tmdb_data.get('title') or tmdb_data.get('name', ''),
+                overview=tmdb_data.get('overview', ''),
+                poster_path=tmdb_data.get('poster_path', ''),
+                release_date=tmdb_data.get('release_date') or tmdb_data.get('first_air_date', ''),
+                rating=tmdb_data.get('vote_average', 0),
+                genres=','.join([g['name'] for g in tmdb_data.get('genres', [])]),
+                runtime=tmdb_data.get('runtime') or tmdb_data.get('episode_run_time', [0])[0] if tmdb_data.get('episode_run_time') else 0,
+                content_type=content_type,
+                watch_providers=str(watch_providers)
+            )
+            db.session.add(movie)
+            db.session.commit()
+        
+        # Get watch providers
+        providers = eval(movie.watch_providers) if movie.watch_providers else []
+        
+        return jsonify({
+            'id': movie.tmdb_id,
+            'title': movie.title,
+            'overview': movie.overview,
+            'poster': f"https://image.tmdb.org/t/p/w500{movie.poster_path}" if movie.poster_path else '/static/placeholder.jpg',
+            'release_date': movie.release_date,
+            'rating': movie.rating,
+            'genres': movie.genres.split(',') if movie.genres else [],
+            'runtime': movie.runtime,
+            'watch_providers': providers
+        })
+    
+    except Exception as e:
+        logging.error(f"Details error: {e}")
+        return jsonify({'error': 'Failed to fetch details'}), 500
+
+@app.route('/api/recommendations')
+@jwt_required()
+def get_recommendations():
+    """Get personalized recommendations"""
+    user_id = get_jwt_identity()
+    
+    try:
+        # Get user's watch history, favorites, and wishlist
+        watch_history = db.session.query(WatchHistory.movie_id).filter_by(user_id=user_id).all()
+        favorites = db.session.query(Favorites.movie_id).filter_by(user_id=user_id).all()
+        
+        user_data = {
+            'user_id': user_id,
+            'watch_history': [w[0] for w in watch_history],
+            'favorites': [f[0] for f in favorites]
+        }
+        
+        # Call ML service for recommendations
+        try:
+            ml_response = requests.post(f"{ML_SERVICE_URL}/recommend", 
+                                      json=user_data, timeout=10)
+            if ml_response.status_code == 200:
+                ml_data = ml_response.json()
+                recommended_ids = ml_data.get('recommendations', [])
+            else:
+                # Fallback to popular content
+                trending = get_trending_content()
+                recommended_ids = [item['id'] for item in trending.get('results', [])[:10]]
+        except:
+            # Fallback to trending if ML service is down
+            trending = get_trending_content()
+            recommended_ids = [item['id'] for item in trending.get('results', [])[:10]]
+        
+        # Get movie details for recommendations
+        results = []
+        for tmdb_id in recommended_ids[:10]:
+            movie = Movie.query.filter_by(tmdb_id=tmdb_id).first()
+            if movie:
+                results.append({
+                    'id': movie.tmdb_id,
+                    'title': movie.title,
+                    'poster': f"https://image.tmdb.org/t/p/w500{movie.poster_path}" if movie.poster_path else '/static/placeholder.jpg',
+                    'year': movie.release_date[:4] if movie.release_date else '',
+                    'rating': movie.rating,
+                    'type': movie.content_type
+                })
+        
+        return jsonify({'results': results})
+    
+    except Exception as e:
+        logging.error(f"Recommendations error: {e}")
+        return jsonify({'error': 'Failed to get recommendations'}), 500
+
+@app.route('/api/wishlist', methods=['GET', 'POST'])
+@jwt_required()
+def handle_wishlist():
+    user_id = get_jwt_identity()
+    
+    if request.method == 'GET':
+        try:
+            wishlist_items = db.session.query(Wishlist, Movie).join(Movie).filter(Wishlist.user_id == user_id).all()
+            results = []
+            for wishlist, movie in wishlist_items:
+                results.append({
+                    'id': movie.tmdb_id,
+                    'title': movie.title,
+                    'poster': f"https://image.tmdb.org/t/p/w500{movie.poster_path}" if movie.poster_path else '/static/placeholder.jpg',
+                    'year': movie.release_date[:4] if movie.release_date else '',
+                    'rating': movie.rating,
+                    'type': movie.content_type
+                })
+            return jsonify({'results': results})
+        except Exception as e:
+            logging.error(f"Wishlist GET error: {e}")
+            return jsonify({'error': 'Failed to fetch wishlist'}), 500
+    
+    elif request.method == 'POST':
+        try:
+            data = request.get_json()
+            movie_tmdb_id = data.get('movie_id')
+            
+            # Find or create movie record
+            movie = Movie.query.filter_by(tmdb_id=movie_tmdb_id).first()
+            if not movie:
+                return jsonify({'error': 'Movie not found'}), 404
+            
+            # Check if already in wishlist
+            existing = Wishlist.query.filter_by(user_id=user_id, movie_id=movie.id).first()
+            if existing:
+                return jsonify({'message': 'Already in wishlist'})
+            
+            wishlist_item = Wishlist(user_id=user_id, movie_id=movie.id)
+            db.session.add(wishlist_item)
+            db.session.commit()
+            
+            return jsonify({'message': 'Added to wishlist'})
+        except Exception as e:
+            logging.error(f"Wishlist POST error: {e}")
+            return jsonify({'error': 'Failed to add to wishlist'}), 500
+
+@app.route('/api/favorites', methods=['GET', 'POST'])
+@jwt_required()
+def handle_favorites():
+    user_id = get_jwt_identity()
+    
+    if request.method == 'GET':
+        try:
+            favorite_items = db.session.query(Favorites, Movie).join(Movie).filter(Favorites.user_id == user_id).all()
+            results = []
+            for favorite, movie in favorite_items:
+                results.append({
+                    'id': movie.tmdb_id,
+                    'title': movie.title,
+                    'poster': f"https://image.tmdb.org/t/p/w500{movie.poster_path}" if movie.poster_path else '/static/placeholder.jpg',
+                    'year': movie.release_date[:4] if movie.release_date else '',
+                    'rating': movie.rating,
+                    'type': movie.content_type
+                })
+            return jsonify({'results': results})
+        except Exception as e:
+            logging.error(f"Favorites GET error: {e}")
+            return jsonify({'error': 'Failed to fetch favorites'}), 500
+    
+    elif request.method == 'POST':
+        try:
+            data = request.get_json()
+            movie_tmdb_id = data.get('movie_id')
+            
+            movie = Movie.query.filter_by(tmdb_id=movie_tmdb_id).first()
+            if not movie:
+                return jsonify({'error': 'Movie not found'}), 404
+            
+            existing = Favorites.query.filter_by(user_id=user_id, movie_id=movie.id).first()
+            if existing:
+                return jsonify({'message': 'Already in favorites'})
+            
+            favorite_item = Favorites(user_id=user_id, movie_id=movie.id)
+            db.session.add(favorite_item)
+            db.session.commit()
+            
+            return jsonify({'message': 'Added to favorites'})
+        except Exception as e:
+            logging.error(f"Favorites POST error: {e}")
+            return jsonify({'error': 'Failed to add to favorites'}), 500
+
+@app.route('/api/admin/featured', methods=['POST'])
+@jwt_required()
+def post_featured():
+    """Admin: Add featured content"""
+    user_id = get_jwt_identity()
+    user = User.query.get(user_id)
+    
+    if not user or not user.is_admin:
+        return jsonify({'error': 'Admin access required'}), 403
+    
+    try:
+        data = request.get_json()
+        movie_tmdb_id = data.get('movie_id')
+        description = data.get('description', '')
+        
+        # Find or create movie record
+        movie = Movie.query.filter_by(tmdb_id=movie_tmdb_id).first()
+        if not movie:
+            # Fetch from TMDb
+            tmdb_data = get_movie_from_tmdb(movie_tmdb_id)
+            if not tmdb_data:
+                return jsonify({'error': 'Movie not found'}), 404
+            
+            movie = Movie(
+                tmdb_id=movie_tmdb_id,
+                title=tmdb_data.get('title', ''),
+                overview=tmdb_data.get('overview', ''),
+                poster_path=tmdb_data.get('poster_path', ''),
+                release_date=tmdb_data.get('release_date', ''),
+                rating=tmdb_data.get('vote_average', 0),
+                genres=','.join([g['name'] for g in tmdb_data.get('genres', [])]),
+                runtime=tmdb_data.get('runtime', 0),
+                content_type='movie'
+            )
+            db.session.add(movie)
+            db.session.commit()
+        
+        # Add to featured
+        featured = FeaturedContent(movie_id=movie.id, description=description)
+        db.session.add(featured)
+        db.session.commit()
+        
+        return jsonify({'message': 'Added to featured content'})
+    
+    except Exception as e:
+        logging.error(f"Featured POST error: {e}")
+        return jsonify({'error': 'Failed to add featured content'}), 500
+
+@app.route('/api/admin/telegram', methods=['POST'])
+@jwt_required()
+def post_to_telegram():
+    """Admin: Post message to Telegram channel"""
+    user_id = get_jwt_identity()
+    user = User.query.get(user_id)
+    
+    if not user or not user.is_admin:
+        return jsonify({'error': 'Admin access required'}), 403
+    
+    try:
+        data = request.get_json()
+        message = data.get('message', '')
+        
+        if send_telegram_message(message):
+            return jsonify({'message': 'Posted to Telegram successfully'})
+        else:
+            return jsonify({'error': 'Failed to post to Telegram'}), 500
+    
+    except Exception as e:
+        logging.error(f"Telegram POST error: {e}")
+        return jsonify({'error': 'Failed to post to Telegram'}), 500
+
+@app.route('/api/watch_history', methods=['POST'])
+@jwt_required()
+def add_to_watch_history():
+    """Add movie to user's watch history"""
+    user_id = get_jwt_identity()
+    
+    try:
+        data = request.get_json()
+        movie_tmdb_id = data.get('movie_id')
+        rating = data.get('rating', None)
+        
+        movie = Movie.query.filter_by(tmdb_id=movie_tmdb_id).first()
         if not movie:
             return jsonify({'error': 'Movie not found'}), 404
         
-        # Get credits
-        credits = tmdb_request(f'/movie/{movie_id}/credits')
-        cast = []
-        if credits and 'cast' in credits:
-            cast = [actor['name'] for actor in credits['cast'][:10]]
-        
-        # Get watch providers
-        watch_providers = get_watch_providers(movie_id)
-        
-        # Format movie details
-        movie_details = format_movie_data(movie)
-        movie_details.update({
-            'runtime': movie.get('runtime', 0),
-            'cast': cast,
-            'watch_providers': watch_providers,
-            'budget': movie.get('budget', 0),
-            'revenue': movie.get('revenue', 0),
-            'homepage': movie.get('homepage', ''),
-            'imdb_id': movie.get('imdb_id', ''),
-            'tagline': movie.get('tagline', ''),
-            'production_companies': [company['name'] for company in movie.get('production_companies', [])]
-        })
-        
-        return jsonify({'movie': movie_details})
-        
-    except Exception as e:
-        logger.error(f"Movie details error: {e}")
-        return jsonify({'error': 'Failed to fetch movie details'}), 500
-
-@app.route('/api/recommendations', methods=['GET'])
-@jwt_required()
-def get_recommendations():
-    try:
-        user_id = get_jwt_identity()
-        
-        # Get user's watch history, favorites, and wishlist
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            SELECT movie_id FROM favorites WHERE user_id = ?
-            UNION
-            SELECT movie_id FROM wishlist WHERE user_id = ?
-            UNION
-            SELECT movie_id FROM watch_history WHERE user_id = ?
-        ''', (user_id, user_id, user_id))
-        
-        user_movies = [row['movie_id'] for row in cursor.fetchall()]
-        conn.close()
-        
-        if user_movies:
-            # Call ML service for personalized recommendations
-            try:
-                ml_response = requests.post(f'{ML_SERVICE_URL}/recommend', 
-                                          json={'user_movies': user_movies},
-                                          timeout=10)
-                if ml_response.status_code == 200:
-                    recommended_ids = ml_response.json().get('recommendations', [])
-                else:
-                    recommended_ids = []
-            except:
-                recommended_ids = []
+        # Check if already watched
+        existing = WatchHistory.query.filter_by(user_id=user_id, movie_id=movie.id).first()
+        if existing:
+            existing.watched_at = datetime.utcnow()
+            if rating:
+                existing.rating = rating
         else:
-            recommended_ids = []
+            watch_item = WatchHistory(user_id=user_id, movie_id=movie.id, rating=rating)
+            db.session.add(watch_item)
         
-        # Fallback to popular movies if no ML recommendations
-        if not recommended_ids:
-            popular = tmdb_request('/movie/popular')
-            if popular and 'results' in popular:
-                movies = [format_movie_data(movie) for movie in popular['results'][:12]]
-            else:
-                movies = []
-        else:
-            # Get details for recommended movies
-            movies = []
-            for movie_id in recommended_ids[:12]:
-                movie = tmdb_request(f'/movie/{movie_id}')
-                if movie:
-                    movies.append(format_movie_data(movie))
-        
-        return jsonify({'results': movies})
-        
+        db.session.commit()
+        return jsonify({'message': 'Added to watch history'})
+    
     except Exception as e:
-        logger.error(f"Recommendations error: {e}")
-        return jsonify({'error': 'Failed to fetch recommendations'}), 500
+        logging.error(f"Watch history error: {e}")
+        return jsonify({'error': 'Failed to add to watch history'}), 500
 
-@app.route('/api/wishlist', methods=['GET', 'POST', 'DELETE'])
-@jwt_required()
-def manage_wishlist():
-    try:
-        user_id = get_jwt_identity()
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        if request.method == 'GET':
-            cursor.execute('''
-                SELECT movie_id, movie_title, movie_poster, added_at
-                FROM wishlist WHERE user_id = ?
-                ORDER BY added_at DESC
-            ''', (user_id,))
-            
-            wishlist_items = cursor.fetchall()
-            movies = []
-            
-            for item in wishlist_items:
-                movies.append({
-                    'id': item['movie_id'],
-                    'title': item['movie_title'],
-                    'poster': item['movie_poster'],
-                    'added_at': item['added_at']
-                })
-            
-            conn.close()
-            return jsonify({'results': movies})
-        
-        elif request.method == 'POST':
-            data = request.get_json()
-            movie_id = data.get('movie_id')
-            
-            if not movie_id:
-                return jsonify({'error': 'Movie ID required'}), 400
-            
-            # Get movie details from TMDB
-            movie = tmdb_request(f'/movie/{movie_id}')
-            if not movie:
-                return jsonify({'error': 'Movie not found'}), 404
-            
-            try:
-                cursor.execute('''
-                    INSERT INTO wishlist (user_id, movie_id, movie_title, movie_poster)
-                    VALUES (?, ?, ?, ?)
-                ''', (user_id, movie_id, movie['title'], 
-                     f"https://image.tmdb.org/t/p/w500{movie['poster_path']}" if movie.get('poster_path') else None))
-                conn.commit()
-                conn.close()
-                return jsonify({'message': 'Added to wishlist'})
-            except sqlite3.IntegrityError:
-                conn.close()
-                return jsonify({'error': 'Already in wishlist'}), 400
-        
-        elif request.method == 'DELETE':
-            movie_id = request.args.get('movie_id')
-            if not movie_id:
-                return jsonify({'error': 'Movie ID required'}), 400
-            
-            cursor.execute('DELETE FROM wishlist WHERE user_id = ? AND movie_id = ?', 
-                          (user_id, movie_id))
-            conn.commit()
-            conn.close()
-            return jsonify({'message': 'Removed from wishlist'})
-        
-    except Exception as e:
-        logger.error(f"Wishlist error: {e}")
-        return jsonify({'error': 'Wishlist operation failed'}), 500
-
-@app.route('/api/favorites', methods=['GET', 'POST', 'DELETE'])
-@jwt_required()
-def manage_favorites():
-    try:
-        user_id = get_jwt_identity()
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        if request.method == 'GET':
-            cursor.execute('''
-                SELECT movie_id, movie_title, movie_poster, added_at
-                FROM favorites WHERE user_id = ?
-                ORDER BY added_at DESC
-            ''', (user_id,))
-            
-            favorite_items = cursor.fetchall()
-            movies = []
-            
-            for item in favorite_items:
-                movies.append({
-                    'id': item['movie_id'],
-                    'title': item['movie_title'],
-                    'poster': item['movie_poster'],
-                    'added_at': item['added_at']
-                })
-            
-            conn.close()
-            return jsonify({'results': movies})
-        
-        elif request.method == 'POST':
-            data = request.get_json()
-            movie_id = data.get('movie_id')
-            
-            if not movie_id:
-                return jsonify({'error': 'Movie ID required'}), 400
-            
-            # Get movie details from TMDB
-            movie = tmdb_request(f'/movie/{movie_id}')
-            if not movie:
-                return jsonify({'error': 'Movie not found'}), 404
-            
-            try:
-                cursor.execute('''
-                    INSERT INTO favorites (user_id, movie_id, movie_title, movie_poster)
-                    VALUES (?, ?, ?, ?)
-                ''', (user_id, movie_id, movie['title'], 
-                     f"https://image.tmdb.org/t/p/w500{movie['poster_path']}" if movie.get('poster_path') else None))
-                conn.commit()
-                conn.close()
-                return jsonify({'message': 'Added to favorites'})
-            except sqlite3.IntegrityError:
-                conn.close()
-                return jsonify({'error': 'Already in favorites'}), 400
-        
-        elif request.method == 'DELETE':
-            movie_id = request.args.get('movie_id')
-            if not movie_id:
-                return jsonify({'error': 'Movie ID required'}), 400
-            
-            cursor.execute('DELETE FROM favorites WHERE user_id = ? AND movie_id = ?', 
-                          (user_id, movie_id))
-            conn.commit()
-            conn.close()
-            return jsonify({'message': 'Removed from favorites'})
-        
-    except Exception as e:
-        logger.error(f"Favorites error: {e}")
-        return jsonify({'error': 'Favorites operation failed'}), 500
-
-@app.route('/api/watch-history', methods=['GET', 'POST'])
-@jwt_required()
-def manage_watch_history():
-    try:
-        user_id = get_jwt_identity()
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        if request.method == 'GET':
-            cursor.execute('''
-                SELECT movie_id, movie_title, watched_at
-                FROM watch_history WHERE user_id = ?
-                ORDER BY watched_at DESC
-                LIMIT 50
-            ''', (user_id,))
-            
-            history = [dict(row) for row in cursor.fetchall()]
-            conn.close()
-            return jsonify({'results': history})
-        
-        elif request.method == 'POST':
-            data = request.get_json()
-            movie_id = data.get('movie_id')
-            movie_title = data.get('movie_title')
-            
-            if not movie_id or not movie_title:
-                return jsonify({'error': 'Movie ID and title required'}), 400
-            
-            cursor.execute('''
-                INSERT INTO watch_history (user_id, movie_id, movie_title)
-                VALUES (?, ?, ?)
-            ''', (user_id, movie_id, movie_title))
-            conn.commit()
-            conn.close()
-            return jsonify({'message': 'Added to watch history'})
-        
-    except Exception as e:
-        logger.error(f"Watch history error: {e}")
-        return jsonify({'error': 'Watch history operation failed'}), 500
-
-# Admin routes
-@app.route('/api/admin/suggestions', methods=['GET', 'POST'])
-@jwt_required()
-def admin_suggestions():
-    try:
-        # For demo purposes, no admin verification
-        # In production, add admin role checking
-        
-        if request.method == 'GET':
-            conn = get_db_connection()
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT * FROM admin_suggestions
-                ORDER BY created_at DESC
-            ''')
-            suggestions = [dict(row) for row in cursor.fetchall()]
-            conn.close()
-            return jsonify({'results': suggestions})
-        
-        elif request.method == 'POST':
-            data = request.get_json()
-            movie_id = data.get('movie_id')
-            title = data.get('title')
-            description = data.get('description')
-            poster_url = data.get('poster_url')
-            is_featured = data.get('is_featured', False)
-            
-            conn = get_db_connection()
-            cursor = conn.cursor()
-            cursor.execute('''
-                INSERT INTO admin_suggestions 
-                (movie_id, title, description, poster_url, is_featured)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (movie_id, title, description, poster_url, is_featured))
-            conn.commit()
-            conn.close()
-            
-            return jsonify({'message': 'Suggestion added successfully'})
-        
-    except Exception as e:
-        logger.error(f"Admin suggestions error: {e}")
-        return jsonify({'error': 'Admin operation failed'}), 500
-
-# Error handlers
-@app.errorhandler(404)
-def not_found(error):
-    return jsonify({'error': 'Endpoint not found'}), 404
-
-@app.errorhandler(500)
-def internal_error(error):
-    return jsonify({'error': 'Internal server error'}), 500
-
-@jwt.expired_token_loader
-def expired_token_callback(jwt_header, jwt_payload):
-    return jsonify({'error': 'Token has expired'}), 401
-
-@jwt.invalid_token_loader
-def invalid_token_callback(error):
-    return jsonify({'error': 'Invalid token'}), 401
+# Initialize database
+@app.before_first_request
+def create_tables():
+    db.create_all()
 
 if __name__ == '__main__':
-    port = int(os.getenv('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=False)
+    with app.app_context():
+        db.create_all()
+        
+        # Create admin user if doesn't exist
+        admin = User.query.filter_by(username='admin').first()
+        if not admin:
+            admin_user = User(
+                username='admin',
+                email='admin@movieapp.com',
+                password_hash=generate_password_hash('admin123'),
+                is_admin=True
+            )
+            db.session.add(admin_user)
+            db.session.commit()
+            print("Admin user created: username=admin, password=admin123")
+    
+    app.run(debug=True, host='0.0.0.0', port=5000)
