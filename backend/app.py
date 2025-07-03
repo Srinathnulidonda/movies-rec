@@ -12,13 +12,16 @@ import logging
 from functools import wraps
 import random
 from collections import defaultdict
+from functools import lru_cache
+import time
+import json
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'your-secret-key-change-this')
 CORS(app)
 
 # Configuration
-TMDB_API_KEY = os.environ.get('TMDB_API_KEY', '1cf86635f20bb2aff8e70940e7c3ddd5')
+TMDB_API_KEY = os.environ.get('TMDB_API_KEY', 'eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiIxY2Y4NjYzNWYyMGJiMmFmZjhlNzA5NDBlN2MzZGRkNSIsInN1YiI6IjY3NGE4ZTdhZTgzOTQyMDY0NWQ2YWU1OSIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.QLQGOPj4_7WVGRMdZPSIJ2aOAl_JZWpNPTkU8C2uMZE')
 TMDB_BASE_URL = 'https://api.themoviedb.org/3'
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '7689567537:AAGvDtu94OlLlTiWpfjSfpl_dd_Osi_2W7c')
 TELEGRAM_CHANNEL_ID = os.environ.get('TELEGRAM_CHANNEL_ID', '-1002566510721')
@@ -175,20 +178,38 @@ def search_movies():
     
     combined_results = []
     
+    # Only search for movies if filter is 'all' or 'movie'
     if media_filter in ['all', 'movie']:
         movies_data = fetch_tmdb_search('movie', query, page)
         for movie in movies_data.get('results', []):
             movie['media_type'] = 'movie'
             combined_results.append(movie)
     
-    if media_filter in ['all', 'tv', 'anime']:
+    # Only search for TV shows if filter is 'all' or 'tv'
+    if media_filter in ['all', 'tv']:
         tv_data = fetch_tmdb_search('tv', query, page)
         for show in tv_data.get('results', []):
-            show['media_type'] = 'tv'
-            # Check if it's anime based on origin_country or genres
+            # Exclude anime from regular TV results
+            if not is_anime(show):
+                show['media_type'] = 'tv'
+                combined_results.append(show)
+    
+    # Only search for anime if filter is 'all' or 'anime'
+    if media_filter in ['all', 'anime']:
+        # Search TV shows and filter for anime
+        tv_data = fetch_tmdb_search('tv', query, page)
+        for show in tv_data.get('results', []):
             if is_anime(show):
                 show['media_type'] = 'anime'
-            combined_results.append(show)
+                combined_results.append(show)
+        
+        # Also search with anime-specific keywords
+        anime_search_data = fetch_anime_search(query, page)
+        for anime in anime_search_data.get('results', []):
+            anime['media_type'] = 'anime'
+            # Avoid duplicates
+            if not any(existing['id'] == anime['id'] for existing in combined_results):
+                combined_results.append(anime)
     
     # Sort by popularity and relevance
     combined_results.sort(key=lambda x: x.get('popularity', 0), reverse=True)
@@ -198,6 +219,30 @@ def search_movies():
         'total_results': len(combined_results),
         'filter_applied': media_filter
     })
+
+# Add new function for anime-specific search
+def fetch_anime_search(query, page):
+    """Search specifically for anime content"""
+    url = f'{TMDB_BASE_URL}/search/tv'
+    params = {
+        'api_key': TMDB_API_KEY, 
+        'query': f'{query} anime',  # Add anime keyword
+        'page': page
+    }
+    
+    try:
+        response = requests.get(url, params=params)
+        data = response.json()
+        
+        # Filter results to only include anime
+        anime_results = []
+        for show in data.get('results', []):
+            if is_anime(show):
+                anime_results.append(show)
+        
+        return {'results': anime_results}
+    except:
+        return {'results': []}
 
 def fetch_tmdb_search(media_type, query, page):
     """Fetch search results from TMDB"""
@@ -211,16 +256,40 @@ def fetch_tmdb_search(media_type, query, page):
         return {'results': []}
 
 def is_anime(show):
-    """Determine if a TV show is anime"""
-    anime_keywords = ['anime', 'animation']
-    japanese_origins = ['JP', 'Japan']
-    
-    # Check origin country
-    if any(country in japanese_origins for country in show.get('origin_country', [])):
+    """Enhanced anime detection with more comprehensive checks"""
+    # Check origin country - most reliable indicator
+    origin_countries = show.get('origin_country', [])
+    if 'JP' in origin_countries:
         return True
     
-    # Check genres (Animation genre ID is 16)
-    if 16 in [genre.get('id') for genre in show.get('genre_ids', [])]:
+    # Check if it's animation genre with Japanese indicators
+    genre_ids = show.get('genre_ids', [])
+    if 16 in genre_ids:  # Animation genre
+        name = show.get('name', '').lower()
+        overview = show.get('overview', '').lower()
+        
+        # Strong anime indicators
+        anime_keywords = [
+            'anime', 'manga', 'japanese', 'japan', 'otaku', 
+            'shounen', 'shoujo', 'seinen', 'josei', 'mecha',
+            'studio', 'episode', 'season', 'arc'
+        ]
+        
+        # Japanese names patterns
+        japanese_patterns = ['san', 'kun', 'chan', 'sama', 'sensei']
+        
+        # Check for anime keywords
+        if any(keyword in name or keyword in overview for keyword in anime_keywords):
+            return True
+            
+        # Check for Japanese name patterns
+        if any(pattern in name for pattern in japanese_patterns):
+            return True
+    
+    # Check for common anime studios in overview or name
+    anime_studios = ['toei', 'madhouse', 'pierrot', 'bones', 'wit', 'mappa']
+    content_text = (show.get('name', '') + ' ' + show.get('overview', '')).lower()
+    if any(studio in content_text for studio in anime_studios):
         return True
     
     return False
@@ -345,87 +414,342 @@ def get_user_movie_status(user_id, movie_id, media_type):
         'watched': watch_record is not None,
         'user_rating': watch_record[0] if watch_record else None
     }
+
 @app.route('/api/public-recommendations')
 def get_public_recommendations():
-    category = request.args.get('category', 'popular')  # popular, trending, top_rated, by_genre
+    category = request.args.get('category', 'popular')
     genre = request.args.get('genre', '')
-    media_type = request.args.get('type', 'movie')  # movie, tv, anime
+    media_type = request.args.get('type', 'all')
+    page = request.args.get('page', 1)
     
     try:
         if category == 'by_genre' and genre:
-            return get_genre_based_recommendations(genre, media_type)
+            return get_genre_based_recommendations(genre, media_type, page)
         elif category == 'trending':
-            return get_trending_content(media_type)
+            return get_trending_content(media_type, page)
         elif category == 'top_rated':
-            return get_top_rated_content(media_type)
+            return get_top_rated_content(media_type, page)
         else:
-            return get_popular_content(media_type)
+            return get_popular_content(media_type, page)
     
     except Exception as e:
-        return jsonify({'error': 'Failed to fetch recommendations'}), 500
+        return jsonify({'error': 'Failed to fetch recommendations', 'details': str(e)}), 500
 
-def get_genre_based_recommendations(genre, media_type):
-    """Get recommendations by genre"""
-    url = f'{TMDB_BASE_URL}/discover/{media_type}'
+
+def get_genre_based_recommendations(genre, media_type, page=1):
+    """Enhanced genre-based recommendations for all content types"""
+    combined_results = []
+    
+    if media_type in ['all', 'movie']:
+        movie_data = fetch_genre_content('movie', genre, page)
+        for movie in movie_data.get('results', []):
+            movie['media_type'] = 'movie'
+            combined_results.append(movie)
+    
+    if media_type in ['all', 'tv']:
+        tv_data = fetch_genre_content('tv', genre, page)
+        for show in tv_data.get('results', []):
+            show['media_type'] = 'tv'
+            combined_results.append(show)
+    
+    if media_type in ['all', 'anime']:
+        # Fetch Japanese TV shows with animation genre
+        anime_data = fetch_anime_content(genre, page)
+        for anime in anime_data.get('results', []):
+            anime['media_type'] = 'anime'
+            combined_results.append(anime)
+    
+    # Sort by popularity and rating
+    combined_results.sort(key=lambda x: (x.get('popularity', 0) * x.get('vote_average', 0)), reverse=True)
+    
+    return jsonify({
+        'results': combined_results,
+        'total_results': len(combined_results),
+        'genre': genre,
+        'media_type': media_type,
+        'page': page
+    })
+
+def fetch_genre_content(content_type, genre, page):
+    """Fetch content by genre from TMDB"""
+    url = f'{TMDB_BASE_URL}/discover/{content_type}'
     params = {
         'api_key': TMDB_API_KEY,
         'with_genres': genre,
         'sort_by': 'popularity.desc',
-        'page': 1
+        'page': page,
+        'vote_count.gte': 10  # Minimum votes for quality
     }
     
-    response = requests.get(url, params=params)
-    data = response.json()
+    try:
+        response = requests.get(url, params=params)
+        return response.json()
+    except:
+        return {'results': []}
     
-    # Add media type to results
-    for item in data.get('results', []):
-        item['media_type'] = 'anime' if media_type == 'tv' and is_anime(item) else media_type
+def fetch_anime_content(genre, page):
+    """Fetch anime content specifically"""
+    url = f'{TMDB_BASE_URL}/discover/tv'
+    params = {
+        'api_key': TMDB_API_KEY,
+        'with_genres': f'16,{genre}' if genre != '16' else '16',  # 16 is Animation
+        'with_origin_country': 'JP',
+        'sort_by': 'popularity.desc',
+        'page': page,
+        'vote_count.gte': 5
+    }
     
-    return jsonify(data)
+    try:
+        response = requests.get(url, params=params)
+        return response.json()
+    except:
+        return {'results': []}
 
-def get_trending_content(media_type):
-    """Get trending content"""
-    if media_type == 'anime':
-        media_type = 'tv'
-    
-    url = f'{TMDB_BASE_URL}/trending/{media_type}/week'
-    params = {'api_key': TMDB_API_KEY}
-    
-    response = requests.get(url, params=params)
-    data = response.json()
-    
-    # Filter anime if requested
-    if media_type == 'tv':
-        results = []
-        for item in data.get('results', []):
-            if is_anime(item):
-                item['media_type'] = 'anime'
-                results.append(item)
-        data['results'] = results
-    
-    return jsonify(data)
 
-def get_popular_content(media_type):
-    """Get popular content"""
-    if media_type == 'anime':
-        media_type = 'tv'
-    
-    url = f'{TMDB_BASE_URL}/{media_type}/popular'
-    params = {'api_key': TMDB_API_KEY}
-    
-    response = requests.get(url, params=params)
-    return jsonify(response.json())
 
-def get_top_rated_content(media_type):
-    """Get top rated content"""
-    if media_type == 'anime':
-        media_type = 'tv'
+def get_trending_content(media_type, page=1):
+    """Enhanced trending content with strict filtering"""
+    combined_results = []
     
-    url = f'{TMDB_BASE_URL}/{media_type}/top_rated'
-    params = {'api_key': TMDB_API_KEY}
+    if media_type == 'movie':
+        movie_data = fetch_trending('movie', page)
+        for movie in movie_data.get('results', []):
+            movie['media_type'] = 'movie'
+            combined_results.append(movie)
     
-    response = requests.get(url, params=params)
-    return jsonify(response.json())
+    elif media_type == 'tv':
+        tv_data = fetch_trending('tv', page)
+        for show in tv_data.get('results', []):
+            if not is_anime(show):
+                show['media_type'] = 'tv'
+                combined_results.append(show)
+    
+    elif media_type == 'anime':
+        tv_data = fetch_trending('tv', page)
+        for show in tv_data.get('results', []):
+            if is_anime(show):
+                show['media_type'] = 'anime'
+                combined_results.append(show)
+    
+    else:  # media_type == 'all'
+        movie_data = fetch_trending('movie', page)
+        for movie in movie_data.get('results', []):
+            movie['media_type'] = 'movie'
+            combined_results.append(movie)
+        
+        tv_data = fetch_trending('tv', page)
+        for show in tv_data.get('results', []):
+            if not is_anime(show):
+                show['media_type'] = 'tv'
+                combined_results.append(show)
+            else:
+                show['media_type'] = 'anime'
+                combined_results.append(show)
+    
+    combined_results.sort(key=lambda x: x.get('popularity', 0), reverse=True)
+    
+    return jsonify({
+        'results': combined_results,
+        'total_results': len(combined_results),
+        'category': 'trending',
+        'media_type': media_type,
+        'page': page
+    })
+
+def fetch_trending(content_type, page):
+    """Fetch trending content from TMDB"""
+    url = f'{TMDB_BASE_URL}/trending/{content_type}/week'
+    params = {
+        'api_key': TMDB_API_KEY,
+        'page': page
+    }
+    
+    try:
+        response = requests.get(url, params=params)
+        return response.json()
+    except:
+        return {'results': []}
+
+def get_popular_content(media_type, page=1):
+    """Enhanced popular content with strict filtering"""
+    combined_results = []
+    
+    if media_type == 'movie':
+        movie_data = fetch_popular('movie', page)
+        for movie in movie_data.get('results', []):
+            movie['media_type'] = 'movie'
+            combined_results.append(movie)
+    
+    elif media_type == 'tv':
+        tv_data = fetch_popular('tv', page)
+        for show in tv_data.get('results', []):
+            # Strictly exclude anime from TV results
+            if not is_anime(show):
+                show['media_type'] = 'tv'
+                combined_results.append(show)
+    
+    elif media_type == 'anime':
+        # Get anime content only
+        anime_data = fetch_popular_anime(page)
+        for anime in anime_data.get('results', []):
+            anime['media_type'] = 'anime'
+            combined_results.append(anime)
+    
+    else:  # media_type == 'all'
+        # Movies
+        movie_data = fetch_popular('movie', page)
+        for movie in movie_data.get('results', []):
+            movie['media_type'] = 'movie'
+            combined_results.append(movie)
+        
+        # TV Shows (excluding anime)
+        tv_data = fetch_popular('tv', page)
+        for show in tv_data.get('results', []):
+            if not is_anime(show):
+                show['media_type'] = 'tv'
+                combined_results.append(show)
+        
+        # Anime
+        anime_data = fetch_popular_anime(page)
+        for anime in anime_data.get('results', []):
+            anime['media_type'] = 'anime'
+            combined_results.append(anime)
+    
+    combined_results.sort(key=lambda x: x.get('popularity', 0), reverse=True)
+    
+    return jsonify({
+        'results': combined_results,
+        'total_results': len(combined_results),
+        'category': 'popular',
+        'media_type': media_type,
+        'page': page
+    })
+
+def fetch_popular_anime(page):
+    """Fetch popular anime with multiple methods"""
+    all_anime = []
+    
+    # Method 1: Japanese TV shows with animation genre
+    url1 = f'{TMDB_BASE_URL}/discover/tv'
+    params1 = {
+        'api_key': TMDB_API_KEY,
+        'with_genres': '16',  # Animation
+        'with_origin_country': 'JP',
+        'sort_by': 'popularity.desc',
+        'page': page,
+        'vote_count.gte': 5
+    }
+    
+    try:
+        response1 = requests.get(url1, params=params1)
+        data1 = response1.json()
+        all_anime.extend(data1.get('results', []))
+    except:
+        pass
+    
+    # Method 2: Search for popular anime titles
+    popular_anime_search_terms = ['naruto', 'attack on titan', 'demon slayer', 'one piece']
+    for term in popular_anime_search_terms[:2]:  # Limit to avoid too many requests
+        try:
+            search_data = fetch_tmdb_search('tv', term, 1)
+            for show in search_data.get('results', []):
+                if is_anime(show) and not any(existing['id'] == show['id'] for existing in all_anime):
+                    all_anime.append(show)
+        except:
+            continue
+    
+    # Remove duplicates and sort by popularity
+    unique_anime = []
+    seen_ids = set()
+    for anime in all_anime:
+        if anime['id'] not in seen_ids:
+            seen_ids.add(anime['id'])
+            unique_anime.append(anime)
+    
+    unique_anime.sort(key=lambda x: x.get('popularity', 0), reverse=True)
+    
+    return {'results': unique_anime}
+
+def get_top_rated_content(media_type, page=1):
+    """Enhanced top rated content with strict filtering"""
+    combined_results = []
+    
+    if media_type == 'movie':
+        movie_data = fetch_top_rated('movie', page)
+        for movie in movie_data.get('results', []):
+            movie['media_type'] = 'movie'
+            combined_results.append(movie)
+    
+    elif media_type == 'tv':
+        tv_data = fetch_top_rated('tv', page)
+        for show in tv_data.get('results', []):
+            if not is_anime(show):
+                show['media_type'] = 'tv'
+                combined_results.append(show)
+    
+    elif media_type == 'anime':
+        anime_data = fetch_top_rated_anime(page)
+        for anime in anime_data.get('results', []):
+            anime['media_type'] = 'anime'
+            combined_results.append(anime)
+    
+    else:  # media_type == 'all'
+        movie_data = fetch_top_rated('movie', page)
+        for movie in movie_data.get('results', []):
+            movie['media_type'] = 'movie'
+            combined_results.append(movie)
+        
+        tv_data = fetch_top_rated('tv', page)
+        for show in tv_data.get('results', []):
+            if not is_anime(show):
+                show['media_type'] = 'tv'
+                combined_results.append(show)
+        
+        anime_data = fetch_top_rated_anime(page)
+        for anime in anime_data.get('results', []):
+            anime['media_type'] = 'anime'
+            combined_results.append(anime)
+    
+    combined_results.sort(key=lambda x: x.get('vote_average', 0), reverse=True)
+    
+    return jsonify({
+        'results': combined_results,
+        'total_results': len(combined_results),
+        'category': 'top_rated',
+        'media_type': media_type,
+        'page': page
+    })
+def fetch_top_rated(content_type, page):
+    """Fetch top rated content from TMDB"""
+    url = f'{TMDB_BASE_URL}/{content_type}/top_rated'
+    params = {
+        'api_key': TMDB_API_KEY,
+        'page': page
+    }
+    
+    try:
+        response = requests.get(url, params=params)
+        return response.json()
+    except:
+        return {'results': []}
+
+def fetch_top_rated_anime(page):
+    """Fetch top rated anime specifically"""
+    url = f'{TMDB_BASE_URL}/discover/tv'
+    params = {
+        'api_key': TMDB_API_KEY,
+        'with_genres': '16',  # Animation
+        'with_origin_country': 'JP',
+        'sort_by': 'vote_average.desc',
+        'page': page,
+        'vote_count.gte': 50  # Higher threshold for quality
+    }
+    
+    try:
+        response = requests.get(url, params=params)
+        return response.json()
+    except:
+        return {'results': []}
 
 # Recommendations
 @app.route('/api/recommendations')
@@ -672,6 +996,62 @@ def manage_watch_history():
         conn.close()
         
         return jsonify({'message': 'Added to watch history'})
+    
+@app.route('/api/admin/dashboard')
+@login_required
+def admin_dashboard():
+    """Admin dashboard with analytics"""
+    if session.get('username') != 'admin':
+        return jsonify({'error': 'Admin access required'}), 403
+    
+    conn = sqlite3.connect('movie_app.db')
+    cursor = conn.cursor()
+    
+    # Get user statistics
+    cursor.execute('SELECT COUNT(*) FROM users')
+    total_users = cursor.fetchone()[0]
+    
+    cursor.execute('SELECT COUNT(*) FROM watchlist')
+    total_watchlist_items = cursor.fetchone()[0]
+    
+    cursor.execute('SELECT COUNT(*) FROM favorites')
+    total_favorites = cursor.fetchone()[0]
+    
+    cursor.execute('SELECT COUNT(*) FROM watch_history')
+    total_watched = cursor.fetchone()[0]
+    
+    # Get popular genres
+    cursor.execute('''
+        SELECT movie_type, COUNT(*) as count 
+        FROM favorites 
+        GROUP BY movie_type 
+        ORDER BY count DESC
+    ''')
+    popular_types = cursor.fetchall()
+    
+    # Get recent activity
+    cursor.execute('''
+        SELECT u.username, 'watchlist' as action, w.added_at 
+        FROM watchlist w 
+        JOIN users u ON w.user_id = u.id 
+        ORDER BY w.added_at DESC 
+        LIMIT 10
+    ''')
+    recent_activity = cursor.fetchall()
+    
+    conn.close()
+    
+    return jsonify({
+        'stats': {
+            'total_users': total_users,
+            'total_watchlist_items': total_watchlist_items,
+            'total_favorites': total_favorites,
+            'total_watched': total_watched
+        },
+        'popular_types': popular_types,
+        'recent_activity': recent_activity
+    })
+
 
 # Admin endpoints
 @app.route('/api/admin/recommend', methods=['POST'])
@@ -815,6 +1195,16 @@ def rate_movie():
     conn.close()
     
     return jsonify({'message': 'Rating saved successfully'})
+
+@lru_cache(maxsize=100)
+def cached_tmdb_request(url, params_json):
+    params = json.loads(params_json)
+    try:
+        response = requests.get(url, params=params, timeout=5)
+        return response.json()
+    except:
+        return {'results': []}
+
 
 # Add these database table modifications in init_db():
 def init_db():
