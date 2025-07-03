@@ -17,8 +17,6 @@ import torch.nn as nn
 import torch.optim as optim
 import networkx as nx
 from textblob import TextBlob
-from surprise import Dataset, Reader, SVD, NMF, KNNBasic
-from surprise.model_selection import cross_validate
 import implicit
 from scipy.sparse import csr_matrix
 import faiss
@@ -35,6 +33,15 @@ import asyncio
 import aiohttp
 import warnings
 import time
+
+# Try importing surprise, but allow the app to continue if it fails
+try:
+    from surprise import Dataset, Reader, SVD, NMF, KNNBasic
+    from surprise.model_selection import cross_validate
+    SURPRISE_AVAILABLE = True
+except ImportError as e:
+    SURPRISE_AVAILABLE = False
+    logging.warning(f"Surprise library not available: {e}. Collaborative filtering models will be skipped.")
 
 warnings.filterwarnings('ignore')
 
@@ -72,6 +79,7 @@ class Sampling(nn.Module):
         epsilon = torch.randn(batch, dim, device=z_mean.device)
         return z_mean + torch.exp(0.5 * z_log_var) * epsilon
 
+# [TrendAnalyzer class remains unchanged]
 class TrendAnalyzer:
     """Advanced trend analysis for content recommendations"""
     def __init__(self):
@@ -85,28 +93,18 @@ class TrendAnalyzer:
         self.trend_cache = {}
 
     def analyze_content_trends(self, content_data, time_window_days=7):
-        """Analyze trending patterns in content"""
         try:
             df = pd.DataFrame(content_data)
             current_time = datetime.now()
 
-            # Calculate popularity momentum
             recent_interactions = df[df['created_at'] > (current_time - timedelta(days=time_window_days))]
             popularity_momentum = recent_interactions.groupby('content_id')['interaction_count'].sum()
 
-            # Calculate rating trends
             rating_trends = self.calculate_rating_trends(df)
-
-            # Genre trend analysis
             genre_trends = self.analyze_genre_trends(df)
-
-            # Seasonal trend detection
             seasonal_trends = self.detect_seasonal_patterns(df)
-
-            # Social buzz from external APIs (simulated)
             social_buzz = self.calculate_social_buzz(df)
 
-            # Combine trend factors
             trend_scores = {}
             all_content_ids = set(df['content_id'].unique())
 
@@ -121,13 +119,11 @@ class TrendAnalyzer:
                 trend_scores[content_id] = score
 
             return trend_scores
-
         except Exception as e:
             logger.error(f"Trend analysis error: {e}")
             return {}
 
     def calculate_rating_trends(self, df):
-        """Calculate rating momentum and trends"""
         rating_trends = {}
         for content_id in df['content_id'].unique():
             content_ratings = df[df['content_id'] == content_id]['rating'].dropna()
@@ -140,7 +136,6 @@ class TrendAnalyzer:
         return rating_trends
 
     def analyze_genre_trends(self, df):
-        """Analyze trending genres"""
         genre_trends = {}
         current_time = datetime.now()
 
@@ -162,7 +157,6 @@ class TrendAnalyzer:
         return content_genre_scores
 
     def detect_seasonal_patterns(self, df):
-        """Detect seasonal viewing patterns"""
         seasonal_scores = {}
         current_month = datetime.now().month
 
@@ -192,12 +186,12 @@ class TrendAnalyzer:
         return seasonal_scores
 
     def calculate_social_buzz(self, df):
-        """Simulate social buzz calculation"""
         social_scores = {}
         for content_id in df['content_id'].unique():
-            social_scores[content_id] = np.random.uniform(0, 1)  # Placeholder for real social media data
+            social_scores[content_id] = np.random.uniform(0, 1)  # Placeholder
         return social_scores
 
+# [DiversityOptimizer class remains unchanged]
 class DiversityOptimizer:
     """Optimize recommendation diversity while maintaining relevance"""
     def __init__(self):
@@ -210,7 +204,6 @@ class DiversityOptimizer:
         }
 
     def optimize_diversity(self, recommendations, target_diversity=0.75):
-        """Optimize recommendation list for diversity"""
         if not recommendations:
             return recommendations
 
@@ -221,7 +214,6 @@ class DiversityOptimizer:
         return self.apply_diversity_algorithm(recommendations, target_diversity)
 
     def calculate_diversity_score(self, recommendations):
-        """Calculate overall diversity score"""
         if not recommendations:
             return 0
 
@@ -237,7 +229,6 @@ class DiversityOptimizer:
         return total_score
 
     def calculate_genre_diversity(self, recommendations):
-        """Calculate genre diversity using Shannon entropy"""
         genre_counts = {}
         total_genres = 0
 
@@ -259,14 +250,12 @@ class DiversityOptimizer:
         return entropy / max_entropy if max_entropy > 0 else 0
 
     def calculate_content_type_diversity(self, recommendations):
-        """Calculate content type diversity"""
         content_types = [rec.get('content_type') for rec in recommendations]
         unique_types = len(set(content_types))
         total_types = len(content_types)
         return unique_types / total_types if total_types > 0 else 0
 
     def calculate_temporal_diversity(self, recommendations):
-        """Calculate temporal diversity across release dates"""
         release_years = []
         for rec in recommendations:
             date_str = rec.get('release_date')
@@ -284,7 +273,6 @@ class DiversityOptimizer:
         return min(1.0, year_span / 50)
 
     def calculate_popularity_diversity(self, recommendations):
-        """Calculate popularity diversity"""
         popularities = [rec.get('popularity', 0) for rec in recommendations]
         if not popularities:
             return 0
@@ -294,11 +282,9 @@ class DiversityOptimizer:
         return min(1.0, std_pop / mean_pop) if mean_pop > 0 else 0
 
     def calculate_cultural_diversity(self, recommendations):
-        """Calculate cultural diversity (placeholder)"""
-        return np.random.uniform(0, 1)  # Implement with actual cultural metadata
+        return np.random.uniform(0, 1)  # Placeholder
 
     def apply_diversity_algorithm(self, recommendations, target_diversity):
-        """Apply diversity optimization algorithm"""
         sorted_recs = sorted(recommendations, key=lambda x: x.get('recommendation_score', 0), reverse=True)
         optimized_list = []
         candidate_pool = sorted_recs.copy()
@@ -323,8 +309,8 @@ class DiversityOptimizer:
 
         return optimized_list
 
+# [AdvancedNeuralRecommender class remains unchanged]
 class AdvancedNeuralRecommender(nn.Module):
-    """Advanced neural network recommender with deep learning"""
     def __init__(self, num_users, num_items, input_dim=100, latent_dim=64):
         super(AdvancedNeuralRecommender, self).__init__()
         self.num_users = num_users
@@ -336,7 +322,6 @@ class AdvancedNeuralRecommender(nn.Module):
         self.gnn_embeddings = None
 
     def build_vae(self):
-        """Build Variational Autoencoder for recommendation"""
         class VAE(nn.Module):
             def __init__(self, input_dim, latent_dim):
                 super(VAE, self).__init__()
@@ -372,7 +357,6 @@ class AdvancedNeuralRecommender(nn.Module):
         return VAE(self.input_dim, self.latent_dim)
 
     def build_transformer(self):
-        """Build Transformer-based recommendation model"""
         class Transformer(nn.Module):
             def __init__(self, num_users, num_items):
                 super(Transformer, self).__init__()
@@ -404,7 +388,6 @@ class AdvancedNeuralRecommender(nn.Module):
         return Transformer(self.num_users, self.num_items)
 
     def build_gnn(self, interactions):
-        """Build Graph Neural Network for recommendations"""
         G = nx.Graph()
         for user_id, item_id, rating in interactions:
             G.add_edge(f"user_{user_id}", f"item_{item_id}", weight=rating)
@@ -429,7 +412,6 @@ class AdvancedNeuralRecommender(nn.Module):
         return self.gnn_embeddings
 
     def train_vae(self, data, epochs=50, batch_size=32):
-        """Train the VAE model"""
         optimizer = optim.Adam(self.vae.parameters(), lr=0.001)
         dataset = torch.utils.data.TensorDataset(torch.FloatTensor(data))
         dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
@@ -451,7 +433,6 @@ class AdvancedNeuralRecommender(nn.Module):
             logger.info(f"VAE Epoch {epoch+1}, Loss: {total_loss/len(dataloader.dataset):.4f}")
 
     def train_transformer(self, user_ids, item_ids, ratings, epochs=50, batch_size=32):
-        """Train the Transformer model"""
         optimizer = optim.Adam(self.transformer.parameters(), lr=0.001)
         criterion = nn.MSELoss()
         dataset = torch.utils.data.TensorDataset(
@@ -475,8 +456,8 @@ class AdvancedNeuralRecommender(nn.Module):
                 total_loss += loss.item()
             logger.info(f"Transformer Epoch {epoch+1}, Loss: {total_loss/len(dataloader.dataset):.4f}")
 
+# [ReinforcementLearningRecommender class remains unchanged]
 class ReinforcementLearningRecommender:
-    """Reinforcement Learning based recommender"""
     def __init__(self, action_space):
         self.q_table = {}
         self.learning_rate = 0.1
@@ -485,7 +466,7 @@ class ReinforcementLearningRecommender:
         self.action_space = action_space
 
     def get_state(self, user_profile, context):
-        """Get current state representation"""
+        """Get current state representation with default values for missing context fields"""
         state = {
             'user_genre_preferences': user_profile.get('genre_preferences', {}),
             'time_of_day': context.get('time_of_day', 'unknown'),
@@ -495,7 +476,6 @@ class ReinforcementLearningRecommender:
         return json.dumps(state, sort_keys=True)
 
     def choose_action(self, state):
-        """Choose action using epsilon-greedy policy"""
         if np.random.random() < self.epsilon:
             return np.random.choice(self.action_space)
         else:
@@ -505,7 +485,6 @@ class ReinforcementLearningRecommender:
                 return np.random.choice(self.action_space)
 
     def update_q_table(self, state, action, reward, next_state):
-        """Update Q-table with new experience"""
         if state not in self.q_table:
             self.q_table[state] = {}
         if action not in self.q_table[state]:
@@ -517,7 +496,6 @@ class ReinforcementLearningRecommender:
         self.q_table[state][action] = new_q
 
 class AdvancedRecommendationEngine:
-    """Advanced recommendation engine with multiple algorithms"""
     def __init__(self, db_path=DB_PATH):
         self.db_path = db_path
         self.content_features = None
@@ -546,13 +524,11 @@ class AdvancedRecommendationEngine:
         self.item_clusters = None
 
     def get_db_connection(self):
-        """Get database connection"""
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         return conn
 
     def extract_content_features(self):
-        """Extract and vectorize content features"""
         conn = self.get_db_connection()
         content_data = conn.execute('''
             SELECT id, title, overview, genre_ids, vote_average, popularity,
@@ -598,7 +574,6 @@ class AdvancedRecommendationEngine:
         return content_features
 
     def build_user_item_matrix(self):
-        """Build user-item interaction matrix"""
         conn = self.get_db_connection()
         interactions = conn.execute('''
             SELECT user_id, content_id, interaction_type, rating
@@ -631,7 +606,6 @@ class AdvancedRecommendationEngine:
         return user_item_matrix
 
     def compute_similarity_matrices(self):
-        """Compute content and user similarity matrices"""
         if self.content_features is not None:
             self.content_similarity = cosine_similarity(self.content_features)
             logger.info("Content similarity matrix computed")
@@ -642,7 +616,6 @@ class AdvancedRecommendationEngine:
             logger.info("User and item similarity matrices computed")
 
     def train_neural_recommender(self):
-        """Train neural recommender models"""
         conn = self.get_db_connection()
         max_user_id = conn.execute('SELECT MAX(user_id) FROM user_interactions').fetchone()[0] or 1000
         max_content_id = conn.execute('SELECT MAX(content_id) FROM user_interactions').fetchone()[0] or 10000
@@ -653,20 +626,21 @@ class AdvancedRecommendationEngine:
         interactions = [(row['user_id'], row['content_id'], row['rating'] or 5) for row in
                         self.get_db_connection().execute('SELECT * FROM user_interactions WHERE rating IS NOT NULL').fetchall()]
 
-        # Train VAE
         if self.content_features is not None:
             self.neural_recommender.train_vae(self.content_features)
 
-        # Train Transformer
         user_ids, item_ids, ratings = zip(*interactions)
-        ratings = np.array(ratings) / 10.0  # Normalize ratings to [0, 1]
+        ratings = np.array(ratings) / 10.0
         self.neural_recommender.train_transformer(user_ids, item_ids, ratings)
-
-        # Build GNN
         self.neural_recommender.build_gnn(interactions)
 
     def train_surprise_models(self):
-        """Train Surprise library models"""
+        """Train Surprise library models if available"""
+        if not SURPRISE_AVAILABLE:
+            logger.warning("Surprise library not available. Skipping collaborative filtering models.")
+            self.surprise_models = {}
+            return False
+
         conn = self.get_db_connection()
         ratings_data = conn.execute('''
             SELECT user_id, content_id, rating
@@ -676,6 +650,7 @@ class AdvancedRecommendationEngine:
 
         if not ratings_data:
             conn.close()
+            logger.warning("No ratings data available for Surprise models")
             return False
 
         df = pd.DataFrame(ratings_data)
@@ -690,21 +665,24 @@ class AdvancedRecommendationEngine:
         }
 
         for name, algo in algorithms.items():
-            cv_results = cross_validate(algo, data, measures=['RMSE', 'MAE'], cv=5, verbose=False)
-            trainset = data.build_full_trainset()
-            algo.fit(trainset)
-            self.surprise_models[name] = {
-                'model': algo,
-                'rmse': np.mean(cv_results['test_rmse']),
-                'mae': np.mean(cv_results['test_mae'])
-            }
-            logger.info(f"Trained {name} - RMSE: {np.mean(cv_results['test_rmse']):.4f}")
+            try:
+                cv_results = cross_validate(algo, data, measures=['RMSE', 'MAE'], cv=5, verbose=False)
+                trainset = data.build_full_trainset()
+                algo.fit(trainset)
+                self.surprise_models[name] = {
+                    'model': algo,
+                    'rmse': np.mean(cv_results['test_rmse']),
+                    'mae': np.mean(cv_results['test_mae'])
+                }
+                logger.info(f"Trained {name} - RMSE: {np.mean(cv_results['test_rmse']):.4f}")
+            except Exception as e:
+                logger.error(f"Failed to train {name} model: {e}")
+                continue
 
         conn.close()
-        return True
+        return bool(self.surprise_models)
 
     def train_implicit_model(self):
-        """Train implicit feedback model using ALS"""
         conn = self.get_db_connection()
         interactions = conn.execute('''
             SELECT user_id, content_id,
@@ -747,7 +725,6 @@ class AdvancedRecommendationEngine:
         return True
 
     def build_faiss_index(self):
-        """Build FAISS index for fast similarity search"""
         if self.content_features is None:
             return False
 
@@ -760,7 +737,6 @@ class AdvancedRecommendationEngine:
         return True
 
     def train_ensemble_models(self):
-        """Train ensemble of ML models"""
         X, y = self.prepare_training_data()
         if X is None or len(X) == 0:
             return False
@@ -782,7 +758,6 @@ class AdvancedRecommendationEngine:
         return True
 
     def prepare_training_data(self):
-        """Prepare training data for ML models"""
         conn = self.get_db_connection()
         data = conn.execute('''
             SELECT
@@ -833,7 +808,6 @@ class AdvancedRecommendationEngine:
         return np.array(X), np.array(y)
 
     def build_knowledge_graph(self):
-        """Build knowledge graph from content relationships"""
         conn = self.get_db_connection()
         content_data = conn.execute('''
             SELECT c.*, GROUP_CONCAT(DISTINCT ui.user_id) as user_interactions
@@ -866,14 +840,15 @@ class AdvancedRecommendationEngine:
         return True
 
     def train_model(self):
-        """Train all recommendation models"""
         try:
             logger.info("Training recommendation models...")
             self.extract_content_features()
             self.build_user_item_matrix()
             self.compute_similarity_matrices()
             self.train_neural_recommender()
-            self.train_surprise_models()
+            success = self.train_surprise_models()
+            if not success:
+                logger.warning("Surprise models not trained; relying on other models")
             self.train_implicit_model()
             self.train_ensemble_models()
             self.build_faiss_index()
@@ -892,7 +867,6 @@ class AdvancedRecommendationEngine:
             return False
 
     def get_content_based_recommendations(self, user_id, limit=20):
-        """Get content-based recommendations"""
         if not self.model_trained or self.content_features is None:
             return self.get_cold_start_recommendations(limit)
 
@@ -936,8 +910,8 @@ class AdvancedRecommendationEngine:
             conn.close()
 
     def get_collaborative_recommendations(self, user_id, limit=20):
-        """Get collaborative filtering recommendations"""
-        if not self.model_trained or self.user_item_matrix is None:
+        if not self.model_trained or self.user_item_matrix is None or not self.surprise_models:
+            logger.warning("Collaborative filtering unavailable; using cold-start recommendations")
             return self.get_cold_start_recommendations(limit)
 
         try:
@@ -972,7 +946,6 @@ class AdvancedRecommendationEngine:
             return self.get_cold_start_recommendations(limit)
 
     def get_deep_learning_recommendations(self, user_id, limit=20):
-        """Get recommendations using deep learning models"""
         try:
             recommendations = []
             if self.neural_recommender and self.neural_recommender.transformer:
@@ -1002,7 +975,6 @@ class AdvancedRecommendationEngine:
             return self.get_hybrid_recommendations(user_id, limit)
 
     def get_hybrid_recommendations(self, user_id, limit=20):
-        """Get hybrid recommendations combining multiple approaches"""
         content_recs = self.get_content_based_recommendations(user_id, limit)
         collab_recs = self.get_collaborative_recommendations(user_id, limit)
         deep_recs = self.get_deep_learning_recommendations(user_id, limit)
@@ -1026,7 +998,6 @@ class AdvancedRecommendationEngine:
         return self.diversity_optimizer.optimize_diversity(final_recs)
 
     def get_cold_start_recommendations(self, limit=20):
-        """Handle cold start with trending and popular content"""
         conn = self.get_db_connection()
         content_data = conn.execute('''
             SELECT *, (popularity * 0.7 + vote_average * 0.3) as score
@@ -1039,7 +1010,6 @@ class AdvancedRecommendationEngine:
         return [dict(row) | {'recommendation_score': row['score']} for row in content_data]
 
     def get_rl_recommendations(self, user_id, context, limit=20):
-        """Get reinforcement learning recommendations"""
         conn = self.get_db_connection()
         user_profile = conn.execute('''
             SELECT genre_ids, AVG(rating) as avg_rating
@@ -1068,12 +1038,11 @@ class AdvancedRecommendationEngine:
         return self.diversity_optimizer.optimize_diversity(recommendations[:limit])
 
     def update_online_learning(self, user_id, content_id, action, context):
-        """Update models with real-time feedback"""
         reward = self.feedback_weights.get(action, 0.1)
         user_profile = self.get_user_profile(user_id)
         state = self.rl_recommender.get_state(user_profile, context)
         action_id = f"recommend_content_{content_id}"
-        next_state = state  # Simplified; real implementation would update state
+        next_state = state
 
         self.rl_recommender.update_q_table(state, action_id, reward, next_state)
         self.online_learning_buffer.append({
@@ -1088,7 +1057,6 @@ class AdvancedRecommendationEngine:
             self.retrain_online_models()
 
     def retrain_online_models(self):
-        """Retrain models with buffered data"""
         try:
             X, y = [], []
             for interaction in self.online_learning_buffer:
@@ -1110,19 +1078,17 @@ class AdvancedRecommendationEngine:
                 conn.close()
 
             if X:
-                # Only retrain models that support incremental learning
                 X_array, y_array = np.array(X), np.array(y)
                 if 'neural_network' in self.ensemble_models:
                     try:
                         self.ensemble_models['neural_network']['model'].partial_fit(X_array, y_array)
                     except:
-                        pass  # Skip if partial_fit fails
+                        pass
                 logger.info("Online models updated with new interactions")
         except Exception as e:
             logger.error(f"Online model retraining error: {e}")
 
     def get_user_profile(self, user_id):
-        """Get user's content preferences"""
         conn = self.get_db_connection()
         genre_stats = conn.execute('''
             SELECT genre_ids, AVG(rating) as avg_rating
@@ -1144,7 +1110,6 @@ class AdvancedRecommendationEngine:
 rec_engine = AdvancedRecommendationEngine()
 
 def get_cached_recommendations(user_id, rec_type='hybrid', limit=20):
-    """Get cached recommendations or compute new ones"""
     cache_key = f"{user_id}_{rec_type}_{limit}"
     if redis_client:
         cached_data = redis_client.get(cache_key)
@@ -1154,7 +1119,7 @@ def get_cached_recommendations(user_id, rec_type='hybrid', limit=20):
                 return cached_data['recommendations']
 
     recommendations = []
-    if rec_type == 'hybrid':
+    if rec_type in ('hybrid', 'hybrid_advanced'):  # Handle backend's hybrid_advanced
         recommendations = rec_engine.get_hybrid_recommendations(user_id, limit)
     elif rec_type == 'content':
         recommendations = rec_engine.get_content_based_recommendations(user_id, limit)
@@ -1181,7 +1146,6 @@ def get_cached_recommendations(user_id, rec_type='hybrid', limit=20):
     return recommendations
 
 def retrain_model_if_needed():
-    """Retrain model if outdated"""
     if not rec_engine.model_trained or not rec_engine.model_timestamp:
         return rec_engine.train_model()
     if datetime.now() - rec_engine.model_timestamp > timedelta(hours=24):
@@ -1189,21 +1153,19 @@ def retrain_model_if_needed():
         return rec_engine.train_model()
     return True
 
-# API Routes
 @app.route('/health')
 def health_check():
-    """Health check endpoint"""
     return jsonify({
         'status': 'healthy',
         'model_trained': rec_engine.model_trained,
         'model_timestamp': rec_engine.model_timestamp.isoformat() if rec_engine.model_timestamp else None,
         'cache_size': len(recommendation_cache) if not redis_client else redis_client.dbsize(),
+        'surprise_available': SURPRISE_AVAILABLE,  # Added for debugging
         'timestamp': datetime.now().isoformat()
     })
 
 @app.route('/train', methods=['POST'])
 def train_model():
-    """Train/retrain the recommendation model"""
     try:
         success = rec_engine.train_model()
         if success:
@@ -1220,12 +1182,11 @@ def train_model():
 
 @app.route('/recommend', methods=['POST'])
 def get_recommendations():
-    """Get personalized recommendations for a user"""
     try:
         data = request.get_json()
         user_id = data.get('user_id')
         limit = min(data.get('limit', 20), 100)
-        rec_type = data.get('type', 'hybrid')
+        rec_type = data.get('type', data.get('algorithm', 'hybrid'))  # Support both 'type' and 'algorithm'
 
         if not user_id:
             return jsonify({'error': 'User ID required'}), 400
@@ -1247,11 +1208,10 @@ def get_recommendations():
 
 @app.route('/similar', methods=['POST'])
 def get_similar_content():
-    """Get similar content to a specific item"""
     try:
         data = request.get_json()
         content_id = data.get('content_id')
-        user_id = data.get('user_id')  # Optional user_id for personalized similarity
+        user_id = data.get('user_id')
         if not content_id:
             return jsonify({'error': 'Content ID required'}), 400
 
@@ -1290,7 +1250,6 @@ def get_similar_content():
 
 @app.route('/search_suggestions', methods=['POST'])
 def get_search_suggestions():
-    """Get ML-powered search suggestions for a user"""
     try:
         data = request.get_json()
         user_id = data.get('user_id')
@@ -1303,15 +1262,10 @@ def get_search_suggestions():
         if not retrain_model_if_needed():
             return jsonify({'error': 'Model not trained'}), 503
 
-        # Vectorize query
         query_vector = rec_engine.tfidf_vectorizer.transform([query]).toarray()
         query_embedding = rec_engine.svd.transform(query_vector)
-
-        # Get user preferences
         user_profile = rec_engine.get_user_profile(user_id)
         genre_preferences = user_profile.get('genre_preferences', {})
-
-        # Compute similarities
         similarities = cosine_similarity(query_embedding, rec_engine.content_features)[0]
         recommendations = []
         conn = rec_engine.get_db_connection()
@@ -1326,7 +1280,6 @@ def get_search_suggestions():
                     content_dict['suggestion_score'] = similarities[idx] * 0.7 + genre_score * 0.3
                     recommendations.append(content_dict)
 
-            # Sort and optimize diversity
             recommendations.sort(key=lambda x: x['suggestion_score'], reverse=True)
             recommendations = rec_engine.diversity_optimizer.optimize_diversity(recommendations[:limit])
             return jsonify({
@@ -1341,7 +1294,6 @@ def get_search_suggestions():
 
 @app.route('/update', methods=['POST'])
 def trigger_model_update():
-    """Trigger ML model update based on events"""
     try:
         data = request.get_json()
         event_type = data.get('event')
@@ -1350,18 +1302,15 @@ def trigger_model_update():
         if not event_type:
             return jsonify({'error': 'Event type required'}), 400
 
-        # Handle specific event types
         if event_type == 'public_recommendation_added':
             content_id = event_data.get('content_id')
             if content_id:
-                # Boost the content's popularity in the recommendation system
                 conn = rec_engine.get_db_connection()
                 conn.execute('UPDATE content SET popularity = popularity * 1.2 WHERE id = ?', (content_id,))
                 conn.commit()
                 conn.close()
                 logger.info(f"Boosted popularity for content_id {content_id} due to public recommendation")
 
-        # Queue for background model update
         rec_engine.online_learning_buffer.append({
             'event': event_type,
             'data': event_data,
@@ -1375,7 +1324,6 @@ def trigger_model_update():
 
 @app.route('/update_preferences', methods=['POST'])
 def update_preferences():
-    """Update user preferences in real-time"""
     try:
         data = request.get_json()
         user_id = data.get('user_id')
@@ -1384,7 +1332,6 @@ def update_preferences():
         if not user_id or not interactions:
             return jsonify({'error': 'User ID and interaction data required'}), 400
 
-        # Update user profile with new interactions
         for interaction in interactions:
             content_id = interaction.get('content_id')
             action = interaction.get('interaction_type')
@@ -1401,7 +1348,6 @@ def update_preferences():
                     'timestamp': datetime.now().isoformat()
                 })
 
-        # Trigger immediate retraining if buffer is large enough
         if len(rec_engine.online_learning_buffer) >= 1000:
             rec_engine.retrain_online_models()
 
@@ -1412,7 +1358,6 @@ def update_preferences():
 
 @app.route('/learn', methods=['POST'])
 def real_time_learning():
-    """Handle real-time learning updates"""
     try:
         data = request.get_json()
         user_id = data.get('user_id')
@@ -1430,7 +1375,6 @@ def real_time_learning():
         return jsonify({'error': 'Failed to record learning data'}), 500
 
 def background_model_update():
-    """Background task to update model periodically"""
     while True:
         try:
             time.sleep(MODEL_UPDATE_INTERVAL)

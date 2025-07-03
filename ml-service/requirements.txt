@@ -6,8 +6,9 @@ xgboost
 torch
 networkx
 textblob
-surprise
+scikit-surprise
 implicit
 faiss-cpu
 redis
 gunicorn
+Cython
