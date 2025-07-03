@@ -6,14 +6,9 @@ xgboost
 tensorflow
 networkx
 textblob
-scikit-surprise
+surprise
 implicit
-scipy
 faiss-cpu
 redis
-asyncio
 aiohttp
-python-dotenv
 gunicorn
-time
-tensorflow
