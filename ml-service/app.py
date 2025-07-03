@@ -1,4 +1,3 @@
-# ml-services/app.py
 from flask import Flask, request, jsonify
 import sqlite3
 import numpy as np
@@ -59,7 +58,6 @@ model_cache = {}
 cache_lock = threading.Lock()
 
 # Initialize Redis for caching
-# Replace the Redis initialization with:
 try:
     redis_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=0, decode_responses=True)
     redis_client.ping()  # Test connection
@@ -67,7 +65,7 @@ except Exception as e:
     redis_client = None
     logger.warning(f"Redis not available, using in-memory caching: {e}")
 
-# Replace the Lambda layer definition with:
+# Custom Sampling Layer for VAE
 class Sampling(tf.keras.layers.Layer):
     def call(self, inputs):
         z_mean, z_log_var = inputs
@@ -75,11 +73,6 @@ class Sampling(tf.keras.layers.Layer):
         dim = tf.shape(z_mean)[1]
         epsilon = tf.random.normal(shape=(batch, dim))
         return z_mean + tf.exp(0.5 * z_log_var) * epsilon
-
-# Then in the build_vae method, replace:
-# z = tf.keras.layers.Lambda(sampling)([z_mean, z_log_var])
-# with:
-z = Sampling()([z_mean, z_log_var])
 
 class TrendAnalyzer:
     """Advanced trend analysis for content recommendations"""
@@ -352,14 +345,7 @@ class AdvancedNeuralRecommender:
         z_mean = Dense(latent_dim)(h)
         z_log_var = Dense(latent_dim)(h)
 
-        def sampling(args):
-            z_mean, z_log_var = args
-            batch = tf.shape(z_mean)[0]
-            dim = tf.shape(z_mean)[1]
-            epsilon = tf.random.normal(shape=(batch, dim))
-            return z_mean + tf.exp(0.5 * z_log_var) * epsilon
-
-        z = tf.keras.layers.Lambda(sampling)([z_mean, z_log_var])
+        z = Sampling()([z_mean, z_log_var])
 
         decoder_h = Dense(128, activation='relu')(z)
         decoder_h = Dropout(0.3)(decoder_h)
@@ -874,7 +860,6 @@ class AdvancedRecommendationEngine:
         finally:
             conn.close()
 
-
     def get_collaborative_recommendations(self, user_id, limit=20):
         """Get collaborative filtering recommendations"""
         if not self.model_trained or self.user_item_matrix is None:
@@ -1057,7 +1042,6 @@ class AdvancedRecommendationEngine:
         except Exception as e:
             logger.error(f"Online model retraining error: {e}")
 
-
     def get_user_profile(self, user_id):
         """Get user's content preferences"""
         conn = self.get_db_connection()
@@ -1157,7 +1141,9 @@ def train_model():
 
 @app.route('/recommend', methods=['POST'])
 def get_recommendations():
-    """Get personalized recommendations for a user"""
+    """Get personalized recommendations for a user
+    Note: Handles deep learning recommendations (equivalent to /deep_recommend) when type='deep_learning'
+    """
     try:
         data = request.get_json()
         user_id = data.get('user_id')
@@ -1182,10 +1168,16 @@ def get_recommendations():
         logger.error(f"Recommendation endpoint error: {e}")
         return jsonify({'error': 'Recommendation service unavailable'}), 500
 
-@app.route('/similar/<int:content_id>')
-def get_similar_content(content_id):
+@app.route('/similar', methods=['POST'])
+def get_similar_content():
     """Get similar content to a specific item"""
     try:
+        data = request.get_json()
+        content_id = data.get('content_id')
+        user_id = data.get('user_id')  # Optional user_id for personalized similarity
+        if not content_id:
+            return jsonify({'error': 'Content ID required'}), 400
+
         if not rec_engine.model_trained or rec_engine.faiss_index is None:
             return jsonify({'error': 'Model not trained'}), 503
 
@@ -1209,7 +1201,7 @@ def get_similar_content(content_id):
                     similar_content.append(content_dict)
 
             return jsonify({
-                'similar_content': similar_content,
+                'similar': similar_content,
                 'content_id': content_id,
                 'count': len(similar_content)
             })
@@ -1218,6 +1210,129 @@ def get_similar_content(content_id):
     except Exception as e:
         logger.error(f"Similar content endpoint error: {e}")
         return jsonify({'error': 'Similar content service unavailable'}), 500
+
+@app.route('/search_suggestions', methods=['POST'])
+def get_search_suggestions():
+    """Get ML-powered search suggestions for a user"""
+    try:
+        data = request.get_json()
+        user_id = data.get('user_id')
+        query = data.get('query', '')
+        limit = min(data.get('limit', 5), 20)
+
+        if not user_id or not query:
+            return jsonify({'error': 'User ID and query required'}), 400
+
+        if not retrain_model_if_needed():
+            return jsonify({'error': 'Model not trained'}), 503
+
+        # Vectorize query
+        query_vector = rec_engine.tfidf_vectorizer.transform([query]).toarray()
+        query_embedding = rec_engine.svd.transform(query_vector)
+
+        # Get user preferences
+        user_profile = rec_engine.get_user_profile(user_id)
+        genre_preferences = user_profile.get('genre_preferences', {})
+
+        # Compute similarities
+        similarities = cosine_similarity(query_embedding, rec_engine.content_features)[0]
+        recommendations = []
+        conn = rec_engine.get_db_connection()
+        try:
+            for idx in np.argsort(similarities)[::-1][:limit * 2]:
+                content_id = rec_engine.content_ids[idx]
+                content = conn.execute('SELECT * FROM content WHERE id = ?', (content_id,)).fetchone()
+                if content:
+                    content_dict = dict(content)
+                    genres = json.loads(content['genre_ids'] or '[]')
+                    genre_score = sum(genre_preferences.get(str(genre), 0) for genre in genres) / (len(genres) or 1)
+                    content_dict['suggestion_score'] = similarities[idx] * 0.7 + genre_score * 0.3
+                    recommendations.append(content_dict)
+
+            # Sort and optimize diversity
+            recommendations.sort(key=lambda x: x['suggestion_score'], reverse=True)
+            recommendations = rec_engine.diversity_optimizer.optimize_diversity(recommendations[:limit])
+            return jsonify({
+                'suggestions': recommendations,
+                'count': len(recommendations)
+            })
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.error(f"Search suggestions error: {e}")
+        return jsonify({'error': 'Search suggestions unavailable'}), 500
+
+@app.route('/update', methods=['POST'])
+def trigger_model_update():
+    """Trigger ML model update based on events"""
+    try:
+        data = request.get_json()
+        event_type = data.get('event')
+        event_data = data.get('data', {})
+
+        if not event_type:
+            return jsonify({'error': 'Event type required'}), 400
+
+        # Handle specific event types
+        if event_type == 'public_recommendation_added':
+            content_id = event_data.get('content_id')
+            if content_id:
+                # Boost the content's popularity in the recommendation system
+                conn = rec_engine.get_db_connection()
+                conn.execute('UPDATE content SET popularity = popularity * 1.2 WHERE id = ?', (content_id,))
+                conn.commit()
+                conn.close()
+                logger.info(f"Boosted popularity for content_id {content_id} due to public recommendation")
+
+        # Queue for background model update
+        rec_engine.online_learning_buffer.append({
+            'event': event_type,
+            'data': event_data,
+            'timestamp': datetime.now().isoformat()
+        })
+
+        return jsonify({'message': 'Model update triggered'})
+    except Exception as e:
+        logger.error(f"Model update error: {e}")
+        return jsonify({'error': 'Failed to trigger model update'}), 500
+
+@app.route('/update_preferences', methods=['POST'])
+def update_preferences():
+    """Update user preferences in real-time"""
+    try:
+        data = request.get_json()
+        user_id = data.get('user_id')
+        interactions = data.get('data', [])
+
+        if not user_id or not interactions:
+            return jsonify({'error': 'User ID and interaction data required'}), 400
+
+        # Update user profile with new interactions
+        for interaction in interactions:
+            content_id = interaction.get('content_id')
+            action = interaction.get('interaction_type')
+            rating = interaction.get('rating')
+            if content_id and action:
+                reward = rec_engine.feedback_weights.get(action, 0.1)
+                if action == 'rating' and rating:
+                    reward = rating / 10.0
+                rec_engine.online_learning_buffer.append({
+                    'user_id': user_id,
+                    'content_id': content_id,
+                    'action': action,
+                    'reward': reward,
+                    'timestamp': datetime.now().isoformat()
+                })
+
+        # Trigger immediate retraining if buffer is large enough
+        if len(rec_engine.online_learning_buffer) >= 1000:
+            rec_engine.retrain_online_models()
+
+        return jsonify({'message': 'Preferences update queued'})
+    except Exception as e:
+        logger.error(f"Preferences update error: {e}")
+        return jsonify({'error': 'Failed to update preferences'}), 500
+
 @app.route('/learn', methods=['POST'])
 def real_time_learning():
     """Handle real-time learning updates"""
