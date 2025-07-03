@@ -21,7 +21,7 @@ app.secret_key = os.environ.get('SECRET_KEY', 'your-secret-key-change-this')
 CORS(app)
 
 # Configuration
-TMDB_API_KEY = os.environ.get('TMDB_API_KEY', 'eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiIxY2Y4NjYzNWYyMGJiMmFmZjhlNzA5NDBlN2MzZGRkNSIsInN1YiI6IjY3NGE4ZTdhZTgzOTQyMDY0NWQ2YWU1OSIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.QLQGOPj4_7WVGRMdZPSIJ2aOAl_JZWpNPTkU8C2uMZE')
+TMDB_API_KEY = os.environ.get('TMDB_API_KEY', '1cf86635f20bb2aff8e70940e7c3ddd5')
 TMDB_BASE_URL = 'https://api.themoviedb.org/3'
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '7689567537:AAGvDtu94OlLlTiWpfjSfpl_dd_Osi_2W7c')
 TELEGRAM_CHANNEL_ID = os.environ.get('TELEGRAM_CHANNEL_ID', '-1002566510721')
