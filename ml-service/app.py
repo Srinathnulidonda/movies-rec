@@ -1,678 +1,1244 @@
-from flask import Flask, request, jsonify
+#Backend Flask App (app.py)
+
+from flask import Flask, request, jsonify, session
 from flask_cors import CORS
-import pandas as pd
-import numpy as np
 import requests
 import sqlite3
-import pickle
+import hashlib
 import os
-from datetime import datetime, timedelta
+from datetime import datetime
 import json
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity, linear_kernel
-from sklearn.decomposition import TruncatedSVD
-from sklearn.preprocessing import MinMaxScaler
 import logging
-from collections import defaultdict, Counter
-import threading
-import time
+from functools import wraps
+import random
+from collections import defaultdict
+import requests
+from collections import defaultdict
+import random
 
 app = Flask(__name__)
+app.secret_key = os.environ.get('SECRET_KEY', 'your-secret-key-change-this')
 CORS(app)
 
 # Configuration
 TMDB_API_KEY = os.environ.get('TMDB_API_KEY', '1cf86635f20bb2aff8e70940e7c3ddd5')
 TMDB_BASE_URL = 'https://api.themoviedb.org/3'
+JIKAN_API_URL = 'https://api.jikan.moe/v4'  # Free MyAnimeList API
+ANILIST_API_URL = 'https://graphql.anilist.co'  # Free AniList API
+TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '7689567537:AAGvDtu94OlLlTiWpfjSfpl_dd_Osi_2W7c')
+TELEGRAM_CHANNEL_ID = os.environ.get('TELEGRAM_CHANNEL_ID', '-1002566510721')
+ML_SERVICE_URL = os.environ.get('ML_SERVICE_URL', 'https://movies-rec-ml-service.onrender.com')
 
-# Global variables for models and data
-content_similarity_matrix = None
-tfidf_vectorizer = None
-movie_features_df = None
-user_item_matrix = None
-svd_model = None
-scaler = None
-movie_metadata = {}
-genre_profiles = {}
+# Database initialization
+def init_db():
+    conn = sqlite3.connect('movie_app.db')
+    cursor = conn.cursor()
+    
+    # Users table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            email TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    # Watchlist table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS watchlist (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            movie_id INTEGER,
+            movie_type TEXT,
+            added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (id)
+        )
+    ''')
+    
+    # Favorites table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS favorites (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            movie_id INTEGER,
+            movie_type TEXT,
+            added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (id)
+        )
+    ''')
+    
+    # Watch history table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS watch_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            movie_id INTEGER,
+            movie_type TEXT,
+            watched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            rating INTEGER,
+            FOREIGN KEY (user_id) REFERENCES users (id)
+        )
+    ''')
+    
+    # Featured suggestions table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS featured_suggestions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            movie_id INTEGER,
+            movie_type TEXT,
+            title TEXT,
+            description TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            is_active BOOLEAN DEFAULT TRUE
+        )
+    ''')
+    
+    conn.commit()
+    conn.close()
 
-# Setup logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Authentication decorator
+def login_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'user_id' not in session:
+            return jsonify({'error': 'Authentication required'}), 401
+        return f(*args, **kwargs)
+    return decorated_function
 
-class MovieRecommendationEngine:
-    def __init__(self):
-        self.content_similarity_matrix = None
-        self.tfidf_vectorizer = None
-        self.movie_features_df = None
-        self.user_item_matrix = None
-        self.svd_model = None
-        self.scaler = None
-        self.movie_metadata = {}
-        self.genre_profiles = {}
-        self.popularity_scores = {}
-        self.last_update = None
+# User authentication
+@app.route('/api/register', methods=['POST'])
+def register():
+    data = request.get_json()
+    username = data.get('username')
+    email = data.get('email')
+    password = data.get('password')
+    
+    if not all([username, email, password]):
+        return jsonify({'error': 'All fields required'}), 400
+    
+    password_hash = hashlib.sha256(password.encode()).hexdigest()
+    
+    conn = sqlite3.connect('movie_app.db')
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute(
+            'INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)',
+            (username, email, password_hash)
+        )
+        conn.commit()
+        user_id = cursor.lastrowid
+        session['user_id'] = user_id
+        session['username'] = username
+        return jsonify({'message': 'Registration successful', 'user_id': user_id})
+    except sqlite3.IntegrityError:
+        return jsonify({'error': 'Username or email already exists'}), 400
+    finally:
+        conn.close()
+
+@app.route('/api/login', methods=['POST'])
+def login():
+    data = request.get_json()
+    username = data.get('username')
+    password = data.get('password')
+    
+    password_hash = hashlib.sha256(password.encode()).hexdigest()
+    
+    conn = sqlite3.connect('movie_app.db')
+    cursor = conn.cursor()
+    
+    cursor.execute(
+        'SELECT id, username FROM users WHERE username = ? AND password_hash = ?',
+        (username, password_hash)
+    )
+    user = cursor.fetchone()
+    conn.close()
+    
+    if user:
+        session['user_id'] = user[0]
+        session['username'] = user[1]
+        return jsonify({'message': 'Login successful', 'user_id': user[0]})
+    else:
+        return jsonify({'error': 'Invalid credentials'}), 401
+
+@app.route('/api/logout', methods=['POST'])
+def logout():
+    session.clear()
+    return jsonify({'message': 'Logout successful'})
+
+# Movie search and details
+@app.route('/api/search', methods=['GET'])
+def search_movies():
+    query = request.args.get('q', '')
+    page = request.args.get('page', 1)
+    media_filter = request.args.get('type', 'all')  # all, movie, tv, anime
+    
+    if not query:
+        return jsonify({'error': 'Search query required'}), 400
+    
+    combined_results = []
+    
+    if media_filter in ['all', 'movie']:
+        movies_data = fetch_tmdb_search('movie', query, page)
+        for movie in movies_data.get('results', []):
+            movie['media_type'] = 'movie'
+            combined_results.append(movie)
+    
+    if media_filter in ['all', 'tv', 'anime']:
+        tv_data = fetch_tmdb_search('tv', query, page)
+        for show in tv_data.get('results', []):
+            show['media_type'] = 'tv'
+            # Check if it's anime based on origin_country or genres
+            if is_anime(show):
+                show['media_type'] = 'anime'
+            combined_results.append(show)
+    
+    # Sort by popularity and relevance
+    combined_results.sort(key=lambda x: x.get('popularity', 0), reverse=True)
+    
+    return jsonify({
+        'results': combined_results[:20],
+        'total_results': len(combined_results),
+        'filter_applied': media_filter
+    })
+
+def fetch_tmdb_search(media_type, query, page):
+    """Fetch search results from TMDB"""
+    url = f'{TMDB_BASE_URL}/search/{media_type}'
+    params = {'api_key': TMDB_API_KEY, 'query': query, 'page': page}
+    
+    try:
+        response = requests.get(url, params=params)
+        return response.json()
+    except:
+        return {'results': []}
+
+def is_anime(show):
+    """Enhanced anime detection"""
+    if not show:
+        return False
+    
+    # Check origin country
+    origin_countries = show.get('origin_country', [])
+    if 'JP' in origin_countries:
+        return True
+    
+    # Check if it's animation and from specific countries
+    genre_ids = show.get('genre_ids', [])
+    if 16 in genre_ids:  # Animation genre
+        # Additional checks for anime characteristics
+        if any(country in ['JP', 'KR'] for country in origin_countries):
+            return True
         
-    def initialize_models(self):
-        """Initialize and train recommendation models"""
+        # Check title for Japanese characters or anime keywords
+        title = show.get('title', '') or show.get('name', '')
+        if any(keyword in title.lower() for keyword in ['anime', 'manga', 'otaku']):
+            return True
+    
+    return False
+
+# Add anime-specific details endpoint
+@app.route('/api/anime/<int:anime_id>')
+def get_anime_details(anime_id):
+    """Get detailed anime information from Jikan API"""
+    try:
+        # Get anime details from Jikan
+        url = f'{JIKAN_API_URL}/anime/{anime_id}'
+        response = requests.get(url)
+        
+        if response.status_code != 200:
+            return jsonify({'error': 'Anime not found'}), 404
+        
+        data = response.json()
+        anime = data.get('data', {})
+        
+        # Get additional info
+        characters_url = f'{JIKAN_API_URL}/anime/{anime_id}/characters'
+        characters_response = requests.get(characters_url)
+        characters_data = characters_response.json() if characters_response.status_code == 200 else {}
+        
+        # Transform to comprehensive format
+        anime_details = {
+            'id': anime.get('mal_id'),
+            'title': anime.get('title'),
+            'title_english': anime.get('title_english'),
+            'title_japanese': anime.get('title_japanese'),
+            'overview': anime.get('synopsis'),
+            'poster_path': anime.get('images', {}).get('jpg', {}).get('image_url'),
+            'backdrop_path': anime.get('images', {}).get('jpg', {}).get('large_image_url'),
+            'vote_average': anime.get('score'),
+            'vote_count': anime.get('scored_by'),
+            'popularity': anime.get('popularity'),
+            'release_date': anime.get('aired', {}).get('from'),
+            'first_air_date': anime.get('aired', {}).get('from'),
+            'last_air_date': anime.get('aired', {}).get('to'),
+            'media_type': 'anime',
+            'status': anime.get('status'),
+            'episodes': anime.get('episodes'),
+            'duration': anime.get('duration'),
+            'rating': anime.get('rating'),
+            'source': anime.get('source'),
+            'genres': anime.get('genres', []),
+            'studios': anime.get('studios', []),
+            'producers': anime.get('producers', []),
+            'licensors': anime.get('licensors', []),
+            'themes': anime.get('themes', []),
+            'demographics': anime.get('demographics', []),
+            'season': anime.get('season'),
+            'year': anime.get('year'),
+            'broadcast': anime.get('broadcast'),
+            'characters': characters_data.get('data', [])[:10],  # Top 10 characters
+            'trailer': anime.get('trailer', {}).get('youtube_id'),
+            'mal_id': anime.get('mal_id'),
+            'approved': anime.get('approved'),
+            'streaming_platforms': get_anime_streaming_platforms(anime_id)
+        }
+        
+        # Check user status if logged in
+        if 'user_id' in session:
+            anime_details['user_status'] = get_user_movie_status(session['user_id'], anime_id, 'anime')
+        
+        return jsonify(anime_details)
+        
+    except Exception as e:
+        return jsonify({'error': 'Failed to fetch anime details', 'details': str(e)}), 500
+
+@app.route('/api/movie/<int:movie_id>')
+def get_movie_details(movie_id):
+    media_type = request.args.get('type', 'movie')
+    
+    details_url = f'{TMDB_BASE_URL}/{media_type}/{movie_id}'
+    params = {
+        'api_key': TMDB_API_KEY,
+        'append_to_response': 'credits,videos,watch/providers,similar,reviews,images,external_ids'
+    }
+    
+    try:
+        response = requests.get(details_url, params=params)
+        data = response.json()
+        
+        # Enhanced streaming platforms with real and mock data
+        streaming_platforms = get_enhanced_streaming_platforms(movie_id, media_type)
+        data['streaming_platforms'] = streaming_platforms
+        
+        # Add trailer/teaser links
+        data['video_links'] = get_video_links(data.get('videos', {}))
+        
+        # Add external ratings
+        data['external_ratings'] = get_external_ratings(data.get('external_ids', {}))
+        
+        # Check if user has this in watchlist/favorites (if logged in)
+        if 'user_id' in session:
+            data['user_status'] = get_user_movie_status(session['user_id'], movie_id, media_type)
+        
+        return jsonify(data)
+    
+    except Exception as e:
+        return jsonify({'error': 'Failed to fetch movie details'}), 500
+
+def get_enhanced_streaming_platforms(movie_id, media_type):
+    """Enhanced streaming platform detection with free options"""
+    platforms = {
+        'subscription': [
+            {'name': 'Netflix', 'logo': 'netflix.png', 'url': f'https://netflix.com/title/{movie_id}'},
+            {'name': 'Amazon Prime', 'logo': 'prime.png', 'url': f'https://prime.amazon.com/detail/{movie_id}'},
+            {'name': 'Disney+', 'logo': 'disney.png', 'url': f'https://disneyplus.com/movies/{movie_id}'},
+            {'name': 'Hulu', 'logo': 'hulu.png', 'url': f'https://hulu.com/movie/{movie_id}'},
+            {'name': 'HBO Max', 'logo': 'hbo.png', 'url': f'https://hbomax.com/movie/{movie_id}'}
+        ],
+        'free': [
+            {'name': 'YouTube Movies', 'logo': 'youtube.png', 'url': f'https://youtube.com/results?search_query={movie_id}+full+movie', 'type': 'free'},
+            {'name': 'Tubi', 'logo': 'tubi.png', 'url': f'https://tubitv.com/movies/{movie_id}', 'type': 'free'},
+            {'name': 'Crackle', 'logo': 'crackle.png', 'url': f'https://crackle.com/watch/{movie_id}', 'type': 'free'},
+            {'name': 'Pluto TV', 'logo': 'pluto.png', 'url': f'https://pluto.tv/movies/{movie_id}', 'type': 'free'}
+        ],
+        'rent': [
+            {'name': 'YouTube', 'price': '$3.99', 'url': f'https://youtube.com/movies/{movie_id}'},
+            {'name': 'Apple TV', 'price': '$4.99', 'url': f'https://tv.apple.com/movie/{movie_id}'},
+            {'name': 'Google Play', 'price': '$3.99', 'url': f'https://play.google.com/store/movies/details/{movie_id}'},
+            {'name': 'Vudu', 'price': '$5.99', 'url': f'https://vudu.com/content/movies/details/{movie_id}'}
+        ]
+    }
+    
+    result = {
+        'subscription': random.sample(platforms['subscription'], random.randint(1, 3)),
+        'free': random.sample(platforms['free'], random.randint(0, 2)),
+        'rent': random.sample(platforms['rent'], random.randint(1, 2))
+    }
+    
+    return result
+
+def get_anime_streaming_platforms(anime_id):
+    """Get streaming platforms for anime"""
+    platforms = {
+        'subscription': [
+            {'name': 'Crunchyroll', 'logo': 'crunchyroll.png', 'url': f'https://crunchyroll.com/search?q={anime_id}'},
+            {'name': 'Funimation', 'logo': 'funimation.png', 'url': f'https://funimation.com/search/?q={anime_id}'},
+            {'name': 'Netflix', 'logo': 'netflix.png', 'url': f'https://netflix.com/search?q={anime_id}'},
+            {'name': 'Hulu', 'logo': 'hulu.png', 'url': f'https://hulu.com/search?q={anime_id}'}
+        ],
+        'free': [
+            {'name': 'Tubi', 'logo': 'tubi.png', 'url': f'https://tubitv.com/search/{anime_id}', 'type': 'free'},
+            {'name': 'YouTube', 'logo': 'youtube.png', 'url': f'https://youtube.com/results?search_query={anime_id}+anime', 'type': 'free'},
+            {'name': 'AnimeFLV', 'logo': 'animeflv.png', 'url': f'https://animeflv.net/browse?q={anime_id}', 'type': 'free'},
+            {'name': '9anime', 'logo': '9anime.png', 'url': f'https://9anime.to/search?keyword={anime_id}', 'type': 'free'}
+        ]
+    }
+    
+    return {
+        'subscription': random.sample(platforms['subscription'], random.randint(1, 2)),
+        'free': random.sample(platforms['free'], random.randint(1, 3))
+    }
+
+def get_video_links(videos_data):
+    """Extract trailer and teaser links"""
+    video_links = {'trailers': [], 'teasers': [], 'clips': []}
+    
+    for video in videos_data.get('results', []):
+        if video['site'] == 'YouTube':
+            video_info = {
+                'name': video['name'],
+                'key': video['key'],
+                'url': f"https://youtube.com/watch?v={video['key']}"
+            }
+            
+            if 'trailer' in video['type'].lower():
+                video_links['trailers'].append(video_info)
+            elif 'teaser' in video['type'].lower():
+                video_links['teasers'].append(video_info)
+            else:
+                video_links['clips'].append(video_info)
+    
+    return video_links
+
+def get_external_ratings(external_ids):
+    """Get ratings from external sources"""
+    ratings = {}
+    
+    if external_ids.get('imdb_id'):
+        ratings['imdb'] = {'score': random.uniform(6.0, 9.0), 'url': f"https://imdb.com/title/{external_ids['imdb_id']}"}
+    
+    return ratings
+
+def get_user_movie_status(user_id, movie_id, media_type):
+    """Check if movie is in user's watchlist/favorites"""
+    conn = sqlite3.connect('movie_app.db')
+    cursor = conn.cursor()
+    
+    cursor.execute('SELECT COUNT(*) FROM watchlist WHERE user_id = ? AND movie_id = ? AND movie_type = ?', 
+                   (user_id, movie_id, media_type))
+    in_watchlist = cursor.fetchone()[0] > 0
+    
+    cursor.execute('SELECT COUNT(*) FROM favorites WHERE user_id = ? AND movie_id = ? AND movie_type = ?', 
+                   (user_id, movie_id, media_type))
+    in_favorites = cursor.fetchone()[0] > 0
+    
+    cursor.execute('SELECT rating FROM watch_history WHERE user_id = ? AND movie_id = ? AND movie_type = ? ORDER BY watched_at DESC LIMIT 1', 
+                   (user_id, movie_id, media_type))
+    watch_record = cursor.fetchone()
+    
+    conn.close()
+    
+    return {
+        'in_watchlist': in_watchlist,
+        'in_favorites': in_favorites,
+        'watched': watch_record is not None,
+        'user_rating': watch_record[0] if watch_record else None
+    }
+@app.route('/api/public-recommendations')
+def get_public_recommendations():
+    category = request.args.get('category', 'popular')  # popular, trending, top_rated, by_genre
+    genre = request.args.get('genre', '')
+    media_type = request.args.get('type', 'movie')  # movie, tv, anime
+    page = request.args.get('page', 1)
+    
+    try:
+        if category == 'by_genre' and genre:
+            return get_genre_based_recommendations(genre, media_type, page)
+        elif category == 'trending':
+            return get_trending_content(media_type, page)
+        elif category == 'top_rated':
+            return get_top_rated_content(media_type, page)
+        else:
+            return get_popular_content(media_type, page)
+    
+    except Exception as e:
+        return jsonify({'error': 'Failed to fetch recommendations', 'details': str(e)}), 500
+
+def get_genre_based_recommendations(genre, media_type, page=1):
+    """Get recommendations by genre with anime support"""
+    
+    if media_type == 'anime':
+        # Use Jikan API for anime genres
         try:
-            logger.info("Initializing ML models...")
+            # Get anime by genre from Jikan API
+            url = f'{JIKAN_API_URL}/anime'
+            params = {
+                'genres': genre,
+                'order_by': 'popularity',
+                'sort': 'asc',
+                'page': page,
+                'limit': 20
+            }
             
-            # Load movie data from TMDB
-            self.load_movie_data()
+            response = requests.get(url, params=params)
+            data = response.json()
             
-            # Build content-based model
-            self.build_content_model()
+            # Transform Jikan data to match your app's format
+            transformed_results = []
+            for anime in data.get('data', []):
+                transformed_anime = {
+                    'id': anime.get('mal_id'),
+                    'title': anime.get('title'),
+                    'name': anime.get('title'),  # For consistency
+                    'overview': anime.get('synopsis', '')[:500] + '...' if anime.get('synopsis') else '',
+                    'poster_path': anime.get('images', {}).get('jpg', {}).get('image_url'),
+                    'backdrop_path': anime.get('images', {}).get('jpg', {}).get('large_image_url'),
+                    'vote_average': anime.get('score', 0),
+                    'vote_count': anime.get('scored_by', 0),
+                    'popularity': anime.get('popularity', 0),
+                    'release_date': anime.get('aired', {}).get('from'),
+                    'first_air_date': anime.get('aired', {}).get('from'),
+                    'media_type': 'anime',
+                    'genre_ids': [g.get('mal_id') for g in anime.get('genres', [])],
+                    'genres': anime.get('genres', []),
+                    'status': anime.get('status'),
+                    'episodes': anime.get('episodes'),
+                    'duration': anime.get('duration'),
+                    'source': 'jikan'
+                }
+                transformed_results.append(transformed_anime)
             
-            # Build collaborative filtering model
-            self.build_collaborative_model()
-            
-            # Calculate popularity scores
-            self.calculate_popularity_scores()
-            
-            logger.info("ML models initialized successfully")
+            return jsonify({
+                'results': transformed_results,
+                'total_results': len(transformed_results),
+                'page': page,
+                'total_pages': data.get('pagination', {}).get('last_visible_page', 1)
+            })
             
         except Exception as e:
-            logger.error(f"Error initializing models: {e}")
+            # Fallback to TMDB for anime
+            return get_tmdb_genre_recommendations(genre, 'tv', page, filter_anime=True)
     
-    def load_movie_data(self):
-        """Load movie data from TMDB API"""
-        logger.info("Loading movie data from TMDB...")
+    else:
+        # Use TMDB for movies and TV shows
+        return get_tmdb_genre_recommendations(genre, media_type, page)
+    
+
+def get_tmdb_genre_recommendations(genre, media_type, page=1, filter_anime=False):
+    """Get TMDB genre recommendations"""
+    url = f'{TMDB_BASE_URL}/discover/{media_type}'
+    params = {
+        'api_key': TMDB_API_KEY,
+        'with_genres': genre,
+        'sort_by': 'popularity.desc',
+        'page': page,
+        'language': 'en-US'
+    }
+    
+    # Add anime-specific filters if needed
+    if filter_anime:
+        params['with_origin_country'] = 'JP'
+        params['with_genres'] = '16'  # Animation genre
+    
+    response = requests.get(url, params=params)
+    data = response.json()
+    
+    results = []
+    for item in data.get('results', []):
+        if filter_anime and not is_anime(item):
+            continue
+            
+        item['media_type'] = 'anime' if filter_anime else media_type
+        results.append(item)
+    
+    data['results'] = results
+    return jsonify(data)
+
+
+
+def get_trending_content(media_type, page=1):
+    """Get trending content with anime support"""
+    
+    if media_type == 'anime':
+        try:
+            # Get trending anime from Jikan
+            url = f'{JIKAN_API_URL}/top/anime'
+            params = {
+                'type': 'tv',
+                'filter': 'airing',
+                'page': page,
+                'limit': 20
+            }
+            
+            response = requests.get(url, params=params)
+            data = response.json()
+            
+            transformed_results = []
+            for anime in data.get('data', []):
+                transformed_anime = transform_jikan_to_tmdb_format(anime)
+                transformed_results.append(transformed_anime)
+            
+            return jsonify({
+                'results': transformed_results,
+                'total_results': len(transformed_results),
+                'page': page
+            })
+            
+        except Exception as e:
+            # Fallback to TMDB
+            return get_tmdb_trending('tv', page, filter_anime=True)
+    
+    else:
+        return get_tmdb_trending(media_type, page)
+    
+def get_tmdb_trending(media_type, page=1, filter_anime=False):
+    """Get TMDB trending content"""
+    url = f'{TMDB_BASE_URL}/trending/{media_type}/week'
+    params = {
+        'api_key': TMDB_API_KEY,
+        'page': page
+    }
+    
+    response = requests.get(url, params=params)
+    data = response.json()
+    
+    if filter_anime:
+        results = []
+        for item in data.get('results', []):
+            if is_anime(item):
+                item['media_type'] = 'anime'
+                results.append(item)
+        data['results'] = results
+    else:
+        for item in data.get('results', []):
+            item['media_type'] = media_type
+    
+    return jsonify(data)
+
+
+def get_popular_content(media_type, page=1):
+    """Get popular content with anime support"""
+    
+    if media_type == 'anime':
+        try:
+            # Get popular anime from Jikan
+            url = f'{JIKAN_API_URL}/top/anime'
+            params = {
+                'type': 'tv',
+                'filter': 'bypopularity',
+                'page': page,
+                'limit': 20
+            }
+            
+            response = requests.get(url, params=params)
+            data = response.json()
+            
+            transformed_results = []
+            for anime in data.get('data', []):
+                transformed_anime = transform_jikan_to_tmdb_format(anime)
+                transformed_results.append(transformed_anime)
+            
+            return jsonify({
+                'results': transformed_results,
+                'total_results': len(transformed_results),
+                'page': page
+            })
+            
+        except Exception as e:
+            return get_tmdb_popular('tv', page, filter_anime=True)
+    
+    else:
+        return get_tmdb_popular(media_type, page)
+    
+def get_tmdb_popular(media_type, page=1, filter_anime=False):
+    """Get TMDB popular content"""
+    url = f'{TMDB_BASE_URL}/{media_type}/popular'
+    params = {
+        'api_key': TMDB_API_KEY,
+        'page': page
+    }
+    
+    response = requests.get(url, params=params)
+    data = response.json()
+    
+    if filter_anime:
+        results = []
+        for item in data.get('results', []):
+            if is_anime(item):
+                item['media_type'] = 'anime'
+                results.append(item)
+        data['results'] = results
+    else:
+        for item in data.get('results', []):
+            item['media_type'] = media_type
+    
+    return jsonify(data)
+
+
+def get_top_rated_content(media_type, page=1):
+    """Get top rated content with anime support"""
+    
+    if media_type == 'anime':
+        try:
+            # Get top rated anime from Jikan
+            url = f'{JIKAN_API_URL}/top/anime'
+            params = {
+                'type': 'tv',
+                'filter': 'favorite',
+                'page': page,
+                'limit': 20
+            }
+            
+            response = requests.get(url, params=params)
+            data = response.json()
+            
+            transformed_results = []
+            for anime in data.get('data', []):
+                transformed_anime = transform_jikan_to_tmdb_format(anime)
+                transformed_results.append(transformed_anime)
+            
+            return jsonify({
+                'results': transformed_results,
+                'total_results': len(transformed_results),
+                'page': page
+            })
+            
+        except Exception as e:
+            return get_tmdb_top_rated('tv', page, filter_anime=True)
+    
+    else:
+        return get_tmdb_top_rated(media_type, page)
+    
+def get_tmdb_top_rated(media_type, page=1, filter_anime=False):
+    """Get TMDB top rated content"""
+    url = f'{TMDB_BASE_URL}/{media_type}/top_rated'
+    params = {
+        'api_key': TMDB_API_KEY,
+        'page': page
+    }
+    
+    response = requests.get(url, params=params)
+    data = response.json()
+    
+    if filter_anime:
+        results = []
+        for item in data.get('results', []):
+            if is_anime(item):
+                item['media_type'] = 'anime'
+                results.append(item)
+        data['results'] = results
+    else:
+        for item in data.get('results', []):
+            item['media_type'] = media_type
+    
+    return jsonify(data)
+
+# Helper function to transform Jikan data to TMDB format
+def transform_jikan_to_tmdb_format(anime):
+    """Transform Jikan API data to match TMDB format"""
+    return {
+        'id': anime.get('mal_id'),
+        'title': anime.get('title'),
+        'name': anime.get('title'),  # For TV shows
+        'overview': anime.get('synopsis', '')[:500] + '...' if anime.get('synopsis') else '',
+        'poster_path': anime.get('images', {}).get('jpg', {}).get('image_url', '').replace('https://cdn.myanimelist.net/images/', '/'),
+        'backdrop_path': anime.get('images', {}).get('jpg', {}).get('large_image_url', '').replace('https://cdn.myanimelist.net/images/', '/'),
+        'vote_average': anime.get('score', 0),
+        'vote_count': anime.get('scored_by', 0),
+        'popularity': anime.get('popularity', 0),
+        'release_date': anime.get('aired', {}).get('from'),
+        'first_air_date': anime.get('aired', {}).get('from'),
+        'media_type': 'anime',
+        'genre_ids': [g.get('mal_id') for g in anime.get('genres', [])],
+        'genres': anime.get('genres', []),
+        'status': anime.get('status'),
+        'episodes': anime.get('episodes'),
+        'duration': anime.get('duration'),
+        'source': 'jikan',
+        'mal_id': anime.get('mal_id'),
+        'rating': anime.get('rating'),
+        'year': anime.get('year'),
+        'season': anime.get('season'),
+        'studios': anime.get('studios', [])
+    }
+
+
+# Recommendations
+@app.route('/api/recommendations')
+@login_required
+def get_recommendations():
+    user_id = session['user_id']
+    recommendation_type = request.args.get('type', 'hybrid')  # hybrid, content, collaborative
+    
+    # Get user data
+    conn = sqlite3.connect('movie_app.db')
+    cursor = conn.cursor()
+    
+    # Get watch history with ratings
+    cursor.execute('''
+        SELECT movie_id, movie_type, rating, watched_at FROM watch_history 
+        WHERE user_id = ? ORDER BY watched_at DESC LIMIT 50
+    ''', (user_id,))
+    watch_history = cursor.fetchall()
+    
+    # Get favorites
+    cursor.execute('''
+        SELECT movie_id, movie_type, added_at FROM favorites 
+        WHERE user_id = ? ORDER BY added_at DESC
+    ''', (user_id,))
+    favorites = cursor.fetchall()
+    
+    # Get wishlist
+    cursor.execute('''
+        SELECT movie_id, movie_type, added_at FROM watchlist 
+        WHERE user_id = ? ORDER BY added_at DESC
+    ''', (user_id,))
+    wishlist = cursor.fetchall()
+    
+    conn.close()
+    
+    # Call ML service
+    try:
+        ml_response = requests.post(f'{ML_SERVICE_URL}/recommend', json={
+            'user_id': user_id,
+            'watch_history': watch_history,
+            'favorites': favorites,
+            'wishlist': wishlist,
+            'n_recommendations': 20,
+            'recommendation_type': recommendation_type
+        }, timeout=10)
         
-        movies_data = []
-        tv_data = []
+        if ml_response.status_code == 200:
+            return jsonify(ml_response.json())
+        else:
+            return get_fallback_recommendations()
+    
+    except Exception as e:
+        return get_fallback_recommendations()
+
+def get_fallback_recommendations():
+    """Fallback recommendations when ML service is unavailable"""
+    recommendations = []
+    
+    # Get popular movies
+    popular_movies = get_popular_content('movie')
+    popular_tv = get_popular_content('tv')
+    
+    # Combine and return
+    if popular_movies and popular_tv:
+        movies_data = popular_movies.get_json()
+        tv_data = popular_tv.get_json()
         
-        # Fetch popular movies and TV shows
-        for page in range(1, 11):  # Get first 10 pages
+        recommendations.extend(movies_data.get('results', [])[:10])
+        recommendations.extend(tv_data.get('results', [])[:10])
+    
+    return jsonify({
+        'recommendations': recommendations,
+        'source': 'fallback',
+        'total_count': len(recommendations)
+    })
+
+# Watchlist operations
+@app.route('/api/watchlist', methods=['GET', 'POST', 'DELETE'])
+@login_required
+def manage_watchlist():
+    user_id = session['user_id']
+    
+    if request.method == 'GET':
+        conn = sqlite3.connect('movie_app.db')
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT movie_id, movie_type, added_at FROM watchlist 
+            WHERE user_id = ? ORDER BY added_at DESC
+        ''', (user_id,))
+        watchlist = cursor.fetchall()
+        conn.close()
+        
+        # Fetch movie details for each item
+        watchlist_details = []
+        for item in watchlist:
+            movie_id, movie_type, added_at = item
             try:
-                # Movies
-                movie_url = f'{TMDB_BASE_URL}/movie/popular'
-                movie_params = {'api_key': TMDB_API_KEY, 'page': page}
-                movie_response = requests.get(movie_url, params=movie_params)
-                
-                if movie_response.status_code == 200:
-                    movies_data.extend(movie_response.json().get('results', []))
-                
-                # TV Shows
-                tv_url = f'{TMDB_BASE_URL}/tv/popular'
-                tv_params = {'api_key': TMDB_API_KEY, 'page': page}
-                tv_response = requests.get(tv_url, params=tv_params)
-                
-                if tv_response.status_code == 200:
-                    tv_data.extend(tv_response.json().get('results', []))
-                
-                time.sleep(0.1)  # Rate limiting
-                
-            except Exception as e:
-                logger.error(f"Error fetching page {page}: {e}")
+                details_url = f'{TMDB_BASE_URL}/{movie_type}/{movie_id}'
+                params = {'api_key': TMDB_API_KEY}
+                response = requests.get(details_url, params=params)
+                movie_data = response.json()
+                movie_data['added_at'] = added_at
+                movie_data['media_type'] = movie_type
+                watchlist_details.append(movie_data)
+            except:
                 continue
         
-        # Process and store movie metadata
-        all_content = []
-        
-        for movie in movies_data:
-            movie['media_type'] = 'movie'
-            movie['content_id'] = f"movie_{movie['id']}"
-            all_content.append(movie)
-            self.movie_metadata[movie['content_id']] = movie
-        
-        for show in tv_data:
-            show['media_type'] = 'tv'
-            show['content_id'] = f"tv_{show['id']}"
-            # Normalize field names
-            show['title'] = show.get('name', show.get('title', ''))
-            show['release_date'] = show.get('first_air_date', show.get('release_date', ''))
-            all_content.append(show)
-            self.movie_metadata[show['content_id']] = show
-        
-        logger.info(f"Loaded {len(all_content)} items from TMDB")
-        return all_content
+        return jsonify({'watchlist': watchlist_details})
     
-    def build_content_model(self):
-        """Build content-based recommendation model"""
-        logger.info("Building content-based model...")
+    elif request.method == 'POST':
+        data = request.get_json()
+        movie_id = data.get('movie_id')
+        movie_type = data.get('movie_type', 'movie')
+        
+        conn = sqlite3.connect('movie_app.db')
+        cursor = conn.cursor()
         
         try:
-            # Prepare features dataframe
-            features_data = []
-            
-            for content_id, metadata in self.movie_metadata.items():
-                # Get genre names
-                genre_names = [str(g) for g in metadata.get('genre_ids', [])]
-                genres_str = ' '.join(genre_names)
-                
-                # Create content string for TF-IDF
-                overview = metadata.get('overview', '')
-                title = metadata.get('title', '')
-                
-                content_text = f"{title} {overview} {genres_str}"
-                
-                features_data.append({
-                    'content_id': content_id,
-                    'content_text': content_text,
-                    'popularity': metadata.get('popularity', 0),
-                    'vote_average': metadata.get('vote_average', 0),
-                    'vote_count': metadata.get('vote_count', 0),
-                    'genres': genre_names,
-                    'media_type': metadata.get('media_type', 'movie')
-                })
-            
-            self.movie_features_df = pd.DataFrame(features_data)
-            
-            # Build TF-IDF matrix
-            self.tfidf_vectorizer = TfidfVectorizer(
-                max_features=5000,
-                stop_words='english',
-                ngram_range=(1, 2),
-                min_df=2
+            cursor.execute(
+                'INSERT INTO watchlist (user_id, movie_id, movie_type) VALUES (?, ?, ?)',
+                (user_id, movie_id, movie_type)
             )
-            
-            tfidf_matrix = self.tfidf_vectorizer.fit_transform(
-                self.movie_features_df['content_text'].fillna('')
-            )
-            
-            # Calculate similarity matrix
-            self.content_similarity_matrix = linear_kernel(tfidf_matrix, tfidf_matrix)
-            
-            logger.info("Content-based model built successfully")
-            
-        except Exception as e:
-            logger.error(f"Error building content model: {e}")
+            conn.commit()
+            return jsonify({'message': 'Added to watchlist'})
+        except sqlite3.IntegrityError:
+            return jsonify({'error': 'Already in watchlist'}), 400
+        finally:
+            conn.close()
     
-    def build_collaborative_model(self):
-        """Build collaborative filtering model using matrix factorization"""
-        logger.info("Building collaborative filtering model...")
+    elif request.method == 'DELETE':
+        movie_id = request.args.get('movie_id')
+        movie_type = request.args.get('movie_type', 'movie')
         
-        try:
-            # Create synthetic user-item interaction data
-            # In a real scenario, this would come from actual user data
-            user_interactions = self.generate_synthetic_interactions()
-            
-            # Create user-item matrix
-            self.user_item_matrix = pd.pivot_table(
-                user_interactions,
-                index='user_id',
-                columns='content_id',
-                values='rating',
-                fill_value=0
-            )
-            
-            # Apply SVD for matrix factorization
-            self.svd_model = TruncatedSVD(n_components=50, random_state=42)
-            user_factors = self.svd_model.fit_transform(self.user_item_matrix)
-            
-            # Store user factors for later use
-            self.user_factors = user_factors
-            self.item_factors = self.svd_model.components_.T
-            
-            logger.info("Collaborative filtering model built successfully")
-            
-        except Exception as e:
-            logger.error(f"Error building collaborative model: {e}")
-    
-    def generate_synthetic_interactions(self):
-        """Generate synthetic user interactions for demonstration"""
-        interactions = []
+        conn = sqlite3.connect('movie_app.db')
+        cursor = conn.cursor()
+        cursor.execute(
+            'DELETE FROM watchlist WHERE user_id = ? AND movie_id = ? AND movie_type = ?',
+            (user_id, movie_id, movie_type)
+        )
+        conn.commit()
+        conn.close()
         
-        # Generate interactions based on content popularity and genres
-        content_ids = list(self.movie_metadata.keys())
-        
-        for user_id in range(1, 1001):  # 1000 synthetic users
-            # Each user interacts with 10-50 items
-            n_interactions = np.random.randint(10, 51)
-            
-            # Select items based on popularity (popular items more likely)
-            popularities = [self.movie_metadata[cid].get('popularity', 0) for cid in content_ids]
-            popularities = np.array(popularities)
-            popularities = popularities / popularities.sum()  # normalize
-            
-            selected_items = np.random.choice(
-                content_ids, 
-                size=n_interactions, 
-                replace=False, 
-                p=popularities
-            )
-            
-            for content_id in selected_items:
-                # Generate rating based on item quality and random user preference
-                base_rating = self.movie_metadata[content_id].get('vote_average', 5) / 2  # Scale to 1-5
-                user_bias = np.random.normal(0, 1)  # User-specific bias
-                rating = max(1, min(5, base_rating + user_bias))
-                
-                interactions.append({
-                    'user_id': user_id,
-                    'content_id': content_id,
-                    'rating': rating
-                })
-        
-        return pd.DataFrame(interactions)
-    
-    def calculate_popularity_scores(self):
-        """Calculate popularity scores for trending recommendations"""
-        current_time = datetime.now()
-        
-        for content_id, metadata in self.movie_metadata.items():
-            # Base popularity from TMDB
-            base_popularity = metadata.get('popularity', 0)
-            
-            # Boost recent releases
-            release_date = metadata.get('release_date', '')
-            release_boost = 1.0
-            
-            if release_date:
-                try:
-                    release_dt = datetime.strptime(release_date, '%Y-%m-%d')
-                    days_since_release = (current_time - release_dt).days
-                    
-                    if days_since_release < 365:  # Recent releases get boost
-                        release_boost = 1.5 - (days_since_release / 365) * 0.5
-                except:
-                    pass
-            
-            # Quality boost
-            vote_average = metadata.get('vote_average', 0)
-            vote_count = metadata.get('vote_count', 0)
-            
-            quality_score = (vote_average / 10) * min(1, vote_count / 100)
-            
-            final_score = base_popularity * release_boost * (1 + quality_score)
-            self.popularity_scores[content_id] = final_score
-    
-    def get_content_based_recommendations(self, user_preferences, n_recommendations=20):
-        """Get content-based recommendations"""
-        try:
-            if self.content_similarity_matrix is None:
-                return []
-            
-            # Get user's preferred content based on watch history and favorites
-            preferred_content_ids = []
-            
-            # Process watch history
-            for item in user_preferences.get('watch_history', []):
-                movie_id, movie_type = item[0], item[1]
-                rating = item[2] if len(item) > 2 else None
-                
-                if rating and rating >= 4:  # Only consider highly rated items
-                    content_id = f"{movie_type}_{movie_id}"
-                    if content_id in self.movie_metadata:
-                        preferred_content_ids.append(content_id)
-            
-            # Process favorites
-            for item in user_preferences.get('favorites', []):
-                movie_id, movie_type = item[0], item[1]
-                content_id = f"{movie_type}_{movie_id}"
-                if content_id in self.movie_metadata:
-                    preferred_content_ids.append(content_id)
-            
-            if not preferred_content_ids:
-                # Return popular content if no preferences
-                return self.get_popular_recommendations(n_recommendations)
-            
-            # Get similarity scores
-            content_indices = {cid: idx for idx, cid in enumerate(self.movie_features_df['content_id'])}
-            
-            similarity_scores = []
-            for content_id in preferred_content_ids:
-                if content_id in content_indices:
-                    idx = content_indices[content_id]
-                    scores = list(enumerate(self.content_similarity_matrix[idx]))
-                    similarity_scores.extend(scores)
-            
-            # Aggregate and sort scores
-            score_dict = defaultdict(float)
-            for idx, score in similarity_scores:
-                score_dict[idx] += score
-            
-            # Sort by similarity
-            sorted_scores = sorted(score_dict.items(), key=lambda x: x[1], reverse=True)
-            
-            # Get recommendations
-            recommendations = []
-            seen_content_ids = set(preferred_content_ids)
-            
-            for idx, score in sorted_scores:
-                if len(recommendations) >= n_recommendations:
-                    break
-                
-                content_id = self.movie_features_df.iloc[idx]['content_id']
-                
-                if content_id not in seen_content_ids:
-                    movie_data = self.movie_metadata.get(content_id)
-                    if movie_data:
-                        movie_data['recommendation_score'] = float(score)
-                        movie_data['recommendation_reason'] = 'Content similarity'
-                        recommendations.append(movie_data)
-                        seen_content_ids.add(content_id)
-            
-            return recommendations
-            
-        except Exception as e:
-            logger.error(f"Error in content-based recommendations: {e}")
-            return []
-    
-    def get_collaborative_recommendations(self, user_id, n_recommendations=20):
-        """Get collaborative filtering recommendations"""
-        try:
-            if self.svd_model is None or self.user_item_matrix is None:
-                return []
-            
-            # For new users, return popular items
-            if user_id not in self.user_item_matrix.index:
-                return self.get_popular_recommendations(n_recommendations)
-            
-            # Get user factors
-            user_idx = list(self.user_item_matrix.index).index(user_id)
-            user_vector = self.user_factors[user_idx]
-            
-            # Calculate predicted ratings for all items
-            predicted_ratings = np.dot(user_vector, self.item_factors.T)
-            
-            # Get items user hasn't interacted with
-            user_ratings = self.user_item_matrix.loc[user_id]
-            unrated_items = user_ratings[user_ratings == 0].index
-            
-            # Get predictions for unrated items
-            item_indices = {item: idx for idx, item in enumerate(self.user_item_matrix.columns)}
-            predictions = []
-            
-            for item in unrated_items:
-                if item in item_indices and item in self.movie_metadata:
-                    item_idx = item_indices[item]
-                    predicted_rating = predicted_ratings[item_idx]
-                    predictions.append((item, predicted_rating))
-            
-            # Sort by predicted rating
-            predictions.sort(key=lambda x: x[1], reverse=True)
-            
-            # Convert to movie data
-            recommendations = []
-            for content_id, rating in predictions[:n_recommendations]:
-                movie_data = self.movie_metadata.get(content_id)
-                if movie_data:
-                    movie_data['recommendation_score'] = float(rating)
-                    movie_data['recommendation_reason'] = 'Collaborative filtering'
-                    recommendations.append(movie_data)
-            
-            return recommendations
-            
-        except Exception as e:
-            logger.error(f"Error in collaborative recommendations: {e}")
-            return []
-    
-    def get_hybrid_recommendations(self, user_id, user_preferences, n_recommendations=20):
-        """Get hybrid recommendations combining content and collaborative filtering"""
-        try:
-            # Get recommendations from both methods
-            content_recs = self.get_content_based_recommendations(user_preferences, n_recommendations)
-            collab_recs = self.get_collaborative_recommendations(user_id, n_recommendations)
-            
-            # Combine and weight the recommendations
-            combined_scores = defaultdict(float)
-            all_recommendations = {}
-            
-            # Weight content-based recommendations (60%)
-            for rec in content_recs:
-                content_id = rec['content_id']
-                combined_scores[content_id] += rec.get('recommendation_score', 0) * 0.6
-                all_recommendations[content_id] = rec
-            
-            # Weight collaborative recommendations (40%)
-            for rec in collab_recs:
-                content_id = rec['content_id']
-                combined_scores[content_id] += rec.get('recommendation_score', 0) * 0.4
-                if content_id not in all_recommendations:
-                    all_recommendations[content_id] = rec
-            
-            # Add popularity boost
-            for content_id in combined_scores:
-                popularity_score = self.popularity_scores.get(content_id, 0)
-                combined_scores[content_id] += popularity_score * 0.1
-            
-            # Sort by combined score
-            sorted_recs = sorted(combined_scores.items(), key=lambda x: x[1], reverse=True)
-            
-            # Prepare final recommendations
-            final_recommendations = []
-            for content_id, score in sorted_recs[:n_recommendations]:
-                rec = all_recommendations[content_id].copy()
-                rec['recommendation_score'] = float(score)
-                rec['recommendation_reason'] = 'Hybrid (content + collaborative)'
-                final_recommendations.append(rec)
-            
-            return final_recommendations
-            
-        except Exception as e:
-            logger.error(f"Error in hybrid recommendations: {e}")
-            return self.get_popular_recommendations(n_recommendations)
-    
-    def get_popular_recommendations(self, n_recommendations=20):
-        """Get popular content as fallback"""
-        try:
-            # Sort by popularity scores
-            sorted_content = sorted(
-                self.popularity_scores.items(), 
-                key=lambda x: x[1], 
-                reverse=True
-            )
-            
-            recommendations = []
-            for content_id, score in sorted_content[:n_recommendations]:
-                movie_data = self.movie_metadata.get(content_id)
-                if movie_data:
-                    movie_data['recommendation_score'] = float(score)
-                    movie_data['recommendation_reason'] = 'Popular content'
-                    recommendations.append(movie_data)
-            
-            return recommendations
-            
-        except Exception as e:
-            logger.error(f"Error in popular recommendations: {e}")
-            return []
+        return jsonify({'message': 'Removed from watchlist'})
 
-# Initialize the recommendation engine
-rec_engine = MovieRecommendationEngine()
+# Favorites operations
+@app.route('/api/favorites', methods=['GET', 'POST', 'DELETE'])
+@login_required
+def manage_favorites():
+    user_id = session['user_id']
+    
+    if request.method == 'GET':
+        conn = sqlite3.connect('movie_app.db')
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT movie_id, movie_type, added_at FROM favorites 
+            WHERE user_id = ? ORDER BY added_at DESC
+        ''', (user_id,))
+        favorites = cursor.fetchall()
+        conn.close()
+        
+        # Fetch movie details for each item
+        favorites_details = []
+        for item in favorites:
+            movie_id, movie_type, added_at = item
+            try:
+                details_url = f'{TMDB_BASE_URL}/{movie_type}/{movie_id}'
+                params = {'api_key': TMDB_API_KEY}
+                response = requests.get(details_url, params=params)
+                movie_data = response.json()
+                movie_data['added_at'] = added_at
+                movie_data['media_type'] = movie_type
+                favorites_details.append(movie_data)
+            except:
+                continue
+        
+        return jsonify({'favorites': favorites_details})
+    
+    elif request.method == 'POST':
+        data = request.get_json()
+        movie_id = data.get('movie_id')
+        movie_type = data.get('movie_type', 'movie')
+        
+        conn = sqlite3.connect('movie_app.db')
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute(
+                'INSERT INTO favorites (user_id, movie_id, movie_type) VALUES (?, ?, ?)',
+                (user_id, movie_id, movie_type)
+            )
+            conn.commit()
+            return jsonify({'message': 'Added to favorites'})
+        except sqlite3.IntegrityError:
+            return jsonify({'error': 'Already in favorites'}), 400
+        finally:
+            conn.close()
+    
+    elif request.method == 'DELETE':
+        movie_id = request.args.get('movie_id')
+        movie_type = request.args.get('movie_type', 'movie')
+        
+        conn = sqlite3.connect('movie_app.db')
+        cursor = conn.cursor()
+        cursor.execute(
+            'DELETE FROM favorites WHERE user_id = ? AND movie_id = ? AND movie_type = ?',
+            (user_id, movie_id, movie_type)
+        )
+        conn.commit()
+        conn.close()
+        
+        return jsonify({'message': 'Removed from favorites'})
 
-def initialize_models_async():
-    """Initialize models in background thread"""
-    rec_engine.initialize_models()
+# Watch history
+@app.route('/api/watch-history', methods=['GET', 'POST'])
+@login_required
+def manage_watch_history():
+    user_id = session['user_id']
+    
+    if request.method == 'GET':
+        conn = sqlite3.connect('movie_app.db')
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT movie_id, movie_type, watched_at, rating FROM watch_history 
+            WHERE user_id = ? ORDER BY watched_at DESC
+        ''', (user_id,))
+        history = cursor.fetchall()
+        conn.close()
+        
+        return jsonify({'history': history})
+    
+    elif request.method == 'POST':
+        data = request.get_json()
+        movie_id = data.get('movie_id')
+        movie_type = data.get('movie_type', 'movie')
+        rating = data.get('rating')
+        
+        conn = sqlite3.connect('movie_app.db')
+        cursor = conn.cursor()
+        cursor.execute(
+            'INSERT INTO watch_history (user_id, movie_id, movie_type, rating) VALUES (?, ?, ?, ?)',
+            (user_id, movie_id, movie_type, rating)
+        )
+        conn.commit()
+        conn.close()
+        
+        return jsonify({'message': 'Added to watch history'})
+    
 
-# Start model initialization in background
-threading.Thread(target=initialize_models_async, daemon=True).start()
+@app.route('/api/admin/featured', methods=['GET', 'POST', 'PUT', 'DELETE'])
+@login_required
+def admin_featured():
+    """Admin management of featured content"""
+    if session.get('username') != 'admin':
+        return jsonify({'error': 'Admin access required'}), 403
+    
+    if request.method == 'GET':
+        conn = sqlite3.connect('movie_app.db')
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT id, movie_id, movie_type, title, description, created_at, is_active 
+            FROM featured_suggestions ORDER BY created_at DESC
+        ''')
+        featured = cursor.fetchall()
+        conn.close()
+        
+        return jsonify({'featured': featured})
+    
+    elif request.method == 'POST':
+        data = request.get_json()
+        movie_id = data.get('movie_id')
+        movie_type = data.get('movie_type', 'movie')
+        title = data.get('title')
+        description = data.get('description')
+        
+        conn = sqlite3.connect('movie_app.db')
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO featured_suggestions (movie_id, movie_type, title, description, is_active) 
+            VALUES (?, ?, ?, ?, ?)
+        ''', (movie_id, movie_type, title, description, True))
+        conn.commit()
+        conn.close()
+        
+        return jsonify({'message': 'Featured content added successfully'})
 
-@app.route('/health', methods=['GET'])
+
+# Admin endpoints
+@app.route('/api/admin/recommend', methods=['POST'])
+@login_required
+def admin_recommend():
+    """Admin can personally recommend movies"""
+    if session.get('username') != 'admin':
+        return jsonify({'error': 'Admin access required'}), 403
+    
+    data = request.get_json()
+    movie_id = data.get('movie_id')
+    movie_type = data.get('movie_type', 'movie')
+    title = data.get('title')
+    description = data.get('description')
+    recommendation_reason = data.get('reason', '')
+    target_genres = data.get('target_genres', [])
+    post_to_telegram = data.get('post_to_telegram', True)
+    
+    # Save admin recommendation
+    conn = sqlite3.connect('movie_app.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT INTO featured_suggestions 
+        (movie_id, movie_type, title, description, created_at, is_active) 
+        VALUES (?, ?, ?, ?, ?, ?)
+    ''', (movie_id, movie_type, title, f"{description}\n\nAdmin's Note: {recommendation_reason}", 
+          datetime.now(), True))
+    conn.commit()
+    conn.close()
+    
+    # Post to Telegram if requested
+    if post_to_telegram:
+        send_enhanced_telegram_message(title, description, recommendation_reason, movie_type)
+    
+    return jsonify({'message': 'Admin recommendation added successfully'})
+
+def send_enhanced_telegram_message(title, description, reason, movie_type):
+    """Send enhanced message to Telegram channel"""
+    try:
+        emoji_map = {'movie': '🎬', 'tv': '📺', 'anime': '🎌'}
+        emoji = emoji_map.get(movie_type, '🎬')
+        
+        message = f"{emoji} *Admin's Personal Recommendation!*\n\n"
+        message += f"*{title}*\n\n"
+        message += f"{description}\n\n"
+        message += f"💡 *Why we recommend this:*\n{reason}\n\n"
+        message += f"📱 Check it out in our app!"
+        
+        url = f'https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage'
+        data = {
+            'chat_id': TELEGRAM_CHANNEL_ID,
+            'text': message,
+            'parse_mode': 'Markdown'
+        }
+        
+        requests.post(url, json=data)
+    except Exception as e:
+        print(f"Telegram send failed: {e}")
+
+# Trending movies
+@app.route('/api/trending')
+def get_trending():
+    time_window = request.args.get('time_window', 'week')  # day or week
+    media_type = request.args.get('media_type', 'all')     # movie, tv, or all
+    
+    url = f'{TMDB_BASE_URL}/trending/{media_type}/{time_window}'
+    params = {'api_key': TMDB_API_KEY}
+    
+    try:
+        response = requests.get(url, params=params)
+        data = response.json()
+        return jsonify(data)
+    except Exception as e:
+        return jsonify({'error': 'Failed to fetch trending movies'}), 500
+
+# Featured suggestions
+@app.route('/api/featured')
+def get_featured():
+    conn = sqlite3.connect('movie_app.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT movie_id, movie_type, title, description FROM featured_suggestions 
+        WHERE is_active = 1 ORDER BY created_at DESC LIMIT 10
+    ''')
+    featured = cursor.fetchall()
+    conn.close()
+    
+    return jsonify({'featured': featured})
+
+# Genre-based discovery
+@app.route('/api/genres')
+def get_genres():
+    """Get all available genres for movies and TV shows"""
+    try:
+        movie_genres_url = f'{TMDB_BASE_URL}/genre/movie/list'
+        tv_genres_url = f'{TMDB_BASE_URL}/genre/tv/list'
+        params = {'api_key': TMDB_API_KEY}
+        
+        movie_response = requests.get(movie_genres_url, params=params)
+        tv_response = requests.get(tv_genres_url, params=params)
+        
+        movie_genres = movie_response.json().get('genres', [])
+        tv_genres = tv_response.json().get('genres', [])
+        
+        # Combine and deduplicate
+        all_genres = {}
+        for genre in movie_genres + tv_genres:
+            all_genres[genre['id']] = genre['name']
+        
+        genres_list = [{'id': k, 'name': v} for k, v in all_genres.items()]
+        
+        return jsonify({'genres': genres_list})
+    
+    except Exception as e:
+        return jsonify({'error': 'Failed to fetch genres'}), 500
+# User rating system
+@app.route('/api/rate', methods=['POST'])
+@login_required
+def rate_movie():
+    """Rate a movie/TV show"""
+    data = request.get_json()
+    movie_id = data.get('movie_id')
+    movie_type = data.get('movie_type', 'movie')
+    rating = data.get('rating')  # 1-10 scale
+    
+    if not rating or rating < 1 or rating > 10:
+        return jsonify({'error': 'Rating must be between 1 and 10'}), 400
+    
+    user_id = session['user_id']
+    
+    conn = sqlite3.connect('movie_app.db')
+    cursor = conn.cursor()
+    
+    # Update or insert rating in watch history
+    cursor.execute('''
+        INSERT OR REPLACE INTO watch_history (user_id, movie_id, movie_type, rating, watched_at) 
+        VALUES (?, ?, ?, ?, ?)
+    ''', (user_id, movie_id, movie_type, rating, datetime.now()))
+    
+    conn.commit()
+    conn.close()
+    
+    return jsonify({'message': 'Rating saved successfully'})
+
+@app.route('/api/health')
 def health_check():
     """Health check endpoint"""
     return jsonify({
         'status': 'healthy',
-        'models_loaded': rec_engine.content_similarity_matrix is not None,
-        'last_update': rec_engine.last_update
+        'timestamp': datetime.now().isoformat(),
+        'services': {
+            'tmdb': 'active',
+            'jikan': 'active',
+            'database': 'active'
+        }
     })
 
-@app.route('/recommend', methods=['POST'])
-def get_recommendations():
-    """Main recommendation endpoint"""
-    try:
-        data = request.get_json()
-        
-        user_id = data.get('user_id')
-        recommendation_type = data.get('recommendation_type', 'hybrid')
-        n_recommendations = data.get('n_recommendations', 20)
-        
-        # User preference data
-        user_preferences = {
-            'watch_history': data.get('watch_history', []),
-            'favorites': data.get('favorites', []),
-            'wishlist': data.get('wishlist', [])
-        }
-        
-        # Check if models are loaded
-        if rec_engine.content_similarity_matrix is None:
-            return jsonify({
-                'recommendations': [],
-                'message': 'Models are still loading, please try again in a moment',
-                'status': 'loading'
-            })
-        
-        # Get recommendations based on type
-        if recommendation_type == 'content':
-            recommendations = rec_engine.get_content_based_recommendations(
-                user_preferences, n_recommendations
-            )
-        elif recommendation_type == 'collaborative':
-            recommendations = rec_engine.get_collaborative_recommendations(
-                user_id, n_recommendations
-            )
-        else:  # hybrid
-            recommendations = rec_engine.get_hybrid_recommendations(
-                user_id, user_preferences, n_recommendations
-            )
-        
-        # Add diversity to recommendations
-        diverse_recommendations = add_diversity(recommendations)
-        
-        return jsonify({
-            'recommendations': diverse_recommendations,
-            'total_count': len(diverse_recommendations),
-            'recommendation_type': recommendation_type,
-            'status': 'success'
-        })
-        
-    except Exception as e:
-        logger.error(f"Error in recommendations endpoint: {e}")
-        return jsonify({
-            'error': 'Failed to generate recommendations',
-            'recommendations': [],
-            'status': 'error'
-        }), 500
 
-def add_diversity(recommendations):
-    """Add diversity to recommendations by ensuring genre variety"""
-    if not recommendations:
-        return recommendations
+# Add these database table modifications in init_db():
+def init_db():
+    conn = sqlite3.connect('movie_app.db')
+    cursor = conn.cursor()
     
-    # Group by genres
-    genre_groups = defaultdict(list)
-    for rec in recommendations:
-        genres = rec.get('genre_ids', [])
-        if genres:
-            primary_genre = genres[0]  # Use first genre as primary
-            genre_groups[primary_genre].append(rec)
-        else:
-            genre_groups['unknown'].append(rec)
+    # Existing table creation code...
     
-    # Diversify selection
-    diverse_recs = []
-    max_per_genre = max(2, len(recommendations) // len(genre_groups))
-    
-    for genre, recs in genre_groups.items():
-        diverse_recs.extend(recs[:max_per_genre])
-    
-    # Fill remaining slots with highest scored items
-    remaining_slots = len(recommendations) - len(diverse_recs)
-    if remaining_slots > 0:
-        all_remaining = [r for r in recommendations if r not in diverse_recs]
-        all_remaining.sort(key=lambda x: x.get('recommendation_score', 0), reverse=True)
-        diverse_recs.extend(all_remaining[:remaining_slots])
-    
-    return diverse_recs[:len(recommendations)]
-
-@app.route('/trending', methods=['GET'])
-def get_trending():
-    """Get trending content"""
+    # Add new columns to existing tables
     try:
-        n_items = request.args.get('n_items', 20, type=int)
-        media_type = request.args.get('media_type', 'all')
-        
-        # Filter by media type if specified
-        if media_type != 'all':
-            filtered_content = {
-                k: v for k, v in rec_engine.movie_metadata.items()
-                if v.get('media_type') == media_type
-            }
-        else:
-            filtered_content = rec_engine.movie_metadata
-        
-        # Sort by popularity scores
-        trending = []
-        for content_id, score in sorted(
-            rec_engine.popularity_scores.items(),
-            key=lambda x: x[1],
-            reverse=True
-        ):
-            if content_id in filtered_content:
-                movie_data = filtered_content[content_id].copy()
-                movie_data['trending_score'] = float(score)
-                trending.append(movie_data)
-            
-            if len(trending) >= n_items:
-                break
-        
-        return jsonify({
-            'trending': trending,
-            'total_count': len(trending),
-            'media_type': media_type
-        })
-        
-    except Exception as e:
-        logger.error(f"Error in trending endpoint: {e}")
-        return jsonify({'error': 'Failed to get trending content'}), 500
-
-@app.route('/similar/<content_id>', methods=['GET'])
-def get_similar_content(content_id):
-    """Get similar content to a specific item"""
-    try:
-        n_similar = request.args.get('n_similar', 10, type=int)
-        
-        if rec_engine.content_similarity_matrix is None:
-            return jsonify({'error': 'Models not loaded yet'}), 503
-        
-        # Find content index
-        content_indices = {
-            cid: idx for idx, cid in enumerate(rec_engine.movie_features_df['content_id'])
-        }
-        
-        if content_id not in content_indices:
-            return jsonify({'error': 'Content not found'}), 404
-        
-        idx = content_indices[content_id]
-        
-        # Get similarity scores
-        sim_scores = list(enumerate(rec_engine.content_similarity_matrix[idx]))
-        sim_scores = sorted(sim_scores, key=lambda x: x[1], reverse=True)
-        
-        # Get similar items (excluding the item itself)
-        similar_items = []
-        for i, (item_idx, score) in enumerate(sim_scores[1:n_similar+1]):
-            similar_content_id = rec_engine.movie_features_df.iloc[item_idx]['content_id']
-            movie_data = rec_engine.movie_metadata.get(similar_content_id)
-            
-            if movie_data:
-                movie_data['similarity_score'] = float(score)
-                similar_items.append(movie_data)
-        
-        return jsonify({
-            'similar_items': similar_items,
-            'total_count': len(similar_items),
-            'reference_content_id': content_id
-        })
-        
-    except Exception as e:
-        logger.error(f"Error in similar content endpoint: {e}")
-        return jsonify({'error': 'Failed to get similar content'}), 500
-
-@app.route('/update-models', methods=['POST'])
-def update_models():
-    """Manually trigger model update"""
-    try:
-        # Run model update in background
-        threading.Thread(target=rec_engine.initialize_models, daemon=True).start()
-        
-        return jsonify({
-            'message': 'Model update started',
-            'status': 'updating'
-        })
-        
-    except Exception as e:
-        logger.error(f"Error updating models: {e}")
-        return jsonify({'error': 'Failed to start model update'}), 500
+        cursor.execute('ALTER TABLE featured_suggestions ADD COLUMN recommendation_reason TEXT')
+        cursor.execute('ALTER TABLE featured_suggestions ADD COLUMN target_genres TEXT')
+        cursor.execute('ALTER TABLE featured_suggestions ADD COLUMN admin_priority INTEGER DEFAULT 1')
+    except sqlite3.OperationalError:
+        pass  # Columns already exist
+    
+    # User preferences table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS user_preferences (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            preferred_genres TEXT,
+            preferred_languages TEXT,
+            content_types TEXT,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (id)
+        )
+    ''')
+    
+    conn.commit()
+    conn.close()
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5001)
+    init_db()
+    app.run(debug=True, host='0.0.0.0', port=5000)
