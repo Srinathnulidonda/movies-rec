@@ -1376,4 +1376,5 @@ if __name__ == '__main__':
     background_thread.start()
     rec_engine.train_model()
     logger.info("ML Recommendation Service ready")
-    app.run(debug=True, host='0.0.0.0', port=5001)
+    if os.environ.get('FLASK_ENV') == 'development':
+        app.run(debug=True, host='0.0.0.0', port=5001)
