@@ -22,10 +22,10 @@ app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-i
 CORS(app, supports_credentials=True)
 
 # API Configuration
-TMDB_API_KEY = os.environ.get('TMDB_API_KEY', 'your-tmdb-api-key')
+TMDB_API_KEY = os.environ.get('TMDB_API_KEY', '1cf86635f20bb2aff8e70940e7c3ddd5')
 TMDB_BASE_URL = 'https://api.themoviedb.org/3'
 JIKAN_BASE_URL = 'https://api.jikan.moe/v4'
-ML_SERVICE_URL = os.environ.get('ML_SERVICE_URL', 'http://localhost:5001')
+ML_SERVICE_URL = os.environ.get('ML_SERVICE_URL', 'https://movies-rec-ml-service.onrender.com')
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', '')
 
