@@ -3,13 +3,11 @@ numpy
 pandas
 scikit-learn
 xgboost
-tensorflow-cpu
-tensorflow
+torch
 networkx
 textblob
 surprise
 implicit
 faiss-cpu
 redis
-aiohttp
 gunicorn
