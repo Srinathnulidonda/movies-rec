@@ -1,4 +1,3 @@
-#ml-service/app.py
 from flask import Flask, request, jsonify
 import sqlite3
 import numpy as np
@@ -13,10 +12,9 @@ from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
 from sklearn.neural_network import MLPRegressor
 from sklearn.model_selection import train_test_split
 import xgboost as xgb
-import tensorflow as tf
-from tensorflow.keras.models import Model
-from tensorflow.keras.layers import Input, Dense, Embedding, Flatten, Concatenate, Dropout, LSTM
-from tensorflow.keras.optimizers import Adam
+import torch
+import torch.nn as nn
+import torch.optim as optim
 import networkx as nx
 from textblob import TextBlob
 from surprise import Dataset, Reader, SVD, NMF, KNNBasic
@@ -47,7 +45,7 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
 # Configuration
-DB_PATH = os.environ.get('DB_PATH', '../backend/recommendations.db')
+DB_PATH = os.environ.get('DATABASE_URL', 'recommendations.db')
 REDIS_HOST = os.environ.get('REDIS_HOST', 'localhost')
 REDIS_PORT = int(os.environ.get('REDIS_PORT', 6379))
 CACHE_DURATION = 3600  # 1 hour
@@ -67,13 +65,12 @@ except Exception as e:
     logger.warning(f"Redis not available, using in-memory caching: {e}")
 
 # Custom Sampling Layer for VAE
-class Sampling(tf.keras.layers.Layer):
-    def call(self, inputs):
-        z_mean, z_log_var = inputs
-        batch = tf.shape(z_mean)[0]
-        dim = tf.shape(z_mean)[1]
-        epsilon = tf.random.normal(shape=(batch, dim))
-        return z_mean + tf.exp(0.5 * z_log_var) * epsilon
+class Sampling(nn.Module):
+    def forward(self, z_mean, z_log_var):
+        batch = z_mean.size(0)
+        dim = z_mean.size(1)
+        epsilon = torch.randn(batch, dim, device=z_mean.device)
+        return z_mean + torch.exp(0.5 * z_log_var) * epsilon
 
 class TrendAnalyzer:
     """Advanced trend analysis for content recommendations"""
@@ -326,66 +323,85 @@ class DiversityOptimizer:
 
         return optimized_list
 
-class AdvancedNeuralRecommender:
+class AdvancedNeuralRecommender(nn.Module):
     """Advanced neural network recommender with deep learning"""
-    def __init__(self, num_users, num_items):
+    def __init__(self, num_users, num_items, input_dim=100, latent_dim=64):
+        super(AdvancedNeuralRecommender, self).__init__()
         self.num_users = num_users
         self.num_items = num_items
-        self.vae_model = None
-        self.transformer_model = None
+        self.input_dim = input_dim
+        self.latent_dim = latent_dim
+        self.vae = self.build_vae()
+        self.transformer = self.build_transformer()
         self.gnn_embeddings = None
 
-    def build_vae(self, input_dim, latent_dim=64):
+    def build_vae(self):
         """Build Variational Autoencoder for recommendation"""
-        encoder_input = Input(shape=(input_dim,))
-        h = Dense(256, activation='relu')(encoder_input)
-        h = Dropout(0.3)(h)
-        h = Dense(128, activation='relu')(h)
-        h = Dropout(0.3)(h)
+        class VAE(nn.Module):
+            def __init__(self, input_dim, latent_dim):
+                super(VAE, self).__init__()
+                self.encoder = nn.Sequential(
+                    nn.Linear(input_dim, 256),
+                    nn.ReLU(),
+                    nn.Dropout(0.3),
+                    nn.Linear(256, 128),
+                    nn.ReLU(),
+                    nn.Dropout(0.3)
+                )
+                self.z_mean = nn.Linear(128, latent_dim)
+                self.z_log_var = nn.Linear(128, latent_dim)
+                self.sampling = Sampling()
+                self.decoder = nn.Sequential(
+                    nn.Linear(latent_dim, 128),
+                    nn.ReLU(),
+                    nn.Dropout(0.3),
+                    nn.Linear(128, 256),
+                    nn.ReLU(),
+                    nn.Linear(256, input_dim),
+                    nn.Sigmoid()
+                )
 
-        z_mean = Dense(latent_dim)(h)
-        z_log_var = Dense(latent_dim)(h)
+            def forward(self, x):
+                h = self.encoder(x)
+                z_mean = self.z_mean(h)
+                z_log_var = self.z_log_var(h)
+                z = self.sampling(z_mean, z_log_var)
+                reconstructed = self.decoder(z)
+                return reconstructed, z_mean, z_log_var
 
-        z = Sampling()([z_mean, z_log_var])
-
-        decoder_h = Dense(128, activation='relu')(z)
-        decoder_h = Dropout(0.3)(decoder_h)
-        decoder_h = Dense(256, activation='relu')(decoder_h)
-        decoder_output = Dense(input_dim, activation='sigmoid')(decoder_h)
-
-        vae = Model(encoder_input, decoder_output)
-        reconstruction_loss = tf.reduce_mean(tf.keras.losses.binary_crossentropy(encoder_input, decoder_output))
-        kl_loss = -0.5 * tf.reduce_mean(1 + z_log_var - tf.square(z_mean) - tf.exp(z_log_var))
-        vae_loss = reconstruction_loss + kl_loss
-        vae.add_loss(vae_loss)
-        vae.compile(optimizer=Adam(learning_rate=0.001))
-        self.vae_model = vae
-        return vae
+        return VAE(self.input_dim, self.latent_dim)
 
     def build_transformer(self):
         """Build Transformer-based recommendation model"""
-        user_input = Input(shape=(), name='user_id')
-        item_input = Input(shape=(), name='item_id')
+        class Transformer(nn.Module):
+            def __init__(self, num_users, num_items):
+                super(Transformer, self).__init__()
+                self.user_embedding = nn.Embedding(num_users, 64)
+                self.item_embedding = nn.Embedding(num_items, 64)
+                self.attention = nn.Linear(128, 64)
+                self.attention_softmax = nn.Softmax(dim=-1)
+                self.dense1 = nn.Linear(128, 128)
+                self.relu = nn.ReLU()
+                self.dropout = nn.Dropout(0.3)
+                self.dense2 = nn.Linear(128, 64)
+                self.output = nn.Linear(64, 1)
+                self.sigmoid = nn.Sigmoid()
 
-        user_embedding = Embedding(self.num_users, 64)(user_input)
-        item_embedding = Embedding(self.num_items, 64)(item_input)
+            def forward(self, user_ids, item_ids):
+                user_vec = self.user_embedding(user_ids)
+                item_vec = self.item_embedding(item_ids)
+                concat = torch.cat([user_vec, item_vec], dim=-1)
+                attention_weights = self.attention_softmax(self.attention(concat))
+                attended = concat * attention_weights
+                x = self.dense1(attended)
+                x = self.relu(x)
+                x = self.dropout(x)
+                x = self.dense2(x)
+                x = self.relu(x)
+                x = self.output(x)
+                return self.sigmoid(x)
 
-        user_vec = Flatten()(user_embedding)
-        item_vec = Flatten()(item_embedding)
-
-        concat = Concatenate()([user_vec, item_vec])
-        attention = Dense(64, activation='softmax')(concat)
-        attended = tf.keras.layers.Multiply()([concat, attention])
-
-        dense1 = Dense(128, activation='relu')(attended)
-        dropout1 = Dropout(0.3)(dense1)
-        dense2 = Dense(64, activation='relu')(dropout1)
-        output = Dense(1, activation='sigmoid')(dense2)
-
-        model = Model(inputs=[user_input, item_input], outputs=output)
-        model.compile(optimizer=Adam(learning_rate=0.001), loss='mse', metrics=['mae'])
-        self.transformer_model = model
-        return model
+        return Transformer(self.num_users, self.num_items)
 
     def build_gnn(self, interactions):
         """Build Graph Neural Network for recommendations"""
@@ -395,20 +411,69 @@ class AdvancedNeuralRecommender:
 
         num_nodes = len(G.nodes())
         embeddings = np.random.normal(0, 0.1, (num_nodes, 64))
+        node_to_idx = {node: idx for idx, node in enumerate(G.nodes())}
 
         for _ in range(3):
             new_embeddings = np.zeros_like(embeddings)
-            for i, node in enumerate(G.nodes()):
+            for node, idx in node_to_idx.items():
                 neighbors = list(G.neighbors(node))
                 if neighbors:
-                    neighbor_embeddings = [embeddings[list(G.nodes()).index(n)] for n in neighbors]
-                    new_embeddings[i] = np.mean(neighbor_embeddings, axis=0)
+                    neighbor_indices = [node_to_idx[n] for n in neighbors]
+                    neighbor_embeddings = embeddings[neighbor_indices]
+                    new_embeddings[idx] = np.mean(neighbor_embeddings, axis=0)
                 else:
-                    new_embeddings[i] = embeddings[i]
+                    new_embeddings[idx] = embeddings[idx]
             embeddings = new_embeddings
 
         self.gnn_embeddings = {node: emb for node, emb in zip(G.nodes(), embeddings)}
         return self.gnn_embeddings
+
+    def train_vae(self, data, epochs=50, batch_size=32):
+        """Train the VAE model"""
+        optimizer = optim.Adam(self.vae.parameters(), lr=0.001)
+        dataset = torch.utils.data.TensorDataset(torch.FloatTensor(data))
+        dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.vae.to(device)
+
+        for epoch in range(epochs):
+            total_loss = 0
+            for batch in dataloader:
+                x = batch[0].to(device)
+                optimizer.zero_grad()
+                reconstructed, z_mean, z_log_var = self.vae(x)
+                recon_loss = nn.BCELoss(reduction='sum')(reconstructed, x)
+                kl_loss = -0.5 * torch.sum(1 + z_log_var - z_mean.pow(2) - z_log_var.exp())
+                loss = recon_loss + kl_loss
+                loss.backward()
+                optimizer.step()
+                total_loss += loss.item()
+            logger.info(f"VAE Epoch {epoch+1}, Loss: {total_loss/len(dataloader.dataset):.4f}")
+
+    def train_transformer(self, user_ids, item_ids, ratings, epochs=50, batch_size=32):
+        """Train the Transformer model"""
+        optimizer = optim.Adam(self.transformer.parameters(), lr=0.001)
+        criterion = nn.MSELoss()
+        dataset = torch.utils.data.TensorDataset(
+            torch.LongTensor(user_ids),
+            torch.LongTensor(item_ids),
+            torch.FloatTensor(ratings)
+        )
+        dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.transformer.to(device)
+
+        for epoch in range(epochs):
+            total_loss = 0
+            for batch in dataloader:
+                user_ids_batch, item_ids_batch, ratings_batch = [b.to(device) for b in batch]
+                optimizer.zero_grad()
+                predictions = self.transformer(user_ids_batch, item_ids_batch).squeeze()
+                loss = criterion(predictions, ratings_batch)
+                loss.backward()
+                optimizer.step()
+                total_loss += loss.item()
+            logger.info(f"Transformer Epoch {epoch+1}, Loss: {total_loss/len(dataloader.dataset):.4f}")
 
 class ReinforcementLearningRecommender:
     """Reinforcement Learning based recommender"""
@@ -490,7 +555,7 @@ class AdvancedRecommendationEngine:
         """Extract and vectorize content features"""
         conn = self.get_db_connection()
         content_data = conn.execute('''
-            SELECT id, title, overview, genre_ids, vote_average, popularity, 
+            SELECT id, title, overview, genre_ids, vote_average, popularity,
                    content_type, release_date, runtime
             FROM content
         ''').fetchall()
@@ -583,12 +648,21 @@ class AdvancedRecommendationEngine:
         max_content_id = conn.execute('SELECT MAX(content_id) FROM user_interactions').fetchone()[0] or 10000
         conn.close()
 
-        self.neural_recommender = AdvancedNeuralRecommender(max_user_id + 1, max_content_id + 1)
-        self.neural_recommender.build_vae(input_dim=self.content_features.shape[1] if self.content_features is not None else 100)
-        self.neural_recommender.build_transformer()
-
+        input_dim = self.content_features.shape[1] if self.content_features is not None else 100
+        self.neural_recommender = AdvancedNeuralRecommender(max_user_id + 1, max_content_id + 1, input_dim)
         interactions = [(row['user_id'], row['content_id'], row['rating'] or 5) for row in
                         self.get_db_connection().execute('SELECT * FROM user_interactions WHERE rating IS NOT NULL').fetchall()]
+
+        # Train VAE
+        if self.content_features is not None:
+            self.neural_recommender.train_vae(self.content_features)
+
+        # Train Transformer
+        user_ids, item_ids, ratings = zip(*interactions)
+        ratings = np.array(ratings) / 10.0  # Normalize ratings to [0, 1]
+        self.neural_recommender.train_transformer(user_ids, item_ids, ratings)
+
+        # Build GNN
         self.neural_recommender.build_gnn(interactions)
 
     def train_surprise_models(self):
@@ -633,7 +707,7 @@ class AdvancedRecommendationEngine:
         """Train implicit feedback model using ALS"""
         conn = self.get_db_connection()
         interactions = conn.execute('''
-            SELECT user_id, content_id, 
+            SELECT user_id, content_id,
                    CASE interaction_type
                        WHEN 'rating' THEN rating
                        WHEN 'favorite' THEN 10
@@ -711,7 +785,7 @@ class AdvancedRecommendationEngine:
         """Prepare training data for ML models"""
         conn = self.get_db_connection()
         data = conn.execute('''
-            SELECT 
+            SELECT
                 ui.user_id,
                 ui.content_id,
                 ui.rating,
@@ -901,13 +975,17 @@ class AdvancedRecommendationEngine:
         """Get recommendations using deep learning models"""
         try:
             recommendations = []
-            if self.neural_recommender and self.neural_recommender.transformer_model:
+            if self.neural_recommender and self.neural_recommender.transformer:
                 conn = self.get_db_connection()
                 items = conn.execute('SELECT id FROM content LIMIT ?', (limit * 2,)).fetchall()
                 item_ids = [item['id'] for item in items]
-                user_ids = np.array([user_id] * len(item_ids))
-                item_ids = np.array(item_ids)
-                predictions = self.neural_recommender.transformer_model.predict([user_ids, item_ids])
+                user_ids = [user_id] * len(item_ids)
+                device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+                user_ids_tensor = torch.LongTensor(user_ids).to(device)
+                item_ids_tensor = torch.LongTensor(item_ids).to(device)
+                self.neural_recommender.transformer.eval()
+                with torch.no_grad():
+                    predictions = self.neural_recommender.transformer(user_ids_tensor, item_ids_tensor).cpu().numpy()
                 scores = predictions.flatten()
                 top_indices = np.argsort(scores)[::-1][:limit]
                 for idx in top_indices:
@@ -1142,9 +1220,7 @@ def train_model():
 
 @app.route('/recommend', methods=['POST'])
 def get_recommendations():
-    """Get personalized recommendations for a user
-    Note: Handles deep learning recommendations (equivalent to /deep_recommend) when type='deep_learning'
-    """
+    """Get personalized recommendations for a user"""
     try:
         data = request.get_json()
         user_id = data.get('user_id')
@@ -1376,5 +1452,4 @@ if __name__ == '__main__':
     background_thread.start()
     rec_engine.train_model()
     logger.info("ML Recommendation Service ready")
-    if os.environ.get('FLASK_ENV') == 'development':
-        app.run(debug=True, host='0.0.0.0', port=5001)
+    app.run(debug=True, host='0.0.0.0', port=5001)
