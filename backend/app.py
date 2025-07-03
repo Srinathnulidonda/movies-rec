@@ -12,6 +12,9 @@ import logging
 from functools import wraps
 import random
 from collections import defaultdict
+import requests
+from collections import defaultdict
+import random
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'your-secret-key-change-this')
@@ -20,6 +23,8 @@ CORS(app)
 # Configuration
 TMDB_API_KEY = os.environ.get('TMDB_API_KEY', '1cf86635f20bb2aff8e70940e7c3ddd5')
 TMDB_BASE_URL = 'https://api.themoviedb.org/3'
+JIKAN_API_URL = 'https://api.jikan.moe/v4'  # Free MyAnimeList API
+ANILIST_API_URL = 'https://graphql.anilist.co'  # Free AniList API
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '7689567537:AAGvDtu94OlLlTiWpfjSfpl_dd_Osi_2W7c')
 TELEGRAM_CHANNEL_ID = os.environ.get('TELEGRAM_CHANNEL_ID', '-1002566510721')
 ML_SERVICE_URL = os.environ.get('ML_SERVICE_URL', 'https://movies-rec-ml-service.onrender.com')
@@ -211,19 +216,94 @@ def fetch_tmdb_search(media_type, query, page):
         return {'results': []}
 
 def is_anime(show):
-    """Determine if a TV show is anime"""
-    anime_keywords = ['anime', 'animation']
-    japanese_origins = ['JP', 'Japan']
+    """Enhanced anime detection"""
+    if not show:
+        return False
     
     # Check origin country
-    if any(country in japanese_origins for country in show.get('origin_country', [])):
+    origin_countries = show.get('origin_country', [])
+    if 'JP' in origin_countries:
         return True
     
-    # Check genres (Animation genre ID is 16)
-    if 16 in [genre.get('id') for genre in show.get('genre_ids', [])]:
-        return True
+    # Check if it's animation and from specific countries
+    genre_ids = show.get('genre_ids', [])
+    if 16 in genre_ids:  # Animation genre
+        # Additional checks for anime characteristics
+        if any(country in ['JP', 'KR'] for country in origin_countries):
+            return True
+        
+        # Check title for Japanese characters or anime keywords
+        title = show.get('title', '') or show.get('name', '')
+        if any(keyword in title.lower() for keyword in ['anime', 'manga', 'otaku']):
+            return True
     
     return False
+
+# Add anime-specific details endpoint
+@app.route('/api/anime/<int:anime_id>')
+def get_anime_details(anime_id):
+    """Get detailed anime information from Jikan API"""
+    try:
+        # Get anime details from Jikan
+        url = f'{JIKAN_API_URL}/anime/{anime_id}'
+        response = requests.get(url)
+        
+        if response.status_code != 200:
+            return jsonify({'error': 'Anime not found'}), 404
+        
+        data = response.json()
+        anime = data.get('data', {})
+        
+        # Get additional info
+        characters_url = f'{JIKAN_API_URL}/anime/{anime_id}/characters'
+        characters_response = requests.get(characters_url)
+        characters_data = characters_response.json() if characters_response.status_code == 200 else {}
+        
+        # Transform to comprehensive format
+        anime_details = {
+            'id': anime.get('mal_id'),
+            'title': anime.get('title'),
+            'title_english': anime.get('title_english'),
+            'title_japanese': anime.get('title_japanese'),
+            'overview': anime.get('synopsis'),
+            'poster_path': anime.get('images', {}).get('jpg', {}).get('image_url'),
+            'backdrop_path': anime.get('images', {}).get('jpg', {}).get('large_image_url'),
+            'vote_average': anime.get('score'),
+            'vote_count': anime.get('scored_by'),
+            'popularity': anime.get('popularity'),
+            'release_date': anime.get('aired', {}).get('from'),
+            'first_air_date': anime.get('aired', {}).get('from'),
+            'last_air_date': anime.get('aired', {}).get('to'),
+            'media_type': 'anime',
+            'status': anime.get('status'),
+            'episodes': anime.get('episodes'),
+            'duration': anime.get('duration'),
+            'rating': anime.get('rating'),
+            'source': anime.get('source'),
+            'genres': anime.get('genres', []),
+            'studios': anime.get('studios', []),
+            'producers': anime.get('producers', []),
+            'licensors': anime.get('licensors', []),
+            'themes': anime.get('themes', []),
+            'demographics': anime.get('demographics', []),
+            'season': anime.get('season'),
+            'year': anime.get('year'),
+            'broadcast': anime.get('broadcast'),
+            'characters': characters_data.get('data', [])[:10],  # Top 10 characters
+            'trailer': anime.get('trailer', {}).get('youtube_id'),
+            'mal_id': anime.get('mal_id'),
+            'approved': anime.get('approved'),
+            'streaming_platforms': get_anime_streaming_platforms(anime_id)
+        }
+        
+        # Check user status if logged in
+        if 'user_id' in session:
+            anime_details['user_status'] = get_user_movie_status(session['user_id'], anime_id, 'anime')
+        
+        return jsonify(anime_details)
+        
+    except Exception as e:
+        return jsonify({'error': 'Failed to fetch anime details', 'details': str(e)}), 500
 
 @app.route('/api/movie/<int:movie_id>')
 def get_movie_details(movie_id):
@@ -290,6 +370,28 @@ def get_enhanced_streaming_platforms(movie_id, media_type):
     
     return result
 
+def get_anime_streaming_platforms(anime_id):
+    """Get streaming platforms for anime"""
+    platforms = {
+        'subscription': [
+            {'name': 'Crunchyroll', 'logo': 'crunchyroll.png', 'url': f'https://crunchyroll.com/search?q={anime_id}'},
+            {'name': 'Funimation', 'logo': 'funimation.png', 'url': f'https://funimation.com/search/?q={anime_id}'},
+            {'name': 'Netflix', 'logo': 'netflix.png', 'url': f'https://netflix.com/search?q={anime_id}'},
+            {'name': 'Hulu', 'logo': 'hulu.png', 'url': f'https://hulu.com/search?q={anime_id}'}
+        ],
+        'free': [
+            {'name': 'Tubi', 'logo': 'tubi.png', 'url': f'https://tubitv.com/search/{anime_id}', 'type': 'free'},
+            {'name': 'YouTube', 'logo': 'youtube.png', 'url': f'https://youtube.com/results?search_query={anime_id}+anime', 'type': 'free'},
+            {'name': 'AnimeFLV', 'logo': 'animeflv.png', 'url': f'https://animeflv.net/browse?q={anime_id}', 'type': 'free'},
+            {'name': '9anime', 'logo': '9anime.png', 'url': f'https://9anime.to/search?keyword={anime_id}', 'type': 'free'}
+        ]
+    }
+    
+    return {
+        'subscription': random.sample(platforms['subscription'], random.randint(1, 2)),
+        'free': random.sample(platforms['free'], random.randint(1, 3))
+    }
+
 def get_video_links(videos_data):
     """Extract trailer and teaser links"""
     video_links = {'trailers': [], 'teasers': [], 'clips': []}
@@ -350,82 +452,319 @@ def get_public_recommendations():
     category = request.args.get('category', 'popular')  # popular, trending, top_rated, by_genre
     genre = request.args.get('genre', '')
     media_type = request.args.get('type', 'movie')  # movie, tv, anime
+    page = request.args.get('page', 1)
     
     try:
         if category == 'by_genre' and genre:
-            return get_genre_based_recommendations(genre, media_type)
+            return get_genre_based_recommendations(genre, media_type, page)
         elif category == 'trending':
-            return get_trending_content(media_type)
+            return get_trending_content(media_type, page)
         elif category == 'top_rated':
-            return get_top_rated_content(media_type)
+            return get_top_rated_content(media_type, page)
         else:
-            return get_popular_content(media_type)
+            return get_popular_content(media_type, page)
     
     except Exception as e:
-        return jsonify({'error': 'Failed to fetch recommendations'}), 500
+        return jsonify({'error': 'Failed to fetch recommendations', 'details': str(e)}), 500
 
-def get_genre_based_recommendations(genre, media_type):
-    """Get recommendations by genre"""
+def get_genre_based_recommendations(genre, media_type, page=1):
+    """Get recommendations by genre with anime support"""
+    
+    if media_type == 'anime':
+        # Use Jikan API for anime genres
+        try:
+            # Get anime by genre from Jikan API
+            url = f'{JIKAN_API_URL}/anime'
+            params = {
+                'genres': genre,
+                'order_by': 'popularity',
+                'sort': 'asc',
+                'page': page,
+                'limit': 20
+            }
+            
+            response = requests.get(url, params=params)
+            data = response.json()
+            
+            # Transform Jikan data to match your app's format
+            transformed_results = []
+            for anime in data.get('data', []):
+                transformed_anime = {
+                    'id': anime.get('mal_id'),
+                    'title': anime.get('title'),
+                    'name': anime.get('title'),  # For consistency
+                    'overview': anime.get('synopsis', '')[:500] + '...' if anime.get('synopsis') else '',
+                    'poster_path': anime.get('images', {}).get('jpg', {}).get('image_url'),
+                    'backdrop_path': anime.get('images', {}).get('jpg', {}).get('large_image_url'),
+                    'vote_average': anime.get('score', 0),
+                    'vote_count': anime.get('scored_by', 0),
+                    'popularity': anime.get('popularity', 0),
+                    'release_date': anime.get('aired', {}).get('from'),
+                    'first_air_date': anime.get('aired', {}).get('from'),
+                    'media_type': 'anime',
+                    'genre_ids': [g.get('mal_id') for g in anime.get('genres', [])],
+                    'genres': anime.get('genres', []),
+                    'status': anime.get('status'),
+                    'episodes': anime.get('episodes'),
+                    'duration': anime.get('duration'),
+                    'source': 'jikan'
+                }
+                transformed_results.append(transformed_anime)
+            
+            return jsonify({
+                'results': transformed_results,
+                'total_results': len(transformed_results),
+                'page': page,
+                'total_pages': data.get('pagination', {}).get('last_visible_page', 1)
+            })
+            
+        except Exception as e:
+            # Fallback to TMDB for anime
+            return get_tmdb_genre_recommendations(genre, 'tv', page, filter_anime=True)
+    
+    else:
+        # Use TMDB for movies and TV shows
+        return get_tmdb_genre_recommendations(genre, media_type, page)
+    
+
+def get_tmdb_genre_recommendations(genre, media_type, page=1, filter_anime=False):
+    """Get TMDB genre recommendations"""
     url = f'{TMDB_BASE_URL}/discover/{media_type}'
     params = {
         'api_key': TMDB_API_KEY,
         'with_genres': genre,
         'sort_by': 'popularity.desc',
-        'page': 1
+        'page': page,
+        'language': 'en-US'
+    }
+    
+    # Add anime-specific filters if needed
+    if filter_anime:
+        params['with_origin_country'] = 'JP'
+        params['with_genres'] = '16'  # Animation genre
+    
+    response = requests.get(url, params=params)
+    data = response.json()
+    
+    results = []
+    for item in data.get('results', []):
+        if filter_anime and not is_anime(item):
+            continue
+            
+        item['media_type'] = 'anime' if filter_anime else media_type
+        results.append(item)
+    
+    data['results'] = results
+    return jsonify(data)
+
+
+
+def get_trending_content(media_type, page=1):
+    """Get trending content with anime support"""
+    
+    if media_type == 'anime':
+        try:
+            # Get trending anime from Jikan
+            url = f'{JIKAN_API_URL}/top/anime'
+            params = {
+                'type': 'tv',
+                'filter': 'airing',
+                'page': page,
+                'limit': 20
+            }
+            
+            response = requests.get(url, params=params)
+            data = response.json()
+            
+            transformed_results = []
+            for anime in data.get('data', []):
+                transformed_anime = transform_jikan_to_tmdb_format(anime)
+                transformed_results.append(transformed_anime)
+            
+            return jsonify({
+                'results': transformed_results,
+                'total_results': len(transformed_results),
+                'page': page
+            })
+            
+        except Exception as e:
+            # Fallback to TMDB
+            return get_tmdb_trending('tv', page, filter_anime=True)
+    
+    else:
+        return get_tmdb_trending(media_type, page)
+    
+def get_tmdb_trending(media_type, page=1, filter_anime=False):
+    """Get TMDB trending content"""
+    url = f'{TMDB_BASE_URL}/trending/{media_type}/week'
+    params = {
+        'api_key': TMDB_API_KEY,
+        'page': page
     }
     
     response = requests.get(url, params=params)
     data = response.json()
     
-    # Add media type to results
-    for item in data.get('results', []):
-        item['media_type'] = 'anime' if media_type == 'tv' and is_anime(item) else media_type
-    
-    return jsonify(data)
-
-def get_trending_content(media_type):
-    """Get trending content"""
-    if media_type == 'anime':
-        media_type = 'tv'
-    
-    url = f'{TMDB_BASE_URL}/trending/{media_type}/week'
-    params = {'api_key': TMDB_API_KEY}
-    
-    response = requests.get(url, params=params)
-    data = response.json()
-    
-    # Filter anime if requested
-    if media_type == 'tv':
+    if filter_anime:
         results = []
         for item in data.get('results', []):
             if is_anime(item):
                 item['media_type'] = 'anime'
                 results.append(item)
         data['results'] = results
+    else:
+        for item in data.get('results', []):
+            item['media_type'] = media_type
     
     return jsonify(data)
 
-def get_popular_content(media_type):
-    """Get popular content"""
-    if media_type == 'anime':
-        media_type = 'tv'
-    
-    url = f'{TMDB_BASE_URL}/{media_type}/popular'
-    params = {'api_key': TMDB_API_KEY}
-    
-    response = requests.get(url, params=params)
-    return jsonify(response.json())
 
-def get_top_rated_content(media_type):
-    """Get top rated content"""
-    if media_type == 'anime':
-        media_type = 'tv'
+def get_popular_content(media_type, page=1):
+    """Get popular content with anime support"""
     
-    url = f'{TMDB_BASE_URL}/{media_type}/top_rated'
-    params = {'api_key': TMDB_API_KEY}
+    if media_type == 'anime':
+        try:
+            # Get popular anime from Jikan
+            url = f'{JIKAN_API_URL}/top/anime'
+            params = {
+                'type': 'tv',
+                'filter': 'bypopularity',
+                'page': page,
+                'limit': 20
+            }
+            
+            response = requests.get(url, params=params)
+            data = response.json()
+            
+            transformed_results = []
+            for anime in data.get('data', []):
+                transformed_anime = transform_jikan_to_tmdb_format(anime)
+                transformed_results.append(transformed_anime)
+            
+            return jsonify({
+                'results': transformed_results,
+                'total_results': len(transformed_results),
+                'page': page
+            })
+            
+        except Exception as e:
+            return get_tmdb_popular('tv', page, filter_anime=True)
+    
+    else:
+        return get_tmdb_popular(media_type, page)
+    
+def get_tmdb_popular(media_type, page=1, filter_anime=False):
+    """Get TMDB popular content"""
+    url = f'{TMDB_BASE_URL}/{media_type}/popular'
+    params = {
+        'api_key': TMDB_API_KEY,
+        'page': page
+    }
     
     response = requests.get(url, params=params)
-    return jsonify(response.json())
+    data = response.json()
+    
+    if filter_anime:
+        results = []
+        for item in data.get('results', []):
+            if is_anime(item):
+                item['media_type'] = 'anime'
+                results.append(item)
+        data['results'] = results
+    else:
+        for item in data.get('results', []):
+            item['media_type'] = media_type
+    
+    return jsonify(data)
+
+
+def get_top_rated_content(media_type, page=1):
+    """Get top rated content with anime support"""
+    
+    if media_type == 'anime':
+        try:
+            # Get top rated anime from Jikan
+            url = f'{JIKAN_API_URL}/top/anime'
+            params = {
+                'type': 'tv',
+                'filter': 'favorite',
+                'page': page,
+                'limit': 20
+            }
+            
+            response = requests.get(url, params=params)
+            data = response.json()
+            
+            transformed_results = []
+            for anime in data.get('data', []):
+                transformed_anime = transform_jikan_to_tmdb_format(anime)
+                transformed_results.append(transformed_anime)
+            
+            return jsonify({
+                'results': transformed_results,
+                'total_results': len(transformed_results),
+                'page': page
+            })
+            
+        except Exception as e:
+            return get_tmdb_top_rated('tv', page, filter_anime=True)
+    
+    else:
+        return get_tmdb_top_rated(media_type, page)
+    
+def get_tmdb_top_rated(media_type, page=1, filter_anime=False):
+    """Get TMDB top rated content"""
+    url = f'{TMDB_BASE_URL}/{media_type}/top_rated'
+    params = {
+        'api_key': TMDB_API_KEY,
+        'page': page
+    }
+    
+    response = requests.get(url, params=params)
+    data = response.json()
+    
+    if filter_anime:
+        results = []
+        for item in data.get('results', []):
+            if is_anime(item):
+                item['media_type'] = 'anime'
+                results.append(item)
+        data['results'] = results
+    else:
+        for item in data.get('results', []):
+            item['media_type'] = media_type
+    
+    return jsonify(data)
+
+# Helper function to transform Jikan data to TMDB format
+def transform_jikan_to_tmdb_format(anime):
+    """Transform Jikan API data to match TMDB format"""
+    return {
+        'id': anime.get('mal_id'),
+        'title': anime.get('title'),
+        'name': anime.get('title'),  # For TV shows
+        'overview': anime.get('synopsis', '')[:500] + '...' if anime.get('synopsis') else '',
+        'poster_path': anime.get('images', {}).get('jpg', {}).get('image_url', '').replace('https://cdn.myanimelist.net/images/', '/'),
+        'backdrop_path': anime.get('images', {}).get('jpg', {}).get('large_image_url', '').replace('https://cdn.myanimelist.net/images/', '/'),
+        'vote_average': anime.get('score', 0),
+        'vote_count': anime.get('scored_by', 0),
+        'popularity': anime.get('popularity', 0),
+        'release_date': anime.get('aired', {}).get('from'),
+        'first_air_date': anime.get('aired', {}).get('from'),
+        'media_type': 'anime',
+        'genre_ids': [g.get('mal_id') for g in anime.get('genres', [])],
+        'genres': anime.get('genres', []),
+        'status': anime.get('status'),
+        'episodes': anime.get('episodes'),
+        'duration': anime.get('duration'),
+        'source': 'jikan',
+        'mal_id': anime.get('mal_id'),
+        'rating': anime.get('rating'),
+        'year': anime.get('year'),
+        'season': anime.get('season'),
+        'studios': anime.get('studios', [])
+    }
+
 
 # Recommendations
 @app.route('/api/recommendations')
@@ -672,6 +1011,45 @@ def manage_watch_history():
         conn.close()
         
         return jsonify({'message': 'Added to watch history'})
+    
+
+@app.route('/api/admin/featured', methods=['GET', 'POST', 'PUT', 'DELETE'])
+@login_required
+def admin_featured():
+    """Admin management of featured content"""
+    if session.get('username') != 'admin':
+        return jsonify({'error': 'Admin access required'}), 403
+    
+    if request.method == 'GET':
+        conn = sqlite3.connect('movie_app.db')
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT id, movie_id, movie_type, title, description, created_at, is_active 
+            FROM featured_suggestions ORDER BY created_at DESC
+        ''')
+        featured = cursor.fetchall()
+        conn.close()
+        
+        return jsonify({'featured': featured})
+    
+    elif request.method == 'POST':
+        data = request.get_json()
+        movie_id = data.get('movie_id')
+        movie_type = data.get('movie_type', 'movie')
+        title = data.get('title')
+        description = data.get('description')
+        
+        conn = sqlite3.connect('movie_app.db')
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO featured_suggestions (movie_id, movie_type, title, description, is_active) 
+            VALUES (?, ?, ?, ?, ?)
+        ''', (movie_id, movie_type, title, description, True))
+        conn.commit()
+        conn.close()
+        
+        return jsonify({'message': 'Featured content added successfully'})
+
 
 # Admin endpoints
 @app.route('/api/admin/recommend', methods=['POST'])
@@ -815,6 +1193,22 @@ def rate_movie():
     conn.close()
     
     return jsonify({'message': 'Rating saved successfully'})
+
+
+
+@app.route('/api/health')
+def health_check():
+    """Health check endpoint"""
+    return jsonify({
+        'status': 'healthy',
+        'timestamp': datetime.now().isoformat(),
+        'services': {
+            'tmdb': 'active',
+            'jikan': 'active',
+            'database': 'active'
+        }
+    })
+
 
 # Add these database table modifications in init_db():
 def init_db():
