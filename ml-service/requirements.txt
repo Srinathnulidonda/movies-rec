@@ -6,9 +6,13 @@ xgboost
 torch
 networkx
 textblob
-scikit-surprise
 implicit
-faiss-cpu
+lightgbm
+optuna
 redis
+celery
+faiss-cpu
+sentence-transformers
 gunicorn
-Cython
+psycopg2-binary
+python-dotenv
