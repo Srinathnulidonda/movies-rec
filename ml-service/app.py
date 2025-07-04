@@ -75,6 +75,15 @@ class ModelStore:
         self.faiss_index = None
         self.content_embeddings = {}
         self._transformer_loaded = False
+    
+    def cleanup_models(self):
+        """Clean up models to free memory"""
+        if self.sentence_transformer:
+            del self.sentence_transformer
+            self.sentence_transformer = None
+            self._transformer_loaded = False
+            gc.collect()
+
         
     def initialize_models(self):
         """Initialize only essential models"""
@@ -104,6 +113,15 @@ class ModelStore:
                 logger.error(f"Failed to load sentence transformer: {e}")
                 return None
         return self.sentence_transformer
+
+class DatabaseManager:
+    def __init__(self, db_url):
+        self.db_url = db_url
+        self._lock = threading.Lock()
+    
+    def get_connection(self):
+        with self._lock:
+            return sqlite3.connect(self.db_url, check_same_thread=False)
 
 class AdvancedRecommendationEngine:
     def __init__(self):
