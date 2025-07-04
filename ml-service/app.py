@@ -568,6 +568,13 @@ class AdvancedRecommendationEngine:
 
 # Initialize recommendation engine
 rec_engine = AdvancedRecommendationEngine()
+# Initialize models at module level for production deployment
+try:
+    model_store.initialize_models()
+    rec_engine.update_models()
+    logger.info("Models initialized successfully")
+except Exception as e:
+    logger.error(f"Model initialization failed: {e}")
 
 # Background task for model updates
 @celery_app.task
@@ -723,17 +730,22 @@ def get_metrics():
     except Exception as e:
         logger.error(f"Metrics error: {e}")
         return jsonify({'error': 'Failed to get metrics'}), 500
-
-# Initialize models on startup
-@app.before_first_request
-def initialize_service():
-    """Initialize service on first request"""
+    
+def create_app():
+    """Application factory pattern"""
+    app = Flask(__name__)
+    
+    # Initialize models during app creation
     model_store.initialize_models()
     rec_engine.update_models()
+    
+    return app
+
 
 if __name__ == '__main__':
     # Initialize models
     model_store.initialize_models()
+    rec_engine.update_models()  # Add this line
     
     # Start the service
     logger.info("Starting Enhanced ML Recommendation Service...")
