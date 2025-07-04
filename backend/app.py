@@ -135,7 +135,7 @@ def create_admin_user():
     # Admin credentials
     admin_username = "admin"
     admin_email = "admin@movierecommendations.com"
-    admin_password = "AdminPass123!"  
+    admin_password = "admin123"  
     
     try:
         conn.execute('''INSERT INTO users (username, email, password_hash, is_admin) 
