@@ -25,6 +25,10 @@ import lightgbm as lgb
 import optuna
 from sentence_transformers import SentenceTransformer
 import faiss
+import psutil
+import gc
+from scipy.sparse import csr_matrix
+
 
 # Configure logging
 logging.basicConfig(
@@ -42,9 +46,11 @@ class Config:
     REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379')
     CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379')
     ML_MODEL_PATH = os.getenv('ML_MODEL_PATH', './models')
-    CACHE_TTL = int(os.getenv('CACHE_TTL', 3600))  # 1 hour
+    CACHE_TTL = int(os.getenv('CACHE_TTL', 3600))
     MAX_RECOMMENDATIONS = int(os.getenv('MAX_RECOMMENDATIONS', 50))
     BATCH_SIZE = int(os.getenv('BATCH_SIZE', 1000))
+    USE_HEAVY_MODELS = os.getenv('USE_HEAVY_MODELS', 'false').lower() == 'true'  # Add this
+    MEMORY_LIMIT = int(os.getenv('MEMORY_LIMIT', 400))  # MB
 
 config = Config()
 
@@ -68,22 +74,36 @@ class ModelStore:
         self.sentence_transformer = None
         self.faiss_index = None
         self.content_embeddings = {}
+        self._transformer_loaded = False
         
     def initialize_models(self):
-        """Initialize ML models"""
+        """Initialize only essential models"""
         try:
-            # Load sentence transformer for semantic similarity
-            self.sentence_transformer = SentenceTransformer('all-MiniLM-L6-v2')
-            logger.info("Sentence transformer loaded successfully")
-            
-            # Initialize FAISS for fast similarity search
-            self.faiss_index = faiss.IndexFlatIP(384)  # Dimension for all-MiniLM-L6-v2
-            logger.info("FAISS index initialized")
+            if config.USE_HEAVY_MODELS:
+                logger.info("Heavy models enabled via environment variable")
+            else:
+                logger.info("Heavy models disabled - using lightweight alternatives")
             
         except Exception as e:
             logger.error(f"Model initialization error: {e}")
-
-model_store = ModelStore()
+    
+    def get_sentence_transformer(self):
+        """Lazy load sentence transformer only when needed and allowed"""
+        if not config.USE_HEAVY_MODELS:
+            logger.info("Heavy models disabled - skipping sentence transformer")
+            return None
+            
+        if not self._transformer_loaded:
+            try:
+                logger.info("Loading sentence transformer on demand...")
+                # Use a smaller model for memory efficiency
+                self.sentence_transformer = SentenceTransformer('all-MiniLM-L6-v2')
+                self._transformer_loaded = True
+                logger.info("Sentence transformer loaded successfully")
+            except Exception as e:
+                logger.error(f"Failed to load sentence transformer: {e}")
+                return None
+        return self.sentence_transformer
 
 class AdvancedRecommendationEngine:
     def __init__(self):
@@ -179,9 +199,21 @@ class AdvancedRecommendationEngine:
     
     def build_content_embeddings(self, content_df: pd.DataFrame) -> Dict:
         """Build content embeddings using sentence transformers"""
-        if model_store.sentence_transformer is None:
-            logger.warning("Sentence transformer not available")
-            return {}
+        # Check memory before starting
+        try:
+            memory_before = get_memory_usage()
+            if memory_before > config.MEMORY_LIMIT * 0.8:  # 80% of limit
+                logger.warning(f"Memory usage high ({memory_before:.1f}MB) - using TF-IDF fallback")
+                return self._build_tfidf_embeddings(content_df)
+        except Exception as e:
+            logger.warning(f"Memory check failed: {e}, proceeding with fallback")
+            return self._build_tfidf_embeddings(content_df)
+        
+        # Use lazy loading
+        transformer = model_store.get_sentence_transformer()
+        if transformer is None:
+            logger.warning("Sentence transformer not available - using fallback")
+            return self._build_tfidf_embeddings(content_df)
         
         cache_key = self.get_cache_key('content_embeddings', version='v1')
         cached_embeddings = self.get_cached_result(cache_key)
@@ -192,36 +224,136 @@ class AdvancedRecommendationEngine:
         try:
             embeddings = {}
             
+            # Process in smaller batches to manage memory
+            batch_size = 10  # Smaller batch size
+            content_items = list(content_df.iterrows())
+            
+            for i in range(0, len(content_items), batch_size):
+                batch = content_items[i:i+batch_size]
+                
+                for idx, row in batch:
+                    content_id = row['id']
+                    
+                    # Combine text features
+                    text_features = []
+                    if pd.notna(row.get('title')):
+                        text_features.append(row['title'])
+                    if pd.notna(row.get('overview')):
+                        # Truncate overview to reduce memory usage
+                        overview = row['overview'][:200] if len(row['overview']) > 200 else row['overview']
+                        text_features.append(overview)
+                    
+                    # Add genre information
+                    try:
+                        genre_ids = row.get('genre_ids', '[]')
+                        if isinstance(genre_ids, str):
+                            genres = json.loads(genre_ids)
+                        else:
+                            genres = genre_ids if isinstance(genre_ids, list) else []
+                        
+                        if genres:
+                            text_features.append(' '.join(str(g) for g in genres))
+                    except Exception as e:
+                        logger.debug(f"Genre parsing error for content {content_id}: {e}")
+                    
+                    combined_text = ' '.join(text_features)
+                    
+                    if combined_text.strip():
+                        try:
+                            embedding = transformer.encode(combined_text)
+                            embeddings[content_id] = embedding.tolist()
+                        except Exception as e:
+                            logger.warning(f"Embedding error for content {content_id}: {e}")
+                
+                # Log progress and check memory
+                if i % 50 == 0:
+                    logger.info(f"Processed {i}/{len(content_items)} content items")
+                    try:
+                        current_memory = get_memory_usage()
+                        if current_memory > config.MEMORY_LIMIT * 0.9:
+                            logger.warning(f"Memory usage critical ({current_memory:.1f}MB), stopping embedding process")
+                            break
+                    except:
+                        pass
+            
+            # Cache embeddings
+            if embeddings:
+                self.set_cached_result(cache_key, embeddings, ttl=86400)
+            
+            return embeddings
+            
+        except Exception as e:
+            logger.error(f"Content embeddings error: {e}")
+            # Fallback to TF-IDF
+            return self._build_tfidf_embeddings(content_df)
+        
+    def _build_tfidf_embeddings(self, content_df: pd.DataFrame) -> Dict:
+        """Fallback method using TF-IDF for embeddings (lighter on memory)"""
+        try:
+            logger.info("Using TF-IDF fallback for embeddings")
+            
+            texts = []
+            content_ids = []
+            
             for idx, row in content_df.iterrows():
                 content_id = row['id']
                 
                 # Combine text features
                 text_features = []
                 if pd.notna(row.get('title')):
-                    text_features.append(row['title'])
+                    text_features.append(str(row['title']))
                 if pd.notna(row.get('overview')):
-                    text_features.append(row['overview'])
+                    # Truncate overview
+                    overview = str(row['overview'])
+                    overview = overview[:200] if len(overview) > 200 else overview
+                    text_features.append(overview)
                 
                 # Add genre information
-                genres = json.loads(row.get('genre_ids', '[]'))
-                if genres:
-                    text_features.append(' '.join(genres))
+                try:
+                    genre_ids = row.get('genre_ids', '[]')
+                    if isinstance(genre_ids, str):
+                        genres = json.loads(genre_ids)
+                    else:
+                        genres = genre_ids if isinstance(genre_ids, list) else []
+                    
+                    if genres:
+                        text_features.append(' '.join(str(g) for g in genres))
+                except Exception as e:
+                    logger.debug(f"Genre parsing error for content {content_id}: {e}")
                 
                 combined_text = ' '.join(text_features)
                 
                 if combined_text.strip():
-                    embedding = model_store.sentence_transformer.encode(combined_text)
-                    embeddings[content_id] = embedding.tolist()
+                    texts.append(combined_text)
+                    content_ids.append(content_id)
             
-            # Cache embeddings
-            self.set_cached_result(cache_key, embeddings, ttl=86400)  # 24 hours
+            if not texts:
+                logger.warning("No text data available for TF-IDF")
+                return {}
             
+            # Use TF-IDF with limited features
+            vectorizer = TfidfVectorizer(
+                max_features=1000,  # Limit features
+                stop_words='english',
+                ngram_range=(1, 2),
+                min_df=2,
+                max_df=0.8
+            )
+            
+            tfidf_matrix = vectorizer.fit_transform(texts)
+            
+            # Convert to embeddings dictionary
+            embeddings = {}
+            for i, content_id in enumerate(content_ids):
+                embeddings[content_id] = tfidf_matrix[i].toarray()[0].tolist()
+            
+            logger.info(f"TF-IDF embeddings created for {len(embeddings)} items")
             return embeddings
             
         except Exception as e:
-            logger.error(f"Content embeddings error: {e}")
+            logger.error(f"TF-IDF embeddings error: {e}")
             return {}
-    
+        
     def train_als_model(self, interactions_df: pd.DataFrame):
         """Train ALS model for collaborative filtering"""
         if interactions_df.empty:
@@ -266,7 +398,6 @@ class AdvancedRecommendationEngine:
             )
             
             # Convert to sparse matrix
-            from scipy.sparse import csr_matrix
             sparse_matrix = csr_matrix(interaction_matrix)
             
             als_model.fit(sparse_matrix)
@@ -277,6 +408,7 @@ class AdvancedRecommendationEngine:
             self.content_to_idx = content_to_idx
             self.idx_to_user = {idx: user_id for user_id, idx in user_to_idx.items()}
             self.idx_to_content = {idx: content_id for content_id, idx in content_to_idx.items()}
+            self.interaction_matrix = sparse_matrix  # Store the matrix
             
             logger.info(f"ALS model trained with {n_users} users and {n_items} items")
             
@@ -304,10 +436,14 @@ class AdvancedRecommendationEngine:
             
             user_idx = self.user_to_idx[user_id]
             
+            # Use the stored interaction matrix
+            if not hasattr(self, 'interaction_matrix') or self.interaction_matrix is None:
+                return self.popularity_based_recommendations(limit)
+            
             # Get recommendations from ALS
             recommended_items, scores = self.als_model.recommend(
                 user_idx,
-                sparse_matrix=None,
+                self.interaction_matrix,
                 N=limit,
                 filter_already_liked_items=True
             )
@@ -356,8 +492,12 @@ class AdvancedRecommendationEngine:
             if user_interactions.empty:
                 return self.popularity_based_recommendations(limit)
             
+            # Get embedding dimension from first embedding
+            sample_embedding = next(iter(content_embeddings.values()))
+            embedding_dim = len(sample_embedding)
+            
             # Build user profile from interactions
-            user_profile = np.zeros(384)  # Dimension for all-MiniLM-L6-v2
+            user_profile = np.zeros(embedding_dim)
             total_weight = 0
             
             for _, interaction in user_interactions.iterrows():
@@ -450,14 +590,20 @@ class AdvancedRecommendationEngine:
             return []
     
     def hybrid_recommendations(self, user_id: int, limit: int = 20) -> List[Dict]:
-        """Hybrid recommendations combining multiple approaches"""
-        cache_key = self.get_cache_key('hybrid', user_id=user_id, limit=limit)
-        cached_result = self.get_cached_result(cache_key)
-        
-        if cached_result:
-            return cached_result
-        
+        """Hybrid recommendations with fallback for missing models"""
         try:
+            # Try to get cached results first
+            cache_key = self.get_cache_key('hybrid', user_id=user_id, limit=limit)
+            cached_result = self.get_cached_result(cache_key)
+            
+            if cached_result:
+                return cached_result
+            
+            # Check if models are available
+            if not model_store._transformer_loaded and self.als_model is None:
+                logger.info("Models not loaded, using popularity-based recommendations")
+                return self.popularity_based_recommendations(limit)
+            
             # Get recommendations from different algorithms
             collab_recs = self.collaborative_filtering(user_id, limit)
             content_recs = self.content_based_recommendations(user_id, limit)
@@ -525,26 +671,40 @@ class AdvancedRecommendationEngine:
         selected_types = set()
         
         # Sort by score first
-        recommendations.sort(key=lambda x: x['recommendation_score'], reverse=True)
+        recommendations.sort(key=lambda x: x.get('recommendation_score', 0), reverse=True)
         
         for rec in recommendations:
-            genres = json.loads(rec.get('genre_ids', '[]'))
+            try:
+                genre_ids = rec.get('genre_ids', '[]')
+                if isinstance(genre_ids, str):
+                    genres = json.loads(genre_ids)
+                else:
+                    genres = genre_ids if isinstance(genre_ids, list) else []
+            except Exception as e:
+                logger.debug(f"Genre parsing error in diversity filter: {e}")
+                genres = []
+                
             content_type = rec.get('content_type', '')
             
             # Calculate diversity bonus
-            genre_diversity = len(set(genres) - selected_genres) / max(len(genres), 1)
+            if genres:
+                genre_diversity = len(set(str(g) for g in genres) - selected_genres) / len(genres)
+            else:
+                genre_diversity = 0
+                
             type_diversity = 1.0 if content_type not in selected_types else 0.5
             
             diversity_bonus = (genre_diversity + type_diversity) / 2 * 0.1
             
             # Apply diversity bonus
-            rec['recommendation_score'] += diversity_bonus
+            current_score = rec.get('recommendation_score', 0)
+            rec['recommendation_score'] = current_score + diversity_bonus
             
             diverse_recs.append(rec)
-            selected_genres.update(genres)
+            selected_genres.update(str(g) for g in genres)
             selected_types.add(content_type)
         
-        return sorted(diverse_recs, key=lambda x: x['recommendation_score'], reverse=True)
+        return sorted(diverse_recs, key=lambda x: x.get('recommendation_score', 0), reverse=True)
     
     def update_models(self):
         """Update all ML models with latest data"""
@@ -567,12 +727,12 @@ class AdvancedRecommendationEngine:
             logger.error(f"Model update error: {e}")
 
 # Initialize recommendation engine
+model_store = ModelStore()
 rec_engine = AdvancedRecommendationEngine()
 # Initialize models at module level for production deployment
 try:
-    model_store.initialize_models()
-    rec_engine.update_models()
-    logger.info("Models initialized successfully")
+    model_store.initialize_models()  # This now only does basic setup
+    logger.info("Basic model store initialized")
 except Exception as e:
     logger.error(f"Model initialization failed: {e}")
 
@@ -586,10 +746,18 @@ def update_models_task():
 @app.route('/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
+    redis_connected = False
+    if redis_client:
+        try:
+            redis_client.ping()
+            redis_connected = True
+        except:
+            redis_connected = False
+    
     return jsonify({
         'status': 'healthy',
         'timestamp': datetime.now().isoformat(),
-        'redis_connected': redis_client is not None and redis_client.ping() if redis_client else False,
+        'redis_connected': redis_connected,
         'models_loaded': rec_engine.als_model is not None
     })
 
@@ -632,6 +800,9 @@ def similar_content():
     """Get similar content to a given item"""
     try:
         data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No JSON data provided'}), 400
+            
         content_id = data.get('content_id')
         limit = min(data.get('limit', 10), 20)
         
@@ -646,7 +817,13 @@ def similar_content():
         
         # Get content embeddings
         content_df, _ = rec_engine.load_data()
+        if content_df.empty:
+            return jsonify({'error': 'No content data available'}), 404
+            
         content_embeddings = rec_engine.build_content_embeddings(content_df)
+        
+        if not content_embeddings:
+            return jsonify({'error': 'Content embeddings not available'}), 500
         
         if content_id not in content_embeddings:
             return jsonify({'error': 'Content not found'}), 404
@@ -656,24 +833,28 @@ def similar_content():
         
         for cid, embedding in content_embeddings.items():
             if cid != content_id:
-                similarity = cosine_similarity([target_embedding], [embedding])[0][0]
-                similarities[cid] = similarity
+                try:
+                    similarity = cosine_similarity([target_embedding], [embedding])[0][0]
+                    similarities[cid] = similarity
+                except Exception as e:
+                    logger.debug(f"Similarity calculation error for content {cid}: {e}")
+                    continue
         
         # Get top similar content
         top_similar = sorted(similarities.items(), key=lambda x: x[1], reverse=True)[:limit]
         
-        similar_content = []
+        similar_content_list = []
         for cid, similarity in top_similar:
             content_row = content_df[content_df['id'] == cid]
             if not content_row.empty:
                 content_data = content_row.iloc[0].to_dict()
                 content_data['similarity_score'] = float(similarity)
-                similar_content.append(content_data)
+                similar_content_list.append(content_data)
         
         result = {
-            'similar': similar_content,
+            'similar': similar_content_list,
             'content_id': content_id,
-            'count': len(similar_content),
+            'count': len(similar_content_list),
             'timestamp': datetime.now().isoformat()
         }
         
@@ -700,7 +881,24 @@ def trigger_model_update():
         
     except Exception as e:
         logger.error(f"Model update trigger error: {e}")
-        return jsonify({'error': 'Failed to schedule model update'}), 500
+        return jsonify({'error': 'Failed to schedule model update'}), 500  
+
+# Add a separate initialization endpoint:
+@app.route('/initialize', methods=['POST'])
+def initialize_models():
+    """Initialize heavy models on demand"""
+    try:
+        # This will trigger model loading
+        model_store.get_sentence_transformer()
+        rec_engine.update_models()
+        
+        return jsonify({
+            'message': 'Models initialized successfully',
+            'timestamp': datetime.now().isoformat()
+        })
+    except Exception as e:
+        logger.error(f"Model initialization error: {e}")
+        return jsonify({'error': 'Model initialization failed'}), 500
 
 @app.route('/metrics', methods=['GET'])
 def get_metrics():
@@ -730,23 +928,74 @@ def get_metrics():
     except Exception as e:
         logger.error(f"Metrics error: {e}")
         return jsonify({'error': 'Failed to get metrics'}), 500
-    
+
+def get_memory_usage():
+    """Get current memory usage"""
+    try:
+        process = psutil.Process()
+        return process.memory_info().rss / 1024 / 1024  # MB
+    except Exception as e:
+        logger.warning(f"Memory usage check failed: {e}")
+        return 0
+
+@app.route('/memory', methods=['GET'])
+def memory_status():
+    """Check memory usage"""
+    try:
+        memory_mb = get_memory_usage()
+        return jsonify({
+            'memory_usage_mb': memory_mb,
+            'memory_limit_mb': config.MEMORY_LIMIT,
+            'memory_usage_percent': (memory_mb / config.MEMORY_LIMIT) * 100,
+            'models_loaded': {
+                'sentence_transformer': model_store._transformer_loaded,
+                'als_model': rec_engine.als_model is not None
+            }
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# 6. Add garbage collection helper:
+def cleanup_memory():
+    """Force garbage collection to free memory"""
+    gc.collect()
+    logger.info(f"Memory usage after cleanup: {get_memory_usage():.1f}MB")
+
+
 def create_app():
     """Application factory pattern"""
-    app = Flask(__name__)
+    app_instance = Flask(__name__)
     
     # Initialize models during app creation
     model_store.initialize_models()
-    rec_engine.update_models()
     
-    return app
+    # Load data and train models
+    content_df, interactions_df = rec_engine.load_data()
+    if not interactions_df.empty:
+        rec_engine.train_als_model(interactions_df)
+    
+    return app_instance
 
 
 if __name__ == '__main__':
-    # Initialize models
-    model_store.initialize_models()
-    rec_engine.update_models()  # Add this line
-    
-    # Start the service
-    logger.info("Starting Enhanced ML Recommendation Service...")
-    app.run(debug=False, host='0.0.0.0', port=5001)
+    try:
+        # Initialize models
+        logger.info("Initializing model store...")
+        model_store.initialize_models()
+        
+        # Load data and train models
+        logger.info("Loading data and training models...")
+        content_df, interactions_df = rec_engine.load_data()
+        if not interactions_df.empty:
+            rec_engine.train_als_model(interactions_df)
+        else:
+            logger.warning("No interaction data available for training")
+        
+        # Start the service
+        logger.info("Starting Enhanced ML Recommendation Service...")
+        app.run(debug=False, host='0.0.0.0', port=5001, threaded=True)
+    except Exception as e:
+        logger.error(f"Failed to start service: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
