@@ -2,367 +2,299 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Movie Recommendations</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#1f2937">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>MovieRecs Mobile</title>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <style>
+        /* Mobile-First Responsive Styles */
         .gradient-bg { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
         .card-hover { transition: transform 0.3s ease; }
-        .card-hover:hover { transform: translateY(-5px); }
+        .card-hover:hover { transform: translateY(-2px); }
+        .card-hover:active { transform: scale(0.98); }
         .glass-effect { backdrop-filter: blur(10px); background: rgba(255, 255, 255, 0.1); }
         .loading { animation: spin 1s linear infinite; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         
-        /* Mobile-First Responsive Design */
-        .mobile-nav { display: none; }
-        .desktop-nav { display: flex; }
-        
         /* Mobile Navigation */
-        @media (max-width: 768px) {
-            .mobile-nav { display: block; }
-            .desktop-nav { display: none; }
-            
-            .mobile-menu {
-                position: fixed;
-                top: 0;
-                left: -100%;
-                width: 280px;
-                height: 100vh;
-                background: rgba(31, 41, 55, 0.95);
-                backdrop-filter: blur(10px);
-                transition: left 0.3s ease;
-                z-index: 1000;
-                padding: 1rem;
-            }
-            
-            .mobile-menu.active {
-                left: 0;
-            }
-            
-            .mobile-overlay {
-                position: fixed;
-                top: 0;
-                left: 0;
-                width: 100%;
-                height: 100%;
-                background: rgba(0, 0, 0, 0.5);
-                z-index: 999;
-                opacity: 0;
-                visibility: hidden;
-                transition: all 0.3s ease;
-            }
-            
-            .mobile-overlay.active {
-                opacity: 1;
-                visibility: visible;
-            }
-        }
+        .mobile-menu { transform: translateX(-100%); transition: transform 0.3s ease; }
+        .mobile-menu.active { transform: translateX(0); }
+        .mobile-overlay { opacity: 0; visibility: hidden; transition: all 0.3s ease; }
+        .mobile-overlay.active { opacity: 1; visibility: visible; }
+        .nav-link { transition: color 0.3s ease; }
+        .nav-link:hover { color: #a855f7; }
         
-        /* Responsive Grid System */
-        .content-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 1.5rem;
-        }
+        /* Responsive Grid */
+        .content-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem; }
+        @media (min-width: 768px) { .content-grid { grid-template-columns: repeat(3, 1fr); gap: 1.5rem; } }
+        @media (min-width: 1024px) { .content-grid { grid-template-columns: repeat(4, 1fr); } }
         
-        @media (max-width: 640px) {
-            .content-grid {
-                grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-                gap: 1rem;
-            }
-        }
+        /* Mobile-Optimized Components */
+        .search-container { display: flex; flex-direction: column; gap: 1rem; }
+        @media (min-width: 640px) { .search-container { flex-direction: row; gap: 1rem; } }
+        .filter-container { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+        .modal-content { margin: 1rem; max-width: calc(100% - 2rem); }
+        .card-image { height: 10rem; }
+        @media (min-width: 640px) { .card-image { height: 12rem; } }
         
-        @media (max-width: 480px) {
-            .content-grid {
-                grid-template-columns: 1fr;
-                gap: 1rem;
-            }
-        }
+        /* Touch-Friendly Elements */
+        .touch-target { min-height: 44px; min-width: 44px; }
+        .btn-mobile { padding: 0.75rem 1rem; font-size: 0.875rem; }
+        .input-mobile { padding: 0.75rem; font-size: 16px; /* Prevents zoom on iOS */ }
         
-        /* Responsive Images */
-        .responsive-img {
-            width: 100%;
-            height: auto;
-            object-fit: cover;
-            border-radius: 0.5rem;
-        }
+        /* Safe Area Support */
+        .safe-area-top { padding-top: env(safe-area-inset-top); }
+        .safe-area-bottom { padding-bottom: env(safe-area-inset-bottom); }
         
-        .card-image {
-            height: 300px;
-            object-fit: cover;
+        /* Mobile Bottom Navigation */
+        .mobile-bottom-nav { 
+            position: fixed; 
+            bottom: 0; 
+            left: 0; 
+            right: 0; 
+            z-index: 40; 
+            background: #1f2937;
+            border-top: 1px solid #374151;
+            padding-bottom: env(safe-area-inset-bottom);
         }
-        
-        @media (max-width: 640px) {
-            .card-image {
-                height: 250px;
-            }
-        }
-        
-        @media (max-width: 480px) {
-            .card-image {
-                height: 200px;
-            }
-        }
-        
-        /* Touch-Friendly Buttons */
-        .touch-btn {
+        .content-container { padding-bottom: 5rem; }
+        .bottom-nav-item { 
+            flex: 1; 
+            display: flex; 
+            flex-direction: column; 
+            align-items: center; 
+            padding: 0.5rem; 
+            transition: color 0.3s ease;
             min-height: 44px;
-            min-width: 44px;
-            padding: 0.75rem;
         }
+        .bottom-nav-item.active { color: #a855f7; }
+        .bottom-nav-item i { font-size: 1.25rem; margin-bottom: 0.25rem; }
+        .bottom-nav-item span { font-size: 0.75rem; }
+        
+        /* Swipe Container */
+        .swipe-container { 
+            overflow-x: auto; 
+            display: flex; 
+            gap: 1rem; 
+            padding: 1rem 0;
+            scrollbar-width: none;
+            -ms-overflow-style: none;
+        }
+        .swipe-container::-webkit-scrollbar { display: none; }
+        .swipe-item { flex: 0 0 auto; width: 120px; }
+        @media (min-width: 640px) { .swipe-item { width: 150px; } }
+        
+        /* Animations */
+        .fade-in { animation: fade-in 0.5s ease-out; }
+        @keyframes fade-in { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+        .slide-in { animation: slide-in 0.3s ease-out; }
+        @keyframes slide-in { from { transform: translateY(100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        
+        /* Performance Optimizations */
+        .hardware-accelerated { transform: translateZ(0); will-change: transform; }
+        .tap-highlight-transparent { -webkit-tap-highlight-color: transparent; }
+        .touch-action-manipulation { touch-action: manipulation; }
+        
+        /* Loading States */
+        .skeleton { 
+            background: linear-gradient(90deg, #374151 25%, #4b5563 50%, #374151 75%); 
+            background-size: 200% 100%; 
+            animation: skeleton-loading 1.5s infinite; 
+        }
+        @keyframes skeleton-loading { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+        
+        /* Accessibility */
+        .focus-ring:focus-visible { outline: 2px solid #a855f7; outline-offset: 2px; }
+        .screen-reader-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+        
+        /* Hide desktop nav on mobile */
+        .nav-desktop { display: none; }
+        @media (min-width: 768px) { .nav-desktop { display: flex; } }
+        .nav-mobile { display: block; }
+        @media (min-width: 768px) { .nav-mobile { display: none; } }
         
         /* Responsive Typography */
-        @media (max-width: 640px) {
-            .responsive-title {
-                font-size: 1.5rem;
-            }
-            
-            .responsive-subtitle {
-                font-size: 1.25rem;
-            }
-            
-            .responsive-text {
-                font-size: 0.875rem;
-            }
-        }
+        .text-responsive { font-size: 0.875rem; }
+        @media (min-width: 640px) { .text-responsive { font-size: 1rem; } }
         
-        /* Responsive Containers */
-        .container-fluid {
-            padding-left: 1rem;
-            padding-right: 1rem;
-        }
-        
-        @media (max-width: 640px) {
-            .container-fluid {
-                padding-left: 0.75rem;
-                padding-right: 0.75rem;
-            }
-        }
-        
-        /* Search Bar Responsive */
-        .search-container {
-            display: flex;
-            flex-direction: column;
-            gap: 0.75rem;
-        }
-        
-        @media (min-width: 640px) {
-            .search-container {
-                flex-direction: row;
-                gap: 1rem;
-            }
-        }
-        
-        .search-input {
-            flex: 1;
-            min-width: 0;
-        }
-        
-        /* Modal Responsiveness */
-        .modal-content {
-            max-width: 95%;
-            margin: 0 auto;
-        }
-        
-        @media (min-width: 640px) {
-            .modal-content {
-                max-width: 28rem;
-            }
-        }
-        
-        /* Filter Buttons */
-        .filter-buttons {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 0.5rem;
-        }
-        
-        .filter-btn {
-            flex: 1;
-            min-width: 80px;
-            text-align: center;
-        }
-        
-        @media (max-width: 480px) {
-            .filter-btn {
-                flex: 1 1 45%;
-            }
-        }
-        
-        /* Content Card Responsive */
-        .content-card {
-            background: rgba(31, 41, 55, 1);
-            border-radius: 0.75rem;
-            overflow: hidden;
-            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
-            transition: transform 0.3s ease, box-shadow 0.3s ease;
-        }
-        
-        .content-card:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 15px 35px rgba(0, 0, 0, 0.3);
-        }
-        
-        @media (max-width: 640px) {
-            .content-card:hover {
-                transform: translateY(-2px);
-            }
-        }
-        
-        /* Optimized Image Loading */
-        .lazy-img {
-            opacity: 0;
-            transition: opacity 0.3s ease;
-        }
-        
-        .lazy-img.loaded {
-            opacity: 1;
-        }
-        
-        .img-placeholder {
-            background: linear-gradient(45deg, #374151, #4B5563);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: #9CA3AF;
-        }
+        /* Pull to Refresh */
+        .pull-to-refresh { min-height: 100vh; overflow-y: auto; }
     </style>
 </head>
-<body class="bg-gray-900 text-white">
-    <!-- Navigation -->
-    <nav class="bg-gray-800 shadow-lg sticky top-0 z-50">
-        <div class="max-w-7xl mx-auto px-4">
-            <div class="flex justify-between items-center h-16">
-                <div class="flex items-center space-x-4">
-                    <i class="fas fa-film text-2xl text-purple-400"></i>
-                    <h1 class="text-xl font-bold">MovieRecs</h1>
+<body class="bg-gray-900 text-white mobile-optimized safe-area-top">
+    <!-- Mobile Header -->
+    <header class="bg-gray-800 shadow-lg sticky top-0 z-30 safe-area-top">
+        <div class="px-4 py-3">
+            <div class="flex justify-between items-center">
+                <div class="flex items-center space-x-3">
+                    <button id="mobile-menu-btn" class="nav-mobile text-white touch-target tap-highlight-transparent">
+                        <i class="fas fa-bars text-xl"></i>
+                    </button>
+                    <div class="flex items-center space-x-2">
+                        <i class="fas fa-film text-xl text-purple-400"></i>
+                        <h1 class="text-lg font-bold">MovieRecs</h1>
+                    </div>
                 </div>
-                
-                <!-- Desktop Navigation -->
-                <div class="desktop-nav items-center space-x-6">
-                    <a href="#" class="nav-link text-purple-400" data-page="search">Search</a>
-                    <a href="#" class="nav-link" data-page="trending">Trending</a>
-                    <a href="#" class="nav-link" data-page="watchlist">Watchlist</a>
-                </div>
-                
-                <!-- Mobile Menu Button -->
-                <button id="mobile-menu-btn" class="mobile-nav text-white p-2">
-                    <i class="fas fa-bars text-xl"></i>
-                </button>
-                
-                <!-- Auth Buttons -->
-                <div class="flex items-center space-x-4">
-                    <div id="auth-buttons" class="space-x-2">
-                        <button id="login-btn" class="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded touch-btn">Login</button>
-                        <button id="register-btn" class="bg-transparent border border-purple-600 hover:bg-purple-600 px-4 py-2 rounded touch-btn">Register</button>
+                <div class="flex items-center space-x-2">
+                    <div id="auth-buttons" class="flex space-x-2">
+                        <button id="login-btn" class="bg-purple-600 hover:bg-purple-700 px-3 py-1.5 rounded text-sm touch-target">Login</button>
                     </div>
                     <div id="user-menu" class="hidden">
-                        <span id="username" class="mr-2"></span>
-                        <button id="logout-btn" class="bg-red-600 hover:bg-red-700 px-4 py-2 rounded touch-btn">Logout</button>
+                        <button id="logout-btn" class="bg-red-600 hover:bg-red-700 px-3 py-1.5 rounded text-sm touch-target">Logout</button>
                     </div>
                 </div>
             </div>
+        </div>
+    </header>
+
+    <!-- Mobile Side Menu -->
+    <div id="mobile-overlay" class="mobile-overlay fixed inset-0 bg-black bg-opacity-50 z-40"></div>
+    <nav id="mobile-menu" class="mobile-menu fixed left-0 top-0 h-full w-64 bg-gray-800 z-50 safe-area-top">
+        <div class="p-4 pt-16">
+            <div class="flex items-center space-x-3 mb-8">
+                <i class="fas fa-film text-2xl text-purple-400"></i>
+                <h2 class="text-xl font-bold">MovieRecs</h2>
+            </div>
+            <nav class="space-y-4">
+                <a href="#" class="nav-link block py-3 px-4 rounded hover:bg-gray-700 transition-colors" data-page="home">
+                    <i class="fas fa-home mr-3"></i>Home
+                </a>
+                <a href="#" class="nav-link block py-3 px-4 rounded hover:bg-gray-700 transition-colors" data-page="search">
+                    <i class="fas fa-search mr-3"></i>Search
+                </a>
+                <a href="#" class="nav-link block py-3 px-4 rounded hover:bg-gray-700 transition-colors" data-page="trending">
+                    <i class="fas fa-fire mr-3"></i>Trending
+                </a>
+                <a href="#" class="nav-link block py-3 px-4 rounded hover:bg-gray-700 transition-colors" data-page="watchlist">
+                    <i class="fas fa-bookmark mr-3"></i>Watchlist
+                </a>
+            </nav>
         </div>
     </nav>
 
-    <!-- Mobile Navigation Menu -->
-    <div id="mobile-overlay" class="mobile-overlay"></div>
-    <div id="mobile-menu" class="mobile-menu">
-        <div class="flex justify-between items-center mb-6">
-            <h2 class="text-xl font-bold">Menu</h2>
-            <button id="close-mobile-menu" class="text-white p-2">
-                <i class="fas fa-times text-xl"></i>
-            </button>
-        </div>
-        <div class="space-y-4">
-            <a href="#" class="mobile-nav-link block p-3 rounded hover:bg-gray-700 text-purple-400" data-page="search">
-                <i class="fas fa-search mr-3"></i>Search
-            </a>
-            <a href="#" class="mobile-nav-link block p-3 rounded hover:bg-gray-700" data-page="trending">
-                <i class="fas fa-fire mr-3"></i>Trending
-            </a>
-            <a href="#" class="mobile-nav-link block p-3 rounded hover:bg-gray-700" data-page="watchlist">
-                <i class="fas fa-bookmark mr-3"></i>Watchlist
-            </a>
-        </div>
-    </div>
-
     <!-- Main Content -->
-    <div class="container-fluid mx-auto py-6">
-        <!-- Search Page (Default) -->
-        <div id="search-page" class="page">
-            <div class="mb-8">
-                <h2 class="responsive-title text-3xl font-bold mb-4">Search Content</h2>
-                <div class="search-container">
-                    <input type="text" id="search-input" placeholder="Search movies, TV shows, anime..." 
-                           class="search-input px-4 py-3 rounded-lg bg-gray-800 border border-gray-600 focus:border-purple-500 focus:outline-none">
-                    <select id="search-type" class="px-4 py-3 rounded-lg bg-gray-800 border border-gray-600 min-w-0">
-                        <option value="all">All</option>
-                        <option value="movie">Movies</option>
-                        <option value="tv">TV Shows</option>
-                        <option value="anime">Anime</option>
-                    </select>
-                    <button id="search-btn" class="bg-purple-600 hover:bg-purple-700 px-6 py-3 rounded-lg touch-btn">
-                        <i class="fas fa-search"></i>
+    <main class="content-container">
+        <!-- Home Page -->
+        <div id="home-page" class="page">
+            <div class="gradient-bg mx-4 mt-4 rounded-lg p-6 mb-6">
+                <h2 class="text-2xl font-bold mb-3">Discover Your Next Favorite</h2>
+                <p class="text-sm opacity-90 mb-4">Get personalized movie and TV show recommendations</p>
+                <div class="flex flex-col sm:flex-row gap-3">
+                    <button class="bg-white text-purple-600 px-4 py-2 rounded-lg font-semibold hover:bg-gray-100 touch-target">
+                        Get Started
+                    </button>
+                    <button class="border border-white px-4 py-2 rounded-lg font-semibold hover:bg-white hover:text-purple-600 touch-target">
+                        Learn More
                     </button>
                 </div>
             </div>
-            <div id="search-results" class="content-grid"></div>
+
+            <!-- Featured Content -->
+            <section class="px-4 mb-6">
+                <h3 class="text-xl font-bold mb-4">Featured Content</h3>
+                <div class="swipe-container">
+                    <div id="featured-content" class="flex gap-4"></div>
+                </div>
+            </section>
+
+            <!-- Recommendations -->
+            <section class="px-4 mb-6">
+                <h3 class="text-xl font-bold mb-4">Recommended for You</h3>
+                <div id="recommendations-content" class="content-grid"></div>
+            </section>
+        </div>
+
+        <!-- Search Page -->
+        <div id="search-page" class="page hidden">
+            <div class="p-4">
+                <h2 class="text-2xl font-bold mb-4">Search Content</h2>
+                <div class="search-container mb-4">
+                    <input type="text" id="search-input" placeholder="Search movies, TV shows..." 
+                           class="flex-1 input-mobile rounded-lg bg-gray-800 border border-gray-600 focus:border-purple-500 focus:outline-none text-white">
+                    <div class="flex gap-2">
+                        <select id="search-type" class="px-3 py-2 rounded-lg bg-gray-800 border border-gray-600 text-white">
+                            <option value="all">All</option>
+                            <option value="movie">Movies</option>
+                            <option value="tv">TV Shows</option>
+                        </select>
+                        <button id="search-btn" class="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded-lg touch-target">
+                            <i class="fas fa-search"></i>
+                        </button>
+                    </div>
+                </div>
+                <div id="search-results" class="content-grid"></div>
+            </div>
         </div>
 
         <!-- Trending Page -->
         <div id="trending-page" class="page hidden">
-            <div class="mb-8">
-                <h2 class="responsive-title text-3xl font-bold mb-4">Trending Now</h2>
-                <div class="filter-buttons">
-                    <button class="trending-filter filter-btn active bg-purple-600 px-4 py-2 rounded touch-btn" data-type="all">All</button>
-                    <button class="trending-filter filter-btn bg-gray-600 px-4 py-2 rounded touch-btn" data-type="movie">Movies</button>
-                    <button class="trending-filter filter-btn bg-gray-600 px-4 py-2 rounded touch-btn" data-type="tv">TV Shows</button>
-                    <button class="trending-filter filter-btn bg-gray-600 px-4 py-2 rounded touch-btn" data-type="anime">Anime</button>
+            <div class="p-4">
+                <h2 class="text-2xl font-bold mb-4">Trending Now</h2>
+                <div class="filter-container mb-4">
+                    <button class="trending-filter active bg-purple-600 px-3 py-2 rounded text-sm touch-target" data-type="all">All</button>
+                    <button class="trending-filter bg-gray-600 px-3 py-2 rounded text-sm touch-target" data-type="movie">Movies</button>
+                    <button class="trending-filter bg-gray-600 px-3 py-2 rounded text-sm touch-target" data-type="tv">TV Shows</button>
                 </div>
+                <div id="trending-content" class="content-grid"></div>
             </div>
-            <div id="trending-content" class="content-grid"></div>
         </div>
 
         <!-- Watchlist Page -->
         <div id="watchlist-page" class="page hidden">
-            <div class="mb-8">
-                <h2 class="responsive-title text-3xl font-bold mb-4">My Watchlist</h2>
-                <p class="text-gray-400 responsive-text">Your saved movies and shows</p>
+            <div class="p-4">
+                <h2 class="text-2xl font-bold mb-4">My Watchlist</h2>
+                <p class="text-gray-400 mb-4">Your saved movies and shows</p>
+                <div id="watchlist-content" class="content-grid"></div>
             </div>
-            <div id="watchlist-content" class="content-grid"></div>
         </div>
-    </div>
+    </main>
+
+    <!-- Mobile Bottom Navigation -->
+    <nav class="mobile-bottom-nav flex bg-gray-800 border-t border-gray-700">
+        <button class="bottom-nav-item active tap-highlight-transparent touch-action-manipulation" data-page="home">
+            <i class="fas fa-home"></i>
+            <span>Home</span>
+        </button>
+        <button class="bottom-nav-item tap-highlight-transparent touch-action-manipulation" data-page="search">
+            <i class="fas fa-search"></i>
+            <span>Search</span>
+        </button>
+        <button class="bottom-nav-item tap-highlight-transparent touch-action-manipulation" data-page="trending">
+            <i class="fas fa-fire"></i>
+            <span>Trending</span>
+        </button>
+        <button class="bottom-nav-item tap-highlight-transparent touch-action-manipulation" data-page="watchlist">
+            <i class="fas fa-bookmark"></i>
+            <span>Watchlist</span>
+        </button>
+    </nav>
 
     <!-- Content Card Template -->
     <template id="content-card-template">
-        <div class="content-card">
+        <div class="bg-gray-800 rounded-lg overflow-hidden shadow-lg card-hover hardware-accelerated">
             <div class="relative">
-                <div class="img-placeholder card-image">
-                    <img class="w-full h-full object-cover lazy-img" src="" alt="" loading="lazy">
-                    <div class="absolute inset-0 bg-gray-700 img-placeholder card-image">
-                        <i class="fas fa-image text-4xl"></i>
-                    </div>
-                </div>
-                <div class="absolute top-2 right-2 bg-black bg-opacity-50 px-2 py-1 rounded">
+                <img class="w-full card-image object-cover" src="" alt="" loading="lazy">
+                <div class="absolute top-2 right-2 bg-black bg-opacity-50 px-2 py-1 rounded text-xs">
                     <span class="rating text-yellow-400">
                         <i class="fas fa-star"></i> <span class="rating-value"></span>
                     </span>
                 </div>
                 <div class="absolute bottom-2 left-2 bg-purple-600 px-2 py-1 rounded text-xs content-type"></div>
             </div>
-            <div class="p-4">
-                <h3 class="font-bold text-lg mb-2 content-title"></h3>
-                <p class="text-gray-400 text-sm mb-3 content-overview responsive-text"></p>
+            <div class="p-3">
+                <h3 class="font-bold text-sm mb-2 content-title line-clamp-2"></h3>
+                <p class="text-gray-400 text-xs mb-3 content-overview line-clamp-2"></p>
                 <div class="flex justify-between items-center">
-                    <span class="text-sm text-gray-500 release-date responsive-text"></span>
-                    <div class="flex space-x-2">
-                        <button class="watchlist-btn bg-gray-600 hover:bg-gray-700 p-2 rounded touch-btn">
-                            <i class="fas fa-bookmark"></i>
+                    <span class="text-xs text-gray-500 release-date"></span>
+                    <div class="flex space-x-1">
+                        <button class="watchlist-btn bg-gray-600 hover:bg-gray-700 p-1.5 rounded touch-target">
+                            <i class="fas fa-bookmark text-xs"></i>
                         </button>
-                        <button class="rate-btn bg-purple-600 hover:bg-purple-700 p-2 rounded touch-btn">
-                            <i class="fas fa-star"></i>
+                        <button class="rate-btn bg-purple-600 hover:bg-purple-700 p-1.5 rounded touch-target">
+                            <i class="fas fa-star text-xs"></i>
                         </button>
                     </div>
                 </div>
@@ -370,34 +302,52 @@
         </div>
     </template>
 
+    <!-- Swipe Item Template -->
+    <template id="swipe-item-template">
+        <div class="swipe-item bg-gray-800 rounded-lg overflow-hidden shadow-lg card-hover">
+            <div class="relative">
+                <img class="w-full h-32 object-cover" src="" alt="" loading="lazy">
+                <div class="absolute top-1 right-1 bg-black bg-opacity-50 px-1 py-0.5 rounded text-xs">
+                    <span class="rating text-yellow-400">
+                        <i class="fas fa-star"></i> <span class="rating-value"></span>
+                    </span>
+                </div>
+            </div>
+            <div class="p-2">
+                <h4 class="font-bold text-xs mb-1 content-title line-clamp-2"></h4>
+                <span class="text-xs text-gray-500 release-date"></span>
+            </div>
+        </div>
+    </template>
+
     <!-- Auth Modal -->
     <div id="auth-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden z-50 p-4">
-        <div class="bg-gray-800 p-6 rounded-lg modal-content">
-            <div class="flex justify-between items-center mb-6">
+        <div class="bg-gray-800 p-6 rounded-lg w-full max-w-sm slide-in">
+            <div class="flex justify-between items-center mb-4">
                 <h3 id="auth-title" class="text-xl font-bold">Login</h3>
-                <button id="close-modal" class="text-gray-400 hover:text-white touch-btn">
+                <button id="close-modal" class="text-gray-400 hover:text-white touch-target">
                     <i class="fas fa-times"></i>
                 </button>
             </div>
             <form id="auth-form">
                 <div class="mb-4">
                     <label class="block text-sm font-medium mb-2">Username</label>
-                    <input type="text" id="auth-username" class="w-full px-3 py-3 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:border-purple-500" required>
+                    <input type="text" id="auth-username" class="w-full input-mobile bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:border-purple-500 text-white" required>
                 </div>
                 <div id="email-field" class="mb-4 hidden">
                     <label class="block text-sm font-medium mb-2">Email</label>
-                    <input type="email" id="auth-email" class="w-full px-3 py-3 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:border-purple-500">
+                    <input type="email" id="auth-email" class="w-full input-mobile bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:border-purple-500 text-white">
                 </div>
                 <div class="mb-6">
                     <label class="block text-sm font-medium mb-2">Password</label>
-                    <input type="password" id="auth-password" class="w-full px-3 py-3 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:border-purple-500" required>
+                    <input type="password" id="auth-password" class="w-full input-mobile bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:border-purple-500 text-white" required>
                 </div>
-                <button type="submit" class="w-full bg-purple-600 hover:bg-purple-700 py-3 rounded-lg font-semibold touch-btn">
+                <button type="submit" class="w-full bg-purple-600 hover:bg-purple-700 py-3 rounded-lg font-semibold touch-target">
                     <span id="auth-submit-text">Login</span>
                 </button>
             </form>
             <div class="mt-4 text-center">
-                <button id="auth-switch" class="text-purple-400 hover:text-purple-300 touch-btn">
+                <button id="auth-switch" class="text-purple-400 hover:text-purple-300 touch-target">
                     Don't have an account? Register
                 </button>
             </div>
@@ -406,23 +356,23 @@
 
     <!-- Rating Modal -->
     <div id="rating-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden z-50 p-4">
-        <div class="bg-gray-800 p-6 rounded-lg modal-content">
+        <div class="bg-gray-800 p-6 rounded-lg w-full max-w-sm slide-in">
             <h3 class="text-xl font-bold mb-4">Rate Content</h3>
             <div class="mb-4">
-                <div class="flex justify-center space-x-1 mb-2">
+                <div class="flex justify-center space-x-2 mb-2">
                     <div id="star-rating" class="flex">
-                        <i class="fas fa-star text-3xl text-gray-400 cursor-pointer touch-btn" data-rating="1"></i>
-                        <i class="fas fa-star text-3xl text-gray-400 cursor-pointer touch-btn" data-rating="2"></i>
-                        <i class="fas fa-star text-3xl text-gray-400 cursor-pointer touch-btn" data-rating="3"></i>
-                        <i class="fas fa-star text-3xl text-gray-400 cursor-pointer touch-btn" data-rating="4"></i>
-                        <i class="fas fa-star text-3xl text-gray-400 cursor-pointer touch-btn" data-rating="5"></i>
+                        <i class="fas fa-star text-2xl text-gray-400 cursor-pointer touch-target" data-rating="1"></i>
+                        <i class="fas fa-star text-2xl text-gray-400 cursor-pointer touch-target" data-rating="2"></i>
+                        <i class="fas fa-star text-2xl text-gray-400 cursor-pointer touch-target" data-rating="3"></i>
+                        <i class="fas fa-star text-2xl text-gray-400 cursor-pointer touch-target" data-rating="4"></i>
+                        <i class="fas fa-star text-2xl text-gray-400 cursor-pointer touch-target" data-rating="5"></i>
                     </div>
                 </div>
-                <p class="text-center text-sm text-gray-400">Click to rate (1-5 stars)</p>
+                <p class="text-center text-sm text-gray-400">Tap to rate (1-5 stars)</p>
             </div>
             <div class="flex space-x-4">
-                <button id="cancel-rating" class="flex-1 bg-gray-600 hover:bg-gray-700 py-3 rounded-lg touch-btn">Cancel</button>
-                <button id="submit-rating" class="flex-1 bg-purple-600 hover:bg-purple-700 py-3 rounded-lg touch-btn">Submit</button>
+                <button id="cancel-rating" class="flex-1 bg-gray-600 hover:bg-gray-700 py-2 rounded-lg touch-target">Cancel</button>
+                <button id="submit-rating" class="flex-1 bg-purple-600 hover:bg-purple-700 py-2 rounded-lg touch-target">Submit</button>
             </div>
         </div>
     </div>
@@ -435,463 +385,498 @@
         </div>
     </div>
 
-    <script>
-        // API Configuration
-        const API_BASE_URL = 'https://movies-rec-1hcv.onrender.com';
-        const TMDB_IMAGE_BASE = 'https://image.tmdb.org/t/p/w500';
+    <!-- Toast Container -->
+    <div id="toast-container" class="fixed top-4 right-4 z-60 space-y-2"></div>
+    <script >
+        // Configuration
+const API_BASE_URL = 'http://localhost:5000';
+const TMDB_IMAGE_BASE_URL = 'https://image.tmdb.org/t/p/w500';
+const JIKAN_IMAGE_BASE_URL = 'https://cdn.myanimelist.net/images/anime';
 
-        // State Management
-        let currentUser = null;
-        let currentContentId = null;
-        let currentRating = 0;
+// DOM Elements
+const elements = {
+    mobileMenuBtn: document.getElementById('mobile-menu-btn'),
+    mobileMenu: document.getElementById('mobile-menu'),
+    mobileOverlay: document.getElementById('mobile-overlay'),
+    authButtons: document.getElementById('auth-buttons'),
+    userMenu: document.getElementById('user-menu'),
+    loginBtn: document.getElementById('login-btn'),
+    logoutBtn: document.getElementById('logout-btn'),
+    authModal: document.getElementById('auth-modal'),
+    authForm: document.getElementById('auth-form'),
+    authTitle: document.getElementById('auth-title'),
+    authUsername: document.getElementById('auth-username'),
+    authEmail: document.getElementById('auth-email'),
+    emailField: document.getElementById('email-field'),
+    authPassword: document.getElementById('auth-password'),
+    authSwitch: document.getElementById('auth-switch'),
+    authSubmitText: document.getElementById('auth-submit-text'),
+    closeModal: document.getElementById('close-modal'),
+    ratingModal: document.getElementById('rating-modal'),
+    cancelRating: document.getElementById('cancel-rating'),
+    submitRating: document.getElementById('submit-rating'),
+    starRating: document.getElementById('star-rating'),
+    searchInput: document.getElementById('search-input'),
+    searchType: document.getElementById('search-type'),
+    searchBtn: document.getElementById('search-btn'),
+    featuredContent: document.getElementById('featured-content'),
+    recommendationsContent: document.getElementById('recommendations-content'),
+    searchResults: document.getElementById('search-results'),
+    trendingContent: document.getElementById('trending-content'),
+    watchlistContent: document.getElementById('watchlist-content'),
+    toastContainer: document.getElementById('toast-container'),
+    loadingSpinner: document.getElementById('loading-spinner'),
+    bottomNavItems: document.querySelectorAll('.bottom-nav-item'),
+    pages: document.querySelectorAll('.page'),
+    trendingFilters: document.querySelectorAll('.trending-filter'),
+    contentCardTemplate: document.getElementById('content-card-template'),
+    swipeItemTemplate: document.getElementById('swipe-item-template')
+};
 
-        // Utility Functions
-        const api = {
-            get: async (endpoint) => {
-                const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-                    credentials: 'include',
-                    headers: { 'Content-Type': 'application/json' }
-                });
-                return response.json();
-            },
-            
-            post: async (endpoint, data) => {
-                const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-                    method: 'POST',
-                    credentials: 'include',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(data)
-                });
-                return response.json();
-            },
-            
-            delete: async (endpoint) => {
-                const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-                    method: 'DELETE',
-                    credentials: 'include'
-                });
-                return response.json();
-            }
-        };
+// State Management
+let state = {
+    currentPage: 'home',
+    isLoggedIn: false,
+    currentUser: null,
+    currentRating: 0,
+    currentContentId: null,
+    trendingType: 'all'
+};
 
-        const ui = {
-            showLoading: () => document.getElementById('loading-spinner').classList.remove('hidden'),
-            hideLoading: () => document.getElementById('loading-spinner').classList.add('hidden'),
-            
-            showPage: (pageId) => {
-                document.querySelectorAll('.page').forEach(page => page.classList.add('hidden'));
-                document.getElementById(pageId).classList.remove('hidden');
-                
-                // Update navigation states
-                document.querySelectorAll('.nav-link, .mobile-nav-link').forEach(link => {
-                    link.classList.remove('text-purple-400');
-                });
-                document.querySelectorAll(`[data-page="${pageId.replace('-page', '')}"]`).forEach(link => {
-                    link.classList.add('text-purple-400');
-                });
-                
-                // Close mobile menu
-                closeMobileMenu();
-            },
-            
-            showModal: (modalId) => document.getElementById(modalId).classList.remove('hidden'),
-            hideModal: (modalId) => document.getElementById(modalId).classList.add('hidden'),
-            
-            toast: (message, type = 'info') => {
-                const toast = document.createElement('div');
-                toast.className = `fixed top-20 right-4 left-4 mx-auto max-w-sm px-6 py-3 rounded-lg text-white z-50 ${
-                    type === 'success' ? 'bg-green-600' : 
-                    type === 'error' ? 'bg-red-600' : 'bg-blue-600'
-                }`;
-                toast.textContent = message;
-                document.body.appendChild(toast);
-                setTimeout(() => toast.remove(), 3000);
-            }
-        };
+// Utility Functions
+const showToast = (message, type = 'success') => {
+    const toast = document.createElement('div');
+    toast.className = `p-4 rounded-lg shadow-lg fade-in ${
+        type === 'success' ? 'bg-green-600' : 'bg-red-600'
+    } text-white`;
+    toast.textContent = message;
+    elements.toastContainer.appendChild(toast);
+    setTimeout(() => toast.remove(), 3000);
+};
 
-        // Mobile Menu Functions
-        const openMobileMenu = () => {
-            document.getElementById('mobile-menu').classList.add('active');
-            document.getElementById('mobile-overlay').classList.add('active');
-            document.body.style.overflow = 'hidden';
-        };
+const showLoading = () => {
+    elements.loadingSpinner.classList.remove('hidden');
+};
 
-        const closeMobileMenu = () => {
-            document.getElementById('mobile-menu').classList.remove('active');
-            document.getElementById('mobile-overlay').classList.remove('active');
-            document.body.style.overflow = 'auto';
-        };
+const hideLoading = () => {
+    elements.loadingSpinner.classList.add('hidden');
+};
 
-        // Image Loading Optimization
-        const loadImage = (img, src) => {
-            const image = new Image();
-            image.onload = () => {
-                img.src = src;
-                img.classList.add('loaded');
-                img.parentElement.querySelector('.img-placeholder').style.display = 'none';
-            };
-            image.onerror = () => {
-                img.src = 'https://via.placeholder.com/300x450?text=No+Image';
-                img.classList.add('loaded');
-                img.parentElement.querySelector('.img-placeholder').style.display = 'none';
-            };
-            image.src = src;
-        };
+const createContentCard = (item, contentType) => {
+    const template = elements.contentCardTemplate.content.cloneNode(true);
+    const card = template.querySelector('div');
+    
+    // Set image
+    const img = card.querySelector('img');
+    img.src = contentType === 'anime' ? 
+        item.images?.jpg?.large_image_url || 'placeholder.jpg' :
+        `${TMDB_IMAGE_BASE_URL}${item.poster_path || '/placeholder.jpg'}`;
+    img.alt = item.title || item.name || 'Content';
+    
+    // Set content type
+    card.querySelector('.content-type').textContent = contentType.charAt(0).toUpperCase() + contentType.slice(1);
+    
+    // Set title
+    card.querySelector('.content-title').textContent = item.title || item.name || 'Unknown Title';
+    
+    // Set overview
+    card.querySelector('.content-overview').textContent = item.overview || item.synopsis || 'No description available';
+    
+    // Set rating
+    const ratingValue = card.querySelector('.rating-value');
+    ratingValue.textContent = (item.vote_average || item.score || 0).toFixed(1);
+    
+    // Set release date
+    card.querySelector('.release-date').textContent = 
+        item.release_date || item.first_air_date || item.aired?.from || 'N/A';
+    
+    // Add event listeners
+    const watchlistBtn = card.querySelector('.watchlist-btn');
+    watchlistBtn.addEventListener('click', () => toggleWatchlist(item.id || item.mal_id, contentType));
+    
+    const rateBtn = card.querySelector('.rate-btn');
+    rateBtn.addEventListener('click', () => showRatingModal(item.id || item.mal_id));
+    
+    return card;
+};
 
-        // Content Rendering
-        const renderContent = (items, containerId) => {
-            const container = document.getElementById(containerId);
-            const template = document.getElementById('content-card-template');
-            
-            container.innerHTML = '';
-            items.forEach(item => {
-                const card = template.content.cloneNode(true);
-                const img = card.querySelector('.lazy-img');
-                const title = card.querySelector('.content-title');
-                const overview = card.querySelector('.content-overview');
-                const rating = card.querySelector('.rating-value');
-                const releaseDate = card.querySelector('.release-date');
-                const contentType = card.querySelector('.content-type');
-                const watchlistBtn = card.querySelector('.watchlist-btn');
-                const rateBtn = card.querySelector('.rate-btn');
-                
-                // Set content data
-                const posterUrl = item.poster_path ? `${TMDB_IMAGE_BASE}${item.poster_path}` : 
-                                 item.images?.jpg?.large_image_url || 'https://via.placeholder.com/300x450?text=No+Image';
-                
-                // Optimize image loading
-                loadImage(img, posterUrl);
-                img.alt = item.title || item.name;
-                
-                title.textContent = item.title || item.name;
-                overview.textContent = (item.overview || item.synopsis || '').substring(0, 100) + '...';
-                rating.textContent = (item.vote_average || item.score || 0).toFixed(1);
-                releaseDate.textContent = item.release_date || item.first_air_date || item.aired?.from || 'N/A';
-                contentType.textContent = item.content_type || 'movie';
-                
-                // Event listeners
-                watchlistBtn.onclick = () => toggleWatchlist(item.id);
-                rateBtn.onclick = () => openRatingModal(item.id);
-                
-                container.appendChild(card);
-            });
-        };
+const createSwipeItem = (item, contentType) => {
+    const template = elements.swipeItemTemplate.content.cloneNode(true);
+    const itemDiv = template.querySelector('.swipe-item');
+    
+    // Set image
+    const img = itemDiv.querySelector('img');
+    img.src = contentType === 'anime' ? 
+        item.images?.jpg?.large_image_url || 'placeholder.jpg' :
+        `${TMDB_IMAGE_BASE_URL}${item.poster_path || '/placeholder.jpg'}`;
+    img.alt = item.title || item.name || 'Content';
+    
+    // Set title
+    itemDiv.querySelector('.content-title').textContent = item.title || item.name || 'Unknown Title';
+    
+    // Set rating
+    itemDiv.querySelector('.rating-value').textContent = (item.vote_average || item.score || 0).toFixed(1);
+    
+    // Set release date
+    itemDiv.querySelector('.release-date').textContent = 
+        item.release_date || item.first_air_date || item.aired?.from || 'N/A';
+    
+    return itemDiv;
+};
 
-        // Authentication
-        const auth = {
-            login: async (username, password) => {
-                const result = await api.post('/auth/login', { username, password });
-                if (result.user) {
-                    currentUser = result.user;
-                    updateAuthUI();
-                    ui.toast('Login successful!', 'success');
-                    return true;
-                }
-                ui.toast(result.error || 'Login failed', 'error');
-                return false;
-            },
-            
-            register: async (username, email, password) => {
-                const result = await api.post('/auth/register', { username, email, password });
-                if (result.message) {
-                    ui.toast('Registration successful! Please login.', 'success');
-                    return true;
-                }
-                ui.toast(result.error || 'Registration failed', 'error');
-                return false;
-            },
-            
-            logout: async () => {
-                await api.post('/auth/logout');
-                currentUser = null;
+// Authentication
+const toggleAuthModal = (isRegister = false) => {
+    elements.authModal.classList.toggle('hidden');
+    elements.authTitle.textContent = isRegister ? 'Register' : 'Login';
+    elements.authSubmitText.textContent = isRegister ? 'Register' : 'Login';
+    elements.emailField.classList.toggle('hidden', !isRegister);
+    elements.authSwitch.textContent = isRegister ? 'Already have an account? Login' : "Don't have an account? Register";
+    elements.authForm.reset();
+};
+
+const handleAuthSubmit = async (e) => {
+    e.preventDefault();
+    const isRegister = elements.authTitle.textContent === 'Register';
+    const payload = {
+        username: elements.authUsername.value,
+        password: elements.authPassword.value
+    };
+    
+    if (isRegister) {
+        payload.email = elements.authEmail.value;
+    }
+    
+    showLoading();
+    try {
+        const response = await fetch(`${API_BASE_URL}/auth/${isRegister ? 'register' : 'login'}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+            credentials: 'include'
+        });
+        
+        const data = await response.json();
+        if (response.ok) {
+            if (!isRegister) {
+                state.isLoggedIn = true;
+                state.currentUser = data.user;
                 updateAuthUI();
-                ui.toast('Logged out successfully', 'success');
-            }
-        };
-
-        const updateAuthUI = () => {
-            const authButtons = document.getElementById('auth-buttons');
-            const userMenu = document.getElementById('user-menu');
-            const username = document.getElementById('username');
-            
-            if (currentUser) {
-                authButtons.classList.add('hidden');
-                userMenu.classList.remove('hidden');
-                username.textContent = currentUser.username;
+                toggleAuthModal();
+                showToast('Successfully logged in!');
+                loadPageContent(state.currentPage);
             } else {
-                authButtons.classList.remove('hidden');
-                userMenu.classList.add('hidden');
+                toggleAuthModal();
+                showToast('Registration successful! Please login.');
             }
-        };
+        } else {
+            showToast(data.error || 'Authentication failed', 'error');
+        }
+    } catch (error) {
+        showToast('Authentication error', 'error');
+    } finally {
+        hideLoading();
+    }
+};
 
-        // Content Actions
-        const toggleWatchlist = async (contentId) => {
-            if (!currentUser) {
-                ui.toast('Please login to use watchlist', 'error');
-                return;
-            }
-            
-            const result = await api.post('/watchlist', { content_id: contentId });
-            ui.toast(result.message || 'Watchlist updated', 'success');
-        };
-
-        const openRatingModal = (contentId) => {
-            if (!currentUser) {
-                ui.toast('Please login to rate content', 'error');
-                return;
-            }
-            
-            currentContentId = contentId;
-            currentRating = 0;
-            updateStarRating();
-            ui.showModal('rating-modal');
-        };
-
-        const updateStarRating = () => {
-            document.querySelectorAll('#star-rating i').forEach((star, index) => {
-                star.className = `fas fa-star text-3xl cursor-pointer touch-btn ${
-                    index < currentRating ? 'text-yellow-400' : 'text-gray-400'
-                }`;
-            });
-        };
-
-        const submitRating = async () => {
-            if (currentRating === 0) {
-                ui.toast('Please select a rating', 'error');
-                return;
-            }
-            
-            const result = await api.post('/rate', {
-                content_id: currentContentId,
-                rating: currentRating * 2 // Convert 1-5 to 1-10
-            });
-            
-            ui.toast(result.message || 'Rating submitted', 'success');
-            ui.hideModal('rating-modal');
-        };
-
-        // Data Loading
-        const loadContent = {
-            trending: async (type = 'all') => {
-                const data = await api.get(`/trending?type=${type}`);
-                const items = [...(data.movies || []), ...(data.tv || []), ...(data.anime || [])];
-                renderContent(items, 'trending-content');
-            },
-            
-            search: async (query, type = 'all') => {
-                const data = await api.get(`/search?q=${encodeURIComponent(query)}&type=${type}`);
-                const items = [...(data.movies || []), ...(data.tv || []), ...(data.anime || [])];
-                renderContent(items, 'search-results');
-            },
-            
-            watchlist: async () => {
-                if (!currentUser) return;
-                const data = await api.get('/watchlist');
-                renderContent(data.watchlist || [], 'watchlist-content');
-            }
-        };
-
-        // Event Listeners
-        document.addEventListener('DOMContentLoaded', () => {
-            // Navigation
-            document.querySelectorAll('.nav-link, .mobile-nav-link').forEach(link => {
-                link.addEventListener('click', (e) => {
-                    e.preventDefault();
-                    const page = e.target.dataset.page;
-                    ui.showPage(`${page}-page`);
-                    
-                    // Load page-specific content
-                    if (page === 'trending') loadContent.trending();
-                    else if (page === 'watchlist') loadContent.watchlist();
-                });
-            });
-            
-            // Mobile menu
-            document.getElementById('mobile-menu-btn').onclick = openMobileMenu;
-            document.getElementById('close-mobile-menu').onclick = closeMobileMenu;
-            document.getElementById('mobile-overlay').onclick = closeMobileMenu;
-            
-            // Auth buttons
-            document.getElementById('login-btn').onclick = () => {
-                document.getElementById('auth-title').textContent = 'Login';
-                document.getElementById('auth-submit-text').textContent = 'Login';
-                document.getElementById('auth-switch').textContent = "Don't have an account? Register";
-                document.getElementById('email-field').classList.add('hidden');
-                ui.showModal('auth-modal');
-            };
-            
-            document.getElementById('register-btn').onclick = () => {
-                document.getElementById('auth-title').textContent = 'Register';
-                document.getElementById('auth-submit-text').textContent = 'Register';
-                document.getElementById('auth-switch').textContent = "Already have an account? Login";
-                document.getElementById('email-field').classList.remove('hidden');
-                ui.showModal('auth-modal');
-            };
-            
-            document.getElementById('logout-btn').onclick = auth.logout;
-            
-            // Modal controls
-            document.getElementById('close-modal').onclick = () => ui.hideModal('auth-modal');
-            document.getElementById('cancel-rating').onclick = () => ui.hideModal('rating-modal');
-            document.getElementById('submit-rating').onclick = submitRating;
-            
-            // Auth form
-            document.getElementById('auth-form').onsubmit = async (e) => {
-                e.preventDefault();
-                const username = document.getElementById('auth-username').value;
-                const email = document.getElementById('auth-email').value;
-                const password = document.getElementById('auth-password').value;
-                const isLogin = document.getElementById('auth-title').textContent === 'Login';
-                
-                ui.showLoading();
-                const success = isLogin ? 
-                    await auth.login(username, password) :
-                    await auth.register(username, email, password);
-                ui.hideLoading();
-                
-                if (success) {
-                    ui.hideModal('auth-modal');
-                }
-            };
-            
-            // Auth switch
-            document.getElementById('auth-switch').onclick = () => {
-                const isLogin = document.getElementById('auth-title').textContent === 'Login';
-                if (isLogin) {
-                    document.getElementById('auth-title').textContent = 'Register';
-                    document.getElementById('auth-submit-text').textContent = 'Register';
-                    document.getElementById('auth-switch').textContent = "Already have an account? Login";
-                    document.getElementById('email-field').classList.remove('hidden');
-                } else {
-                    document.getElementById('auth-title').textContent = 'Login';
-                    document.getElementById('auth-submit-text').textContent = 'Login';
-                    document.getElementById('auth-switch').textContent = "Don't have an account? Register";
-                    document.getElementById('email-field').classList.add('hidden');
-                }
-            };
-            
-            // Search
-            document.getElementById('search-btn').onclick = () => {
-                const query = document.getElementById('search-input').value;
-                const type = document.getElementById('search-type').value;
-                if (query.trim()) {
-                    ui.showLoading();
-                    loadContent.search(query, type).finally(() => ui.hideLoading());
-                }
-            };
-            
-            document.getElementById('search-input').onkeypress = (e) => {
-                if (e.key === 'Enter') {
-                    document.getElementById('search-btn').click();
-                }
-            };
-            
-            // Trending filters
-            document.querySelectorAll('.trending-filter').forEach(filter => {
-                filter.onclick = () => {
-                    document.querySelectorAll('.trending-filter').forEach(f => {
-                        f.classList.remove('active', 'bg-purple-600');
-                        f.classList.add('bg-gray-600');
-                    });
-                    filter.classList.add('active', 'bg-purple-600');
-                    filter.classList.remove('bg-gray-600');
-                    ui.showLoading();
-                    loadContent.trending(filter.dataset.type).finally(() => ui.hideLoading());
-                };
-            });
-            
-            // Star rating
-            document.querySelectorAll('#star-rating i').forEach((star, index) => {
-                star.onclick = () => {
-                    currentRating = index + 1;
-                    updateStarRating();
-                };
-            });
-            
-            // Touch/swipe gestures for mobile
-            let touchStartX = 0;
-            let touchEndX = 0;
-            
-            document.addEventListener('touchstart', (e) => {
-                touchStartX = e.changedTouches[0].screenX;
-            });
-            
-            document.addEventListener('touchend', (e) => {
-                touchEndX = e.changedTouches[0].screenX;
-                handleSwipe();
-            });
-            
-            const handleSwipe = () => {
-                const swipeThreshold = 50;
-                const diff = touchStartX - touchEndX;
-                
-                if (Math.abs(diff) > swipeThreshold) {
-                    if (diff > 0) {
-                        // Swipe left - could implement next page functionality
-                    } else {
-                        // Swipe right - could implement previous page functionality
-                    }
-                }
-            };
-            
-            // Intersection Observer for lazy loading
-            const imageObserver = new IntersectionObserver((entries) => {
-                entries.forEach(entry => {
-                    if (entry.isIntersecting) {
-                        const img = entry.target;
-                        if (img.dataset.src) {
-                            loadImage(img, img.dataset.src);
-                            imageObserver.unobserve(img);
-                        }
-                    }
-                });
-            });
-            
-            // Observe all lazy images
-            document.querySelectorAll('.lazy-img').forEach(img => {
-                imageObserver.observe(img);
-            });
-            
-            // Resize handler for responsive adjustments
-            window.addEventListener('resize', () => {
-                // Close mobile menu on resize to larger screen
-                if (window.innerWidth > 768) {
-                    closeMobileMenu();
-                }
-            });
-            
-            // Initial load - default to search page
-            ui.showPage('search-page');
-            loadContent.trending();
+const handleLogout = async () => {
+    showLoading();
+    try {
+        const response = await fetch(`${API_BASE_URL}/auth/logout`, {
+            method: 'POST',
+            credentials: 'include'
         });
+        
+        if (response.ok) {
+            state.isLoggedIn = false;
+            state.currentUser = null;
+            updateAuthUI();
+            showToast('Logged out successfully');
+            loadPageContent(state.currentPage);
+        }
+    } catch (error) {
+        showToast('Logout error', 'error');
+    } finally {
+        hideLoading();
+    }
+};
 
-        // Performance optimizations
-        const debounce = (func, wait) => {
-            let timeout;
-            return function executedFunction(...args) {
-                const later = () => {
-                    clearTimeout(timeout);
-                    func(...args);
-                };
-                clearTimeout(timeout);
-                timeout = setTimeout(later, wait);
-            };
-        };
+const updateAuthUI = () => {
+    elements.authButtons.classList.toggle('hidden', state.isLoggedIn);
+    elements.userMenu.classList.toggle('hidden', !state.isLoggedIn);
+};
 
-        // Debounced search
-        const debouncedSearch = debounce((query, type) => {
-            if (query.trim()) {
-                ui.showLoading();
-                loadContent.search(query, type).finally(() => ui.hideLoading());
-            }
-        }, 300);
+// Navigation
+const toggleMobileMenu = () => {
+    elements.mobileMenu.classList.toggle('active');
+    elements.mobileOverlay.classList.toggle('active');
+};
 
-        // Add real-time search
-        document.getElementById('search-input').addEventListener('input', (e) => {
-            const query = e.target.value;
-            const type = document.getElementById('search-type').value;
-            debouncedSearch(query, type);
+const showPage = (pageId) => {
+    state.currentPage = pageId;
+    elements.pages.forEach(page => {
+        page.classList.toggle('hidden', page.id !== `${pageId}-page`);
+    });
+    elements.bottomNavItems.forEach(item => {
+        item.classList.toggle('active', item.dataset.page === pageId);
+    });
+    elements.mobileMenu.classList.remove('active');
+    elements.mobileOverlay.classList.remove('active');
+    loadPageContent(pageId);
+};
+
+// Content Loading
+const loadFeaturedContent = async () => {
+    showLoading();
+    try {
+        const response = await fetch(`${API_BASE_URL}/featured`, { credentials: 'include' });
+        const data = await response.json();
+        elements.featuredContent.innerHTML = '';
+        data.featured.forEach(item => {
+            const card = createSwipeItem(item, item.content_type);
+            elements.featuredContent.appendChild(card);
         });
+    } catch (error) {
+        showToast('Failed to load featured content', 'error');
+    } finally {
+        hideLoading();
+    }
+};
+
+const loadRecommendations = async () => {
+    if (!state.isLoggedIn) return;
+    showLoading();
+    try {
+        const response = await fetch(`${API_BASE_URL}/recommendations`, { credentials: 'include' });
+        const data = await response.json();
+        elements.recommendationsContent.innerHTML = '';
+        data.recommendations.forEach(item => {
+            const card = createContentCard(item, item.content_type);
+            elements.recommendationsContent.appendChild(card);
+        });
+    } catch (error) {
+        showToast('Failed to load recommendations', 'error');
+    } finally {
+        hideLoading();
+    }
+};
+
+const loadSearchResults = async (query, type) => {
+    showLoading();
+    try {
+        const response = await fetch(`${API_BASE_URL}/search?q=${encodeURIComponent(query)}&type=${type}`, {
+            credentials: 'include'
+        });
+        const data = await response.json();
+        elements.searchResults.innerHTML = '';
+        ['movies', 'tv', 'anime'].forEach(type => {
+            data[type].forEach(item => {
+                const card = createContentCard(item, type);
+                elements.searchResults.appendChild(card);
+            });
+        });
+    } catch (error) {
+        showToast('Failed to load search results', 'error');
+    } finally {
+        hideLoading();
+    }
+};
+
+const loadTrendingContent = async (type) => {
+    showLoading();
+    try {
+        const response = await fetch(`${API_BASE_URL}/trending?type=${type}`, { credentials: 'include' });
+        const data = await response.json();
+        elements.trendingContent.innerHTML = '';
+        ['movies', 'tv', 'anime'].forEach(t => {
+            data[t].forEach(item => {
+                const card = createContentCard(item, t);
+                elements.trendingContent.appendChild(card);
+            });
+        });
+    } catch (error) {
+        showToast('Failed to load trending content', 'error');
+    } finally {
+        hideLoading();
+    }
+};
+
+const loadWatchlist = async () => {
+    if (!state.isLoggedIn) {
+        showToast('Please login to view watchlist', 'error');
+        return;
+    }
+    showLoading();
+    try {
+        const response = await fetch(`${API_BASE_URL}/watchlist`, { credentials: 'include' });
+        const data = await response.json();
+        elements.watchlistContent.innerHTML = '';
+        data.watchlist.forEach(item => {
+            const card = createContentCard(item, item.content_type);
+            elements.watchlistContent.appendChild(card);
+        });
+    } catch (error) {
+        showToast('Failed to load watchlist', 'error');
+    } finally {
+        hideLoading();
+    }
+};
+
+const loadPageContent = (pageId) => {
+    switch (pageId) {
+        case 'home':
+            loadFeaturedContent();
+            loadRecommendations();
+            break;
+        case 'search':
+            // Clear search results initially
+            elements.searchResults.innerHTML = '';
+            break;
+        case 'trending':
+            loadTrendingContent(state.trendingType);
+            break;
+        case 'watchlist':
+            loadWatchlist();
+            break;
+    }
+};
+
+// Watchlist
+const toggleWatchlist = async (contentId, contentType) => {
+    if (!state.isLoggedIn) {
+        showToast('Please login to manage watchlist', 'error');
+        return;
+    }
+    
+    showLoading();
+    try {
+        const method = 'POST'; // Simplified for demo; actual implementation would check if item is already in watchlist
+        const response = await fetch(`${API_BASE_URL}/watchlist`, {
+            method,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content_id: contentId }),
+            credentials: 'include'
+        });
+        
+        const data = await response.json();
+        if (response.ok) {
+            showToast(data.message);
+            if (state.currentPage === 'watchlist') {
+                loadWatchlist();
+            }
+        } else {
+            showToast(data.error || 'Watchlist update failed', 'error');
+        }
+    } catch (error) {
+        showToast('Watchlist update error', 'error');
+    } finally {
+        hideLoading();
+    }
+};
+
+// Rating
+const showRatingModal = (contentId) => {
+    if (!state.isLoggedIn) {
+        showToast('Please login to rate content', 'error');
+        return;
+    }
+    
+    state.currentContentId = contentId;
+    elements.ratingModal.classList.remove('hidden');
+    state.currentRating = 0;
+    
+    elements.starRating.querySelectorAll('i').forEach(star => {
+        star.classList.remove('text-yellow-400');
+        star.classList.add('text-gray-400');
+        star.addEventListener('click', () => {
+            state.currentRating = parseInt(star.dataset.rating);
+            elements.starRating.querySelectorAll('i').forEach(s => {
+                s.classList.toggle('text-yellow-400', parseInt(s.dataset.rating) <= state.currentRating);
+                s.classList.toggle('text-gray-400', parseInt(s.dataset.rating) > state.currentRating);
+            });
+        });
+    });
+};
+
+const handleRatingSubmit = async () => {
+    if (!state.currentRating) {
+        showToast('Please select a rating', 'error');
+        return;
+    }
+    
+    showLoading();
+    try {
+        const response = await fetch(`${API_BASE_URL}/rate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content_id: state.currentContentId, rating: state.currentRating }),
+            credentials: 'include'
+        });
+        
+        const data = await response.json();
+        if (response.ok) {
+            showToast(data.message);
+            elements.ratingModal.classList.add('hidden');
+        } else {
+            showToast(data.error || 'Rating failed', 'error');
+        }
+    } catch (error) {
+        showToast('Rating error', 'error');
+    } finally {
+        hideLoading();
+    }
+};
+
+// Event Listeners
+elements.mobileMenuBtn.addEventListener('click', toggleMobileMenu);
+elements.mobileOverlay.addEventListener('click', toggleMobileMenu);
+elements.loginBtn.addEventListener('click', () => toggleAuthModal(false));
+elements.logoutBtn.addEventListener('click', handleLogout);
+elements.authForm.addEventListener('submit', handleAuthSubmit);
+elements.authSwitch.addEventListener('click', () => toggleAuthModal(elements.authTitle.textContent === 'Login'));
+elements.closeModal.addEventListener('click', () => elements.authModal.classList.add('hidden'));
+elements.cancelRating.addEventListener('click', () => elements.ratingModal.classList.add('hidden'));
+elements.submitRating.addEventListener('click', handleRatingSubmit);
+elements.searchBtn.addEventListener('click', () => loadSearchResults(elements.searchInput.value, elements.searchType.value));
+
+elements.bottomNavItems.forEach(item => {
+    item.addEventListener('click', () => showPage(item.dataset.page));
+});
+
+elements.trendingFilters.forEach(filter => {
+    filter.addEventListener('click', () => {
+        state.trendingType = filter.dataset.type;
+        elements.trendingFilters.forEach(f => f.classList.toggle('active', f === filter));
+        loadTrendingContent(state.trendingType);
+    });
+});
+
+// Initialize
+const init = async () => {
+    try {
+        const response = await fetch(`${API_BASE_URL}/health`, { credentials: 'include' });
+        if (response.ok) {
+            // Check if user is already logged in
+            const userResponse = await fetch(`${API_BASE_URL}/auth/login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({}),
+                credentials: 'include'
+            });
+            
+            if (userResponse.ok) {
+                const data = await userResponse.json();
+                state.isLoggedIn = true;
+                state.currentUser = data.user;
+                updateAuthUI();
+            }
+        }
+    } catch (error) {
+        console.error('Initialization error:', error);
+    }
+    loadPageContent('home');
+};
+
+init();
     </script>
-</body>
-</html>
+    </body>
+    </html>
