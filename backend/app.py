@@ -12,6 +12,8 @@ import aiohttp
 from datetime import datetime, timedelta
 from threading import Thread
 import time
+import sqlite3
+from werkzeug.security import generate_password_hash
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -125,6 +127,31 @@ def init_db():
 
     conn.commit()
     conn.close()
+
+
+def create_admin_user():
+    conn = sqlite3.connect('recommendations.db')
+    
+    # Admin credentials
+    admin_username = "admin"
+    admin_email = "admin@movierecommendations.com"
+    admin_password = "AdminPass123!"  # Change this!
+    
+    try:
+        conn.execute('''INSERT INTO users (username, email, password_hash, is_admin) 
+                       VALUES (?, ?, ?, 1)''',
+                    (admin_username, admin_email, generate_password_hash(admin_password)))
+        conn.commit()
+        print(f"Admin user created successfully!")
+        print(f"Username: {admin_username}")
+        print(f"Email: {admin_email}")
+        print(f"Password: {admin_password}")
+        print("Please change the password after first login!")
+    except sqlite3.IntegrityError:
+        print("Admin user already exists or username/email conflict")
+    finally:
+        conn.close()
+
 
 # Utility functions
 def login_required(f):
@@ -1155,4 +1182,5 @@ def health_check():
 
 if __name__ == '__main__':
     init_db()
+    create_admin_user()
     app.run(debug=True, host='0.0.0.0', port=5000)
