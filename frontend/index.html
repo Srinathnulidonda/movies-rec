@@ -13,117 +13,338 @@
         .glass-effect { backdrop-filter: blur(10px); background: rgba(255, 255, 255, 0.1); }
         .loading { animation: spin 1s linear infinite; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        
+        /* Mobile-First Responsive Design */
+        .mobile-nav { display: none; }
+        .desktop-nav { display: flex; }
+        
+        /* Mobile Navigation */
+        @media (max-width: 768px) {
+            .mobile-nav { display: block; }
+            .desktop-nav { display: none; }
+            
+            .mobile-menu {
+                position: fixed;
+                top: 0;
+                left: -100%;
+                width: 280px;
+                height: 100vh;
+                background: rgba(31, 41, 55, 0.95);
+                backdrop-filter: blur(10px);
+                transition: left 0.3s ease;
+                z-index: 1000;
+                padding: 1rem;
+            }
+            
+            .mobile-menu.active {
+                left: 0;
+            }
+            
+            .mobile-overlay {
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: rgba(0, 0, 0, 0.5);
+                z-index: 999;
+                opacity: 0;
+                visibility: hidden;
+                transition: all 0.3s ease;
+            }
+            
+            .mobile-overlay.active {
+                opacity: 1;
+                visibility: visible;
+            }
+        }
+        
+        /* Responsive Grid System */
+        .content-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1.5rem;
+        }
+        
+        @media (max-width: 640px) {
+            .content-grid {
+                grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+                gap: 1rem;
+            }
+        }
+        
+        @media (max-width: 480px) {
+            .content-grid {
+                grid-template-columns: 1fr;
+                gap: 1rem;
+            }
+        }
+        
+        /* Responsive Images */
+        .responsive-img {
+            width: 100%;
+            height: auto;
+            object-fit: cover;
+            border-radius: 0.5rem;
+        }
+        
+        .card-image {
+            height: 300px;
+            object-fit: cover;
+        }
+        
+        @media (max-width: 640px) {
+            .card-image {
+                height: 250px;
+            }
+        }
+        
+        @media (max-width: 480px) {
+            .card-image {
+                height: 200px;
+            }
+        }
+        
+        /* Touch-Friendly Buttons */
+        .touch-btn {
+            min-height: 44px;
+            min-width: 44px;
+            padding: 0.75rem;
+        }
+        
+        /* Responsive Typography */
+        @media (max-width: 640px) {
+            .responsive-title {
+                font-size: 1.5rem;
+            }
+            
+            .responsive-subtitle {
+                font-size: 1.25rem;
+            }
+            
+            .responsive-text {
+                font-size: 0.875rem;
+            }
+        }
+        
+        /* Responsive Containers */
+        .container-fluid {
+            padding-left: 1rem;
+            padding-right: 1rem;
+        }
+        
+        @media (max-width: 640px) {
+            .container-fluid {
+                padding-left: 0.75rem;
+                padding-right: 0.75rem;
+            }
+        }
+        
+        /* Search Bar Responsive */
+        .search-container {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+        
+        @media (min-width: 640px) {
+            .search-container {
+                flex-direction: row;
+                gap: 1rem;
+            }
+        }
+        
+        .search-input {
+            flex: 1;
+            min-width: 0;
+        }
+        
+        /* Modal Responsiveness */
+        .modal-content {
+            max-width: 95%;
+            margin: 0 auto;
+        }
+        
+        @media (min-width: 640px) {
+            .modal-content {
+                max-width: 28rem;
+            }
+        }
+        
+        /* Filter Buttons */
+        .filter-buttons {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+        
+        .filter-btn {
+            flex: 1;
+            min-width: 80px;
+            text-align: center;
+        }
+        
+        @media (max-width: 480px) {
+            .filter-btn {
+                flex: 1 1 45%;
+            }
+        }
+        
+        /* Content Card Responsive */
+        .content-card {
+            background: rgba(31, 41, 55, 1);
+            border-radius: 0.75rem;
+            overflow: hidden;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        
+        .content-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 35px rgba(0, 0, 0, 0.3);
+        }
+        
+        @media (max-width: 640px) {
+            .content-card:hover {
+                transform: translateY(-2px);
+            }
+        }
+        
+        /* Optimized Image Loading */
+        .lazy-img {
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+        
+        .lazy-img.loaded {
+            opacity: 1;
+        }
+        
+        .img-placeholder {
+            background: linear-gradient(45deg, #374151, #4B5563);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #9CA3AF;
+        }
     </style>
 </head>
 <body class="bg-gray-900 text-white">
     <!-- Navigation -->
-    <nav class="bg-gray-800 shadow-lg">
+    <nav class="bg-gray-800 shadow-lg sticky top-0 z-50">
         <div class="max-w-7xl mx-auto px-4">
             <div class="flex justify-between items-center h-16">
                 <div class="flex items-center space-x-4">
                     <i class="fas fa-film text-2xl text-purple-400"></i>
                     <h1 class="text-xl font-bold">MovieRecs</h1>
                 </div>
-                <div class="hidden md:flex items-center space-x-6">
-                    <a href="#" class="nav-link" data-page="home">Home</a>
-                    <a href="#" class="nav-link" data-page="search">Search</a>
+                
+                <!-- Desktop Navigation -->
+                <div class="desktop-nav items-center space-x-6">
+                    <a href="#" class="nav-link text-purple-400" data-page="search">Search</a>
                     <a href="#" class="nav-link" data-page="trending">Trending</a>
                     <a href="#" class="nav-link" data-page="watchlist">Watchlist</a>
                 </div>
+                
+                <!-- Mobile Menu Button -->
+                <button id="mobile-menu-btn" class="mobile-nav text-white p-2">
+                    <i class="fas fa-bars text-xl"></i>
+                </button>
+                
+                <!-- Auth Buttons -->
                 <div class="flex items-center space-x-4">
                     <div id="auth-buttons" class="space-x-2">
-                        <button id="login-btn" class="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded">Login</button>
-                        <button id="register-btn" class="bg-transparent border border-purple-600 hover:bg-purple-600 px-4 py-2 rounded">Register</button>
+                        <button id="login-btn" class="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded touch-btn">Login</button>
+                        <button id="register-btn" class="bg-transparent border border-purple-600 hover:bg-purple-600 px-4 py-2 rounded touch-btn">Register</button>
                     </div>
                     <div id="user-menu" class="hidden">
                         <span id="username" class="mr-2"></span>
-                        <button id="logout-btn" class="bg-red-600 hover:bg-red-700 px-4 py-2 rounded">Logout</button>
+                        <button id="logout-btn" class="bg-red-600 hover:bg-red-700 px-4 py-2 rounded touch-btn">Logout</button>
                     </div>
                 </div>
             </div>
         </div>
     </nav>
 
-    <!-- Main Content -->
-    <div class="container mx-auto px-4 py-8">
-        <!-- Home Page -->
-        <div id="home-page" class="page">
-            <div class="gradient-bg rounded-lg p-8 mb-8">
-                <h2 class="text-4xl font-bold mb-4">Discover Your Next Favorite</h2>
-                <p class="text-lg opacity-90 mb-6">Get personalized movie and TV show recommendations powered by AI</p>
-                <div class="flex space-x-4">
-                    <button class="bg-white text-purple-600 px-6 py-3 rounded-lg font-semibold hover:bg-gray-100">
-                        Get Started
-                    </button>
-                    <button class="border border-white px-6 py-3 rounded-lg font-semibold hover:bg-white hover:text-purple-600">
-                        Learn More
-                    </button>
-                </div>
-            </div>
-
-            <!-- Featured Content -->
-            <div id="featured-section" class="mb-8">
-                <h3 class="text-2xl font-bold mb-4">Featured Content</h3>
-                <div id="featured-content" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6"></div>
-            </div>
-
-            <!-- Recommendations -->
-            <div id="recommendations-section" class="mb-8">
-                <h3 class="text-2xl font-bold mb-4">Recommended for You</h3>
-                <div id="recommendations-content" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6"></div>
-            </div>
+    <!-- Mobile Navigation Menu -->
+    <div id="mobile-overlay" class="mobile-overlay"></div>
+    <div id="mobile-menu" class="mobile-menu">
+        <div class="flex justify-between items-center mb-6">
+            <h2 class="text-xl font-bold">Menu</h2>
+            <button id="close-mobile-menu" class="text-white p-2">
+                <i class="fas fa-times text-xl"></i>
+            </button>
         </div>
+        <div class="space-y-4">
+            <a href="#" class="mobile-nav-link block p-3 rounded hover:bg-gray-700 text-purple-400" data-page="search">
+                <i class="fas fa-search mr-3"></i>Search
+            </a>
+            <a href="#" class="mobile-nav-link block p-3 rounded hover:bg-gray-700" data-page="trending">
+                <i class="fas fa-fire mr-3"></i>Trending
+            </a>
+            <a href="#" class="mobile-nav-link block p-3 rounded hover:bg-gray-700" data-page="watchlist">
+                <i class="fas fa-bookmark mr-3"></i>Watchlist
+            </a>
+        </div>
+    </div>
 
-        <!-- Search Page -->
-        <div id="search-page" class="page hidden">
+    <!-- Main Content -->
+    <div class="container-fluid mx-auto py-6">
+        <!-- Search Page (Default) -->
+        <div id="search-page" class="page">
             <div class="mb-8">
-                <h2 class="text-3xl font-bold mb-4">Search Content</h2>
-                <div class="flex space-x-4 mb-4">
+                <h2 class="responsive-title text-3xl font-bold mb-4">Search Content</h2>
+                <div class="search-container">
                     <input type="text" id="search-input" placeholder="Search movies, TV shows, anime..." 
-                           class="flex-1 px-4 py-2 rounded-lg bg-gray-800 border border-gray-600 focus:border-purple-500 focus:outline-none">
-                    <select id="search-type" class="px-4 py-2 rounded-lg bg-gray-800 border border-gray-600">
+                           class="search-input px-4 py-3 rounded-lg bg-gray-800 border border-gray-600 focus:border-purple-500 focus:outline-none">
+                    <select id="search-type" class="px-4 py-3 rounded-lg bg-gray-800 border border-gray-600 min-w-0">
                         <option value="all">All</option>
                         <option value="movie">Movies</option>
                         <option value="tv">TV Shows</option>
                         <option value="anime">Anime</option>
                     </select>
-                    <button id="search-btn" class="bg-purple-600 hover:bg-purple-700 px-6 py-2 rounded-lg">
+                    <button id="search-btn" class="bg-purple-600 hover:bg-purple-700 px-6 py-3 rounded-lg touch-btn">
                         <i class="fas fa-search"></i>
                     </button>
                 </div>
             </div>
-            <div id="search-results" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6"></div>
+            <div id="search-results" class="content-grid"></div>
         </div>
 
         <!-- Trending Page -->
         <div id="trending-page" class="page hidden">
             <div class="mb-8">
-                <h2 class="text-3xl font-bold mb-4">Trending Now</h2>
-                <div class="flex space-x-4 mb-4">
-                    <button class="trending-filter active bg-purple-600 px-4 py-2 rounded" data-type="all">All</button>
-                    <button class="trending-filter bg-gray-600 px-4 py-2 rounded" data-type="movie">Movies</button>
-                    <button class="trending-filter bg-gray-600 px-4 py-2 rounded" data-type="tv">TV Shows</button>
-                    <button class="trending-filter bg-gray-600 px-4 py-2 rounded" data-type="anime">Anime</button>
+                <h2 class="responsive-title text-3xl font-bold mb-4">Trending Now</h2>
+                <div class="filter-buttons">
+                    <button class="trending-filter filter-btn active bg-purple-600 px-4 py-2 rounded touch-btn" data-type="all">All</button>
+                    <button class="trending-filter filter-btn bg-gray-600 px-4 py-2 rounded touch-btn" data-type="movie">Movies</button>
+                    <button class="trending-filter filter-btn bg-gray-600 px-4 py-2 rounded touch-btn" data-type="tv">TV Shows</button>
+                    <button class="trending-filter filter-btn bg-gray-600 px-4 py-2 rounded touch-btn" data-type="anime">Anime</button>
                 </div>
             </div>
-            <div id="trending-content" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6"></div>
+            <div id="trending-content" class="content-grid"></div>
         </div>
 
         <!-- Watchlist Page -->
         <div id="watchlist-page" class="page hidden">
             <div class="mb-8">
-                <h2 class="text-3xl font-bold mb-4">My Watchlist</h2>
-                <p class="text-gray-400">Your saved movies and shows</p>
+                <h2 class="responsive-title text-3xl font-bold mb-4">My Watchlist</h2>
+                <p class="text-gray-400 responsive-text">Your saved movies and shows</p>
             </div>
-            <div id="watchlist-content" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6"></div>
+            <div id="watchlist-content" class="content-grid"></div>
         </div>
     </div>
 
     <!-- Content Card Template -->
     <template id="content-card-template">
-        <div class="bg-gray-800 rounded-lg overflow-hidden shadow-lg card-hover">
+        <div class="content-card">
             <div class="relative">
-                <img class="w-full h-64 object-cover" src="" alt="">
+                <div class="img-placeholder card-image">
+                    <img class="w-full h-full object-cover lazy-img" src="" alt="" loading="lazy">
+                    <div class="absolute inset-0 bg-gray-700 img-placeholder card-image">
+                        <i class="fas fa-image text-4xl"></i>
+                    </div>
+                </div>
                 <div class="absolute top-2 right-2 bg-black bg-opacity-50 px-2 py-1 rounded">
                     <span class="rating text-yellow-400">
                         <i class="fas fa-star"></i> <span class="rating-value"></span>
@@ -133,14 +354,14 @@
             </div>
             <div class="p-4">
                 <h3 class="font-bold text-lg mb-2 content-title"></h3>
-                <p class="text-gray-400 text-sm mb-3 content-overview"></p>
+                <p class="text-gray-400 text-sm mb-3 content-overview responsive-text"></p>
                 <div class="flex justify-between items-center">
-                    <span class="text-sm text-gray-500 release-date"></span>
+                    <span class="text-sm text-gray-500 release-date responsive-text"></span>
                     <div class="flex space-x-2">
-                        <button class="watchlist-btn bg-gray-600 hover:bg-gray-700 p-2 rounded">
+                        <button class="watchlist-btn bg-gray-600 hover:bg-gray-700 p-2 rounded touch-btn">
                             <i class="fas fa-bookmark"></i>
                         </button>
-                        <button class="rate-btn bg-purple-600 hover:bg-purple-700 p-2 rounded">
+                        <button class="rate-btn bg-purple-600 hover:bg-purple-700 p-2 rounded touch-btn">
                             <i class="fas fa-star"></i>
                         </button>
                     </div>
@@ -150,33 +371,33 @@
     </template>
 
     <!-- Auth Modal -->
-    <div id="auth-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden z-50">
-        <div class="bg-gray-800 p-8 rounded-lg max-w-md w-full mx-4">
+    <div id="auth-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden z-50 p-4">
+        <div class="bg-gray-800 p-6 rounded-lg modal-content">
             <div class="flex justify-between items-center mb-6">
                 <h3 id="auth-title" class="text-xl font-bold">Login</h3>
-                <button id="close-modal" class="text-gray-400 hover:text-white">
+                <button id="close-modal" class="text-gray-400 hover:text-white touch-btn">
                     <i class="fas fa-times"></i>
                 </button>
             </div>
             <form id="auth-form">
                 <div class="mb-4">
                     <label class="block text-sm font-medium mb-2">Username</label>
-                    <input type="text" id="auth-username" class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:border-purple-500" required>
+                    <input type="text" id="auth-username" class="w-full px-3 py-3 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:border-purple-500" required>
                 </div>
                 <div id="email-field" class="mb-4 hidden">
                     <label class="block text-sm font-medium mb-2">Email</label>
-                    <input type="email" id="auth-email" class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:border-purple-500">
+                    <input type="email" id="auth-email" class="w-full px-3 py-3 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:border-purple-500">
                 </div>
                 <div class="mb-6">
                     <label class="block text-sm font-medium mb-2">Password</label>
-                    <input type="password" id="auth-password" class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:border-purple-500" required>
+                    <input type="password" id="auth-password" class="w-full px-3 py-3 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:border-purple-500" required>
                 </div>
-                <button type="submit" class="w-full bg-purple-600 hover:bg-purple-700 py-2 rounded-lg font-semibold">
+                <button type="submit" class="w-full bg-purple-600 hover:bg-purple-700 py-3 rounded-lg font-semibold touch-btn">
                     <span id="auth-submit-text">Login</span>
                 </button>
             </form>
             <div class="mt-4 text-center">
-                <button id="auth-switch" class="text-purple-400 hover:text-purple-300">
+                <button id="auth-switch" class="text-purple-400 hover:text-purple-300 touch-btn">
                     Don't have an account? Register
                 </button>
             </div>
@@ -184,24 +405,24 @@
     </div>
 
     <!-- Rating Modal -->
-    <div id="rating-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden z-50">
-        <div class="bg-gray-800 p-6 rounded-lg max-w-sm w-full mx-4">
+    <div id="rating-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden z-50 p-4">
+        <div class="bg-gray-800 p-6 rounded-lg modal-content">
             <h3 class="text-xl font-bold mb-4">Rate Content</h3>
             <div class="mb-4">
                 <div class="flex justify-center space-x-1 mb-2">
                     <div id="star-rating" class="flex">
-                        <i class="fas fa-star text-2xl text-gray-400 cursor-pointer" data-rating="1"></i>
-                        <i class="fas fa-star text-2xl text-gray-400 cursor-pointer" data-rating="2"></i>
-                        <i class="fas fa-star text-2xl text-gray-400 cursor-pointer" data-rating="3"></i>
-                        <i class="fas fa-star text-2xl text-gray-400 cursor-pointer" data-rating="4"></i>
-                        <i class="fas fa-star text-2xl text-gray-400 cursor-pointer" data-rating="5"></i>
+                        <i class="fas fa-star text-3xl text-gray-400 cursor-pointer touch-btn" data-rating="1"></i>
+                        <i class="fas fa-star text-3xl text-gray-400 cursor-pointer touch-btn" data-rating="2"></i>
+                        <i class="fas fa-star text-3xl text-gray-400 cursor-pointer touch-btn" data-rating="3"></i>
+                        <i class="fas fa-star text-3xl text-gray-400 cursor-pointer touch-btn" data-rating="4"></i>
+                        <i class="fas fa-star text-3xl text-gray-400 cursor-pointer touch-btn" data-rating="5"></i>
                     </div>
                 </div>
                 <p class="text-center text-sm text-gray-400">Click to rate (1-5 stars)</p>
             </div>
             <div class="flex space-x-4">
-                <button id="cancel-rating" class="flex-1 bg-gray-600 hover:bg-gray-700 py-2 rounded-lg">Cancel</button>
-                <button id="submit-rating" class="flex-1 bg-purple-600 hover:bg-purple-700 py-2 rounded-lg">Submit</button>
+                <button id="cancel-rating" class="flex-1 bg-gray-600 hover:bg-gray-700 py-3 rounded-lg touch-btn">Cancel</button>
+                <button id="submit-rating" class="flex-1 bg-purple-600 hover:bg-purple-700 py-3 rounded-lg touch-btn">Submit</button>
             </div>
         </div>
     </div>
@@ -260,8 +481,17 @@
             showPage: (pageId) => {
                 document.querySelectorAll('.page').forEach(page => page.classList.add('hidden'));
                 document.getElementById(pageId).classList.remove('hidden');
-                document.querySelectorAll('.nav-link').forEach(link => link.classList.remove('text-purple-400'));
-                document.querySelector(`[data-page="${pageId.replace('-page', '')}"]`)?.classList.add('text-purple-400');
+                
+                // Update navigation states
+                document.querySelectorAll('.nav-link, .mobile-nav-link').forEach(link => {
+                    link.classList.remove('text-purple-400');
+                });
+                document.querySelectorAll(`[data-page="${pageId.replace('-page', '')}"]`).forEach(link => {
+                    link.classList.add('text-purple-400');
+                });
+                
+                // Close mobile menu
+                closeMobileMenu();
             },
             
             showModal: (modalId) => document.getElementById(modalId).classList.remove('hidden'),
@@ -269,7 +499,7 @@
             
             toast: (message, type = 'info') => {
                 const toast = document.createElement('div');
-                toast.className = `fixed top-4 right-4 px-6 py-3 rounded-lg text-white z-50 ${
+                toast.className = `fixed top-20 right-4 left-4 mx-auto max-w-sm px-6 py-3 rounded-lg text-white z-50 ${
                     type === 'success' ? 'bg-green-600' : 
                     type === 'error' ? 'bg-red-600' : 'bg-blue-600'
                 }`;
@@ -277,6 +507,35 @@
                 document.body.appendChild(toast);
                 setTimeout(() => toast.remove(), 3000);
             }
+        };
+
+        // Mobile Menu Functions
+        const openMobileMenu = () => {
+            document.getElementById('mobile-menu').classList.add('active');
+            document.getElementById('mobile-overlay').classList.add('active');
+            document.body.style.overflow = 'hidden';
+        };
+
+        const closeMobileMenu = () => {
+            document.getElementById('mobile-menu').classList.remove('active');
+            document.getElementById('mobile-overlay').classList.remove('active');
+            document.body.style.overflow = 'auto';
+        };
+
+        // Image Loading Optimization
+        const loadImage = (img, src) => {
+            const image = new Image();
+            image.onload = () => {
+                img.src = src;
+                img.classList.add('loaded');
+                img.parentElement.querySelector('.img-placeholder').style.display = 'none';
+            };
+            image.onerror = () => {
+                img.src = 'https://via.placeholder.com/300x450?text=No+Image';
+                img.classList.add('loaded');
+                img.parentElement.querySelector('.img-placeholder').style.display = 'none';
+            };
+            image.src = src;
         };
 
         // Content Rendering
@@ -287,7 +546,7 @@
             container.innerHTML = '';
             items.forEach(item => {
                 const card = template.content.cloneNode(true);
-                const img = card.querySelector('img');
+                const img = card.querySelector('.lazy-img');
                 const title = card.querySelector('.content-title');
                 const overview = card.querySelector('.content-overview');
                 const rating = card.querySelector('.rating-value');
@@ -297,9 +556,13 @@
                 const rateBtn = card.querySelector('.rate-btn');
                 
                 // Set content data
-                img.src = item.poster_path ? `${TMDB_IMAGE_BASE}${item.poster_path}` : 
-                         item.images?.jpg?.large_image_url || 'https://via.placeholder.com/300x450?text=No+Image';
+                const posterUrl = item.poster_path ? `${TMDB_IMAGE_BASE}${item.poster_path}` : 
+                                 item.images?.jpg?.large_image_url || 'https://via.placeholder.com/300x450?text=No+Image';
+                
+                // Optimize image loading
+                loadImage(img, posterUrl);
                 img.alt = item.title || item.name;
+                
                 title.textContent = item.title || item.name;
                 overview.textContent = (item.overview || item.synopsis || '').substring(0, 100) + '...';
                 rating.textContent = (item.vote_average || item.score || 0).toFixed(1);
@@ -386,7 +649,7 @@
 
         const updateStarRating = () => {
             document.querySelectorAll('#star-rating i').forEach((star, index) => {
-                star.className = `fas fa-star text-2xl cursor-pointer ${
+                star.className = `fas fa-star text-3xl cursor-pointer touch-btn ${
                     index < currentRating ? 'text-yellow-400' : 'text-gray-400'
                 }`;
             });
@@ -409,17 +672,6 @@
 
         // Data Loading
         const loadContent = {
-            featured: async () => {
-                const data = await api.get('/featured');
-                renderContent(data.featured || [], 'featured-content');
-            },
-            
-            recommendations: async () => {
-                if (!currentUser) return;
-                const data = await api.get('/recommendations');
-                renderContent(data.recommendations || [], 'recommendations-content');
-            },
-            
             trending: async (type = 'all') => {
                 const data = await api.get(`/trending?type=${type}`);
                 const items = [...(data.movies || []), ...(data.tv || []), ...(data.anime || [])];
@@ -442,7 +694,7 @@
         // Event Listeners
         document.addEventListener('DOMContentLoaded', () => {
             // Navigation
-            document.querySelectorAll('.nav-link').forEach(link => {
+            document.querySelectorAll('.nav-link, .mobile-nav-link').forEach(link => {
                 link.addEventListener('click', (e) => {
                     e.preventDefault();
                     const page = e.target.dataset.page;
@@ -453,6 +705,11 @@
                     else if (page === 'watchlist') loadContent.watchlist();
                 });
             });
+            
+            // Mobile menu
+            document.getElementById('mobile-menu-btn').onclick = openMobileMenu;
+            document.getElementById('close-mobile-menu').onclick = closeMobileMenu;
+            document.getElementById('mobile-overlay').onclick = closeMobileMenu;
             
             // Auth buttons
             document.getElementById('login-btn').onclick = () => {
@@ -494,9 +751,6 @@
                 
                 if (success) {
                     ui.hideModal('auth-modal');
-                    if (isLogin) {
-                        loadContent.recommendations();
-                    }
                 }
             };
             
@@ -521,7 +775,8 @@
                 const query = document.getElementById('search-input').value;
                 const type = document.getElementById('search-type').value;
                 if (query.trim()) {
-                    loadContent.search(query, type);
+                    ui.showLoading();
+                    loadContent.search(query, type).finally(() => ui.hideLoading());
                 }
             };
             
@@ -540,7 +795,8 @@
                     });
                     filter.classList.add('active', 'bg-purple-600');
                     filter.classList.remove('bg-gray-600');
-                    loadContent.trending(filter.dataset.type);
+                    ui.showLoading();
+                    loadContent.trending(filter.dataset.type).finally(() => ui.hideLoading());
                 };
             });
             
@@ -552,9 +808,89 @@
                 };
             });
             
-            // Initial load
-            loadContent.featured();
+            // Touch/swipe gestures for mobile
+            let touchStartX = 0;
+            let touchEndX = 0;
+            
+            document.addEventListener('touchstart', (e) => {
+                touchStartX = e.changedTouches[0].screenX;
+            });
+            
+            document.addEventListener('touchend', (e) => {
+                touchEndX = e.changedTouches[0].screenX;
+                handleSwipe();
+            });
+            
+            const handleSwipe = () => {
+                const swipeThreshold = 50;
+                const diff = touchStartX - touchEndX;
+                
+                if (Math.abs(diff) > swipeThreshold) {
+                    if (diff > 0) {
+                        // Swipe left - could implement next page functionality
+                    } else {
+                        // Swipe right - could implement previous page functionality
+                    }
+                }
+            };
+            
+            // Intersection Observer for lazy loading
+            const imageObserver = new IntersectionObserver((entries) => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting) {
+                        const img = entry.target;
+                        if (img.dataset.src) {
+                            loadImage(img, img.dataset.src);
+                            imageObserver.unobserve(img);
+                        }
+                    }
+                });
+            });
+            
+            // Observe all lazy images
+            document.querySelectorAll('.lazy-img').forEach(img => {
+                imageObserver.observe(img);
+            });
+            
+            // Resize handler for responsive adjustments
+            window.addEventListener('resize', () => {
+                // Close mobile menu on resize to larger screen
+                if (window.innerWidth > 768) {
+                    closeMobileMenu();
+                }
+            });
+            
+            // Initial load - default to search page
+            ui.showPage('search-page');
             loadContent.trending();
+        });
+
+        // Performance optimizations
+        const debounce = (func, wait) => {
+            let timeout;
+            return function executedFunction(...args) {
+                const later = () => {
+                    clearTimeout(timeout);
+                    func(...args);
+                };
+                clearTimeout(timeout);
+                timeout = setTimeout(later, wait);
+            };
+        };
+
+        // Debounced search
+        const debouncedSearch = debounce((query, type) => {
+            if (query.trim()) {
+                ui.showLoading();
+                loadContent.search(query, type).finally(() => ui.hideLoading());
+            }
+        }, 300);
+
+        // Add real-time search
+        document.getElementById('search-input').addEventListener('input', (e) => {
+            const query = e.target.value;
+            const type = document.getElementById('search-type').value;
+            debouncedSearch(query, type);
         });
     </script>
 </body>

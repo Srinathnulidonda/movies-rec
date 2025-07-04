@@ -1,0 +1,29 @@
+/* Custom Styles */
+body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.swiper-container {
+    padding: 1rem;
+}
+
+.content-card {
+    @apply bg-[#21262d] rounded-lg overflow-hidden transition-transform transform hover:scale-105;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+}
+
+.content-card img {
+    @apply w-full h-64 object-cover;
+}
+
+.btn {
+    @apply transition-colors duration-200;
+}
+
+input:focus, select:focus {
+    @apply ring-2 ring-[#58a6ff] outline-none;
+}
+
+.modal {
+    @apply transition-opacity duration-300;
+}
