@@ -216,7 +216,7 @@
 
     <script>
         // API Configuration
-        const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'https://movies-rec-1hcv.onrender.com';
+        const API_BASE_URL = 'https://movies-rec-1hcv.onrender.com';
         const TMDB_IMAGE_BASE = 'https://image.tmdb.org/t/p/w500';
 
         // State Management
@@ -226,54 +226,32 @@
 
         // Utility Functions
         const api = {
-    get: async (endpoint, retries = 3) => {
-        for (let i = 0; i < retries; i++) {
-            try {
+            get: async (endpoint) => {
                 const response = await fetch(`${API_BASE_URL}${endpoint}`, {
                     credentials: 'include',
                     headers: { 'Content-Type': 'application/json' }
                 });
-                if (!response.ok) throw new Error(`HTTP ${response.status}`);
                 return response.json();
-            } catch (error) {
-                if (i === retries - 1) throw error;
-                await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1))); // Exponential backoff
-            }
-        }
-    },
-    post: async (endpoint, data, retries = 3) => {
-        for (let i = 0; i < retries; i++) {
-            try {
+            },
+            
+            post: async (endpoint, data) => {
                 const response = await fetch(`${API_BASE_URL}${endpoint}`, {
                     method: 'POST',
                     credentials: 'include',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(data)
                 });
-                if (!response.ok) throw new Error(`HTTP ${response.status}`);
                 return response.json();
-            } catch (error) {
-                if (i === retries - 1) throw error;
-                await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
-            }
-        }
-    },
-    delete: async (endpoint, retries = 3) => {
-        for (let i = 0; i < retries; i++) {
-            try {
+            },
+            
+            delete: async (endpoint) => {
                 const response = await fetch(`${API_BASE_URL}${endpoint}`, {
                     method: 'DELETE',
                     credentials: 'include'
                 });
-                if (!response.ok) throw new Error(`HTTP ${response.status}`);
                 return response.json();
-            } catch (error) {
-                if (i === retries - 1) throw error;
-                await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
             }
-        }
-    }
-};
+        };
 
         const ui = {
             showLoading: () => document.getElementById('loading-spinner').classList.remove('hidden'),
