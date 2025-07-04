@@ -3,373 +3,558 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CineDiscover - Your Ultimate Movie & TV Guide</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <title>Movie Recommendations</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <style>
-        :root { --primary: #6366f1; --secondary: #8b5cf6; --dark: #0f172a; --light: #f8fafc; --accent: #f59e0b; }
-        * { font-family: 'Inter', sans-serif; }
-        body { background: linear-gradient(135deg, var(--dark) 0%, #1e293b 100%); color: var(--light); overflow-x: hidden; }
-        .hero-section { min-height: 100vh; background: radial-gradient(circle at center, rgba(99,102,241,0.1) 0%, transparent 70%); }
-        .search-container { backdrop-filter: blur(10px); background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); }
-        .movie-card { transition: all 0.3s ease; backdrop-filter: blur(10px); background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); }
-        .movie-card:hover { transform: translateY(-8px); box-shadow: 0 20px 40px rgba(99,102,241,0.3); background: rgba(255,255,255,0.1); }
-        .btn-primary { background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%); border: none; }
-        .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 10px 25px rgba(99,102,241,0.4); }
-        .navbar { backdrop-filter: blur(20px); background: rgba(15,23,42,0.8); border-bottom: 1px solid rgba(255,255,255,0.1); }
-        .rating-stars { color: var(--accent); }
-        .category-chip { background: rgba(99,102,241,0.2); color: var(--primary); border: 1px solid rgba(99,102,241,0.3); }
-        .trending-badge { background: linear-gradient(45deg, #ff6b6b, #feca57); }
-        .genre-tag { background: rgba(139,92,246,0.2); color: var(--secondary); }
-        .loading-skeleton { background: linear-gradient(90deg, rgba(255,255,255,0.1) 25%, rgba(255,255,255,0.2) 50%, rgba(255,255,255,0.1) 75%); background-size: 200% 100%; animation: shimmer 1.5s infinite; }
-        @keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
-        .floating-action { position: fixed; bottom: 2rem; right: 2rem; z-index: 1000; }
-        .stats-counter { font-size: 2.5rem; font-weight: 700; color: var(--primary); }
-        .glass-effect { background: rgba(255, 255, 255, 0.05); backdrop-filter: blur(20px); border: 1px solid rgba(255, 255, 255, 0.1); }
-        .gradient-border { position: relative; background: linear-gradient(135deg, rgba(14, 165, 233, 0.1), rgba(217, 70, 239, 0.1)); }
-        .gradient-border::before { content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0; padding: 1px; background: linear-gradient(135deg, #0ea5e9, #d946ef); border-radius: inherit; mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0); mask-composite: exclude; }
-        .card-hover:hover { transform: translateY(-8px) scale(1.02); box-shadow: 0 25px 50px rgba(0, 0, 0, 0.4), 0 0 40px rgba(14, 165, 233, 0.2); }
-        .text-gradient { background: linear-gradient(135deg, #0ea5e9, #d946ef); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+        .gradient-bg { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
+        .card-hover { transition: transform 0.3s ease; }
+        .card-hover:hover { transform: translateY(-5px); }
+        .glass-effect { backdrop-filter: blur(10px); background: rgba(255, 255, 255, 0.1); }
+        .loading { animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     </style>
 </head>
-<body>
+<body class="bg-gray-900 text-white">
     <!-- Navigation -->
-    <nav class="navbar navbar-expand-lg fixed-top">
-        <div class="container">
-            <a class="navbar-brand fw-bold fs-3 text-white" href="/">
-                <i class="fas fa-film text-primary me-2"></i>CineDiscover
-            </a>
-            <button class="navbar-toggler border-0" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
-                <i class="fas fa-bars text-white"></i>
-            </button>
-            <div class="collapse navbar-collapse" id="navbarNav">
-                <ul class="navbar-nav ms-auto align-items-center">
-                    <li class="nav-item"><a class="nav-link text-white-50 hover-primary px-3" href="#home">Home</a></li>
-                    <li class="nav-item"><a class="nav-link text-white-50 hover-primary px-3" href="#trending">Trending</a></li>
-                    <li class="nav-item"><a class="nav-link text-white-50 hover-primary px-3" href="#genres">Genres</a></li>
-                    <li class="nav-item"><a class="nav-link text-white-50 hover-primary px-3" href="/dashboard">Dashboard</a></li>
-                    <li class="nav-item ms-2"><a href="/login" class="btn btn-outline-primary btn-sm px-3">Sign In</a></li>
-                    <li class="nav-item ms-2"><a href="/register" class="btn btn-primary btn-sm px-3">Get Started</a></li>
-                </ul>
+    <nav class="bg-gray-800 shadow-lg">
+        <div class="max-w-7xl mx-auto px-4">
+            <div class="flex justify-between items-center h-16">
+                <div class="flex items-center space-x-4">
+                    <i class="fas fa-film text-2xl text-purple-400"></i>
+                    <h1 class="text-xl font-bold">MovieRecs</h1>
+                </div>
+                <div class="hidden md:flex items-center space-x-6">
+                    <a href="#" class="nav-link" data-page="home">Home</a>
+                    <a href="#" class="nav-link" data-page="search">Search</a>
+                    <a href="#" class="nav-link" data-page="trending">Trending</a>
+                    <a href="#" class="nav-link" data-page="watchlist">Watchlist</a>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <div id="auth-buttons" class="space-x-2">
+                        <button id="login-btn" class="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded">Login</button>
+                        <button id="register-btn" class="bg-transparent border border-purple-600 hover:bg-purple-600 px-4 py-2 rounded">Register</button>
+                    </div>
+                    <div id="user-menu" class="hidden">
+                        <span id="username" class="mr-2"></span>
+                        <button id="logout-btn" class="bg-red-600 hover:bg-red-700 px-4 py-2 rounded">Logout</button>
+                    </div>
+                </div>
             </div>
         </div>
     </nav>
 
-    <!-- Hero Section -->
-    <section id="home" class="hero-section d-flex align-items-center">
-        <div class="container">
-            <div class="row align-items-center">
-                <div class="col-lg-6">
-                    <div class="mb-4">
-                        <span class="badge bg-primary bg-opacity-20 text-primary px-3 py-2 rounded-pill">
-                            <i class="fas fa-star me-1"></i>Discover Movies & TV Shows
-                        </span>
-                    </div>
-                    <h1 class="display-3 fw-bold mb-4">Your Ultimate Entertainment <span class="text-gradient">Discovery</span> Platform</h1>
-                    <p class="lead mb-5 text-white-50">Explore millions of movies, TV shows, and anime. Get personalized recommendations, track your watchlist, and never miss what's trending.</p>
-                    
-                    <!-- Search Bar -->
-                    <div class="search-container glass-effect rounded-4 p-4 mb-4">
-                        <div class="input-group input-group-lg">
-                            <span class="input-group-text bg-transparent border-0 text-white-50">
-                                <i class="fas fa-search"></i>
-                            </span>
-                            <input type="text" class="form-control bg-transparent border-0 text-white" placeholder="Search movies, TV shows, anime..." id="searchInput">
-                            <button class="btn btn-primary px-4" type="button" onclick="performSearch()">
-                                <i class="fas fa-arrow-right"></i>
-                            </button>
-                        </div>
-                        <div class="d-flex flex-wrap gap-2 mt-3">
-                            <button class="btn btn-sm category-chip rounded-pill px-3" onclick="quickSearch('movie')">Movies</button>
-                            <button class="btn btn-sm category-chip rounded-pill px-3" onclick="quickSearch('tv')">TV Shows</button>
-                            <button class="btn btn-sm category-chip rounded-pill px-3" onclick="quickSearch('anime')">Anime</button>
-                            <button class="btn btn-sm category-chip rounded-pill px-3" onclick="quickSearch('action')">Action</button>
-                            <button class="btn btn-sm category-chip rounded-pill px-3" onclick="quickSearch('comedy')">Comedy</button>
-                        </div>
-                    </div>
-
-                    <!-- Stats -->
-                    <div class="row g-4 mb-5">
-                        <div class="col-4">
-                            <div class="text-center">
-                                <div class="stats-counter">50K+</div>
-                                <small class="text-white-50">Movies</small>
-                            </div>
-                        </div>
-                        <div class="col-4">
-                            <div class="text-center">
-                                <div class="stats-counter">25K+</div>
-                                <small class="text-white-50">TV Shows</small>
-                            </div>
-                        </div>
-                        <div class="col-4">
-                            <div class="text-center">
-                                <div class="stats-counter">10K+</div>
-                                <small class="text-white-50">Anime</small>
-                            </div>
-                        </div>
-                    </div>
+    <!-- Main Content -->
+    <div class="container mx-auto px-4 py-8">
+        <!-- Home Page -->
+        <div id="home-page" class="page">
+            <div class="gradient-bg rounded-lg p-8 mb-8">
+                <h2 class="text-4xl font-bold mb-4">Discover Your Next Favorite</h2>
+                <p class="text-lg opacity-90 mb-6">Get personalized movie and TV show recommendations powered by AI</p>
+                <div class="flex space-x-4">
+                    <button class="bg-white text-purple-600 px-6 py-3 rounded-lg font-semibold hover:bg-gray-100">
+                        Get Started
+                    </button>
+                    <button class="border border-white px-6 py-3 rounded-lg font-semibold hover:bg-white hover:text-purple-600">
+                        Learn More
+                    </button>
                 </div>
-                <div class="col-lg-6">
-                    <div class="position-relative">
-                        <div class="featured-movie-showcase">
-                            <div class="movie-card card-hover rounded-4 p-0 overflow-hidden">
-                                <img src="https://image.tmdb.org/t/p/w500/placeholder.jpg" class="img-fluid w-100" alt="Featured Movie" style="height: 400px; object-fit: cover;" id="heroImage">
-                                <div class="position-absolute bottom-0 start-0 end-0 p-4" style="background: linear-gradient(transparent, rgba(0,0,0,0.8));">
-                                    <span class="trending-badge badge px-2 py-1 mb-2"><i class="fas fa-fire me-1"></i>Trending</span>
-                                    <h3 class="text-white mb-2" id="heroTitle">Loading...</h3>
-                                    <div class="d-flex align-items-center gap-3 mb-2">
-                                        <div class="rating-stars">
-                                            <i class="fas fa-star"></i>
-                                            <i class="fas fa-star"></i>
-                                            <i class="fas fa-star"></i>
-                                            <i class="fas fa-star"></i>
-                                            <i class="fas fa-star-half-alt"></i>
-                                            <span class="text-white ms-1">4.5</span>
-                                        </div>
-                                        <span class="text-white-50" id="heroYear">2024</span>
-                                    </div>
-                                    <p class="text-white-50 small mb-0" id="heroDescription">Loading description...</p>
-                                </div>
-                            </div>
-                        </div>
+            </div>
+
+            <!-- Featured Content -->
+            <div id="featured-section" class="mb-8">
+                <h3 class="text-2xl font-bold mb-4">Featured Content</h3>
+                <div id="featured-content" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6"></div>
+            </div>
+
+            <!-- Recommendations -->
+            <div id="recommendations-section" class="mb-8">
+                <h3 class="text-2xl font-bold mb-4">Recommended for You</h3>
+                <div id="recommendations-content" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6"></div>
+            </div>
+        </div>
+
+        <!-- Search Page -->
+        <div id="search-page" class="page hidden">
+            <div class="mb-8">
+                <h2 class="text-3xl font-bold mb-4">Search Content</h2>
+                <div class="flex space-x-4 mb-4">
+                    <input type="text" id="search-input" placeholder="Search movies, TV shows, anime..." 
+                           class="flex-1 px-4 py-2 rounded-lg bg-gray-800 border border-gray-600 focus:border-purple-500 focus:outline-none">
+                    <select id="search-type" class="px-4 py-2 rounded-lg bg-gray-800 border border-gray-600">
+                        <option value="all">All</option>
+                        <option value="movie">Movies</option>
+                        <option value="tv">TV Shows</option>
+                        <option value="anime">Anime</option>
+                    </select>
+                    <button id="search-btn" class="bg-purple-600 hover:bg-purple-700 px-6 py-2 rounded-lg">
+                        <i class="fas fa-search"></i>
+                    </button>
+                </div>
+            </div>
+            <div id="search-results" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6"></div>
+        </div>
+
+        <!-- Trending Page -->
+        <div id="trending-page" class="page hidden">
+            <div class="mb-8">
+                <h2 class="text-3xl font-bold mb-4">Trending Now</h2>
+                <div class="flex space-x-4 mb-4">
+                    <button class="trending-filter active bg-purple-600 px-4 py-2 rounded" data-type="all">All</button>
+                    <button class="trending-filter bg-gray-600 px-4 py-2 rounded" data-type="movie">Movies</button>
+                    <button class="trending-filter bg-gray-600 px-4 py-2 rounded" data-type="tv">TV Shows</button>
+                    <button class="trending-filter bg-gray-600 px-4 py-2 rounded" data-type="anime">Anime</button>
+                </div>
+            </div>
+            <div id="trending-content" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6"></div>
+        </div>
+
+        <!-- Watchlist Page -->
+        <div id="watchlist-page" class="page hidden">
+            <div class="mb-8">
+                <h2 class="text-3xl font-bold mb-4">My Watchlist</h2>
+                <p class="text-gray-400">Your saved movies and shows</p>
+            </div>
+            <div id="watchlist-content" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6"></div>
+        </div>
+    </div>
+
+    <!-- Content Card Template -->
+    <template id="content-card-template">
+        <div class="bg-gray-800 rounded-lg overflow-hidden shadow-lg card-hover">
+            <div class="relative">
+                <img class="w-full h-64 object-cover" src="" alt="">
+                <div class="absolute top-2 right-2 bg-black bg-opacity-50 px-2 py-1 rounded">
+                    <span class="rating text-yellow-400">
+                        <i class="fas fa-star"></i> <span class="rating-value"></span>
+                    </span>
+                </div>
+                <div class="absolute bottom-2 left-2 bg-purple-600 px-2 py-1 rounded text-xs content-type"></div>
+            </div>
+            <div class="p-4">
+                <h3 class="font-bold text-lg mb-2 content-title"></h3>
+                <p class="text-gray-400 text-sm mb-3 content-overview"></p>
+                <div class="flex justify-between items-center">
+                    <span class="text-sm text-gray-500 release-date"></span>
+                    <div class="flex space-x-2">
+                        <button class="watchlist-btn bg-gray-600 hover:bg-gray-700 p-2 rounded">
+                            <i class="fas fa-bookmark"></i>
+                        </button>
+                        <button class="rate-btn bg-purple-600 hover:bg-purple-700 p-2 rounded">
+                            <i class="fas fa-star"></i>
+                        </button>
                     </div>
                 </div>
             </div>
         </div>
-    </section>
+    </template>
 
-    <!-- Trending Section -->
-    <section id="trending" class="py-5">
-        <div class="container">
-            <div class="d-flex justify-content-between align-items-center mb-5">
-                <div>
-                    <h2 class="fw-bold mb-2">Trending Now</h2>
-                    <p class="text-white-50 mb-0">Most popular movies and shows this week</p>
-                </div>
-                <div class="d-flex gap-2">
-                    <button class="btn btn-outline-primary btn-sm active" onclick="loadTrending('all')">All</button>
-                    <button class="btn btn-outline-primary btn-sm" onclick="loadTrending('movie')">Movies</button>
-                    <button class="btn btn-outline-primary btn-sm" onclick="loadTrending('tv')">TV</button>
-                </div>
+    <!-- Auth Modal -->
+    <div id="auth-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden z-50">
+        <div class="bg-gray-800 p-8 rounded-lg max-w-md w-full mx-4">
+            <div class="flex justify-between items-center mb-6">
+                <h3 id="auth-title" class="text-xl font-bold">Login</h3>
+                <button id="close-modal" class="text-gray-400 hover:text-white">
+                    <i class="fas fa-times"></i>
+                </button>
             </div>
-            <div class="row g-4" id="trendingContainer">
-                <!-- Loading skeletons -->
-                <div class="col-lg-3 col-md-4 col-sm-6">
-                    <div class="movie-card rounded-4 p-3">
-                        <div class="loading-skeleton rounded-3 mb-3" style="height: 300px;"></div>
-                        <div class="loading-skeleton rounded mb-2" style="height: 20px;"></div>
-                        <div class="loading-skeleton rounded" style="height: 16px; width: 60%;"></div>
-                    </div>
+            <form id="auth-form">
+                <div class="mb-4">
+                    <label class="block text-sm font-medium mb-2">Username</label>
+                    <input type="text" id="auth-username" class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:border-purple-500" required>
                 </div>
-            </div>
-            <div class="text-center mt-5">
-                <button class="btn btn-outline-primary px-4" onclick="loadMoreTrending()">
-                    <i class="fas fa-plus me-2"></i>Load More
+                <div id="email-field" class="mb-4 hidden">
+                    <label class="block text-sm font-medium mb-2">Email</label>
+                    <input type="email" id="auth-email" class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:border-purple-500">
+                </div>
+                <div class="mb-6">
+                    <label class="block text-sm font-medium mb-2">Password</label>
+                    <input type="password" id="auth-password" class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:border-purple-500" required>
+                </div>
+                <button type="submit" class="w-full bg-purple-600 hover:bg-purple-700 py-2 rounded-lg font-semibold">
+                    <span id="auth-submit-text">Login</span>
+                </button>
+            </form>
+            <div class="mt-4 text-center">
+                <button id="auth-switch" class="text-purple-400 hover:text-purple-300">
+                    Don't have an account? Register
                 </button>
             </div>
         </div>
-    </section>
-
-    <!-- Genres Section -->
-    <section id="genres" class="py-5 bg-dark bg-opacity-25">
-        <div class="container">
-            <div class="text-center mb-5">
-                <h2 class="fw-bold mb-3">Explore by Genre</h2>
-                <p class="text-white-50">Find your next favorite based on what you love</p>
-            </div>
-            <div class="row g-3" id="genresContainer"></div>
-        </div>
-    </section>
-
-    <!-- Footer -->
-    <footer class="py-5 bg-dark">
-        <div class="container">
-            <div class="row">
-                <div class="col-lg-6">
-                    <h5 class="fw-bold text-primary mb-3">CineDiscover</h5>
-                    <p class="text-white-50">Your ultimate destination for movie and TV show discovery.</p>
-                </div>
-                <div class="col-lg-6">
-                    <div class="row">
-                        <div class="col-md-6">
-                            <h6 class="text-white mb-3">Quick Links</h6>
-                            <ul class="list-unstyled">
-                                <li><a href="#" class="text-white-50 text-decoration-none">About Us</a></li>
-                                <li><a href="#" class="text-white-50 text-decoration-none">Contact</a></li>
-                            </ul>
-                        </div>
-                        <div class="col-md-6">
-                            <h6 class="text-white mb-3">Follow Us</h6>
-                            <div class="d-flex gap-3">
-                                <a href="#" class="text-white-50"><i class="fab fa-twitter fs-5"></i></a>
-                                <a href="#" class="text-white-50"><i class="fab fa-instagram fs-JAVAscript"></i></a>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <hr class="my-4 opacity-25">
-            <div class="text-center text-white-50">
-                <p class="mb-0">© 2025 CineDiscover. All rights reserved.</p>
-            </div>
-        </div>
-    </footer>
-
-    <!-- Floating Action Button -->
-    <div class="floating-action">
-        <button class="btn btn-primary rounded-circle shadow-lg p-3" data-bs-toggle="tooltip" title="Quick Search">
-            <i class="fas fa-search"></i>
-        </button>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
-    <script>
-        const API_BASE = 'https://movies-rec-1hcv.onrender.com/api';
-
-        document.addEventListener('DOMContentLoaded', function() {
-            loadFeaturedMovie();
-            loadTrendingContent();
-            loadGenres();
-            initializeTooltips();
-        });
-
-        async function loadFeaturedMovie() {
-            try {
-                const response = await fetch(`${API_BASE}/trending?time_window=week&media_type=movie`);
-                const data = await response.json();
-                if (data.results && data.results.length > 0) {
-                    const movie = data.results[0];
-                    document.getElementById('heroTitle').textContent = movie.title || movie.name;
-                    document.getElementById('heroDescription').textContent = movie.overview?.substring(0, 150) + '...';
-                    document.getElementById('heroYear').textContent = movie.release_date ? new Date(movie.release_date).getFullYear() : 
-                        movie.first_air_date ? new Date(movie.first_air_date).getFullYear() : '';
-                    if (movie.poster_path) {
-                        document.getElementById('heroImage').src = `https://image.tmdb.org/t/p/w500${movie.poster_path}`;
-                    }
-                }
-            } catch (error) {
-                console.error('Error loading featured movie:', error);
-            }
-        }
-
-        async function loadTrendingContent(type = 'all') {
-            try {
-                const response = await fetch(`${API_BASE}/trending?time_window=week&media_type=${type}`);
-                const data = await response.json();
-                const container = document.getElementById('trendingContainer');
-                container.innerHTML = '';
-                data.results?.slice(0, 8).forEach(item => {
-                    const movieCard = createMovieCard(item);
-                    container.appendChild(movieCard);
-                });
-            } catch (error) {
-                console.error('Error loading trending content:', error);
-            }
-        }
-
-        function createMovieCard(item) {
-            const col = document.createElement('div');
-            col.className = 'col-lg-3 col-md-4 col-sm-6';
-            const title = item.title || item.name;
-            const posterPath = item.poster_path ? `https://image.tmdb.org/t/p/w300${item.poster_path}` : 'https://via.placeholder.com/300x450?text=No+Image';
-            const rating = item.vote_average ? item.vote_average.toFixed(1) : 'N/A';
-            const year = item.release_date ? new Date(item.release_date).getFullYear() : 
-                        item.first_air_date ? new Date(item.first_air_date).getFullYear() : '';
-            
-            col.innerHTML = `
-                <div class="movie-card card-hover rounded-4 overflow-hidden h-100">
-                    <div class="position-relative">
-                        <img src="${posterPath}" class="img-fluid w-100" alt="${title}" style="height: 300px; object-fit: cover;">
-                        <div class="position-absolute top-0 end-0 m-2">
-                            <span class="badge bg-dark bg-opacity-75 text-white">
-                                <i class="fas fa-star text-warning me-1"></i>${rating}
-                            </span>
-                        </div>
-                    </div>
-                    <div class="p-3">
-                        <h6 class="text-white mb-2 text-truncate" title="${title}">${title}</h6>
-                        <div class="d-flex justify-content-between align-items-center">
-                            <small class="text-white-50">${year}</small>
-                            <button class="btn btn-sm btn-outline-primary" onclick="viewDetails(${item.id}, '${item.media_type || 'movie'}')">
-                                <i class="fas fa-play me-1"></i>Details
-                            </button>
-                        </div>
+    <!-- Rating Modal -->
+    <div id="rating-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden z-50">
+        <div class="bg-gray-800 p-6 rounded-lg max-w-sm w-full mx-4">
+            <h3 class="text-xl font-bold mb-4">Rate Content</h3>
+            <div class="mb-4">
+                <div class="flex justify-center space-x-1 mb-2">
+                    <div id="star-rating" class="flex">
+                        <i class="fas fa-star text-2xl text-gray-400 cursor-pointer" data-rating="1"></i>
+                        <i class="fas fa-star text-2xl text-gray-400 cursor-pointer" data-rating="2"></i>
+                        <i class="fas fa-star text-2xl text-gray-400 cursor-pointer" data-rating="3"></i>
+                        <i class="fas fa-star text-2xl text-gray-400 cursor-pointer" data-rating="4"></i>
+                        <i class="fas fa-star text-2xl text-gray-400 cursor-pointer" data-rating="5"></i>
                     </div>
                 </div>
-            `;
-            return col;
-        }
+                <p class="text-center text-sm text-gray-400">Click to rate (1-5 stars)</p>
+            </div>
+            <div class="flex space-x-4">
+                <button id="cancel-rating" class="flex-1 bg-gray-600 hover:bg-gray-700 py-2 rounded-lg">Cancel</button>
+                <button id="submit-rating" class="flex-1 bg-purple-600 hover:bg-purple-700 py-2 rounded-lg">Submit</button>
+            </div>
+        </div>
+    </div>
 
-        async function loadGenres() {
-            try {
-                const response = await fetch(`${API_BASE}/genres`);
-                const data = await response.json();
-                const container = document.getElementById('genresContainer');
-                container.innerHTML = '';
-                data.genres?.slice(0, 12).forEach(genre => {
-                    const col = document.createElement('div');
-                    col.className = 'col-lg-2 col-md-3 col-sm-4 col-6';
-                    col.innerHTML = `
-                        <button class="btn genre-tag w-100 py-3 rounded-4" onclick="exploreGenre(${genre.id}, '${genre.name}')">
-                            <i class="fas fa-film mb-2 d-block"></i>
-                            <div class="fw-medium">${genre.name}</div>
-                        </button>
-                    `;
-                    container.appendChild(col);
+    <!-- Loading Spinner -->
+    <div id="loading-spinner" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden z-50">
+        <div class="bg-gray-800 p-6 rounded-lg">
+            <i class="fas fa-spinner loading text-3xl text-purple-400"></i>
+            <p class="mt-2 text-center">Loading...</p>
+        </div>
+    </div>
+
+    <script>
+        // API Configuration
+        const API_BASE_URL = 'http://localhost:5000';
+        const TMDB_IMAGE_BASE = 'https://image.tmdb.org/t/p/w500';
+
+        // State Management
+        let currentUser = null;
+        let currentContentId = null;
+        let currentRating = 0;
+
+        // Utility Functions
+        const api = {
+            get: async (endpoint) => {
+                const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+                    credentials: 'include',
+                    headers: { 'Content-Type': 'application/json' }
                 });
-            } catch (error) {
-                console.error('Error loading genres:', error);
+                return response.json();
+            },
+            
+            post: async (endpoint, data) => {
+                const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+                return response.json();
+            },
+            
+            delete: async (endpoint) => {
+                const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+                    method: 'DELETE',
+                    credentials: 'include'
+                });
+                return response.json();
             }
-        }
+        };
 
-        function performSearch() {
-            const query = document.getElementById('searchInput').value.trim();
-            if (query) {
-                window.location.href = `/search?q=${encodeURIComponent(query)}`;
+        const ui = {
+            showLoading: () => document.getElementById('loading-spinner').classList.remove('hidden'),
+            hideLoading: () => document.getElementById('loading-spinner').classList.add('hidden'),
+            
+            showPage: (pageId) => {
+                document.querySelectorAll('.page').forEach(page => page.classList.add('hidden'));
+                document.getElementById(pageId).classList.remove('hidden');
+                document.querySelectorAll('.nav-link').forEach(link => link.classList.remove('text-purple-400'));
+                document.querySelector(`[data-page="${pageId.replace('-page', '')}"]`)?.classList.add('text-purple-400');
+            },
+            
+            showModal: (modalId) => document.getElementById(modalId).classList.remove('hidden'),
+            hideModal: (modalId) => document.getElementById(modalId).classList.add('hidden'),
+            
+            toast: (message, type = 'info') => {
+                const toast = document.createElement('div');
+                toast.className = `fixed top-4 right-4 px-6 py-3 rounded-lg text-white z-50 ${
+                    type === 'success' ? 'bg-green-600' : 
+                    type === 'error' ? 'bg-red-600' : 'bg-blue-600'
+                }`;
+                toast.textContent = message;
+                document.body.appendChild(toast);
+                setTimeout(() => toast.remove(), 3000);
             }
-        }
+        };
 
-        function quickSearch(category) {
-            window.location.href = `/search?type=${encodeURIComponent(category)}`;
-        }
-
-        function loadTrending(type) {
-            document.querySelectorAll('#trending .btn').forEach(btn => btn.classList.remove('active'));
-            event.target.classList.add('active');
-            loadTrendingContent(type);
-        }
-
-        function viewDetails(movieId, mediaType) {
-            window.location.href = `/movie/${movieId}?type=${mediaType}`;
-        }
-
-        function exploreGenre(genreId, genreName) {
-            window.location.href = `/search?type=by_genre&genre=${genreId}&name=${encodeURIComponent(genreName)}`;
-        }
-
-        function initializeTooltips() {
-            const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
-            tooltipTriggerList.map(function (tooltipTriggerEl) {
-                return new bootstrap.Tooltip(tooltipTriggerEl);
+        // Content Rendering
+        const renderContent = (items, containerId) => {
+            const container = document.getElementById(containerId);
+            const template = document.getElementById('content-card-template');
+            
+            container.innerHTML = '';
+            items.forEach(item => {
+                const card = template.content.cloneNode(true);
+                const img = card.querySelector('img');
+                const title = card.querySelector('.content-title');
+                const overview = card.querySelector('.content-overview');
+                const rating = card.querySelector('.rating-value');
+                const releaseDate = card.querySelector('.release-date');
+                const contentType = card.querySelector('.content-type');
+                const watchlistBtn = card.querySelector('.watchlist-btn');
+                const rateBtn = card.querySelector('.rate-btn');
+                
+                // Set content data
+                img.src = item.poster_path ? `${TMDB_IMAGE_BASE}${item.poster_path}` : 
+                         item.images?.jpg?.large_image_url || 'https://via.placeholder.com/300x450?text=No+Image';
+                img.alt = item.title || item.name;
+                title.textContent = item.title || item.name;
+                overview.textContent = (item.overview || item.synopsis || '').substring(0, 100) + '...';
+                rating.textContent = (item.vote_average || item.score || 0).toFixed(1);
+                releaseDate.textContent = item.release_date || item.first_air_date || item.aired?.from || 'N/A';
+                contentType.textContent = item.content_type || 'movie';
+                
+                // Event listeners
+                watchlistBtn.onclick = () => toggleWatchlist(item.id);
+                rateBtn.onclick = () => openRatingModal(item.id);
+                
+                container.appendChild(card);
             });
-        }
+        };
 
-        document.getElementById('searchInput').addEventListener('keypress', function(e) {
-            if (e.key === 'Enter') {
-                performSearch();
+        // Authentication
+        const auth = {
+            login: async (username, password) => {
+                const result = await api.post('/auth/login', { username, password });
+                if (result.user) {
+                    currentUser = result.user;
+                    updateAuthUI();
+                    ui.toast('Login successful!', 'success');
+                    return true;
+                }
+                ui.toast(result.error || 'Login failed', 'error');
+                return false;
+            },
+            
+            register: async (username, email, password) => {
+                const result = await api.post('/auth/register', { username, email, password });
+                if (result.message) {
+                    ui.toast('Registration successful! Please login.', 'success');
+                    return true;
+                }
+                ui.toast(result.error || 'Registration failed', 'error');
+                return false;
+            },
+            
+            logout: async () => {
+                await api.post('/auth/logout');
+                currentUser = null;
+                updateAuthUI();
+                ui.toast('Logged out successfully', 'success');
             }
-        });
+        };
 
-        window.addEventListener('scroll', function() {
-            const navbar = document.querySelector('.navbar');
-            if (window.scrollY > 100) {
-                navbar.style.background = 'rgba(15,23,42,0.95)';
+        const updateAuthUI = () => {
+            const authButtons = document.getElementById('auth-buttons');
+            const userMenu = document.getElementById('user-menu');
+            const username = document.getElementById('username');
+            
+            if (currentUser) {
+                authButtons.classList.add('hidden');
+                userMenu.classList.remove('hidden');
+                username.textContent = currentUser.username;
             } else {
-                navbar.style.background = 'rgba(15,23,42,0.8)';
+                authButtons.classList.remove('hidden');
+                userMenu.classList.add('hidden');
             }
+        };
+
+        // Content Actions
+        const toggleWatchlist = async (contentId) => {
+            if (!currentUser) {
+                ui.toast('Please login to use watchlist', 'error');
+                return;
+            }
+            
+            const result = await api.post('/watchlist', { content_id: contentId });
+            ui.toast(result.message || 'Watchlist updated', 'success');
+        };
+
+        const openRatingModal = (contentId) => {
+            if (!currentUser) {
+                ui.toast('Please login to rate content', 'error');
+                return;
+            }
+            
+            currentContentId = contentId;
+            currentRating = 0;
+            updateStarRating();
+            ui.showModal('rating-modal');
+        };
+
+        const updateStarRating = () => {
+            document.querySelectorAll('#star-rating i').forEach((star, index) => {
+                star.className = `fas fa-star text-2xl cursor-pointer ${
+                    index < currentRating ? 'text-yellow-400' : 'text-gray-400'
+                }`;
+            });
+        };
+
+        const submitRating = async () => {
+            if (currentRating === 0) {
+                ui.toast('Please select a rating', 'error');
+                return;
+            }
+            
+            const result = await api.post('/rate', {
+                content_id: currentContentId,
+                rating: currentRating * 2 // Convert 1-5 to 1-10
+            });
+            
+            ui.toast(result.message || 'Rating submitted', 'success');
+            ui.hideModal('rating-modal');
+        };
+
+        // Data Loading
+        const loadContent = {
+            featured: async () => {
+                const data = await api.get('/featured');
+                renderContent(data.featured || [], 'featured-content');
+            },
+            
+            recommendations: async () => {
+                if (!currentUser) return;
+                const data = await api.get('/recommendations');
+                renderContent(data.recommendations || [], 'recommendations-content');
+            },
+            
+            trending: async (type = 'all') => {
+                const data = await api.get(`/trending?type=${type}`);
+                const items = [...(data.movies || []), ...(data.tv || []), ...(data.anime || [])];
+                renderContent(items, 'trending-content');
+            },
+            
+            search: async (query, type = 'all') => {
+                const data = await api.get(`/search?q=${encodeURIComponent(query)}&type=${type}`);
+                const items = [...(data.movies || []), ...(data.tv || []), ...(data.anime || [])];
+                renderContent(items, 'search-results');
+            },
+            
+            watchlist: async () => {
+                if (!currentUser) return;
+                const data = await api.get('/watchlist');
+                renderContent(data.watchlist || [], 'watchlist-content');
+            }
+        };
+
+        // Event Listeners
+        document.addEventListener('DOMContentLoaded', () => {
+            // Navigation
+            document.querySelectorAll('.nav-link').forEach(link => {
+                link.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    const page = e.target.dataset.page;
+                    ui.showPage(`${page}-page`);
+                    
+                    // Load page-specific content
+                    if (page === 'trending') loadContent.trending();
+                    else if (page === 'watchlist') loadContent.watchlist();
+                });
+            });
+            
+            // Auth buttons
+            document.getElementById('login-btn').onclick = () => {
+                document.getElementById('auth-title').textContent = 'Login';
+                document.getElementById('auth-submit-text').textContent = 'Login';
+                document.getElementById('auth-switch').textContent = "Don't have an account? Register";
+                document.getElementById('email-field').classList.add('hidden');
+                ui.showModal('auth-modal');
+            };
+            
+            document.getElementById('register-btn').onclick = () => {
+                document.getElementById('auth-title').textContent = 'Register';
+                document.getElementById('auth-submit-text').textContent = 'Register';
+                document.getElementById('auth-switch').textContent = "Already have an account? Login";
+                document.getElementById('email-field').classList.remove('hidden');
+                ui.showModal('auth-modal');
+            };
+            
+            document.getElementById('logout-btn').onclick = auth.logout;
+            
+            // Modal controls
+            document.getElementById('close-modal').onclick = () => ui.hideModal('auth-modal');
+            document.getElementById('cancel-rating').onclick = () => ui.hideModal('rating-modal');
+            document.getElementById('submit-rating').onclick = submitRating;
+            
+            // Auth form
+            document.getElementById('auth-form').onsubmit = async (e) => {
+                e.preventDefault();
+                const username = document.getElementById('auth-username').value;
+                const email = document.getElementById('auth-email').value;
+                const password = document.getElementById('auth-password').value;
+                const isLogin = document.getElementById('auth-title').textContent === 'Login';
+                
+                ui.showLoading();
+                const success = isLogin ? 
+                    await auth.login(username, password) :
+                    await auth.register(username, email, password);
+                ui.hideLoading();
+                
+                if (success) {
+                    ui.hideModal('auth-modal');
+                    if (isLogin) {
+                        loadContent.recommendations();
+                    }
+                }
+            };
+            
+            // Auth switch
+            document.getElementById('auth-switch').onclick = () => {
+                const isLogin = document.getElementById('auth-title').textContent === 'Login';
+                if (isLogin) {
+                    document.getElementById('auth-title').textContent = 'Register';
+                    document.getElementById('auth-submit-text').textContent = 'Register';
+                    document.getElementById('auth-switch').textContent = "Already have an account? Login";
+                    document.getElementById('email-field').classList.remove('hidden');
+                } else {
+                    document.getElementById('auth-title').textContent = 'Login';
+                    document.getElementById('auth-submit-text').textContent = 'Login';
+                    document.getElementById('auth-switch').textContent = "Don't have an account? Register";
+                    document.getElementById('email-field').classList.add('hidden');
+                }
+            };
+            
+            // Search
+            document.getElementById('search-btn').onclick = () => {
+                const query = document.getElementById('search-input').value;
+                const type = document.getElementById('search-type').value;
+                if (query.trim()) {
+                    loadContent.search(query, type);
+                }
+            };
+            
+            document.getElementById('search-input').onkeypress = (e) => {
+                if (e.key === 'Enter') {
+                    document.getElementById('search-btn').click();
+                }
+            };
+            
+            // Trending filters
+            document.querySelectorAll('.trending-filter').forEach(filter => {
+                filter.onclick = () => {
+                    document.querySelectorAll('.trending-filter').forEach(f => {
+                        f.classList.remove('active', 'bg-purple-600');
+                        f.classList.add('bg-gray-600');
+                    });
+                    filter.classList.add('active', 'bg-purple-600');
+                    filter.classList.remove('bg-gray-600');
+                    loadContent.trending(filter.dataset.type);
+                };
+            });
+            
+            // Star rating
+            document.querySelectorAll('#star-rating i').forEach((star, index) => {
+                star.onclick = () => {
+                    currentRating = index + 1;
+                    updateStarRating();
+                };
+            });
+            
+            // Initial load
+            loadContent.featured();
+            loadContent.trending();
         });
     </script>
 </body>
