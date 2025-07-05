@@ -1,42 +1,7 @@
-# Flask Web Framework
 Flask
+Flask-SQLAlchemy
 Flask-CORS
-Flask-Limiter
-Flask-Caching
-
-# Database
-psycopg2-binary
-SQLAlchemy
-
-# Authentication & Security
-PyJWT
 Werkzeug
-
-# HTTP Requests
 requests
-
-# Data Processing
-numpy
-pandas
-
-# Machine Learning (for basic recommendations)
-scikit-learn
-
-# Utilities
-python-dotenv
-gunicorn
-
-# Background Tasks
-celery
-redis
-
-# Logging and Monitoring
-python-json-logger
-
-# Date/Time handling
-python-dateutil
-
-# Environment Variables
-python-decouple
 
 gunicorn
