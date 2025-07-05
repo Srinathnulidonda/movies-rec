@@ -38,9 +38,15 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 # Initialize Flask app
 app = Flask(__name__)
+def get_database_url():
+    database_url = os.environ.get('DATABASE_URL', 'sqlite:///movies.db')
+    if database_url.startswith('postgres://'):
+        database_url = database_url.replace('postgres://', 'postgresql://')
+    return database_url
+
 app.config.update({
     'SECRET_KEY': os.environ.get('SECRET_KEY', 'dev-secret-key'),
-    'SQLALCHEMY_DATABASE_URI': os.environ.get('DATABASE_URL', 'sqlite:///movies.db').replace('postgres://', 'postgresql://youtube_monitoring_user:0MUE9e1YzFxocZCDttYBCjcN9bUQHSgm@dpg-d1h95qjipnbc73bj5rhg-a/youtube_monitoring'),
+    'SQLALCHEMY_DATABASE_URI': get_database_url(),
     'SQLALCHEMY_TRACK_MODIFICATIONS': False,
     'JWT_SECRET_KEY': os.environ.get('JWT_SECRET_KEY', 'jwt-secret'),
     'JWT_ACCESS_TOKEN_EXPIRES': timedelta(days=7),
@@ -1064,19 +1070,33 @@ def ratelimit_handler(e):
 
 # Initialize Database
 def init_db():
-    with app.app_context():  # Ensure the app context is available
-        db.create_all()
-        # Create admin user if it doesn't exist
-        admin = User.query.filter_by(username='admin').first()
-        if not admin:
-            admin = User(
-                username='admin',
-                email='admin@example.com',
-                password_hash=generate_password_hash('admin123'),
-                is_admin=True
-            )
-            db.session.add(admin)
-            db.session.commit()
+    """Initialize database with proper error handling"""
+    try:
+        with app.app_context():
+            # Drop and recreate tables in development
+            if os.environ.get('FLASK_ENV') == 'development':
+                db.drop_all()
+            
+            db.create_all()
+            
+            # Create admin user if it doesn't exist
+            admin = User.query.filter_by(username='admin').first()
+            if not admin:
+                admin = User(
+                    username='admin',
+                    email='admin@example.com',
+                    password_hash=generate_password_hash('admin123'),
+                    is_admin=True
+                )
+                db.session.add(admin)
+                db.session.commit()
+                logging.info("Admin user created")
+            
+            logging.info("Database initialized successfully")
+            
+    except Exception as e:
+        logging.error(f"Database initialization error: {e}")
+        raise
 # Background Scheduler
 scheduler = BackgroundScheduler()
 scheduler.add_job(
@@ -1215,12 +1235,22 @@ if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('FLASK_ENV') == 'development'
     
-    # Initialize database within app context
-    with app.app_context():
-        init_db()
-        migrate = Migrate(app, db)
-        # Initialize background tasks
-        sync_content_data()
-        update_similarity_matrix()
+    # Initialize database
+    init_db()
+    
+    # Initialize migrations
+    migrate = Migrate(app, db)
+    
+    # Run initial sync in background thread to avoid blocking startup
+    def run_initial_sync():
+        try:
+            with app.app_context():
+                sync_content_data()
+                update_similarity_matrix()
+        except Exception as e:
+            logging.error(f"Initial sync error: {e}")
+    
+    # Start background sync after a delay
+    threading.Timer(10.0, run_initial_sync).start()
     
     app.run(host='0.0.0.0', port=port, debug=debug)
