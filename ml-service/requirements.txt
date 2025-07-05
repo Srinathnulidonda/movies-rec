@@ -3,6 +3,6 @@ Flask-CORS
 numpy
 pandas
 scikit-learn
-joblib
 requests
+redis
 gunicorn
