@@ -1,16 +1,59 @@
-flask
+# Flask Web Framework
+Flask
+Flask-CORS
+
+# Database
+psycopg2-binary
+
+# Data Processing
 numpy
 pandas
+
+# Machine Learning
 scikit-learn
-redis
-celery
-implicit
-lightgbm
-optuna
-sentence-transformers
-faiss-cpu
-psutil
 scipy
-transformers
-torch
+
+# Model Persistence
+joblib
+
+# HTTP Requests
+requests
+
+# Natural Language Processing
+nltk
+
+# Performance Optimization
+numba
+
+# Utilities
+python-dotenv
+gunicorn
+
+# Mathematical Operations
+sympy
+
+# Memory Management
+psutil
+
+# JSON Handling
+ujson
+
+# Date/Time handling
+python-dateutil
+
+# Environment Variables
+python-decouple
+
+# Logging
+python-json-logger
+
+# Threading and Concurrency
+concurrent-futures
+
+# Data Validation
+marshmallow
+
+# Caching
+cachetools
+
 gunicorn
