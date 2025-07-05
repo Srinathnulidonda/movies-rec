@@ -1063,22 +1063,20 @@ def ratelimit_handler(e):
     return jsonify({"error": "Rate limit exceeded"}), 429
 
 # Initialize Database
-@app.before_first_request
-def create_tables():
-    db.create_all()
-    
-    # Create admin user if doesn't exist
-    admin = User.query.filter_by(username='admin').first()
-    if not admin:
-        admin = User(
-            username='admin',
-            email='admin@example.com',
-            password_hash=generate_password_hash('admin123'),
-            is_admin=True
-        )
-        db.session.add(admin)
-        db.session.commit()
-
+def init_db():
+    with app.app_context():  # Ensure the app context is available
+        db.create_all()
+        # Create admin user if it doesn't exist
+        admin = User.query.filter_by(username='admin').first()
+        if not admin:
+            admin = User(
+                username='admin',
+                email='admin@example.com',
+                password_hash=generate_password_hash('admin123'),
+                is_admin=True
+            )
+            db.session.add(admin)
+            db.session.commit()
 # Background Scheduler
 scheduler = BackgroundScheduler()
 scheduler.add_job(
@@ -1213,14 +1211,14 @@ def ml_user_interactions():
 def health_check():
     return jsonify({"status": "healthy", "timestamp": datetime.utcnow().isoformat()})
 
-# Production Configuration
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('FLASK_ENV') == 'development'
     
+    # Initialize database
+    init_db()
+    migrate = Migrate(app, db)
     # Initialize background tasks
     sync_content_data()
     update_similarity_matrix()
-    
     app.run(host='0.0.0.0', port=port, debug=debug)
-    migrate = Migrate(app, db)
