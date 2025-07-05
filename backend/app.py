@@ -16,6 +16,7 @@ import requests
 import asyncio
 import aiohttp
 from concurrent.futures import ThreadPoolExecutor
+from flask_migrate import Migrate
 
 
 from flask import Flask, request, jsonify, g
@@ -92,11 +93,10 @@ class Content(db.Model):
     backdrop_path = db.Column(db.String(200))
     language = db.Column(db.String(10))
     popularity = db.Column(db.Float, default=0)
-    metadata = db.Column(db.JSON)
+    meta_data = db.Column(db.JSON)  # Changed from 'metadata' to 'meta_data'
     source = db.Column(db.String(20))  # tmdb, omdb, jikan, custom
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
 class UserInteraction(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
@@ -334,21 +334,21 @@ def sync_content_data():
                     existing = Content.query.filter_by(external_id=str(item['id']), source='tmdb').first()
                     if not existing:
                         content = Content(
-                            external_id=str(item['id']),
-                            title=item.get('title', item.get('name', '')),
-                            original_title=item.get('original_title', item.get('original_name', '')),
-                            type='movie' if 'title' in item else 'tv',
-                            genres=item.get('genre_ids', []),
-                            overview=item.get('overview', ''),
-                            release_date=datetime.strptime(item.get('release_date', item.get('first_air_date', '1900-01-01')), '%Y-%m-%d').date() if item.get('release_date') or item.get('first_air_date') else None,
-                            rating=item.get('vote_average', 0),
-                            poster_path=item.get('poster_path', ''),
-                            backdrop_path=item.get('backdrop_path', ''),
-                            language=item.get('original_language', 'en'),
-                            popularity=item.get('popularity', 0),
-                            metadata=item,
-                            source='tmdb'
-                        )
+    external_id=str(item['id']),
+    title=item.get('title', item.get('name', '')),
+    original_title=item.get('original_title', item.get('original_name', '')),
+    type='movie' if 'title' in item else 'tv',
+    genres=item.get('genre_ids', []),
+    overview=item.get('overview', ''),
+    release_date=datetime.strptime(item.get('release_date', item.get('first_air_date', '1900-01-01')), '%Y-%m-%d').date() if item.get('release_date') or item.get('first_air_date') else None,
+    rating=item.get('vote_average', 0),
+    poster_path=item.get('poster_path', ''),
+    backdrop_path=item.get('backdrop_path', ''),
+    language=item.get('original_language', 'en'),
+    popularity=item.get('popularity', 0),
+    meta_data=item,  # Changed from 'metadata' to 'meta_data'
+    source='tmdb'
+)
                         db.session.add(content)
         
         # Fetch anime content
@@ -358,20 +358,20 @@ def sync_content_data():
                 existing = Content.query.filter_by(external_id=str(item['mal_id']), source='jikan').first()
                 if not existing:
                     content = Content(
-                        external_id=str(item['mal_id']),
-                        title=item.get('title', ''),
-                        original_title=item.get('title_japanese', ''),
-                        type='anime',
-                        genres=[g['name'] for g in item.get('genres', [])],
-                        overview=item.get('synopsis', ''),
-                        release_date=datetime.strptime(item.get('aired', {}).get('from', '1900-01-01T00:00:00'), '%Y-%m-%dT%H:%M:%S').date() if item.get('aired', {}).get('from') else None,
-                        rating=item.get('score', 0),
-                        poster_path=item.get('images', {}).get('jpg', {}).get('image_url', ''),
-                        language='ja',
-                        popularity=item.get('popularity', 0),
-                        metadata=item,
-                        source='jikan'
-                    )
+    external_id=str(item['mal_id']),
+    title=item.get('title', ''),
+    original_title=item.get('title_japanese', ''),
+    type='anime',
+    genres=[g['name'] for g in item.get('genres', [])],
+    overview=item.get('synopsis', ''),
+    release_date=datetime.strptime(item.get('aired', {}).get('from', '1900-01-01T00:00:00'), '%Y-%m-%dT%H:%M:%S').date() if item.get('aired', {}).get('from') else None,
+    rating=item.get('score', 0),
+    poster_path=item.get('images', {}).get('jpg', {}).get('image_url', ''),
+    language='ja',
+    popularity=item.get('popularity', 0),
+    meta_data=item,  # Changed from 'metadata' to 'meta_data'
+    source='jikan'
+)
                     db.session.add(content)
         
         db.session.commit()
@@ -1223,3 +1223,4 @@ if __name__ == '__main__':
     update_similarity_matrix()
     
     app.run(host='0.0.0.0', port=port, debug=debug)
+    migrate = Migrate(app, db)
