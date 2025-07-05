@@ -42,6 +42,9 @@ def get_database_url():
     database_url = os.environ.get('DATABASE_URL', 'sqlite:///movies.db')
     if database_url.startswith('postgres://'):
         database_url = database_url.replace('postgres://', 'postgresql://')
+    # Ensure SQLite file path is absolute for consistency
+    if database_url.startswith('sqlite:///') and not database_url.startswith('sqlite:////'):
+        database_url = f"sqlite:///{os.path.abspath('movies.db')}"
     return database_url
 
 app.config.update({
@@ -341,22 +344,23 @@ def sync_content_data():
                     existing = Content.query.filter_by(external_id=str(item['id']), source='tmdb').first()
                     if not existing:
                         content = Content(
-    external_id=str(item['id']),
-    title=item.get('title', item.get('name', '')),
-    original_title=item.get('original_title', item.get('original_name', '')),
-    type='movie' if 'title' in item else 'tv',
-    genres=item.get('genre_ids', []),
-    overview=item.get('overview', ''),
-    release_date=datetime.strptime(item.get('release_date', item.get('first_air_date', '1900-01-01')), '%Y-%m-%d').date() if item.get('release_date') or item.get('first_air_date') else None,
-    rating=item.get('vote_average', 0),
-    poster_path=item.get('poster_path', ''),
-    backdrop_path=item.get('backdrop_path', ''),
-    language=item.get('original_language', 'en'),
-    popularity=item.get('popularity', 0),
-    meta_data=item,  # Changed from 'metadata' to 'meta_data'
-    source='tmdb'
-)
+                            external_id=str(item['id']),
+                            title=item.get('title', item.get('name', '')),
+                            original_title=item.get('original_title', item.get('original_name', '')),
+                            type='movie' if 'title' in item else 'tv',
+                            genres=item.get('genre_ids', []),
+                            overview=item.get('overview', ''),
+                            release_date=datetime.strptime(item.get('release_date', item.get('first_air_date', '1900-01-01')), '%Y-%m-%d').date() if item.get('release_date') or item.get('first_air_date') else None,
+                            rating=item.get('vote_average', 0),
+                            poster_path=item.get('poster_path', ''),
+                            backdrop_path=item.get('backdrop_path', ''),
+                            language=item.get('original_language', 'en'),
+                            popularity=item.get('popularity', 0),
+                            meta_data=item,
+                            source='tmdb'
+                        )
                         db.session.add(content)
+                        logging.info(f"Added TMDB content: {content.title}")
         
         # Fetch anime content
         anime_data = content_fetcher.fetch_anime_content()
@@ -365,28 +369,30 @@ def sync_content_data():
                 existing = Content.query.filter_by(external_id=str(item['mal_id']), source='jikan').first()
                 if not existing:
                     content = Content(
-    external_id=str(item['mal_id']),
-    title=item.get('title', ''),
-    original_title=item.get('title_japanese', ''),
-    type='anime',
-    genres=[g['name'] for g in item.get('genres', [])],
-    overview=item.get('synopsis', ''),
-    release_date=datetime.strptime(item.get('aired', {}).get('from', '1900-01-01T00:00:00'), '%Y-%m-%dT%H:%M:%S').date() if item.get('aired', {}).get('from') else None,
-    rating=item.get('score', 0),
-    poster_path=item.get('images', {}).get('jpg', {}).get('image_url', ''),
-    language='ja',
-    popularity=item.get('popularity', 0),
-    meta_data=item,  # Changed from 'metadata' to 'meta_data'
-    source='jikan'
-)
+                        external_id=str(item['mal_id']),
+                        title=item.get('title', ''),
+                        original_title=item.get('title_japanese', ''),
+                        type='anime',
+                        genres=[g['name'] for g in item.get('genres', [])],
+                        overview=item.get('synopsis', ''),
+                        release_date=datetime.strptime(item.get('aired', {}).get('from', '1900-01-01T00:00:00'), '%Y-%m-%dT%H:%M:%S').date() if item.get('aired', {}).get('from') else None,
+                        rating=item.get('score', 0),
+                        poster_path=item.get('images', {}).get('jpg', {}).get('image_url', ''),
+                        language='ja',
+                        popularity=item.get('popularity', 0),
+                        meta_data=item,
+                        source='jikan'
+                    )
                     db.session.add(content)
+                    logging.info(f"Added anime content: {content.title}")
         
         db.session.commit()
-        logging.info("Content sync completed")
+        logging.info(f"Content sync completed. Total content items: {Content.query.count()}")
         
     except Exception as e:
         logging.error(f"Content sync error: {e}")
         db.session.rollback()
+        raise
 
 def update_similarity_matrix():
     """Update content similarity matrix"""
@@ -1073,10 +1079,11 @@ def init_db():
     """Initialize database with proper error handling"""
     try:
         with app.app_context():
+            # Ensure database connection is established
+            db.engine.connect()
             # Drop and recreate tables in development
             if os.environ.get('FLASK_ENV') == 'development':
                 db.drop_all()
-            
             db.create_all()
             
             # Create admin user if it doesn't exist
@@ -1092,11 +1099,19 @@ def init_db():
                 db.session.commit()
                 logging.info("Admin user created")
             
+            # Verify content table exists
+            if db.engine.dialect.has_table(db.engine, 'content'):
+                logging.info("Content table verified")
+            else:
+                logging.error("Content table not created")
+                raise Exception("Failed to create content table")
+            
             logging.info("Database initialized successfully")
             
     except Exception as e:
         logging.error(f"Database initialization error: {e}")
         raise
+    
 # Background Scheduler
 scheduler = BackgroundScheduler()
 scheduler.add_job(
