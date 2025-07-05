@@ -8,6 +8,7 @@ psycopg2-binary
 python-dotenv
 requests
 numpy
+Flask-Migrate
 pandas
 scikit-learn
 APScheduler
