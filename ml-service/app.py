@@ -21,7 +21,7 @@ CORS(app)
 
 # Configuration
 REDIS_URL = os.environ.get('REDIS_URL', 'redis://localhost:6379')
-MAIN_BACKEND_URL = os.environ.get('MAIN_BACKEND_URL', 'http://localhost:5000')
+MAIN_BACKEND_URL = os.environ.get('MAIN_BACKEND_URL', 'https://movies-rec-1hcv.onrender.com')
 ML_SERVICE_PORT = int(os.environ.get('ML_SERVICE_PORT', 5001))
 
 # Initialize Redis for caching
