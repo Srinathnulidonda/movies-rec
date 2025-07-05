@@ -54,11 +54,11 @@ limiter = Limiter(app, key_func=get_remote_address, default_limits=["200 per day
 cache = Cache(app)
 
 # API Keys
-TMDB_API_KEY = os.environ.get('TMDB_API_KEY', '')
-OMDB_API_KEY = os.environ.get('OMDB_API_KEY', '')
-TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
-TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', '')
-ML_SERVICE_URL = os.environ.get('ML_SERVICE_URL', 'http://localhost:5001')
+TMDB_API_KEY = os.environ.get('TMDB_API_KEY', '1cf86635f20bb2aff8e70940e7c3ddd5')
+OMDB_API_KEY = os.environ.get('OMDB_API_KEY', '52260795')
+TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '7689567537:AAGvDtu94OlLlTiWpfjSfpl_dd_Osi_2W7c')
+TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', '-1002566510721')
+ML_SERVICE_URL = os.environ.get('ML_SERVICE_URL', 'https://movies-rec-ml-service.onrender.com')
 ML_SERVICE_TIMEOUT = 5  # seconds
 
 
