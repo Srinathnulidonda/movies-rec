@@ -1,3 +1,4 @@
+#backend/app.py
 import os
 import json
 import requests
@@ -39,7 +40,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 app = Flask(__name__)
 app.config.update({
     'SECRET_KEY': os.environ.get('SECRET_KEY', 'dev-secret-key'),
-    'SQLALCHEMY_DATABASE_URI': os.environ.get('DATABASE_URL', 'sqlite:///movies.db').replace('postgres://', 'postgresql://'),
+    'SQLALCHEMY_DATABASE_URI': os.environ.get('DATABASE_URL', 'sqlite:///movies.db').replace('postgres://', 'postgresql://youtube_monitoring_user:0MUE9e1YzFxocZCDttYBCjcN9bUQHSgm@dpg-d1h95qjipnbc73bj5rhg-a/youtube_monitoring'),
     'SQLALCHEMY_TRACK_MODIFICATIONS': False,
     'JWT_SECRET_KEY': os.environ.get('JWT_SECRET_KEY', 'jwt-secret'),
     'JWT_ACCESS_TOKEN_EXPIRES': timedelta(days=7),
@@ -696,9 +697,8 @@ def search_content():
         # Search in database
         search_filter = Content.title.ilike(f'%{query}%') | Content.overview.ilike(f'%{query}%')
         
-        if content_type != 'all':
-            search_filter = search_filter & (Content.type == content_type)
-        
+        if content_type != 'all' and content_type in ['movie', 'tv', 'anime']:
+            search_filter = search_filter & (Content.type == content_type)        
         results = Content.query.filter(search_filter).order_by(Content.popularity.desc()).limit(limit).all()
         
         # If not enough results, search external APIs
@@ -854,7 +854,7 @@ def trending_content():
         if region != 'global':
             query = query.filter_by(language=region)
         
-        if content_type != 'all':
+        if content_type != 'all' and content_type != 'trending':
             query = query.filter_by(type=content_type)
         
         # Get trending based on recent interactions and popularity
@@ -1215,10 +1215,12 @@ if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('FLASK_ENV') == 'development'
     
-    # Initialize database
-    init_db()
-    migrate = Migrate(app, db)
-    # Initialize background tasks
-    sync_content_data()
-    update_similarity_matrix()
+    # Initialize database within app context
+    with app.app_context():
+        init_db()
+        migrate = Migrate(app, db)
+        # Initialize background tasks
+        sync_content_data()
+        update_similarity_matrix()
+    
     app.run(host='0.0.0.0', port=port, debug=debug)
