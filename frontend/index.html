@@ -2,881 +2,542 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <meta name="theme-color" content="#1f2937">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <title>MovieRecs Mobile</title>
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css" rel="stylesheet">
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CineStream - Movie & TV Recommendations</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
     <style>
-        /* Mobile-First Responsive Styles */
-        .gradient-bg { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
-        .card-hover { transition: transform 0.3s ease; }
-        .card-hover:hover { transform: translateY(-2px); }
-        .card-hover:active { transform: scale(0.98); }
-        .glass-effect { backdrop-filter: blur(10px); background: rgba(255, 255, 255, 0.1); }
-        .loading { animation: spin 1s linear infinite; }
+        :root { --bg-primary: #0f0f0f; --bg-secondary: #1a1a1a; --bg-card: #2a2a2a; --text-primary: #ffffff; --text-secondary: #b3b3b3; --accent: #e50914; --accent-hover: #f40612; --border: #3a3a3a; --gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
+        [data-theme="light"] { --bg-primary: #ffffff; --bg-secondary: #f8f9fa; --bg-card: #ffffff; --text-primary: #212529; --text-secondary: #6c757d; --border: #dee2e6; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: var(--bg-primary); color: var(--text-primary); transition: all 0.3s ease; overflow-x: hidden; }
+        .navbar { background: var(--bg-secondary) !important; border-bottom: 1px solid var(--border); backdrop-filter: blur(10px); }
+        .navbar-brand { font-weight: 700; font-size: 1.5rem; color: var(--accent) !important; }
+        .nav-link { color: var(--text-primary) !important; transition: color 0.3s ease; }
+        .nav-link:hover { color: var(--accent) !important; }
+        .hero { background: var(--gradient); min-height: 60vh; display: flex; align-items: center; position: relative; overflow: hidden; }
+        .hero::before { content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1000"><polygon fill="rgba(255,255,255,0.1)" points="0,1000 1000,0 1000,1000"/></svg>'); }
+        .hero-content { position: relative; z-index: 2; }
+        .hero h1 { font-size: 3.5rem; font-weight: 700; margin-bottom: 1rem; text-shadow: 2px 2px 4px rgba(0,0,0,0.5); }
+        .hero p { font-size: 1.25rem; margin-bottom: 2rem; text-shadow: 1px 1px 2px rgba(0,0,0,0.5); }
+        .btn-primary { background: var(--accent); border: none; padding: 12px 30px; font-weight: 600; transition: all 0.3s ease; }
+        .btn-primary:hover { background: var(--accent-hover); transform: translateY(-2px); box-shadow: 0 8px 25px rgba(229,9,20,0.3); }
+        .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; transition: all 0.3s ease; overflow: hidden; }
+        .card:hover { transform: translateY(-5px); box-shadow: 0 10px 30px rgba(0,0,0,0.3); }
+        .card-img-top { height: 300px; object-fit: cover; transition: transform 0.3s ease; }
+        .card:hover .card-img-top { transform: scale(1.05); }
+        .card-body { padding: 1.5rem; }
+        .card-title { color: var(--text-primary); font-weight: 600; margin-bottom: 0.5rem; }
+        .card-text { color: var(--text-secondary); font-size: 0.9rem; }
+        .section-title { font-size: 2rem; font-weight: 700; margin-bottom: 2rem; color: var(--text-primary); }
+        .content-slider { display: flex; overflow-x: auto; gap: 1rem; padding: 1rem 0; scroll-behavior: smooth; }
+        .content-slider::-webkit-scrollbar { height: 8px; }
+        .content-slider::-webkit-scrollbar-track { background: var(--bg-secondary); border-radius: 4px; }
+        .content-slider::-webkit-scrollbar-thumb { background: var(--accent); border-radius: 4px; }
+        .content-item { flex: 0 0 250px; }
+        .rating { color: #ffc107; }
+        .genre-badge { background: var(--accent); color: white; padding: 0.25rem 0.75rem; border-radius: 20px; font-size: 0.8rem; margin-right: 0.5rem; margin-bottom: 0.5rem; display: inline-block; }
+        .search-container { position: relative; max-width: 600px; margin: 0 auto; }
+        .search-input { background: var(--bg-card); border: 1px solid var(--border); color: var(--text-primary); padding: 15px 50px 15px 20px; border-radius: 50px; width: 100%; transition: all 0.3s ease; }
+        .search-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(229,9,20,0.1); }
+        .search-btn { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: var(--accent); border: none; color: white; padding: 10px 15px; border-radius: 50%; }
+        .theme-toggle { background: var(--bg-card); border: 1px solid var(--border); color: var(--text-primary); padding: 8px 12px; border-radius: 8px; cursor: pointer; transition: all 0.3s ease; }
+        .theme-toggle:hover { background: var(--accent); color: white; }
+        .loading { text-align: center; padding: 3rem; }
+        .spinner { border: 4px solid var(--border); border-top: 4px solid var(--accent); border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto 1rem; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        
-        /* Mobile Navigation */
-        .mobile-menu { transform: translateX(-100%); transition: transform 0.3s ease; }
-        .mobile-menu.active { transform: translateX(0); }
-        .mobile-overlay { opacity: 0; visibility: hidden; transition: all 0.3s ease; }
-        .mobile-overlay.active { opacity: 1; visibility: visible; }
-        .nav-link { transition: color 0.3s ease; }
-        .nav-link:hover { color: #a855f7; }
-        
-        /* Responsive Grid */
-        .content-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem; }
-        @media (min-width: 768px) { .content-grid { grid-template-columns: repeat(3, 1fr); gap: 1.5rem; } }
-        @media (min-width: 1024px) { .content-grid { grid-template-columns: repeat(4, 1fr); } }
-        
-        /* Mobile-Optimized Components */
-        .search-container { display: flex; flex-direction: column; gap: 1rem; }
-        @media (min-width: 640px) { .search-container { flex-direction: row; gap: 1rem; } }
-        .filter-container { display: flex; flex-wrap: wrap; gap: 0.5rem; }
-        .modal-content { margin: 1rem; max-width: calc(100% - 2rem); }
-        .card-image { height: 10rem; }
-        @media (min-width: 640px) { .card-image { height: 12rem; } }
-        
-        /* Touch-Friendly Elements */
-        .touch-target { min-height: 44px; min-width: 44px; }
-        .btn-mobile { padding: 0.75rem 1rem; font-size: 0.875rem; }
-        .input-mobile { padding: 0.75rem; font-size: 16px; /* Prevents zoom on iOS */ }
-        
-        /* Safe Area Support */
-        .safe-area-top { padding-top: env(safe-area-inset-top); }
-        .safe-area-bottom { padding-bottom: env(safe-area-inset-bottom); }
-        
-        /* Mobile Bottom Navigation */
-        .mobile-bottom-nav { 
-            position: fixed; 
-            bottom: 0; 
-            left: 0; 
-            right: 0; 
-            z-index: 40; 
-            background: #1f2937;
-            border-top: 1px solid #374151;
-            padding-bottom: env(safe-area-inset-bottom);
-        }
-        .content-container { padding-bottom: 5rem; }
-        .bottom-nav-item { 
-            flex: 1; 
-            display: flex; 
-            flex-direction: column; 
-            align-items: center; 
-            padding: 0.5rem; 
-            transition: color 0.3s ease;
-            min-height: 44px;
-        }
-        .bottom-nav-item.active { color: #a855f7; }
-        .bottom-nav-item i { font-size: 1.25rem; margin-bottom: 0.25rem; }
-        .bottom-nav-item span { font-size: 0.75rem; }
-        
-        /* Swipe Container */
-        .swipe-container { 
-            overflow-x: auto; 
-            display: flex; 
-            gap: 1rem; 
-            padding: 1rem 0;
-            scrollbar-width: none;
-            -ms-overflow-style: none;
-        }
-        .swipe-container::-webkit-scrollbar { display: none; }
-        .swipe-item { flex: 0 0 auto; width: 120px; }
-        @media (min-width: 640px) { .swipe-item { width: 150px; } }
-        
-        /* Animations */
-        .fade-in { animation: fade-in 0.5s ease-out; }
-        @keyframes fade-in { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
-        .slide-in { animation: slide-in 0.3s ease-out; }
-        @keyframes slide-in { from { transform: translateY(100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
-        
-        /* Performance Optimizations */
-        .hardware-accelerated { transform: translateZ(0); will-change: transform; }
-        .tap-highlight-transparent { -webkit-tap-highlight-color: transparent; }
-        .touch-action-manipulation { touch-action: manipulation; }
-        
-        /* Loading States */
-        .skeleton { 
-            background: linear-gradient(90deg, #374151 25%, #4b5563 50%, #374151 75%); 
-            background-size: 200% 100%; 
-            animation: skeleton-loading 1.5s infinite; 
-        }
-        @keyframes skeleton-loading { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
-        
-        /* Accessibility */
-        .focus-ring:focus-visible { outline: 2px solid #a855f7; outline-offset: 2px; }
-        .screen-reader-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
-        
-        /* Hide desktop nav on mobile */
-        .nav-desktop { display: none; }
-        @media (min-width: 768px) { .nav-desktop { display: flex; } }
-        .nav-mobile { display: block; }
-        @media (min-width: 768px) { .nav-mobile { display: none; } }
-        
-        /* Responsive Typography */
-        .text-responsive { font-size: 0.875rem; }
-        @media (min-width: 640px) { .text-responsive { font-size: 1rem; } }
-        
-        /* Pull to Refresh */
-        .pull-to-refresh { min-height: 100vh; overflow-y: auto; }
+        .modal-content { background: var(--bg-card); border: 1px solid var(--border); }
+        .modal-header { border-bottom: 1px solid var(--border); }
+        .modal-footer { border-top: 1px solid var(--border); }
+        .auth-form { max-width: 400px; margin: 0 auto; padding: 2rem; }
+        .form-control { background: var(--bg-card); border: 1px solid var(--border); color: var(--text-primary); }
+        .form-control:focus { background: var(--bg-card); border-color: var(--accent); color: var(--text-primary); box-shadow: 0 0 0 3px rgba(229,9,20,0.1); }
+        .interaction-btn { background: transparent; border: 1px solid var(--border); color: var(--text-secondary); padding: 8px 12px; border-radius: 8px; transition: all 0.3s ease; margin-right: 0.5rem; }
+        .interaction-btn:hover { background: var(--accent); color: white; border-color: var(--accent); }
+        .interaction-btn.active { background: var(--accent); color: white; border-color: var(--accent); }
+        @media (max-width: 768px) { .hero h1 { font-size: 2.5rem; } .hero p { font-size: 1rem; } .content-item { flex: 0 0 200px; } }
+        .fade-in { animation: fadeIn 0.5s ease-in; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
     </style>
 </head>
-<body class="bg-gray-900 text-white mobile-optimized safe-area-top">
-    <!-- Mobile Header -->
-    <header class="bg-gray-800 shadow-lg sticky top-0 z-30 safe-area-top">
-        <div class="px-4 py-3">
-            <div class="flex justify-between items-center">
-                <div class="flex items-center space-x-3">
-                    <button id="mobile-menu-btn" class="nav-mobile text-white touch-target tap-highlight-transparent">
-                        <i class="fas fa-bars text-xl"></i>
+<body>
+    <nav class="navbar navbar-expand-lg fixed-top">
+        <div class="container">
+            <a class="navbar-brand" href="#"><i class="fas fa-film me-2"></i>CineStream</a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav me-auto">
+                    <li class="nav-item"><a class="nav-link" href="#home">Home</a></li>
+                    <li class="nav-item"><a class="nav-link" href="#movies">Movies</a></li>
+                    <li class="nav-item"><a class="nav-link" href="#tv">TV Shows</a></li>
+                    <li class="nav-item"><a class="nav-link" href="#anime">Anime</a></li>
+                </ul>
+                <div class="d-flex align-items-center">
+                    <button class="theme-toggle me-3" onclick="toggleTheme()">
+                        <i class="fas fa-moon"></i>
                     </button>
-                    <div class="flex items-center space-x-2">
-                        <i class="fas fa-film text-xl text-purple-400"></i>
-                        <h1 class="text-lg font-bold">MovieRecs</h1>
+                    <div id="auth-buttons">
+                        <button class="btn btn-outline-light me-2" onclick="showAuth('login')">Login</button>
+                        <button class="btn btn-primary" onclick="showAuth('register')">Sign Up</button>
                     </div>
-                </div>
-                <div class="flex items-center space-x-2">
-                    <div id="auth-buttons" class="flex space-x-2">
-                        <button id="login-btn" class="bg-purple-600 hover:bg-purple-700 px-3 py-1.5 rounded text-sm touch-target">Login</button>
-                    </div>
-                    <div id="user-menu" class="hidden">
-                        <button id="logout-btn" class="bg-red-600 hover:bg-red-700 px-3 py-1.5 rounded text-sm touch-target">Logout</button>
+                    <div id="user-menu" class="d-none">
+                        <span id="username" class="me-3"></span>
+                        <button class="btn btn-outline-light" onclick="logout()">Logout</button>
                     </div>
                 </div>
             </div>
-        </div>
-    </header>
-
-    <!-- Mobile Side Menu -->
-    <div id="mobile-overlay" class="mobile-overlay fixed inset-0 bg-black bg-opacity-50 z-40"></div>
-    <nav id="mobile-menu" class="mobile-menu fixed left-0 top-0 h-full w-64 bg-gray-800 z-50 safe-area-top">
-        <div class="p-4 pt-16">
-            <div class="flex items-center space-x-3 mb-8">
-                <i class="fas fa-film text-2xl text-purple-400"></i>
-                <h2 class="text-xl font-bold">MovieRecs</h2>
-            </div>
-            <nav class="space-y-4">
-                <a href="#" class="nav-link block py-3 px-4 rounded hover:bg-gray-700 transition-colors" data-page="home">
-                    <i class="fas fa-home mr-3"></i>Home
-                </a>
-                <a href="#" class="nav-link block py-3 px-4 rounded hover:bg-gray-700 transition-colors" data-page="search">
-                    <i class="fas fa-search mr-3"></i>Search
-                </a>
-                <a href="#" class="nav-link block py-3 px-4 rounded hover:bg-gray-700 transition-colors" data-page="trending">
-                    <i class="fas fa-fire mr-3"></i>Trending
-                </a>
-                <a href="#" class="nav-link block py-3 px-4 rounded hover:bg-gray-700 transition-colors" data-page="watchlist">
-                    <i class="fas fa-bookmark mr-3"></i>Watchlist
-                </a>
-            </nav>
         </div>
     </nav>
 
-    <!-- Main Content -->
-    <main class="content-container">
-        <!-- Home Page -->
-        <div id="home-page" class="page">
-            <div class="gradient-bg mx-4 mt-4 rounded-lg p-6 mb-6">
-                <h2 class="text-2xl font-bold mb-3">Discover Your Next Favorite</h2>
-                <p class="text-sm opacity-90 mb-4">Get personalized movie and TV show recommendations</p>
-                <div class="flex flex-col sm:flex-row gap-3">
-                    <button class="bg-white text-purple-600 px-4 py-2 rounded-lg font-semibold hover:bg-gray-100 touch-target">
-                        Get Started
-                    </button>
-                    <button class="border border-white px-4 py-2 rounded-lg font-semibold hover:bg-white hover:text-purple-600 touch-target">
-                        Learn More
-                    </button>
-                </div>
-            </div>
-
-            <!-- Featured Content -->
-            <section class="px-4 mb-6">
-                <h3 class="text-xl font-bold mb-4">Featured Content</h3>
-                <div class="swipe-container">
-                    <div id="featured-content" class="flex gap-4"></div>
-                </div>
-            </section>
-
-            <!-- Recommendations -->
-            <section class="px-4 mb-6">
-                <h3 class="text-xl font-bold mb-4">Recommended for You</h3>
-                <div id="recommendations-content" class="content-grid"></div>
-            </section>
-        </div>
-
-        <!-- Search Page -->
-        <div id="search-page" class="page hidden">
-            <div class="p-4">
-                <h2 class="text-2xl font-bold mb-4">Search Content</h2>
-                <div class="search-container mb-4">
-                    <input type="text" id="search-input" placeholder="Search movies, TV shows..." 
-                           class="flex-1 input-mobile rounded-lg bg-gray-800 border border-gray-600 focus:border-purple-500 focus:outline-none text-white">
-                    <div class="flex gap-2">
-                        <select id="search-type" class="px-3 py-2 rounded-lg bg-gray-800 border border-gray-600 text-white">
-                            <option value="all">All</option>
-                            <option value="movie">Movies</option>
-                            <option value="tv">TV Shows</option>
-                        </select>
-                        <button id="search-btn" class="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded-lg touch-target">
+    <main style="padding-top: 76px;">
+        <section class="hero" id="home">
+            <div class="container">
+                <div class="hero-content text-center text-white">
+                    <h1 class="fade-in">Discover Your Next Favorite</h1>
+                    <p class="fade-in">Personalized movie and TV show recommendations powered by AI</p>
+                    <div class="search-container fade-in">
+                        <input type="text" class="search-input" placeholder="Search movies, TV shows, anime..." id="searchInput">
+                        <button class="search-btn" onclick="searchContent()">
                             <i class="fas fa-search"></i>
                         </button>
                     </div>
                 </div>
-                <div id="search-results" class="content-grid"></div>
             </div>
-        </div>
+        </section>
 
-        <!-- Trending Page -->
-        <div id="trending-page" class="page hidden">
-            <div class="p-4">
-                <h2 class="text-2xl font-bold mb-4">Trending Now</h2>
-                <div class="filter-container mb-4">
-                    <button class="trending-filter active bg-purple-600 px-3 py-2 rounded text-sm touch-target" data-type="all">All</button>
-                    <button class="trending-filter bg-gray-600 px-3 py-2 rounded text-sm touch-target" data-type="movie">Movies</button>
-                    <button class="trending-filter bg-gray-600 px-3 py-2 rounded text-sm touch-target" data-type="tv">TV Shows</button>
+        <div class="container my-5">
+            <div id="search-results" class="d-none">
+                <h2 class="section-title">Search Results</h2>
+                <div id="search-content" class="row g-4"></div>
+            </div>
+
+            <section id="trending" class="mb-5">
+                <h2 class="section-title">Trending Now</h2>
+                <div id="trending-content" class="content-slider"></div>
+            </section>
+
+            <section id="personalized" class="mb-5 d-none">
+                <h2 class="section-title">Recommended for You</h2>
+                <div id="personalized-content" class="content-slider"></div>
+            </section>
+
+            <section id="genres" class="mb-5">
+                <h2 class="section-title">Popular by Genre</h2>
+                <div class="row g-4">
+                    <div class="col-md-6">
+                        <h4>Action</h4>
+                        <div id="action-content" class="content-slider"></div>
+                    </div>
+                    <div class="col-md-6">
+                        <h4>Comedy</h4>
+                        <div id="comedy-content" class="content-slider"></div>
+                    </div>
                 </div>
-                <div id="trending-content" class="content-grid"></div>
-            </div>
-        </div>
+            </section>
 
-        <!-- Watchlist Page -->
-        <div id="watchlist-page" class="page hidden">
-            <div class="p-4">
-                <h2 class="text-2xl font-bold mb-4">My Watchlist</h2>
-                <p class="text-gray-400 mb-4">Your saved movies and shows</p>
-                <div id="watchlist-content" class="content-grid"></div>
-            </div>
+            <section id="regional" class="mb-5">
+                <h2 class="section-title">Regional Content</h2>
+                <div class="row g-4">
+                    <div class="col-md-3">
+                        <h5>Telugu</h5>
+                        <div id="telugu-content" class="content-slider"></div>
+                    </div>
+                    <div class="col-md-3">
+                        <h5>Hindi</h5>
+                        <div id="hindi-content" class="content-slider"></div>
+                    </div>
+                    <div class="col-md-3">
+                        <h5>Tamil</h5>
+                        <div id="tamil-content" class="content-slider"></div>
+                    </div>
+                    <div class="col-md-3">
+                        <h5>Kannada</h5>
+                        <div id="kannada-content" class="content-slider"></div>
+                    </div>
+                </div>
+            </section>
         </div>
     </main>
 
-    <!-- Mobile Bottom Navigation -->
-    <nav class="mobile-bottom-nav flex bg-gray-800 border-t border-gray-700">
-        <button class="bottom-nav-item active tap-highlight-transparent touch-action-manipulation" data-page="home">
-            <i class="fas fa-home"></i>
-            <span>Home</span>
-        </button>
-        <button class="bottom-nav-item tap-highlight-transparent touch-action-manipulation" data-page="search">
-            <i class="fas fa-search"></i>
-            <span>Search</span>
-        </button>
-        <button class="bottom-nav-item tap-highlight-transparent touch-action-manipulation" data-page="trending">
-            <i class="fas fa-fire"></i>
-            <span>Trending</span>
-        </button>
-        <button class="bottom-nav-item tap-highlight-transparent touch-action-manipulation" data-page="watchlist">
-            <i class="fas fa-bookmark"></i>
-            <span>Watchlist</span>
-        </button>
-    </nav>
-
-    <!-- Content Card Template -->
-    <template id="content-card-template">
-        <div class="bg-gray-800 rounded-lg overflow-hidden shadow-lg card-hover hardware-accelerated">
-            <div class="relative">
-                <img class="w-full card-image object-cover" src="" alt="" loading="lazy">
-                <div class="absolute top-2 right-2 bg-black bg-opacity-50 px-2 py-1 rounded text-xs">
-                    <span class="rating text-yellow-400">
-                        <i class="fas fa-star"></i> <span class="rating-value"></span>
-                    </span>
-                </div>
-                <div class="absolute bottom-2 left-2 bg-purple-600 px-2 py-1 rounded text-xs content-type"></div>
-            </div>
-            <div class="p-3">
-                <h3 class="font-bold text-sm mb-2 content-title line-clamp-2"></h3>
-                <p class="text-gray-400 text-xs mb-3 content-overview line-clamp-2"></p>
-                <div class="flex justify-between items-center">
-                    <span class="text-xs text-gray-500 release-date"></span>
-                    <div class="flex space-x-1">
-                        <button class="watchlist-btn bg-gray-600 hover:bg-gray-700 p-1.5 rounded touch-target">
-                            <i class="fas fa-bookmark text-xs"></i>
-                        </button>
-                        <button class="rate-btn bg-purple-600 hover:bg-purple-700 p-1.5 rounded touch-target">
-                            <i class="fas fa-star text-xs"></i>
-                        </button>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </template>
-
-    <!-- Swipe Item Template -->
-    <template id="swipe-item-template">
-        <div class="swipe-item bg-gray-800 rounded-lg overflow-hidden shadow-lg card-hover">
-            <div class="relative">
-                <img class="w-full h-32 object-cover" src="" alt="" loading="lazy">
-                <div class="absolute top-1 right-1 bg-black bg-opacity-50 px-1 py-0.5 rounded text-xs">
-                    <span class="rating text-yellow-400">
-                        <i class="fas fa-star"></i> <span class="rating-value"></span>
-                    </span>
-                </div>
-            </div>
-            <div class="p-2">
-                <h4 class="font-bold text-xs mb-1 content-title line-clamp-2"></h4>
-                <span class="text-xs text-gray-500 release-date"></span>
-            </div>
-        </div>
-    </template>
-
     <!-- Auth Modal -->
-    <div id="auth-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden z-50 p-4">
-        <div class="bg-gray-800 p-6 rounded-lg w-full max-w-sm slide-in">
-            <div class="flex justify-between items-center mb-4">
-                <h3 id="auth-title" class="text-xl font-bold">Login</h3>
-                <button id="close-modal" class="text-gray-400 hover:text-white touch-target">
-                    <i class="fas fa-times"></i>
-                </button>
-            </div>
-            <form id="auth-form">
-                <div class="mb-4">
-                    <label class="block text-sm font-medium mb-2">Username</label>
-                    <input type="text" id="auth-username" class="w-full input-mobile bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:border-purple-500 text-white" required>
+    <div class="modal fade" id="authModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="authModalTitle">Login</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
-                <div id="email-field" class="mb-4 hidden">
-                    <label class="block text-sm font-medium mb-2">Email</label>
-                    <input type="email" id="auth-email" class="w-full input-mobile bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:border-purple-500 text-white">
+                <div class="modal-body">
+                    <form id="authForm" class="auth-form">
+                        <div class="mb-3" id="emailField" style="display: none;">
+                            <label class="form-label">Email</label>
+                            <input type="email" class="form-control" id="email" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Username</label>
+                            <input type="text" class="form-control" id="username" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Password</label>
+                            <input type="password" class="form-control" id="password" required>
+                        </div>
+                        <button type="submit" class="btn btn-primary w-100">Login</button>
+                    </form>
                 </div>
-                <div class="mb-6">
-                    <label class="block text-sm font-medium mb-2">Password</label>
-                    <input type="password" id="auth-password" class="w-full input-mobile bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:border-purple-500 text-white" required>
-                </div>
-                <button type="submit" class="w-full bg-purple-600 hover:bg-purple-700 py-3 rounded-lg font-semibold touch-target">
-                    <span id="auth-submit-text">Login</span>
-                </button>
-            </form>
-            <div class="mt-4 text-center">
-                <button id="auth-switch" class="text-purple-400 hover:text-purple-300 touch-target">
-                    Don't have an account? Register
-                </button>
             </div>
         </div>
     </div>
 
-    <!-- Rating Modal -->
-    <div id="rating-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden z-50 p-4">
-        <div class="bg-gray-800 p-6 rounded-lg w-full max-w-sm slide-in">
-            <h3 class="text-xl font-bold mb-4">Rate Content</h3>
-            <div class="mb-4">
-                <div class="flex justify-center space-x-2 mb-2">
-                    <div id="star-rating" class="flex">
-                        <i class="fas fa-star text-2xl text-gray-400 cursor-pointer touch-target" data-rating="1"></i>
-                        <i class="fas fa-star text-2xl text-gray-400 cursor-pointer touch-target" data-rating="2"></i>
-                        <i class="fas fa-star text-2xl text-gray-400 cursor-pointer touch-target" data-rating="3"></i>
-                        <i class="fas fa-star text-2xl text-gray-400 cursor-pointer touch-target" data-rating="4"></i>
-                        <i class="fas fa-star text-2xl text-gray-400 cursor-pointer touch-target" data-rating="5"></i>
+    <!-- Content Detail Modal -->
+    <div class="modal fade" id="contentModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="contentTitle"></h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row">
+                        <div class="col-md-4">
+                            <img id="contentPoster" class="img-fluid rounded" alt="">
+                        </div>
+                        <div class="col-md-8">
+                            <p id="contentOverview"></p>
+                            <div class="mb-3">
+                                <span class="rating me-2">
+                                    <i class="fas fa-star"></i>
+                                    <span id="contentRating"></span>
+                                </span>
+                                <span id="contentGenres"></span>
+                            </div>
+                            <div id="contentInteractions" class="d-none">
+                                <button class="interaction-btn" onclick="interact('like')">
+                                    <i class="fas fa-thumbs-up"></i> Like
+                                </button>
+                                <button class="interaction-btn" onclick="interact('favorite')">
+                                    <i class="fas fa-heart"></i> Favorite
+                                </button>
+                                <button class="interaction-btn" onclick="interact('wishlist')">
+                                    <i class="fas fa-bookmark"></i> Wishlist
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 </div>
-                <p class="text-center text-sm text-gray-400">Tap to rate (1-5 stars)</p>
-            </div>
-            <div class="flex space-x-4">
-                <button id="cancel-rating" class="flex-1 bg-gray-600 hover:bg-gray-700 py-2 rounded-lg touch-target">Cancel</button>
-                <button id="submit-rating" class="flex-1 bg-purple-600 hover:bg-purple-700 py-2 rounded-lg touch-target">Submit</button>
             </div>
         </div>
     </div>
 
-    <!-- Loading Spinner -->
-    <div id="loading-spinner" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden z-50">
-        <div class="bg-gray-800 p-6 rounded-lg">
-            <i class="fas fa-spinner loading text-3xl text-purple-400"></i>
-            <p class="mt-2 text-center">Loading...</p>
-        </div>
-    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/js/bootstrap.bundle.min.js"></script>
+    <script>
+        const API_BASE = 'https://backend-app-970m.onrender.com/api';
+        let currentUser = null;
+        let authToken = null;
+        let currentContentId = null;
 
-    <!-- Toast Container -->
-    <div id="toast-container" class="fixed top-4 right-4 z-60 space-y-2"></div>
-    <script >
-        // Configuration
-        const API_BASE_URL = 'https://movies-rec-1hcv.onrender.com';
-const TMDB_IMAGE_BASE_URL = 'https://image.tmdb.org/t/p/w500';
-const JIKAN_IMAGE_BASE_URL = 'https://cdn.myanimelist.net/images/anime';
-
-// DOM Elements
-const elements = {
-    mobileMenuBtn: document.getElementById('mobile-menu-btn'),
-    mobileMenu: document.getElementById('mobile-menu'),
-    mobileOverlay: document.getElementById('mobile-overlay'),
-    authButtons: document.getElementById('auth-buttons'),
-    userMenu: document.getElementById('user-menu'),
-    loginBtn: document.getElementById('login-btn'),
-    logoutBtn: document.getElementById('logout-btn'),
-    authModal: document.getElementById('auth-modal'),
-    authForm: document.getElementById('auth-form'),
-    authTitle: document.getElementById('auth-title'),
-    authUsername: document.getElementById('auth-username'),
-    authEmail: document.getElementById('auth-email'),
-    emailField: document.getElementById('email-field'),
-    authPassword: document.getElementById('auth-password'),
-    authSwitch: document.getElementById('auth-switch'),
-    authSubmitText: document.getElementById('auth-submit-text'),
-    closeModal: document.getElementById('close-modal'),
-    ratingModal: document.getElementById('rating-modal'),
-    cancelRating: document.getElementById('cancel-rating'),
-    submitRating: document.getElementById('submit-rating'),
-    starRating: document.getElementById('star-rating'),
-    searchInput: document.getElementById('search-input'),
-    searchType: document.getElementById('search-type'),
-    searchBtn: document.getElementById('search-btn'),
-    featuredContent: document.getElementById('featured-content'),
-    recommendationsContent: document.getElementById('recommendations-content'),
-    searchResults: document.getElementById('search-results'),
-    trendingContent: document.getElementById('trending-content'),
-    watchlistContent: document.getElementById('watchlist-content'),
-    toastContainer: document.getElementById('toast-container'),
-    loadingSpinner: document.getElementById('loading-spinner'),
-    bottomNavItems: document.querySelectorAll('.bottom-nav-item'),
-    pages: document.querySelectorAll('.page'),
-    trendingFilters: document.querySelectorAll('.trending-filter'),
-    contentCardTemplate: document.getElementById('content-card-template'),
-    swipeItemTemplate: document.getElementById('swipe-item-template')
-};
-
-// State Management
-let state = {
-    currentPage: 'home',
-    isLoggedIn: false,
-    currentUser: null,
-    currentRating: 0,
-    currentContentId: null,
-    trendingType: 'all'
-};
-
-// Utility Functions
-const showToast = (message, type = 'success') => {
-    const toast = document.createElement('div');
-    toast.className = `p-4 rounded-lg shadow-lg fade-in ${
-        type === 'success' ? 'bg-green-600' : 'bg-red-600'
-    } text-white`;
-    toast.textContent = message;
-    elements.toastContainer.appendChild(toast);
-    setTimeout(() => toast.remove(), 3000);
-};
-
-const showLoading = () => {
-    elements.loadingSpinner.classList.remove('hidden');
-};
-
-const hideLoading = () => {
-    elements.loadingSpinner.classList.add('hidden');
-};
-
-const createContentCard = (item, contentType) => {
-    const template = elements.contentCardTemplate.content.cloneNode(true);
-    const card = template.querySelector('div');
-    
-    // Set image
-    const img = card.querySelector('img');
-    img.src = contentType === 'anime' ? 
-        item.images?.jpg?.large_image_url || 'placeholder.jpg' :
-        `${TMDB_IMAGE_BASE_URL}${item.poster_path || '/placeholder.jpg'}`;
-    img.alt = item.title || item.name || 'Content';
-    
-    // Set content type
-    card.querySelector('.content-type').textContent = contentType.charAt(0).toUpperCase() + contentType.slice(1);
-    
-    // Set title
-    card.querySelector('.content-title').textContent = item.title || item.name || 'Unknown Title';
-    
-    // Set overview
-    card.querySelector('.content-overview').textContent = item.overview || item.synopsis || 'No description available';
-    
-    // Set rating
-    const ratingValue = card.querySelector('.rating-value');
-    ratingValue.textContent = (item.vote_average || item.score || 0).toFixed(1);
-    
-    // Set release date
-    card.querySelector('.release-date').textContent = 
-        item.release_date || item.first_air_date || item.aired?.from || 'N/A';
-    
-    // Add event listeners
-    const watchlistBtn = card.querySelector('.watchlist-btn');
-    watchlistBtn.addEventListener('click', () => toggleWatchlist(item.id || item.mal_id, contentType));
-    
-    const rateBtn = card.querySelector('.rate-btn');
-    rateBtn.addEventListener('click', () => showRatingModal(item.id || item.mal_id));
-    
-    return card;
-};
-
-const createSwipeItem = (item, contentType) => {
-    const template = elements.swipeItemTemplate.content.cloneNode(true);
-    const itemDiv = template.querySelector('.swipe-item');
-    
-    // Set image
-    const img = itemDiv.querySelector('img');
-    img.src = contentType === 'anime' ? 
-        item.images?.jpg?.large_image_url || 'placeholder.jpg' :
-        `${TMDB_IMAGE_BASE_URL}${item.poster_path || '/placeholder.jpg'}`;
-    img.alt = item.title || item.name || 'Content';
-    
-    // Set title
-    itemDiv.querySelector('.content-title').textContent = item.title || item.name || 'Unknown Title';
-    
-    // Set rating
-    itemDiv.querySelector('.rating-value').textContent = (item.vote_average || item.score || 0).toFixed(1);
-    
-    // Set release date
-    itemDiv.querySelector('.release-date').textContent = 
-        item.release_date || item.first_air_date || item.aired?.from || 'N/A';
-    
-    return itemDiv;
-};
-
-// Authentication
-const toggleAuthModal = (isRegister = false) => {
-    elements.authModal.classList.toggle('hidden');
-    elements.authTitle.textContent = isRegister ? 'Register' : 'Login';
-    elements.authSubmitText.textContent = isRegister ? 'Register' : 'Login';
-    elements.emailField.classList.toggle('hidden', !isRegister);
-    elements.authSwitch.textContent = isRegister ? 'Already have an account? Login' : "Don't have an account? Register";
-    elements.authForm.reset();
-};
-
-const handleAuthSubmit = async (e) => {
-    e.preventDefault();
-    const isRegister = elements.authTitle.textContent === 'Register';
-    const payload = {
-        username: elements.authUsername.value,
-        password: elements.authPassword.value
-    };
-    
-    if (isRegister) {
-        payload.email = elements.authEmail.value;
-    }
-    
-    showLoading();
-    try {
-        const response = await fetch(`${API_BASE_URL}/auth/${isRegister ? 'register' : 'login'}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-            credentials: 'include'
+        // Initialize app
+        document.addEventListener('DOMContentLoaded', function() {
+            checkAuthStatus();
+            loadHomepage();
+            setupEventListeners();
         });
-        
-        const data = await response.json();
-        if (response.ok) {
-            if (!isRegister) {
-                state.isLoggedIn = true;
-                state.currentUser = data.user;
-                updateAuthUI();
-                toggleAuthModal();
-                showToast('Successfully logged in!');
-                loadPageContent(state.currentPage);
-            } else {
-                toggleAuthModal();
-                showToast('Registration successful! Please login.');
+
+        function setupEventListeners() {
+            document.getElementById('searchInput').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') searchContent();
+            });
+
+            document.getElementById('authForm').addEventListener('submit', function(e) {
+                e.preventDefault();
+                submitAuth();
+            });
+        }
+
+        function checkAuthStatus() {
+            authToken = localStorage.getItem('authToken');
+            if (authToken) {
+                currentUser = JSON.parse(localStorage.getItem('currentUser') || '{}');
+                showUserMenu();
+                loadPersonalizedContent();
             }
-        } else {
-            showToast(data.error || 'Authentication failed', 'error');
         }
-    } catch (error) {
-        showToast('Authentication error', 'error');
-    } finally {
-        hideLoading();
-    }
-};
 
-const handleLogout = async () => {
-    showLoading();
-    try {
-        const response = await fetch(`${API_BASE_URL}/auth/logout`, {
-            method: 'POST',
-            credentials: 'include'
-        });
-        
-        if (response.ok) {
-            state.isLoggedIn = false;
-            state.currentUser = null;
-            updateAuthUI();
-            showToast('Logged out successfully');
-            loadPageContent(state.currentPage);
+        function showUserMenu() {
+            document.getElementById('auth-buttons').classList.add('d-none');
+            document.getElementById('user-menu').classList.remove('d-none');
+            document.getElementById('username').textContent = currentUser.username || 'User';
+            document.getElementById('personalized').classList.remove('d-none');
+            document.getElementById('contentInteractions').classList.remove('d-none');
         }
-    } catch (error) {
-        showToast('Logout error', 'error');
-    } finally {
-        hideLoading();
-    }
-};
 
-const updateAuthUI = () => {
-    elements.authButtons.classList.toggle('hidden', state.isLoggedIn);
-    elements.userMenu.classList.toggle('hidden', !state.isLoggedIn);
-};
+        function hideUserMenu() {
+            document.getElementById('auth-buttons').classList.remove('d-none');
+            document.getElementById('user-menu').classList.add('d-none');
+            document.getElementById('personalized').classList.add('d-none');
+            document.getElementById('contentInteractions').classList.add('d-none');
+        }
 
-// Navigation
-const toggleMobileMenu = () => {
-    elements.mobileMenu.classList.toggle('active');
-    elements.mobileOverlay.classList.toggle('active');
-};
-
-const showPage = (pageId) => {
-    state.currentPage = pageId;
-    elements.pages.forEach(page => {
-        page.classList.toggle('hidden', page.id !== `${pageId}-page`);
-    });
-    elements.bottomNavItems.forEach(item => {
-        item.classList.toggle('active', item.dataset.page === pageId);
-    });
-    elements.mobileMenu.classList.remove('active');
-    elements.mobileOverlay.classList.remove('active');
-    loadPageContent(pageId);
-};
-
-// Content Loading
-const loadFeaturedContent = async () => {
-    showLoading();
-    try {
-        const response = await fetch(`${API_BASE_URL}/featured`, { credentials: 'include' });
-        const data = await response.json();
-        elements.featuredContent.innerHTML = '';
-        data.featured.forEach(item => {
-            const card = createSwipeItem(item, item.content_type);
-            elements.featuredContent.appendChild(card);
-        });
-    } catch (error) {
-        showToast('Failed to load featured content', 'error');
-    } finally {
-        hideLoading();
-    }
-};
-
-const loadRecommendations = async () => {
-    if (!state.isLoggedIn) return;
-    showLoading();
-    try {
-        const response = await fetch(`${API_BASE_URL}/recommendations`, { credentials: 'include' });
-        const data = await response.json();
-        elements.recommendationsContent.innerHTML = '';
-        data.recommendations.forEach(item => {
-            const card = createContentCard(item, item.content_type);
-            elements.recommendationsContent.appendChild(card);
-        });
-    } catch (error) {
-        showToast('Failed to load recommendations', 'error');
-    } finally {
-        hideLoading();
-    }
-};
-
-const loadSearchResults = async (query, type) => {
-    showLoading();
-    try {
-        const response = await fetch(`${API_BASE_URL}/search?q=${encodeURIComponent(query)}&type=${type}`, {
-            credentials: 'include'
-        });
-        const data = await response.json();
-        elements.searchResults.innerHTML = '';
-        ['movies', 'tv', 'anime'].forEach(type => {
-            data[type].forEach(item => {
-                const card = createContentCard(item, type);
-                elements.searchResults.appendChild(card);
-            });
-        });
-    } catch (error) {
-        showToast('Failed to load search results', 'error');
-    } finally {
-        hideLoading();
-    }
-};
-
-const loadTrendingContent = async (type) => {
-    showLoading();
-    try {
-        const response = await fetch(`${API_BASE_URL}/trending?type=${type}`, { credentials: 'include' });
-        const data = await response.json();
-        elements.trendingContent.innerHTML = '';
-        ['movies', 'tv', 'anime'].forEach(t => {
-            data[t].forEach(item => {
-                const card = createContentCard(item, t);
-                elements.trendingContent.appendChild(card);
-            });
-        });
-    } catch (error) {
-        showToast('Failed to load trending content', 'error');
-    } finally {
-        hideLoading();
-    }
-};
-
-const loadWatchlist = async () => {
-    if (!state.isLoggedIn) {
-        showToast('Please login to view watchlist', 'error');
-        return;
-    }
-    showLoading();
-    try {
-        const response = await fetch(`${API_BASE_URL}/watchlist`, { credentials: 'include' });
-        const data = await response.json();
-        elements.watchlistContent.innerHTML = '';
-        data.watchlist.forEach(item => {
-            const card = createContentCard(item, item.content_type);
-            elements.watchlistContent.appendChild(card);
-        });
-    } catch (error) {
-        showToast('Failed to load watchlist', 'error');
-    } finally {
-        hideLoading();
-    }
-};
-
-const loadPageContent = (pageId) => {
-    switch (pageId) {
-        case 'home':
-            loadFeaturedContent();
-            loadRecommendations();
-            break;
-        case 'search':
-            // Clear search results initially
-            elements.searchResults.innerHTML = '';
-            break;
-        case 'trending':
-            loadTrendingContent(state.trendingType);
-            break;
-        case 'watchlist':
-            loadWatchlist();
-            break;
-    }
-};
-
-// Watchlist
-const toggleWatchlist = async (contentId, contentType) => {
-    if (!state.isLoggedIn) {
-        showToast('Please login to manage watchlist', 'error');
-        return;
-    }
-    
-    showLoading();
-    try {
-        const method = 'POST'; // Simplified for demo; actual implementation would check if item is already in watchlist
-        const response = await fetch(`${API_BASE_URL}/watchlist`, {
-            method,
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ content_id: contentId }),
-            credentials: 'include'
-        });
-        
-        const data = await response.json();
-        if (response.ok) {
-            showToast(data.message);
-            if (state.currentPage === 'watchlist') {
-                loadWatchlist();
+        async function loadHomepage() {
+            showLoading('trending-content');
+            try {
+                const response = await fetch(`${API_BASE}/homepage`);
+                const data = await response.json();
+                
+                renderContent(data.trending.movies, 'trending-content');
+                renderContent(data.popular_by_genre.Action, 'action-content');
+                renderContent(data.popular_by_genre.Comedy, 'comedy-content');
+                renderContent(data.regional.Telugu, 'telugu-content');
+                renderContent(data.regional.Hindi, 'hindi-content');
+                renderContent(data.regional.Tamil, 'tamil-content');
+                renderContent(data.regional.Kannada, 'kannada-content');
+            } catch (error) {
+                console.error('Error loading homepage:', error);
             }
-        } else {
-            showToast(data.error || 'Watchlist update failed', 'error');
         }
-    } catch (error) {
-        showToast('Watchlist update error', 'error');
-    } finally {
-        hideLoading();
-    }
-};
 
-// Rating
-const showRatingModal = (contentId) => {
-    if (!state.isLoggedIn) {
-        showToast('Please login to rate content', 'error');
-        return;
-    }
-    
-    state.currentContentId = contentId;
-    elements.ratingModal.classList.remove('hidden');
-    state.currentRating = 0;
-    
-    elements.starRating.querySelectorAll('i').forEach(star => {
-        star.classList.remove('text-yellow-400');
-        star.classList.add('text-gray-400');
-        star.addEventListener('click', () => {
-            state.currentRating = parseInt(star.dataset.rating);
-            elements.starRating.querySelectorAll('i').forEach(s => {
-                s.classList.toggle('text-yellow-400', parseInt(s.dataset.rating) <= state.currentRating);
-                s.classList.toggle('text-gray-400', parseInt(s.dataset.rating) > state.currentRating);
-            });
-        });
-    });
-};
-
-const handleRatingSubmit = async () => {
-    if (!state.currentRating) {
-        showToast('Please select a rating', 'error');
-        return;
-    }
-    
-    showLoading();
-    try {
-        const response = await fetch(`${API_BASE_URL}/rate`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ content_id: state.currentContentId, rating: state.currentRating }),
-            credentials: 'include'
-        });
-        
-        const data = await response.json();
-        if (response.ok) {
-            showToast(data.message);
-            elements.ratingModal.classList.add('hidden');
-        } else {
-            showToast(data.error || 'Rating failed', 'error');
-        }
-    } catch (error) {
-        showToast('Rating error', 'error');
-    } finally {
-        hideLoading();
-    }
-};
-
-// Event Listeners
-elements.mobileMenuBtn.addEventListener('click', toggleMobileMenu);
-elements.mobileOverlay.addEventListener('click', toggleMobileMenu);
-elements.loginBtn.addEventListener('click', () => toggleAuthModal(false));
-elements.logoutBtn.addEventListener('click', handleLogout);
-elements.authForm.addEventListener('submit', handleAuthSubmit);
-elements.authSwitch.addEventListener('click', () => toggleAuthModal(elements.authTitle.textContent === 'Login'));
-elements.closeModal.addEventListener('click', () => elements.authModal.classList.add('hidden'));
-elements.cancelRating.addEventListener('click', () => elements.ratingModal.classList.add('hidden'));
-elements.submitRating.addEventListener('click', handleRatingSubmit);
-elements.searchBtn.addEventListener('click', () => loadSearchResults(elements.searchInput.value, elements.searchType.value));
-
-elements.bottomNavItems.forEach(item => {
-    item.addEventListener('click', () => showPage(item.dataset.page));
-});
-
-elements.trendingFilters.forEach(filter => {
-    filter.addEventListener('click', () => {
-        state.trendingType = filter.dataset.type;
-        elements.trendingFilters.forEach(f => f.classList.toggle('active', f === filter));
-        loadTrendingContent(state.trendingType);
-    });
-});
-
-// Initialize
-const init = async () => {
-    try {
-        const response = await fetch(`${API_BASE_URL}/health`, { credentials: 'include' });
-        if (response.ok) {
-            // Check if user is already logged in
-            const userResponse = await fetch(`${API_BASE_URL}/auth/login`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({}),
-                credentials: 'include'
-            });
+        async function loadPersonalizedContent() {
+            if (!authToken) return;
             
-            if (userResponse.ok) {
-                const data = await userResponse.json();
-                state.isLoggedIn = true;
-                state.currentUser = data.user;
-                updateAuthUI();
+            showLoading('personalized-content');
+            try {
+                const response = await fetch(`${API_BASE}/recommendations`, {
+                    headers: { 'Authorization': `Bearer ${authToken}` }
+                });
+                const data = await response.json();
+                renderContent(data.hybrid_recommendations, 'personalized-content');
+            } catch (error) {
+                console.error('Error loading personalized content:', error);
             }
         }
-    } catch (error) {
-        console.error('Initialization error:', error);
-    }
-    loadPageContent('home');
-};
 
-init();
+        function renderContent(items, containerId) {
+            const container = document.getElementById(containerId);
+            if (!items || items.length === 0) {
+                container.innerHTML = '<p class="text-muted">No content available</p>';
+                return;
+            }
+
+            container.innerHTML = items.map(item => `
+                <div class="content-item">
+                    <div class="card" onclick="showContentDetail(${item.id || item.tmdb_id})">
+                        <img src="${item.poster_path ? `https://image.tmdb.org/t/p/w300${item.poster_path}` : 'https://via.placeholder.com/300x450?text=No+Image'}" 
+                             class="card-img-top" alt="${item.title || item.name}">
+                        <div class="card-body">
+                            <h6 class="card-title">${item.title || item.name}</h6>
+                            <div class="d-flex justify-content-between align-items-center">
+                                <span class="rating">
+                                    <i class="fas fa-star"></i>
+                                    ${item.vote_average || item.rating || 'N/A'}
+                                </span>
+                                <small class="text-muted">${item.release_date || item.first_air_date || ''}</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        async function searchContent() {
+            const query = document.getElementById('searchInput').value.trim();
+            if (!query) return;
+
+            document.getElementById('search-results').classList.remove('d-none');
+            showLoading('search-content');
+
+            try {
+                const response = await fetch(`${API_BASE}/search?q=${encodeURIComponent(query)}`);
+                const data = await response.json();
+                
+                const allResults = [...(data.database_results || []), ...(data.tmdb_results || [])];
+                renderSearchResults(allResults);
+            } catch (error) {
+                console.error('Error searching content:', error);
+            }
+        }
+
+        function renderSearchResults(results) {
+            const container = document.getElementById('search-content');
+            if (!results || results.length === 0) {
+                container.innerHTML = '<p class="text-muted">No results found</p>';
+                return;
+            }
+
+            container.innerHTML = results.map(item => `
+                <div class="col-md-3">
+                    <div class="card" onclick="showContentDetail(${item.id || item.tmdb_id})">
+                        <img src="${item.poster_path ? `https://image.tmdb.org/t/p/w300${item.poster_path}` : 'https://via.placeholder.com/300x450?text=No+Image'}" 
+                             class="card-img-top" alt="${item.title || item.name}">
+                        <div class="card-body">
+                            <h6 class="card-title">${item.title || item.name}</h6>
+                            <p class="card-text">${(item.overview || '').substring(0, 100)}...</p>
+                            <div class="d-flex justify-content-between align-items-center">
+                                <span class="rating">
+                                    <i class="fas fa-star"></i>
+                                    ${item.vote_average || item.rating || 'N/A'}
+                                </span>
+                                <small class="text-muted">${item.release_date || item.first_air_date || ''}</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        async function showContentDetail(contentId) {
+            currentContentId = contentId;
+            try {
+                const response = await fetch(`${API_BASE}/content/${contentId}`);
+                const data = await response.json();
+                
+                document.getElementById('contentTitle').textContent = data.content.title;
+                document.getElementById('contentOverview').textContent = data.content.overview || 'No overview available';
+                document.getElementById('contentRating').textContent = data.content.rating || 'N/A';
+                document.getElementById('contentPoster').src = data.content.poster_path ? 
+                    `https://image.tmdb.org/t/p/w300${data.content.poster_path}` : 
+                    'https://via.placeholder.com/300x450?text=No+Image';
+                
+                if (data.content.genres) {
+                    document.getElementById('contentGenres').innerHTML = data.content.genres.map(genre => 
+                        `<span class="genre-badge">${genre}</span>`
+                    ).join('');
+                }
+                
+                new bootstrap.Modal(document.getElementById('contentModal')).show();
+            } catch (error) {
+                console.error('Error loading content details:', error);
+            }
+        }
+
+        function showAuth(type) {
+            const modal = new bootstrap.Modal(document.getElementById('authModal'));
+            const title = document.getElementById('authModalTitle');
+            const emailField = document.getElementById('emailField');
+            const submitBtn = document.querySelector('#authForm button[type="submit"]');
+            
+            if (type === 'register') {
+                title.textContent = 'Sign Up';
+                emailField.style.display = 'block';
+                submitBtn.textContent = 'Sign Up';
+                document.getElementById('email').required = true;
+            } else {
+                title.textContent = 'Login';
+                emailField.style.display = 'none';
+                submitBtn.textContent = 'Login';
+                document.getElementById('email').required = false;
+            }
+            
+            modal.show();
+        }
+
+        async function submitAuth() {
+            const isRegister = document.getElementById('authModalTitle').textContent === 'Sign Up';
+            const endpoint = isRegister ? 'register' : 'login';
+            
+            const formData = {
+                username: document.getElementById('username').value,
+                password: document.getElementById('password').value
+            };
+            
+            if (isRegister) {
+                formData.email = document.getElementById('email').value;
+            }
+            
+            try {
+                const response = await fetch(`${API_BASE}/${endpoint}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(formData)
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    authToken = data.token;
+                    currentUser = { username: formData.username, id: data.user_id };
+                    localStorage.setItem('authToken', authToken);
+                    localStorage.setItem('currentUser', JSON.stringify(currentUser));
+                    
+                    showUserMenu();
+                    loadPersonalizedContent();
+                    bootstrap.Modal.getInstance(document.getElementById('authModal')).hide();
+                    document.getElementById('authForm').reset();
+                } else {
+                    alert(data.error || 'Authentication failed');
+                }
+            } catch (error) {
+                console.error('Auth error:', error);
+                alert('Authentication failed');
+            }
+        }
+
+        function logout() {
+            authToken = null;
+            currentUser = null;
+            localStorage.removeItem('authToken');
+            localStorage.removeItem('currentUser');
+            hideUserMenu();
+        }
+
+        async function interact(type) {
+            if (!authToken || !currentContentId) return;
+            
+            try {
+                const response = await fetch(`${API_BASE}/interact`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${authToken}`
+                    },
+                    body: JSON.stringify({
+                        content_id: currentContentId,
+                        interaction_type: type,
+                        rating: type === 'like' ? 5 : undefined
+                    })
+                });
+                
+                if (response.ok) {
+                    const button = event.target.closest('.interaction-btn');
+                    button.classList.add('active');
+                    setTimeout(() => button.classList.remove('active'), 2000);
+                }
+            } catch (error) {
+                console.error('Interaction error:', error);
+            }
+        }
+
+        function toggleTheme() {
+            const body = document.body;
+            const icon = document.querySelector('.theme-toggle i');
+            
+            if (body.getAttribute('data-theme') === 'light') {
+                body.removeAttribute('data-theme');
+                icon.className = 'fas fa-moon';
+                localStorage.setItem('theme', 'dark');
+            } else {
+                body.setAttribute('data-theme', 'light');
+                icon.className = 'fas fa-sun';
+                localStorage.setItem('theme', 'light');
+            }
+        }
+
+        function showLoading(containerId) {
+            const container = document.getElementById(containerId);
+            container.innerHTML = `
+                <div class="loading">
+                    <div class="spinner"></div>
+                    <p>Loading content...</p>
+                </div>
+            `;
+        }
+
+        // Initialize theme
+        const savedTheme = localStorage.getItem('theme');
+        if (savedTheme === 'light') {
+            document.body.setAttribute('data-theme', 'light');
+            document.querySelector('.theme-toggle i').className = 'fas fa-sun';
+        }
     </script>
-    </body>
-    </html>
+</body>
+</html>
