@@ -1,8 +1,6 @@
-Flask
-Flask-CORS
+flask
 numpy
 pandas
 scikit-learn
 requests
-redis
 gunicorn
