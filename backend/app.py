@@ -823,23 +823,6 @@ def create_tables():
         # Initial content sync
         if Content.query.count() == 0:
             sync_content()
-
-@app.route('/api/homepage-recommendations')
-def homepage_recommendations():
-    return jsonify(get_homepage_data())
-
-# 3. Add admin authentication middleware
-def admin_required(f):
-    @wraps(f)
-    @jwt_required()
-    def decorated_function(*args, **kwargs):
-        user_id = get_jwt_identity()
-        user = User.query.get(user_id)
-        if not user or user.preferences.get('role') != 'admin':
-            return jsonify({'error': 'Admin access required'}), 403
-        return f(*args, **kwargs)
-    return decorated_function
-
 if __name__ == '__main__':
     create_tables() 
     CORS(app)
