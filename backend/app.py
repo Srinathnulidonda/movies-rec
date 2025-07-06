@@ -18,11 +18,14 @@ import json
 from threading import Thread
 import time
 from flask_cors import CORS
-
-
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+import redis
+from functools import wraps
 
 
 app = Flask(__name__)
+CORS(app, origins=["*"], methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///movie_rec.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['JWT_SECRET_KEY'] = 'your-secret-key'
@@ -145,6 +148,42 @@ class ContentAggregator:
         async with aiohttp.ClientSession() as session:
             async with session.get(url, params=params) as response:
                 return await response.json()
+
+
+class RedisRateLimiter:
+    def __init__(self, redis_url=None):
+        self.redis_client = redis.from_url(redis_url or 'redis://red-d1l75ap5pdvs73bk295g:rE0xu32o3U2bNUQKz6mG7KIybWzle9xf@red-d1l75ap5pdvs73bk295g:6379')
+    
+    def is_allowed(self, key, limit=100, window=3600):
+        try:
+            pipe = self.redis_client.pipeline()
+            pipe.incr(key)
+            pipe.expire(key, window)
+            results = pipe.execute()
+            
+            return results[0] <= limit
+        except:
+            # If Redis fails, allow the request
+            return True
+
+# Initialize (only if Redis is available)
+try:
+    redis_limiter = RedisRateLimiter(os.getenv('REDIS_URL'))
+except:
+    redis_limiter = None
+
+# Rate limiting decorator
+def redis_rate_limit(limit=100, window=3600):
+    def decorator(f):
+        @wraps(f)
+        def decorated_function(*args, **kwargs):
+            if redis_limiter:
+                key = f"rate_limit:{request.remote_addr}:{f.__name__}"
+                if not redis_limiter.is_allowed(key, limit, window):
+                    return jsonify({'error': 'Rate limit exceeded'}), 429
+            return f(*args, **kwargs)
+        return decorated_function
+    return decorator
 
 # Recommendation Engine
 class RecommendationEngine:

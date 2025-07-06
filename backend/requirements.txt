@@ -9,4 +9,5 @@ numpy
 scikit-learn
 aiohttp
 asyncio
+redis
 gunicorn
