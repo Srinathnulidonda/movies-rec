@@ -18,8 +18,6 @@ import json
 from threading import Thread
 import time
 from flask_cors import CORS
-from flask_limiter import Limiter
-from flask_limiter.util import get_remote_address
 import redis
 from functools import wraps
 
@@ -152,9 +150,14 @@ class ContentAggregator:
 
 class RedisRateLimiter:
     def __init__(self, redis_url=None):
-        self.redis_client = redis.from_url(redis_url or 'redis://red-d1l75ap5pdvs73bk295g:rE0xu32o3U2bNUQKz6mG7KIybWzle9xf@red-d1l75ap5pdvs73bk295g:6379')
+        try:
+            self.redis_client = redis.from_url(redis_url or 'redis://red-d1l75ap5pdvs73bk295g:rE0xu32o3U2bNUQKz6mG7KIybWzle9xf@red-d1l75ap5pdvs73bk295g:6379')
+        except:
+            self.redis_client = None
     
     def is_allowed(self, key, limit=100, window=3600):
+        if not self.redis_client:
+            return True
         try:
             pipe = self.redis_client.pipeline()
             pipe.incr(key)
@@ -167,17 +170,14 @@ class RedisRateLimiter:
             return True
 
 # Initialize (only if Redis is available)
-try:
-    redis_limiter = RedisRateLimiter(os.getenv('REDIS_URL'))
-except:
-    redis_limiter = None
+redis_limiter = RedisRateLimiter(os.getenv('REDIS_URL'))
 
 # Rate limiting decorator
 def redis_rate_limit(limit=100, window=3600):
     def decorator(f):
         @wraps(f)
         def decorated_function(*args, **kwargs):
-            if redis_limiter:
+            if redis_limiter and redis_limiter.redis_client:
                 key = f"rate_limit:{request.remote_addr}:{f.__name__}"
                 if not redis_limiter.is_allowed(key, limit, window):
                     return jsonify({'error': 'Rate limit exceeded'}), 429
