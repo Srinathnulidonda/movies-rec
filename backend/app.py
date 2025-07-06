@@ -804,26 +804,33 @@ def sync_content():
     return jsonify({'status': 'sync_started'})
 
 def create_tables():
-    with app.app_context():
-        db.create_all()
-        
-        # Create admin user if not exists
-        admin_user = User.query.filter_by(username='admin').first()
-        if not admin_user:
-            admin_user = User(
-                username='admin',
-                email='admin@movieapp.com',
-                password_hash=generate_password_hash('admin123'),
-                preferences={'role': 'admin'}
-            )
-            db.session.add(admin_user)
-            db.session.commit()
-            print("Admin user created - Username: admin, Password: admin123")
-        
-        # Initial content sync
-        if Content.query.count() == 0:
-            sync_content()
+    try:
+        with app.app_context():
+            db.create_all()
+            
+            # Create admin user if not exists
+            admin_user = User.query.filter_by(username='admin').first()
+            if not admin_user:
+                admin_user = User(
+                    username='admin',
+                    email='admin@movieapp.com',
+                    password_hash=generate_password_hash('admin123'),
+                    preferences={'role': 'admin'}
+                )
+                db.session.add(admin_user)
+                db.session.commit()
+                print("Admin user created - Username: admin, Password: admin123")
+            
+            # Initial content sync (only if no content exists)
+            if Content.query.count() == 0:
+                print("Starting initial content sync...")
+                # Don't call sync_content() here as it's async, just log
+                
+    except Exception as e:
+        print(f"Error creating tables: {e}")
+# Always create tables when the app starts
+create_tables()
+
 if __name__ == '__main__':
-    create_tables() 
     CORS(app)
     app.run(debug=True, port=5000)
