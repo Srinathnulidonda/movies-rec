@@ -24,9 +24,13 @@ from functools import wraps
 
 app = Flask(__name__)
 CORS(app, 
-     origins=["http://127.0.0.1:5500", "http://localhost:5500", "https://backend-app-970m.onrender.com"],
+     origins=["http://127.0.0.1:5500", 
+              "http://localhost:5500", 
+              "https://movies-rec.vercel.app",
+              "https://backend-app-970m.onrender.com"],
      methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-     allow_headers=["Content-Type", "Authorization"])
+     allow_headers=["Content-Type", "Authorization"],
+     supports_credentials=True)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///movie_rec.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['JWT_SECRET_KEY'] = 'your-secret-key'
@@ -391,14 +395,9 @@ def register():
     try:
         data = request.get_json()
         
-        # Debug logging
-        print(f"Register request data: {data}")
-        
-        # Handle different content types
         if not data:
             data = request.form.to_dict()
         
-        # Add validation for required fields
         if not data:
             return jsonify({'error': 'No data provided'}), 400
             
@@ -431,7 +430,8 @@ def register():
         })
         
     except Exception as e:
-        print(f"Register error: {e}")
+        if app.debug:
+            print(f"Register error: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
 @app.route('/api/login', methods=['POST'])
@@ -439,25 +439,23 @@ def login():
     try:
         data = request.get_json()
         
-        # Debug logging
-        print(f"Login request data: {data}")
-        print(f"Request content type: {request.content_type}")
-        
         # Handle different content types
         if not data:
             data = request.form.to_dict()
         
-        # Add validation for required fields
         if not data:
             return jsonify({'error': 'No data provided'}), 400
             
-        username = data.get('username')
+        username = data.get('username') or data.get('email')  # Allow email as username
         password = data.get('password')
         
         if not username or not password:
             return jsonify({'error': 'Username and password are required'}), 400
         
-        user = User.query.filter_by(username=username).first()
+        # Check both username and email fields
+        user = User.query.filter(
+            (User.username == username) | (User.email == username)
+        ).first()
         
         if user and check_password_hash(user.password_hash, password):
             token = create_access_token(identity=user.id)
@@ -470,7 +468,8 @@ def login():
         return jsonify({'error': 'Invalid credentials'}), 401
         
     except Exception as e:
-        print(f"Login error: {e}")
+        if app.debug:
+            print(f"Login error: {e}")
         return jsonify({'error': 'Internal server error'}), 500
     
 
@@ -866,13 +865,23 @@ def sync_content():
     return jsonify({'status': 'sync_started'})
 
 
+@app.route('/')
+def home():
+    return jsonify({
+        'message': 'Movie Recommendation API',
+        'version': '1.0',
+        'endpoints': {
+            'homepage': '/api/homepage',
+            'login': '/api/login',
+            'register': '/api/register',
+            'search': '/api/search'
+        }
+    })
 
-@app.before_request
-def log_request():
-    print(f"Request: {request.method} {request.url}")
-    print(f"Headers: {dict(request.headers)}")
-    if request.data:
-        print(f"Body: {request.data}")
+
+@app.route('/health')
+def health_check():
+    return jsonify({'status': 'healthy', 'timestamp': datetime.utcnow().isoformat()})
 
 
 def create_tables():
