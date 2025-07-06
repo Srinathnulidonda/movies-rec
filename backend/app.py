@@ -23,7 +23,10 @@ from functools import wraps
 
 
 app = Flask(__name__)
-CORS(app, origins=["*"], methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+CORS(app, 
+     origins=["http://127.0.0.1:5500", "http://localhost:5500", "https://backend-app-970m.onrender.com"],
+     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+     allow_headers=["Content-Type", "Authorization"])
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///movie_rec.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['JWT_SECRET_KEY'] = 'your-secret-key'
@@ -385,44 +388,103 @@ def serialize_content(content):
 # API Routes
 @app.route('/api/register', methods=['POST'])
 def register():
-    data = request.get_json()
-    
-    # Add validation for required fields
-    if not data or 'username' not in data or 'email' not in data or 'password' not in data:
-        return jsonify({'error': 'Username, email, and password are required'}), 400
-    
-    if User.query.filter_by(username=data['username']).first():
-        return jsonify({'error': 'Username already exists'}), 400
-    
-    if User.query.filter_by(email=data['email']).first():
-        return jsonify({'error': 'Email already exists'}), 400
-    
-    user = User(
-        username=data['username'],
-        email=data['email'],
-        password_hash=generate_password_hash(data['password'])
-    )
-    db.session.add(user)
-    db.session.commit()
-    
-    token = create_access_token(identity=user.id)
-    return jsonify({'token': token, 'user_id': user.id})
+    try:
+        data = request.get_json()
+        
+        # Debug logging
+        print(f"Register request data: {data}")
+        
+        # Handle different content types
+        if not data:
+            data = request.form.to_dict()
+        
+        # Add validation for required fields
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+            
+        username = data.get('username')
+        email = data.get('email')
+        password = data.get('password')
+        
+        if not username or not email or not password:
+            return jsonify({'error': 'Username, email, and password are required'}), 400
+        
+        if User.query.filter_by(username=username).first():
+            return jsonify({'error': 'Username already exists'}), 400
+        
+        if User.query.filter_by(email=email).first():
+            return jsonify({'error': 'Email already exists'}), 400
+        
+        user = User(
+            username=username,
+            email=email,
+            password_hash=generate_password_hash(password)
+        )
+        db.session.add(user)
+        db.session.commit()
+        
+        token = create_access_token(identity=user.id)
+        return jsonify({
+            'token': token, 
+            'user_id': user.id,
+            'username': user.username
+        })
+        
+    except Exception as e:
+        print(f"Register error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
 
 @app.route('/api/login', methods=['POST'])
 def login():
-    data = request.get_json()
+    try:
+        data = request.get_json()
+        
+        # Debug logging
+        print(f"Login request data: {data}")
+        print(f"Request content type: {request.content_type}")
+        
+        # Handle different content types
+        if not data:
+            data = request.form.to_dict()
+        
+        # Add validation for required fields
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+            
+        username = data.get('username')
+        password = data.get('password')
+        
+        if not username or not password:
+            return jsonify({'error': 'Username and password are required'}), 400
+        
+        user = User.query.filter_by(username=username).first()
+        
+        if user and check_password_hash(user.password_hash, password):
+            token = create_access_token(identity=user.id)
+            return jsonify({
+                'token': token, 
+                'user_id': user.id,
+                'username': user.username
+            })
+        
+        return jsonify({'error': 'Invalid credentials'}), 401
+        
+    except Exception as e:
+        print(f"Login error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
     
-    # Add validation for required fields
-    if not data or 'username' not in data or 'password' not in data:
-        return jsonify({'error': 'Username and password are required'}), 400
-    
-    user = User.query.filter_by(username=data['username']).first()
-    
-    if user and check_password_hash(user.password_hash, data['password']):
-        token = create_access_token(identity=user.id)
-        return jsonify({'token': token, 'user_id': user.id})
-    
-    return jsonify({'error': 'Invalid credentials'}), 401
+
+@app.route('/api/test', methods=['GET', 'POST'])
+def test_api():
+    if request.method == 'POST':
+        data = request.get_json()
+        return jsonify({
+            'message': 'Test successful',
+            'received_data': data,
+            'content_type': request.content_type
+        })
+    return jsonify({'message': 'API is working', 'method': 'GET'})
+
 
 @app.route('/api/homepage')
 def homepage():
@@ -802,6 +864,16 @@ def sync_content():
     thread.start()
     
     return jsonify({'status': 'sync_started'})
+
+
+
+@app.before_request
+def log_request():
+    print(f"Request: {request.method} {request.url}")
+    print(f"Headers: {dict(request.headers)}")
+    if request.data:
+        print(f"Body: {request.data}")
+
 
 def create_tables():
     try:
