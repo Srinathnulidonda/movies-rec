@@ -19,7 +19,7 @@ import json
 app = Flask(__name__)
 
 # Configuration
-DATABASE_PATH = '../backend/movie_rec.db'
+DATABASE_PATH = os.getenv('DATABASE_PATH', './movie_rec.db')
 MODEL_PATH = './models/'
 RETRAIN_INTERVAL = 24 * 60 * 60  # 24 hours
 
@@ -734,4 +734,6 @@ if __name__ == '__main__':
     
     print("ML service initialized")
     
-    app.run(debug=True, port=5001)
+    # Get port from environment variable for deployment
+    port = int(os.getenv('PORT', 5001))
+    app.run(host='0.0.0.0', port=port, debug=False)
