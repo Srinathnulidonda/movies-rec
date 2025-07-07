@@ -929,18 +929,18 @@ def sync_content():
     return jsonify({'status': 'sync_started'})
 
 
-@app.route('/')
-def home():
-    return jsonify({
-        'message': 'Movie Recommendation API',
-        'version': '1.0',
-        'endpoints': {
-            'homepage': '/api/homepage',
-            'login': '/api/login',
-            'register': '/api/register',
-            'search': '/api/search'
-        }
-    })
+# @app.route('/')
+# def home():
+#     return jsonify({
+#         'message': 'Movie Recommendation API',
+#         'version': '1.0',
+#         'endpoints': {
+#             'homepage': '/api/homepage',
+#             'login': '/api/login',
+#             'register': '/api/register',
+#             'search': '/api/search'
+#         }
+#     })
 
 
 @app.route('/health')
