@@ -42,7 +42,7 @@ jwt = JWTManager(app)
 # API Keys
 TMDB_API_KEY = os.getenv('TMDB_API_KEY', '1cf86635f20bb2aff8e70940e7c3ddd5')
 OMDB_API_KEY = os.getenv('OMDB_API_KEY', '52260795')
-ML_SERVICE_URL = os.getenv('ML_SERVICE_URL', 'https://ml-service-s2pr.onrender.com')
+ML_SERVICE_URL = os.getenv('ML_SERVICE_URL', 'https://movies-rec-xmf5.onrender.com')
 
 # Database Models
 class User(db.Model):
@@ -927,21 +927,6 @@ def sync_content():
     thread.start()
     
     return jsonify({'status': 'sync_started'})
-
-
-# @app.route('/')
-# def home():
-#     return jsonify({
-#         'message': 'Movie Recommendation API',
-#         'version': '1.0',
-#         'endpoints': {
-#             'homepage': '/api/homepage',
-#             'login': '/api/login',
-#             'register': '/api/register',
-#             'search': '/api/search'
-#         }
-#     })
-
 
 @app.route('/health')
 def health_check():
