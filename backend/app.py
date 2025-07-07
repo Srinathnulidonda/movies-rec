@@ -20,8 +20,6 @@ import time
 from flask_cors import CORS
 import redis
 from functools import wraps
-from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity, verify_jwt_in_request
-from flask_jwt_extended.exceptions import InvalidHeaderError, NoAuthorizationError, DecodeError
 
 
 app = Flask(__name__)
@@ -596,76 +594,49 @@ def homepage():
         'user_favorites': [serialize_content(c) for c in user_favorites]
     })
 
-
-
-def jwt_required_with_error_handling():
-    def decorator(f):
-        @wraps(f)
-        def decorated_function(*args, **kwargs):
-            try:
-                verify_jwt_in_request()
-                return f(*args, **kwargs)
-            except NoAuthorizationError:
-                return jsonify({'error': 'Authorization token is required'}), 401
-            except InvalidHeaderError:
-                return jsonify({'error': 'Invalid authorization header'}), 401
-            except DecodeError:
-                return jsonify({'error': 'Invalid token format'}), 401
-            except Exception as e:
-                return jsonify({'error': 'Token validation failed', 'details': str(e)}), 401
-        return decorated_function
-    return decorator
-
-
 @app.route('/api/recommendations')
-@jwt_required_with_error_handling()
+@jwt_required()
 def get_recommendations():
     """Get personalized recommendations for logged-in users"""
+    user_id = get_jwt_identity()
+    
+    # Get hybrid recommendations
+    recommendations = recommender.get_hybrid_recommendations(user_id, 20)
+    
+    # Get ML service recommendations
     try:
-        user_id = get_jwt_identity()
-        
-        # Get hybrid recommendations
-        recommendations = recommender.get_hybrid_recommendations(user_id, 20)
-        
-        # Get ML service recommendations
-        try:
-            ml_response = requests.post(f"{ML_SERVICE_URL}/recommend", 
-                                      json={'user_id': user_id}, timeout=5)
-            ml_recommendations = ml_response.json().get('recommendations', [])
-        except:
-            ml_recommendations = []
-        
-        # Get user preferences
-        user = User.query.get(user_id)
-        if not user:
-            return jsonify({'error': 'User not found'}), 404
-            
-        preferences = user.preferences or {}
-        
-        # Genre-based recommendations
-        favorite_genres = preferences.get('favorite_genres', [])
-        genre_recommendations = []
-        
-        for genre in favorite_genres:
-            genre_content = Content.query.filter(
-                Content.genres.contains(genre)
-            ).order_by(Content.popularity.desc()).limit(5).all()
-            genre_recommendations.extend(genre_content)
-        
-        # Recent interactions analysis
-        recent_interactions = UserInteraction.query.filter_by(
-            user_id=user_id
-        ).order_by(UserInteraction.created_at.desc()).limit(10).all()
-        
-        return jsonify({
-            'hybrid_recommendations': [serialize_content(r) for r in recommendations],
-            'ml_recommendations': ml_recommendations,
-            'genre_based': [serialize_content(r) for r in genre_recommendations],
-            'based_on_recent': [serialize_content(Content.query.get(i.content_id)) 
-                               for i in recent_interactions if Content.query.get(i.content_id)]
-        })
-    except Exception as e:
-        return jsonify({'error': 'Failed to get recommendations', 'details': str(e)}), 500
+        ml_response = requests.post(f"{ML_SERVICE_URL}/recommend", 
+                                  json={'user_id': user_id}, timeout=5)
+        ml_recommendations = ml_response.json().get('recommendations', [])
+    except:
+        ml_recommendations = []
+    
+    # Get user preferences
+    user = User.query.get(user_id)
+    preferences = user.preferences or {}
+    
+    # Genre-based recommendations
+    favorite_genres = preferences.get('favorite_genres', [])
+    genre_recommendations = []
+    
+    for genre in favorite_genres:
+        genre_content = Content.query.filter(
+            Content.genres.contains(genre)
+        ).order_by(Content.popularity.desc()).limit(5).all()
+        genre_recommendations.extend(genre_content)
+    
+    # Recent interactions analysis
+    recent_interactions = UserInteraction.query.filter_by(
+        user_id=user_id
+    ).order_by(UserInteraction.created_at.desc()).limit(10).all()
+    
+    return jsonify({
+        'hybrid_recommendations': [serialize_content(r) for r in recommendations],
+        'ml_recommendations': ml_recommendations,
+        'genre_based': [serialize_content(r) for r in genre_recommendations],
+        'based_on_recent': [serialize_content(Content.query.get(i.content_id)) 
+                           for i in recent_interactions if Content.query.get(i.content_id)]
+    })
 
 @app.route('/api/content/<int:content_id>')
 def get_content_details(content_id):
@@ -742,61 +713,51 @@ def get_content_details(content_id):
     })
 
 @app.route('/api/interact', methods=['POST'])
-@jwt_required_with_error_handling()
+@jwt_required()
 def user_interact():
     """Record user interaction"""
-    try:
-        user_id = get_jwt_identity()
-        data = request.get_json()
-        
-        if not data:
-            return jsonify({'error': 'No data provided'}), 400
-        
-        if not data.get('content_id') or not data.get('interaction_type'):
-            return jsonify({'error': 'content_id and interaction_type are required'}), 400
-        
-        # Check if interaction already exists
-        existing = UserInteraction.query.filter_by(
+    user_id = get_jwt_identity()
+    data = request.get_json()
+    
+    # Check if interaction already exists
+    existing = UserInteraction.query.filter_by(
+        user_id=user_id,
+        content_id=data['content_id'],
+        interaction_type=data['interaction_type']
+    ).first()
+    
+    if existing:
+        existing.rating = data.get('rating', existing.rating)
+        existing.created_at = datetime.utcnow()
+    else:
+        interaction = UserInteraction(
             user_id=user_id,
             content_id=data['content_id'],
-            interaction_type=data['interaction_type']
-        ).first()
+            interaction_type=data['interaction_type'],
+            rating=data.get('rating')
+        )
+        db.session.add(interaction)
+    
+    db.session.commit()
+    
+    # Update user preferences
+    user = User.query.get(user_id)
+    content = Content.query.get(data['content_id'])
+    
+    if content and content.genres:
+        preferences = user.preferences or {}
+        genre_weights = preferences.get('genre_weights', {})
         
-        if existing:
-            existing.rating = data.get('rating', existing.rating)
-            existing.created_at = datetime.utcnow()
-        else:
-            interaction = UserInteraction(
-                user_id=user_id,
-                content_id=data['content_id'],
-                interaction_type=data['interaction_type'],
-                rating=data.get('rating')
-            )
-            db.session.add(interaction)
+        weight_change = 1 if data['interaction_type'] in ['favorite', 'like'] else 0.5
         
+        for genre in content.genres:
+            genre_weights[genre] = genre_weights.get(genre, 0) + weight_change
+        
+        preferences['genre_weights'] = genre_weights
+        user.preferences = preferences
         db.session.commit()
-        
-        # Update user preferences
-        user = User.query.get(user_id)
-        content = Content.query.get(data['content_id'])
-        
-        if content and content.genres:
-            preferences = user.preferences or {}
-            genre_weights = preferences.get('genre_weights', {})
-            
-            weight_change = 1 if data['interaction_type'] in ['favorite', 'like'] else 0.5
-            
-            for genre in content.genres:
-                genre_weights[str(genre)] = genre_weights.get(str(genre), 0) + weight_change
-            
-            preferences['genre_weights'] = genre_weights
-            user.preferences = preferences
-            db.session.commit()
-        
-        return jsonify({'status': 'success'})
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({'error': 'Failed to record interaction', 'details': str(e)}), 500
+    
+    return jsonify({'status': 'success'})
 
 @app.route('/api/content/tmdb/<int:tmdb_id>')
 def get_tmdb_content(tmdb_id):
@@ -853,27 +814,6 @@ def admin_required(f):
             return jsonify({'error': 'Admin access required'}), 403
         return f(*args, **kwargs)
     return decorated_function
-
-@app.route('/api/debug/jwt')
-@jwt_required_with_error_handling()
-def debug_jwt():
-    user_id = get_jwt_identity()
-    user = User.query.get(user_id)
-    return jsonify({
-        'user_id': user_id,
-        'username': user.username if user else None,
-        'status': 'JWT working'
-    })
-
-@app.errorhandler(422)
-def handle_unprocessable_entity(e):
-    return jsonify({'error': 'Unprocessable entity', 'details': str(e)}), 422
-
-@app.errorhandler(500)
-def handle_internal_error(e):
-    db.session.rollback()
-    return jsonify({'error': 'Internal server error', 'details': str(e)}), 500
-
 
 @app.route('/api/admin/curate', methods=['POST'])
 @admin_required
@@ -1001,28 +941,6 @@ def home():
             'search': '/api/search'
         }
     })
-
-
-@jwt.expired_token_loader
-def expired_token_callback(jwt_header, jwt_payload):
-    return jsonify({'error': 'Token has expired'}), 401
-
-@jwt.invalid_token_loader
-def invalid_token_callback(error):
-    return jsonify({'error': 'Invalid token'}), 401
-
-@jwt.unauthorized_loader
-def missing_token_callback(error):
-    return jsonify({'error': 'Authorization token is required'}), 401
-
-# Add a custom JWT verification function
-def verify_jwt_optional():
-    try:
-        verify_jwt_in_request(optional=True)
-        return get_jwt_identity()
-    except:
-        return None
-
 
 
 @app.route('/health')
