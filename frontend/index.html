@@ -522,6 +522,52 @@
             }
         }
 
+
+
+        async function submitAuth() {
+    const isRegister = document.getElementById('authModalTitle').textContent === 'Sign Up';
+    const endpoint = isRegister ? 'register' : 'login';
+    
+    const formData = {
+        username: document.getElementById('username').value,
+        password: document.getElementById('password').value
+    };
+    
+    if (isRegister) {
+        formData.email = document.getElementById('email').value;
+    }
+    
+    try {
+        const response = await fetch(`${API_BASE}/${endpoint}`, {
+            method: 'POST',
+            headers: { 
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            },
+            body: JSON.stringify(formData)
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok) {
+            authToken = data.token;
+            currentUser = { username: data.username, id: data.user_id }; // Changed to use data.username from response
+            localStorage.setItem('authToken', authToken);
+            localStorage.setItem('currentUser', JSON.stringify(currentUser));
+            
+            showUserMenu();
+            loadPersonalizedContent();
+            bootstrap.Modal.getInstance(document.getElementById('authModal')).hide();
+            document.getElementById('authForm').reset();
+        } else {
+            alert(data.error || 'Authentication failed');
+        }
+    } catch (error) {
+        console.error('Auth error:', error);
+        alert('Network error. Please try again.');
+    }
+}
+
         function showLoading(containerId) {
             const container = document.getElementById(containerId);
             container.innerHTML = `
