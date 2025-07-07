@@ -437,20 +437,65 @@ def register():
 @app.route('/api/login', methods=['POST'])
 def login():
     try:
-        data = request.get_json()
+        # Get raw data for debugging
+        raw_data = request.get_data()
+        content_type = request.content_type
         
-        # Handle different content types
+        print(f"Raw data: {raw_data}")
+        print(f"Content type: {content_type}")
+        
+        # Try multiple ways to get data
+        data = None
+        
+        # Method 1: JSON
+        try:
+            data = request.get_json(force=True)
+            print(f"JSON data: {data}")
+        except Exception as e:
+            print(f"JSON parsing failed: {e}")
+        
+        # Method 2: Form data
         if not data:
-            data = request.form.to_dict()
+            try:
+                data = request.form.to_dict()
+                print(f"Form data: {data}")
+            except Exception as e:
+                print(f"Form parsing failed: {e}")
+        
+        # Method 3: Raw JSON parsing
+        if not data and raw_data:
+            try:
+                import json
+                data = json.loads(raw_data.decode('utf-8'))
+                print(f"Raw JSON data: {data}")
+            except Exception as e:
+                print(f"Raw JSON parsing failed: {e}")
+        
+        # Method 4: Args
+        if not data:
+            data = request.args.to_dict()
+            print(f"Args data: {data}")
         
         if not data:
-            return jsonify({'error': 'No data provided'}), 400
-            
-        username = data.get('username') or data.get('email')  # Allow email as username
+            return jsonify({'error': 'No data provided', 'debug': {
+                'raw_data': raw_data.decode('utf-8') if raw_data else None,
+                'content_type': content_type
+            }}), 400
+        
+        username = data.get('username') or data.get('email')
         password = data.get('password')
         
+        print(f"Extracted - Username: {username}, Password: {'*' * len(password) if password else None}")
+        
         if not username or not password:
-            return jsonify({'error': 'Username and password are required'}), 400
+            return jsonify({
+                'error': 'Username and password are required',
+                'received': data,
+                'debug': {
+                    'username_received': bool(username),
+                    'password_received': bool(password)
+                }
+            }), 400
         
         # Check both username and email fields
         user = User.query.filter(
@@ -468,9 +513,10 @@ def login():
         return jsonify({'error': 'Invalid credentials'}), 401
         
     except Exception as e:
-        if app.debug:
-            print(f"Login error: {e}")
-        return jsonify({'error': 'Internal server error'}), 500
+        print(f"Login error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': 'Internal server error', 'debug': str(e)}), 500
     
 
 @app.route('/api/test', methods=['GET', 'POST'])
@@ -483,6 +529,24 @@ def test_api():
             'content_type': request.content_type
         })
     return jsonify({'message': 'API is working', 'method': 'GET'})
+
+
+@app.route('/api/test-login', methods=['POST'])
+def test_login():
+    try:
+        raw_data = request.get_data()
+        json_data = request.get_json(force=True)
+        form_data = request.form.to_dict()
+        
+        return jsonify({
+            'raw_data': raw_data.decode('utf-8') if raw_data else None,
+            'json_data': json_data,
+            'form_data': form_data,
+            'content_type': request.content_type,
+            'headers': dict(request.headers)
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/api/homepage')
