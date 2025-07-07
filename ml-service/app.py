@@ -4,426 +4,518 @@ import numpy as np
 import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-from sklearn.decomposition import NMF
+from sklearn.decomposition import NMF, TruncatedSVD
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
-import requests
+from scipy.sparse import csr_matrix
+from scipy.spatial.distance import cosine
+import sqlite3
+import os
 import json
 from datetime import datetime, timedelta
-import os
-from functools import wraps
-import logging
-from threading import Thread
+from collections import defaultdict, Counter
+import threading
 import time
+import requests
+from functools import lru_cache
 import pickle
-import sqlite3
-from collections import defaultdict
+import joblib
 import warnings
 warnings.filterwarnings('ignore')
 
 app = Flask(__name__)
 CORS(app)
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-BACKEND_URL = os.getenv('BACKEND_URL', 'https://backend-app-970m.onrender.com')
-MODEL_UPDATE_INTERVAL = 3600
-
-class AdvancedRecommendationML:
+class AdvancedRecommendationEngine:
     def __init__(self):
-        self.content_vectors = None
+        self.user_item_matrix = None
+        self.content_features = None
         self.user_profiles = {}
-        self.item_factors = None
-        self.user_factors = None
-        self.content_clusters = None
+        self.item_profiles = {}
+        self.models = {}
+        self.scaler = StandardScaler()
+        self.content_vectorizer = TfidfVectorizer(max_features=5000, stop_words='english')
         self.genre_weights = {}
         self.popularity_scores = {}
-        self.tfidf_vectorizer = TfidfVectorizer(max_features=5000, stop_words='english')
-        self.scaler = StandardScaler()
-        self.nmf_model = NMF(n_components=50, random_state=42)
-        self.kmeans_model = KMeans(n_clusters=10, random_state=42)
+        self.seasonal_weights = {}
+        self.user_clusters = {}
+        self.item_clusters = {}
         self.last_update = datetime.now()
+        self.update_lock = threading.Lock()
         
-    def fetch_data_from_backend(self):
-        """Fetch data from main backend"""
+    def load_data_from_backend(self):
+        """Load user interactions and content from backend database"""
         try:
-            response = requests.get(f"{BACKEND_URL}/api/ml/data", timeout=10)
-            if response.status_code == 200:
-                return response.json()
-            else:
-                logger.error(f"Backend API error: {response.status_code}")
-                return None
-        except Exception as e:
-            logger.error(f"Failed to fetch data from backend: {e}")
-            return self.load_cached_data()
-    
-    def load_cached_data(self):
-        """Load cached data from local storage"""
-        try:
-            with open('cached_data.json', 'r') as f:
-                return json.load(f)
-        except:
-            return {'users': [], 'content': [], 'interactions': []}
-    
-    def save_cached_data(self, data):
-        """Save data to local cache"""
-        try:
-            with open('cached_data.json', 'w') as f:
-                json.dump(data, f)
-        except Exception as e:
-            logger.error(f"Failed to save cached data: {e}")
-    
-    def preprocess_content(self, content_data):
-        """Preprocess content for feature extraction"""
-        processed = []
-        for item in content_data:
-            features = []
-            if item.get('title'):
-                features.append(item['title'])
-            if item.get('overview'):
-                features.append(item['overview'])
-            if item.get('genres'):
-                genre_names = [str(g) for g in item['genres']]
-                features.extend(genre_names)
-            processed.append(' '.join(features))
-        return processed
-    
-    def build_content_features(self, content_data):
-        """Build content feature matrix"""
-        if not content_data:
-            return None
-        
-        text_features = self.preprocess_content(content_data)
-        content_vectors = self.tfidf_vectorizer.fit_transform(text_features)
-        
-        additional_features = []
-        for item in content_data:
-            features = [
-                item.get('rating', 0) / 10.0,
-                item.get('popularity', 0) / 100.0,
-                len(item.get('genres', [])) / 10.0,
-                item.get('runtime', 0) / 200.0 if item.get('runtime') else 0
-            ]
-            additional_features.append(features)
-        
-        additional_features = self.scaler.fit_transform(additional_features)
-        
-        from scipy.sparse import hstack
-        self.content_vectors = hstack([content_vectors, additional_features])
-        
-        return self.content_vectors
-    
-    def build_user_item_matrix(self, users_data, interactions_data):
-        """Build user-item interaction matrix"""
-        user_ids = [u['id'] for u in users_data]
-        content_ids = list(set([i['content_id'] for i in interactions_data]))
-        
-        user_item_matrix = np.zeros((len(user_ids), len(content_ids)))
-        
-        user_id_map = {uid: idx for idx, uid in enumerate(user_ids)}
-        content_id_map = {cid: idx for idx, cid in enumerate(content_ids)}
-        
-        for interaction in interactions_data:
-            if interaction['user_id'] in user_id_map and interaction['content_id'] in content_id_map:
-                user_idx = user_id_map[interaction['user_id']]
-                content_idx = content_id_map[interaction['content_id']]
-                
-                rating = interaction.get('rating', 0)
-                if interaction['interaction_type'] == 'favorite':
-                    rating = max(rating, 5)
-                elif interaction['interaction_type'] == 'like':
-                    rating = max(rating, 4)
-                elif interaction['interaction_type'] == 'view':
-                    rating = max(rating, 3)
-                
-                user_item_matrix[user_idx, content_idx] = rating
-        
-        return user_item_matrix, user_id_map, content_id_map
-    
-    def matrix_factorization(self, user_item_matrix):
-        """Perform matrix factorization using NMF"""
-        try:
-            self.user_factors = self.nmf_model.fit_transform(user_item_matrix)
-            self.item_factors = self.nmf_model.components_
-            return True
-        except Exception as e:
-            logger.error(f"Matrix factorization failed: {e}")
-            return False
-    
-    def cluster_content(self, content_vectors):
-        """Cluster content using K-means"""
-        try:
-            if content_vectors is not None:
-                self.content_clusters = self.kmeans_model.fit_predict(content_vectors.toarray())
-                return True
-        except Exception as e:
-            logger.error(f"Content clustering failed: {e}")
-        return False
-    
-    def calculate_genre_preferences(self, user_interactions, content_data):
-        """Calculate user genre preferences"""
-        user_genre_scores = defaultdict(lambda: defaultdict(float))
-        
-        content_dict = {item['id']: item for item in content_data}
-        
-        for interaction in user_interactions:
-            user_id = interaction['user_id']
-            content_id = interaction['content_id']
+            backend_url = os.getenv('BACKEND_URL', 'https://backend-app-970m.onrender.com')
             
-            if content_id in content_dict:
-                content = content_dict[content_id]
-                genres = content.get('genres', [])
+            # Fetch user interactions
+            interactions_response = requests.get(f'{backend_url}/api/ml/interactions', timeout=30)
+            content_response = requests.get(f'{backend_url}/api/ml/content', timeout=30)
+            
+            if interactions_response.status_code == 200 and content_response.status_code == 200:
+                interactions_data = interactions_response.json()
+                content_data = content_response.json()
                 
-                score = 1.0
-                if interaction['interaction_type'] == 'favorite':
-                    score = 2.0
-                elif interaction['interaction_type'] == 'like':
-                    score = 1.5
-                elif interaction.get('rating'):
-                    score = interaction['rating'] / 5.0
+                self.interactions_df = pd.DataFrame(interactions_data)
+                self.content_df = pd.DataFrame(content_data)
                 
-                for genre in genres:
-                    user_genre_scores[user_id][genre] += score
-        
-        return dict(user_genre_scores)
-    
-    def train_models(self):
-        """Train all ML models"""
-        data = self.fetch_data_from_backend()
-        if not data:
-            logger.warning("No data available for training")
+                if not self.interactions_df.empty:
+                    self.interactions_df['rating'] = self.interactions_df['rating'].fillna(3.5)
+                    self.interactions_df['weight'] = self.interactions_df['interaction_type'].map({
+                        'favorite': 5.0, 'like': 4.0, 'view': 3.0, 'wishlist': 4.5
+                    }).fillna(3.0)
+                
+                return True
+            else:
+                self._create_dummy_data()
+                return False
+                
+        except Exception as e:
+            print(f"Error loading data: {e}")
+            self._create_dummy_data()
             return False
-        
-        self.save_cached_data(data)
-        
-        users_data = data.get('users', [])
-        content_data = data.get('content', [])
-        interactions_data = data.get('interactions', [])
-        
-        if not users_data or not content_data or not interactions_data:
-            logger.warning("Insufficient data for training")
-            return False
-        
-        logger.info(f"Training with {len(users_data)} users, {len(content_data)} content items, {len(interactions_data)} interactions")
-        
-        # Build content features
-        content_vectors = self.build_content_features(content_data)
-        if content_vectors is not None:
-            self.cluster_content(content_vectors)
-        
-        # Build user-item matrix
-        user_item_matrix, user_id_map, content_id_map = self.build_user_item_matrix(users_data, interactions_data)
-        
-        # Matrix factorization
-        self.matrix_factorization(user_item_matrix)
-        
-        # Calculate genre preferences
-        self.user_genre_preferences = self.calculate_genre_preferences(interactions_data, content_data)
-        
-        # Store mappings
-        self.user_id_map = user_id_map
-        self.content_id_map = content_id_map
-        self.content_data = content_data
-        
-        # Calculate popularity scores
-        content_popularity = defaultdict(int)
-        for interaction in interactions_data:
-            weight = 1
-            if interaction['interaction_type'] == 'favorite':
-                weight = 3
-            elif interaction['interaction_type'] == 'like':
-                weight = 2
-            content_popularity[interaction['content_id']] += weight
-        
-        self.popularity_scores = dict(content_popularity)
-        
-        self.last_update = datetime.now()
-        logger.info("Model training completed successfully")
-        return True
     
-    def get_content_based_recommendations(self, user_id, n_recommendations=10):
-        """Content-based recommendations"""
-        if self.content_vectors is None:
-            return []
+    def _create_dummy_data(self):
+        """Create dummy data for testing"""
+        np.random.seed(42)
         
-        user_interactions = [i for i in self.interactions_data if i['user_id'] == user_id]
-        if not user_interactions:
-            return self.get_popularity_based_recommendations(n_recommendations)
+        # Generate dummy interactions
+        users = list(range(1, 51))
+        items = list(range(1, 201))
         
-        user_content_ids = [i['content_id'] for i in user_interactions]
-        user_content_indices = [self.content_id_map.get(cid) for cid in user_content_ids if cid in self.content_id_map]
+        interactions = []
+        for user in users:
+            n_interactions = np.random.randint(5, 20)
+            user_items = np.random.choice(items, n_interactions, replace=False)
+            
+            for item in user_items:
+                interactions.append({
+                    'user_id': user,
+                    'content_id': item,
+                    'rating': np.random.choice([3, 4, 5], p=[0.2, 0.3, 0.5]),
+                    'interaction_type': np.random.choice(['view', 'like', 'favorite'], p=[0.5, 0.3, 0.2]),
+                    'weight': np.random.uniform(3.0, 5.0)
+                })
         
-        if not user_content_indices:
-            return []
+        self.interactions_df = pd.DataFrame(interactions)
         
-        user_profile = np.mean(self.content_vectors[user_content_indices], axis=0)
-        content_similarities = cosine_similarity(user_profile, self.content_vectors).flatten()
+        # Generate dummy content
+        genres = ['Action', 'Comedy', 'Drama', 'Horror', 'Romance', 'Sci-Fi', 'Thriller', 'Animation']
+        content = []
         
-        similar_indices = np.argsort(content_similarities)[::-1]
-        
-        recommendations = []
-        for idx in similar_indices:
-            content_id = list(self.content_id_map.keys())[list(self.content_id_map.values()).index(idx)]
-            if content_id not in user_content_ids and len(recommendations) < n_recommendations:
-                content_item = next((c for c in self.content_data if c['id'] == content_id), None)
-                if content_item:
-                    recommendations.append({
-                        'content_id': content_id,
-                        'score': float(content_similarities[idx]),
-                        'method': 'content_based',
-                        'content': content_item
-                    })
-        
-        return recommendations
-    
-    def get_collaborative_recommendations(self, user_id, n_recommendations=10):
-        """Collaborative filtering recommendations"""
-        if self.user_factors is None or self.item_factors is None:
-            return []
-        
-        if user_id not in self.user_id_map:
-            return []
-        
-        user_idx = self.user_id_map[user_id]
-        user_vector = self.user_factors[user_idx]
-        
-        scores = np.dot(user_vector, self.item_factors)
-        
-        user_interactions = [i for i in self.interactions_data if i['user_id'] == user_id]
-        user_content_ids = [i['content_id'] for i in user_interactions]
-        
-        recommendations = []
-        for content_idx, score in enumerate(scores):
-            content_id = list(self.content_id_map.keys())[list(self.content_id_map.values()).index(content_idx)]
-            if content_id not in user_content_ids:
-                content_item = next((c for c in self.content_data if c['id'] == content_id), None)
-                if content_item:
-                    recommendations.append({
-                        'content_id': content_id,
-                        'score': float(score),
-                        'method': 'collaborative',
-                        'content': content_item
-                    })
-        
-        return sorted(recommendations, key=lambda x: x['score'], reverse=True)[:n_recommendations]
-    
-    def get_genre_based_recommendations(self, user_id, n_recommendations=10):
-        """Genre-based recommendations"""
-        if user_id not in self.user_genre_preferences:
-            return []
-        
-        user_genres = self.user_genre_preferences[user_id]
-        
-        recommendations = []
-        for content in self.content_data:
-            if content['genres']:
-                score = 0
-                for genre in content['genres']:
-                    score += user_genres.get(genre, 0)
-                
-                if score > 0:
-                    recommendations.append({
-                        'content_id': content['id'],
-                        'score': score,
-                        'method': 'genre_based',
-                        'content': content
-                    })
-        
-        return sorted(recommendations, key=lambda x: x['score'], reverse=True)[:n_recommendations]
-    
-    def get_popularity_based_recommendations(self, n_recommendations=10):
-        """Popularity-based recommendations"""
-        popularity_recs = []
-        for content in self.content_data:
-            popularity = self.popularity_scores.get(content['id'], 0)
-            popularity_recs.append({
-                'content_id': content['id'],
-                'score': popularity,
-                'method': 'popularity',
-                'content': content
+        for item in items:
+            content.append({
+                'id': item,
+                'title': f'Movie {item}',
+                'genres': [np.random.choice(genres), np.random.choice(genres)],
+                'overview': f'This is the overview for movie {item}',
+                'rating': np.random.uniform(3.0, 9.0),
+                'popularity': np.random.uniform(0.1, 100.0),
+                'release_date': f'2020-{np.random.randint(1,13):02d}-{np.random.randint(1,29):02d}',
+                'runtime': np.random.randint(80, 180),
+                'language': np.random.choice(['en', 'hi', 'te', 'ta'])
             })
         
-        return sorted(popularity_recs, key=lambda x: x['score'], reverse=True)[:n_recommendations]
+        self.content_df = pd.DataFrame(content)
+    
+    def build_user_item_matrix(self):
+        """Build user-item interaction matrix"""
+        if self.interactions_df.empty:
+            return
+            
+        pivot_data = self.interactions_df.pivot_table(
+            index='user_id', 
+            columns='content_id', 
+            values='weight', 
+            fill_value=0
+        )
+        
+        self.user_item_matrix = csr_matrix(pivot_data.values)
+        self.user_ids = pivot_data.index.tolist()
+        self.item_ids = pivot_data.columns.tolist()
+        
+    def build_content_features(self):
+        """Build content-based features"""
+        if self.content_df.empty:
+            return
+            
+        # Text features
+        content_text = self.content_df['title'].fillna('') + ' ' + self.content_df['overview'].fillna('')
+        text_features = self.content_vectorizer.fit_transform(content_text)
+        
+        # Genre features
+        all_genres = set()
+        for genres in self.content_df['genres']:
+            if isinstance(genres, list):
+                all_genres.update(genres)
+        
+        genre_features = np.zeros((len(self.content_df), len(all_genres)))
+        genre_list = list(all_genres)
+        
+        for i, genres in enumerate(self.content_df['genres']):
+            if isinstance(genres, list):
+                for genre in genres:
+                    if genre in genre_list:
+                        genre_features[i, genre_list.index(genre)] = 1
+        
+        # Numerical features
+        numerical_features = self.content_df[['rating', 'popularity', 'runtime']].fillna(0).values
+        numerical_features = self.scaler.fit_transform(numerical_features)
+        
+        # Combine features
+        self.content_features = np.hstack([
+            text_features.toarray(),
+            genre_features,
+            numerical_features
+        ])
+        
+    def train_matrix_factorization(self):
+        """Train matrix factorization models"""
+        if self.user_item_matrix is None:
+            return
+            
+        # NMF Model
+        nmf_model = NMF(n_components=50, init='random', random_state=42, max_iter=200)
+        self.models['nmf'] = nmf_model.fit(self.user_item_matrix)
+        
+        # SVD Model
+        svd_model = TruncatedSVD(n_components=50, random_state=42)
+        self.models['svd'] = svd_model.fit(self.user_item_matrix)
+        
+    def train_clustering_models(self):
+        """Train user and item clustering models"""
+        if self.user_item_matrix is None:
+            return
+            
+        # User clustering
+        user_kmeans = KMeans(n_clusters=min(10, len(self.user_ids)), random_state=42)
+        user_clusters = user_kmeans.fit_predict(self.user_item_matrix)
+        
+        for i, user_id in enumerate(self.user_ids):
+            self.user_clusters[user_id] = user_clusters[i]
+        
+        # Item clustering
+        if self.content_features is not None:
+            item_kmeans = KMeans(n_clusters=min(20, len(self.item_ids)), random_state=42)
+            item_clusters = item_kmeans.fit_predict(self.content_features)
+            
+            for i, item_id in enumerate(self.item_ids):
+                if i < len(item_clusters):
+                    self.item_clusters[item_id] = item_clusters[i]
+        
+        self.models['user_kmeans'] = user_kmeans
+        self.models['item_kmeans'] = item_kmeans if self.content_features is not None else None
+        
+    def build_user_profiles(self):
+        """Build comprehensive user profiles"""
+        if self.interactions_df.empty:
+            return
+            
+        for user_id in self.interactions_df['user_id'].unique():
+            user_interactions = self.interactions_df[self.interactions_df['user_id'] == user_id]
+            
+            # Genre preferences
+            genre_prefs = defaultdict(float)
+            for _, interaction in user_interactions.iterrows():
+                content_id = interaction['content_id']
+                weight = interaction['weight']
+                
+                content_row = self.content_df[self.content_df['id'] == content_id]
+                if not content_row.empty:
+                    genres = content_row.iloc[0]['genres']
+                    if isinstance(genres, list):
+                        for genre in genres:
+                            genre_prefs[genre] += weight
+            
+            # Normalize genre preferences
+            total_weight = sum(genre_prefs.values())
+            if total_weight > 0:
+                genre_prefs = {k: v/total_weight for k, v in genre_prefs.items()}
+            
+            # Rating patterns
+            ratings = user_interactions['rating'].values
+            avg_rating = np.mean(ratings)
+            rating_std = np.std(ratings)
+            
+            # Temporal patterns
+            interaction_types = user_interactions['interaction_type'].value_counts().to_dict()
+            
+            self.user_profiles[user_id] = {
+                'genre_preferences': dict(genre_prefs),
+                'avg_rating': avg_rating,
+                'rating_std': rating_std,
+                'interaction_patterns': interaction_types,
+                'total_interactions': len(user_interactions),
+                'cluster': self.user_clusters.get(user_id, 0)
+            }
+    
+    def calculate_popularity_scores(self):
+        """Calculate time-decayed popularity scores"""
+        if self.content_df.empty:
+            return
+            
+        current_date = datetime.now()
+        
+        for _, content in self.content_df.iterrows():
+            content_id = content['id']
+            
+            # Base popularity
+            base_popularity = content.get('popularity', 0)
+            
+            # Interaction-based popularity
+            content_interactions = self.interactions_df[
+                self.interactions_df['content_id'] == content_id
+            ]
+            
+            interaction_score = len(content_interactions) * 0.1
+            
+            # Time decay for release date
+            try:
+                release_date = datetime.strptime(content['release_date'], '%Y-%m-%d')
+                days_since_release = (current_date - release_date).days
+                time_decay = max(0.1, 1 - (days_since_release / 365) * 0.1)
+            except:
+                time_decay = 0.5
+            
+            self.popularity_scores[content_id] = (base_popularity + interaction_score) * time_decay
+    
+    def get_collaborative_recommendations(self, user_id, n_recommendations=10):
+        """Advanced collaborative filtering recommendations"""
+        if self.user_item_matrix is None or user_id not in self.user_ids:
+            return []
+            
+        user_idx = self.user_ids.index(user_id)
+        user_vector = self.user_item_matrix[user_idx].toarray().flatten()
+        
+        # Matrix factorization recommendations
+        nmf_recs = []
+        svd_recs = []
+        
+        if 'nmf' in self.models:
+            nmf_user_features = self.models['nmf'].transform(self.user_item_matrix[user_idx])
+            nmf_predictions = np.dot(nmf_user_features, self.models['nmf'].components_)
+            nmf_recs = self._get_top_items(nmf_predictions.flatten(), user_vector, n_recommendations)
+        
+        if 'svd' in self.models:
+            svd_user_features = self.models['svd'].transform(self.user_item_matrix[user_idx])
+            svd_item_features = self.models['svd'].components_
+            svd_predictions = np.dot(svd_user_features, svd_item_features)
+            svd_recs = self._get_top_items(svd_predictions.flatten(), user_vector, n_recommendations)
+        
+        # User-based collaborative filtering
+        user_similarities = []
+        for i, other_user_id in enumerate(self.user_ids):
+            if i != user_idx:
+                other_vector = self.user_item_matrix[i].toarray().flatten()
+                similarity = 1 - cosine(user_vector, other_vector)
+                user_similarities.append((i, similarity))
+        
+        user_similarities.sort(key=lambda x: x[1], reverse=True)
+        
+        # Get recommendations from similar users
+        similar_user_recs = []
+        for similar_user_idx, similarity in user_similarities[:10]:
+            similar_user_vector = self.user_item_matrix[similar_user_idx].toarray().flatten()
+            for item_idx, rating in enumerate(similar_user_vector):
+                if rating > 0 and user_vector[item_idx] == 0:
+                    similar_user_recs.append((self.item_ids[item_idx], rating * similarity))
+        
+        # Aggregate similar user recommendations
+        similar_user_scores = defaultdict(float)
+        for item_id, score in similar_user_recs:
+            similar_user_scores[item_id] += score
+        
+        similar_user_final = sorted(similar_user_scores.items(), key=lambda x: x[1], reverse=True)
+        
+        # Combine all recommendations
+        all_recommendations = {}
+        
+        # Weight different methods
+        for item_id, score in nmf_recs[:20]:
+            all_recommendations[item_id] = all_recommendations.get(item_id, 0) + score * 0.4
+            
+        for item_id, score in svd_recs[:20]:
+            all_recommendations[item_id] = all_recommendations.get(item_id, 0) + score * 0.4
+            
+        for item_id, score in similar_user_final[:20]:
+            all_recommendations[item_id] = all_recommendations.get(item_id, 0) + score * 0.2
+        
+        # Sort and return top recommendations
+        final_recs = sorted(all_recommendations.items(), key=lambda x: x[1], reverse=True)
+        return [item_id for item_id, _ in final_recs[:n_recommendations]]
+    
+    def get_content_based_recommendations(self, user_id, n_recommendations=10):
+        """Advanced content-based recommendations"""
+        if user_id not in self.user_profiles or self.content_features is None:
+            return []
+            
+        user_profile = self.user_profiles[user_id]
+        
+        # Build user preference vector
+        user_interactions = self.interactions_df[self.interactions_df['user_id'] == user_id]
+        liked_items = user_interactions[user_interactions['weight'] >= 4]['content_id'].tolist()
+        
+        if not liked_items:
+            return []
+        
+        # Calculate average feature vector for liked items
+        liked_features = []
+        for item_id in liked_items:
+            item_idx = self.content_df[self.content_df['id'] == item_id].index
+            if len(item_idx) > 0:
+                liked_features.append(self.content_features[item_idx[0]])
+        
+        if not liked_features:
+            return []
+        
+        user_preference_vector = np.mean(liked_features, axis=0)
+        
+        # Calculate similarities with all items
+        similarities = []
+        for i, item_id in enumerate(self.content_df['id']):
+            if item_id not in liked_items:
+                item_features = self.content_features[i]
+                similarity = 1 - cosine(user_preference_vector, item_features)
+                
+                # Boost with genre preferences
+                item_genres = self.content_df.iloc[i]['genres']
+                genre_boost = 0
+                if isinstance(item_genres, list):
+                    for genre in item_genres:
+                        genre_boost += user_profile['genre_preferences'].get(genre, 0)
+                
+                final_score = similarity * 0.7 + genre_boost * 0.3
+                similarities.append((item_id, final_score))
+        
+        similarities.sort(key=lambda x: x[1], reverse=True)
+        return [item_id for item_id, _ in similarities[:n_recommendations]]
     
     def get_hybrid_recommendations(self, user_id, n_recommendations=10):
-        """Hybrid recommendations combining multiple methods"""
-        content_recs = self.get_content_based_recommendations(user_id, n_recommendations//2)
-        collab_recs = self.get_collaborative_recommendations(user_id, n_recommendations//2)
-        genre_recs = self.get_genre_based_recommendations(user_id, n_recommendations//2)
+        """Hybrid recommendations combining multiple approaches"""
+        collab_recs = self.get_collaborative_recommendations(user_id, n_recommendations)
+        content_recs = self.get_content_based_recommendations(user_id, n_recommendations)
         
-        # Combine and weight recommendations
-        all_recs = {}
+        # Popularity-based recommendations
+        popularity_recs = sorted(self.popularity_scores.items(), key=lambda x: x[1], reverse=True)
+        popularity_recs = [item_id for item_id, _ in popularity_recs[:n_recommendations]]
         
-        for rec in content_recs:
-            all_recs[rec['content_id']] = rec
-            all_recs[rec['content_id']]['combined_score'] = rec['score'] * 0.4
+        # Cluster-based recommendations
+        cluster_recs = []
+        if user_id in self.user_clusters:
+            user_cluster = self.user_clusters[user_id]
+            cluster_users = [uid for uid, cluster in self.user_clusters.items() if cluster == user_cluster]
+            
+            cluster_items = defaultdict(float)
+            for cluster_user in cluster_users:
+                if cluster_user != user_id:
+                    user_interactions = self.interactions_df[
+                        self.interactions_df['user_id'] == cluster_user
+                    ]
+                    for _, interaction in user_interactions.iterrows():
+                        if interaction['weight'] >= 4:
+                            cluster_items[interaction['content_id']] += interaction['weight']
+            
+            cluster_recs = [item_id for item_id, _ in sorted(cluster_items.items(), key=lambda x: x[1], reverse=True)]
         
-        for rec in collab_recs:
-            if rec['content_id'] in all_recs:
-                all_recs[rec['content_id']]['combined_score'] += rec['score'] * 0.4
-            else:
-                all_recs[rec['content_id']] = rec
-                all_recs[rec['content_id']]['combined_score'] = rec['score'] * 0.4
+        # Combine all recommendations with weights
+        final_scores = defaultdict(float)
         
-        for rec in genre_recs:
-            if rec['content_id'] in all_recs:
-                all_recs[rec['content_id']]['combined_score'] += rec['score'] * 0.2
-            else:
-                all_recs[rec['content_id']] = rec
-                all_recs[rec['content_id']]['combined_score'] = rec['score'] * 0.2
+        # Weight collaborative filtering
+        for i, item_id in enumerate(collab_recs):
+            final_scores[item_id] += (len(collab_recs) - i) * 0.4
         
-        # Sort by combined score
-        final_recs = sorted(all_recs.values(), key=lambda x: x['combined_score'], reverse=True)
+        # Weight content-based
+        for i, item_id in enumerate(content_recs):
+            final_scores[item_id] += (len(content_recs) - i) * 0.3
         
-        return final_recs[:n_recommendations]
+        # Weight popularity
+        for i, item_id in enumerate(popularity_recs):
+            final_scores[item_id] += (len(popularity_recs) - i) * 0.2
+        
+        # Weight cluster-based
+        for i, item_id in enumerate(cluster_recs[:n_recommendations]):
+            final_scores[item_id] += (n_recommendations - i) * 0.1
+        
+        # Sort and return final recommendations
+        final_recs = sorted(final_scores.items(), key=lambda x: x[1], reverse=True)
+        return [item_id for item_id, _ in final_recs[:n_recommendations]]
+    
+    def _get_top_items(self, predictions, user_vector, n_items):
+        """Get top items from predictions, excluding already rated items"""
+        item_scores = []
+        for i, score in enumerate(predictions):
+            if i < len(self.item_ids) and user_vector[i] == 0:
+                item_scores.append((self.item_ids[i], score))
+        
+        item_scores.sort(key=lambda x: x[1], reverse=True)
+        return item_scores[:n_items]
+    
+    def train_all_models(self):
+        """Train all recommendation models"""
+        print("Loading data...")
+        self.load_data_from_backend()
+        
+        print("Building matrices...")
+        self.build_user_item_matrix()
+        self.build_content_features()
+        
+        print("Training models...")
+        self.train_matrix_factorization()
+        self.train_clustering_models()
+        
+        print("Building profiles...")
+        self.build_user_profiles()
+        self.calculate_popularity_scores()
+        
+        self.last_update = datetime.now()
+        print("Training completed!")
+    
+    def should_retrain(self):
+        """Check if models should be retrained"""
+        return (datetime.now() - self.last_update).seconds > 3600
+    
+    def get_model_stats(self):
+        """Get model statistics"""
+        return {
+            'last_update': self.last_update.isoformat(),
+            'num_users': len(self.user_ids) if self.user_ids else 0,
+            'num_items': len(self.item_ids) if self.item_ids else 0,
+            'num_interactions': len(self.interactions_df) if hasattr(self, 'interactions_df') else 0,
+            'models_trained': list(self.models.keys()),
+            'user_clusters': len(set(self.user_clusters.values())) if self.user_clusters else 0,
+            'item_clusters': len(set(self.item_clusters.values())) if self.item_clusters else 0
+        }
 
-ml_engine = AdvancedRecommendationML()
+# Initialize the recommendation engine
+recommender = AdvancedRecommendationEngine()
 
-def model_update_worker():
-    """Background worker to update models periodically"""
+# Background training thread
+def background_training():
     while True:
         try:
-            time.sleep(MODEL_UPDATE_INTERVAL)
-            logger.info("Starting scheduled model update")
-            ml_engine.train_models()
-            logger.info("Scheduled model update completed")
+            if recommender.should_retrain():
+                with recommender.update_lock:
+                    recommender.train_all_models()
+            time.sleep(300)  # Check every 5 minutes
         except Exception as e:
-            logger.error(f"Error in model update worker: {e}")
+            print(f"Background training error: {e}")
+            time.sleep(600)  # Wait 10 minutes on error
 
-def requires_trained_model(f):
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        if not hasattr(ml_engine, 'content_data') or not ml_engine.content_data:
-            return jsonify({'error': 'Models not trained yet', 'recommendations': []}), 503
-        return f(*args, **kwargs)
-    return decorated_function
+# Start background training
+training_thread = threading.Thread(target=background_training, daemon=True)
+training_thread.start()
 
-@app.route('/health')
+# API Routes
+@app.route('/health', methods=['GET'])
 def health_check():
     return jsonify({
         'status': 'healthy',
-        'last_model_update': ml_engine.last_update.isoformat(),
-        'models_trained': hasattr(ml_engine, 'content_data') and bool(ml_engine.content_data)
+        'service': 'ML Recommendation Service',
+        'timestamp': datetime.now().isoformat()
     })
 
-@app.route('/train', methods=['POST'])
-def train_models():
-    """Manually trigger model training"""
-    try:
-        success = ml_engine.train_models()
-        if success:
-            return jsonify({'status': 'success', 'message': 'Models trained successfully'})
-        else:
-            return jsonify({'status': 'error', 'message': 'Model training failed'}), 500
-    except Exception as e:
-        logger.error(f"Training error: {e}")
-        return jsonify({'status': 'error', 'message': str(e)}), 500
-
 @app.route('/recommend', methods=['POST'])
-@requires_trained_model
 def get_recommendations():
-    """Get personalized recommendations"""
     try:
         data = request.get_json()
         user_id = data.get('user_id')
@@ -431,127 +523,174 @@ def get_recommendations():
         method = data.get('method', 'hybrid')
         
         if not user_id:
-            return jsonify({'error': 'User ID is required'}), 400
+            return jsonify({'error': 'user_id is required'}), 400
         
-        if method == 'content':
-            recommendations = ml_engine.get_content_based_recommendations(user_id, n_recommendations)
-        elif method == 'collaborative':
-            recommendations = ml_engine.get_collaborative_recommendations(user_id, n_recommendations)
-        elif method == 'genre':
-            recommendations = ml_engine.get_genre_based_recommendations(user_id, n_recommendations)
-        elif method == 'popularity':
-            recommendations = ml_engine.get_popularity_based_recommendations(n_recommendations)
-        else:
-            recommendations = ml_engine.get_hybrid_recommendations(user_id, n_recommendations)
+        # Ensure models are trained
+        if not recommender.models or recommender.should_retrain():
+            with recommender.update_lock:
+                recommender.train_all_models()
+        
+        # Get recommendations based on method
+        if method == 'collaborative':
+            recommendations = recommender.get_collaborative_recommendations(user_id, n_recommendations)
+        elif method == 'content':
+            recommendations = recommender.get_content_based_recommendations(user_id, n_recommendations)
+        else:  # hybrid
+            recommendations = recommender.get_hybrid_recommendations(user_id, n_recommendations)
         
         return jsonify({
-            'recommendations': recommendations,
             'user_id': user_id,
+            'recommendations': recommendations,
             'method': method,
             'timestamp': datetime.now().isoformat()
         })
-    
+        
     except Exception as e:
-        logger.error(f"Recommendation error: {e}")
-        return jsonify({'error': str(e), 'recommendations': []}), 500
+        return jsonify({'error': str(e)}), 500
 
-@app.route('/similar/<int:content_id>')
-@requires_trained_model
-def get_similar_content(content_id):
-    """Get similar content recommendations"""
+@app.route('/similar_items/<int:item_id>', methods=['GET'])
+def get_similar_items(item_id):
     try:
-        if ml_engine.content_vectors is None:
-            return jsonify({'similar_content': []}), 503
+        n_similar = request.args.get('n_similar', 10, type=int)
         
-        if content_id not in ml_engine.content_id_map:
-            return jsonify({'similar_content': []}), 404
+        if recommender.content_features is None:
+            return jsonify({'error': 'Content features not available'}), 400
         
-        content_idx = ml_engine.content_id_map[content_id]
-        content_vector = ml_engine.content_vectors[content_idx]
+        # Find item index
+        item_row = recommender.content_df[recommender.content_df['id'] == item_id]
+        if item_row.empty:
+            return jsonify({'error': 'Item not found'}), 404
         
-        similarities = cosine_similarity(content_vector, ml_engine.content_vectors).flatten()
-        similar_indices = np.argsort(similarities)[::-1][1:11]  # Exclude self
+        item_idx = item_row.index[0]
+        item_features = recommender.content_features[item_idx]
         
-        similar_content = []
-        for idx in similar_indices:
-            similar_content_id = list(ml_engine.content_id_map.keys())[list(ml_engine.content_id_map.values()).index(idx)]
-            content_item = next((c for c in ml_engine.content_data if c['id'] == similar_content_id), None)
-            if content_item:
-                similar_content.append({
-                    'content_id': similar_content_id,
-                    'similarity_score': float(similarities[idx]),
-                    'content': content_item
-                })
+        # Calculate similarities
+        similarities = []
+        for i, other_item_id in enumerate(recommender.content_df['id']):
+            if other_item_id != item_id:
+                other_features = recommender.content_features[i]
+                similarity = 1 - cosine(item_features, other_features)
+                similarities.append((other_item_id, similarity))
         
-        return jsonify({'similar_content': similar_content})
-    
+        similarities.sort(key=lambda x: x[1], reverse=True)
+        similar_items = [item_id for item_id, _ in similarities[:n_similar]]
+        
+        return jsonify({
+            'item_id': item_id,
+            'similar_items': similar_items,
+            'timestamp': datetime.now().isoformat()
+        })
+        
     except Exception as e:
-        logger.error(f"Similar content error: {e}")
-        return jsonify({'error': str(e), 'similar_content': []}), 500
+        return jsonify({'error': str(e)}), 500
 
-@app.route('/user-profile/<int:user_id>')
-@requires_trained_model
+@app.route('/user_profile/<int:user_id>', methods=['GET'])
 def get_user_profile(user_id):
-    """Get user preference profile"""
     try:
-        profile = {
-            'user_id': user_id,
-            'genre_preferences': ml_engine.user_genre_preferences.get(user_id, {}),
-            'has_interactions': user_id in ml_engine.user_id_map,
-            'recommendation_methods': ['hybrid', 'content', 'collaborative', 'genre', 'popularity']
-        }
+        if user_id not in recommender.user_profiles:
+            return jsonify({'error': 'User profile not found'}), 404
+        
+        profile = recommender.user_profiles[user_id].copy()
+        profile['user_id'] = user_id
+        profile['timestamp'] = datetime.now().isoformat()
         
         return jsonify(profile)
-    
-    except Exception as e:
-        logger.error(f"User profile error: {e}")
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/trending')
-@requires_trained_model
-def get_trending():
-    """Get trending content based on recent interactions"""
-    try:
-        trending = ml_engine.get_popularity_based_recommendations(20)
-        return jsonify({'trending': trending})
-    
-    except Exception as e:
-        logger.error(f"Trending error: {e}")
-        return jsonify({'error': str(e), 'trending': []}), 500
-
-@app.route('/stats')
-@requires_trained_model
-def get_stats():
-    """Get ML service statistics"""
-    try:
-        stats = {
-            'total_users': len(ml_engine.user_id_map) if hasattr(ml_engine, 'user_id_map') else 0,
-            'total_content': len(ml_engine.content_data) if hasattr(ml_engine, 'content_data') else 0,
-            'total_interactions': len(ml_engine.interactions_data) if hasattr(ml_engine, 'interactions_data') else 0,
-            'model_features': {
-                'content_vectors': ml_engine.content_vectors.shape if ml_engine.content_vectors is not None else None,
-                'user_factors': ml_engine.user_factors.shape if ml_engine.user_factors is not None else None,
-                'item_factors': ml_engine.item_factors.shape if ml_engine.item_factors is not None else None,
-                'content_clusters': len(set(ml_engine.content_clusters)) if ml_engine.content_clusters is not None else 0
-            },
-            'last_update': ml_engine.last_update.isoformat()
-        }
         
-        return jsonify(stats)
-    
     except Exception as e:
-        logger.error(f"Stats error: {e}")
         return jsonify({'error': str(e)}), 500
+
+@app.route('/trending', methods=['GET'])
+def get_trending():
+    try:
+        n_items = request.args.get('n_items', 20, type=int)
+        
+        # Get trending items based on recent interactions and popularity
+        trending_items = sorted(
+            recommender.popularity_scores.items(),
+            key=lambda x: x[1],
+            reverse=True
+        )[:n_items]
+        
+        return jsonify({
+            'trending_items': [item_id for item_id, _ in trending_items],
+            'timestamp': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/stats', methods=['GET'])
+def get_stats():
+    try:
+        return jsonify(recommender.get_model_stats())
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/retrain', methods=['POST'])
+def retrain_models():
+    try:
+        # Force retrain models
+        with recommender.update_lock:
+            recommender.train_all_models()
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Models retrained successfully',
+            'timestamp': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/batch_recommend', methods=['POST'])
+def batch_recommend():
+    try:
+        data = request.get_json()
+        user_ids = data.get('user_ids', [])
+        n_recommendations = data.get('n_recommendations', 10)
+        method = data.get('method', 'hybrid')
+        
+        if not user_ids:
+            return jsonify({'error': 'user_ids list is required'}), 400
+        
+        # Ensure models are trained
+        if not recommender.models or recommender.should_retrain():
+            with recommender.update_lock:
+                recommender.train_all_models()
+        
+        batch_results = {}
+        
+        for user_id in user_ids:
+            try:
+                if method == 'collaborative':
+                    recommendations = recommender.get_collaborative_recommendations(user_id, n_recommendations)
+                elif method == 'content':
+                    recommendations = recommender.get_content_based_recommendations(user_id, n_recommendations)
+                else:  # hybrid
+                    recommendations = recommender.get_hybrid_recommendations(user_id, n_recommendations)
+                
+                batch_results[user_id] = recommendations
+                
+            except Exception as e:
+                batch_results[user_id] = {'error': str(e)}
+        
+        return jsonify({
+            'results': batch_results,
+            'method': method,
+            'timestamp': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# Initialize models on startup
+@app.before_first_request
+def initialize_models():
+    try:
+        recommender.train_all_models()
+    except Exception as e:
+        print(f"Error initializing models: {e}")
 
 if __name__ == '__main__':
-    logger.info("Starting ML Recommendation Service")
-    
-    # Initial model training
-    logger.info("Performing initial model training")
-    ml_engine.train_models()
-    
-    # Start background update worker
-    update_thread = Thread(target=model_update_worker, daemon=True)
-    update_thread.start()
-    
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5001)), debug=False)
+    port = int(os.environ.get('PORT', 5001))
+    app.run(host='0.0.0.0', port=port, debug=False)
