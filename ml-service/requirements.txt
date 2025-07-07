@@ -1,6 +1,10 @@
-flask
+# ml-service/requirements.txt
+Flask
+Flask-CORS
 numpy
 pandas
 scikit-learn
+redis
 requests
+aiohttp
 gunicorn
