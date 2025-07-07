@@ -684,12 +684,15 @@ def batch_recommend():
         return jsonify({'error': str(e)}), 500
 
 # Initialize models on startup
-@app.before_first_request
+# Initialize models on startup
 def initialize_models():
     try:
         recommender.train_all_models()
     except Exception as e:
         print(f"Error initializing models: {e}")
+
+# Call initialization after app setup
+initialize_models()
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5001))
