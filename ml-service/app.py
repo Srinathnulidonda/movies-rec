@@ -684,7 +684,6 @@ def batch_recommend():
         return jsonify({'error': str(e)}), 500
 
 # Initialize models on startup
-# Initialize models on startup
 def initialize_models():
     try:
         recommender.train_all_models()
