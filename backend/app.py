@@ -253,6 +253,104 @@ class ContentAggregator:
                     return False
         except:
             return False
+        
+    # Add these methods to the ContentAggregator class
+
+    async def fetch_trending(self, content_type='movie'):
+        """Fetch trending content from TMDB"""
+        try:
+            url = f"{self.tmdb_base}/trending/{content_type}/week"
+            params = {'api_key': TMDB_API_KEY}
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, params=params) as response:
+                    data = await response.json()
+                    return data.get('results', [])
+        except Exception as e:
+            print(f"Error fetching trending {content_type}: {e}")
+            return []
+
+    async def fetch_popular_by_genre(self, genre_id, content_type='movie'):
+        """Fetch popular content by genre"""
+        try:
+            url = f"{self.tmdb_base}/discover/{content_type}"
+            params = {
+                'api_key': TMDB_API_KEY,
+                'with_genres': genre_id,
+                'sort_by': 'popularity.desc'
+            }
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, params=params) as response:
+                    data = await response.json()
+                    return data.get('results', [])[:10]
+        except Exception as e:
+            print(f"Error fetching popular content for genre {genre_id}: {e}")
+            return []
+
+    async def fetch_regional_content(self, language_code):
+        """Fetch regional content by language"""
+        try:
+            url = f"{self.tmdb_base}/discover/movie"
+            params = {
+                'api_key': TMDB_API_KEY,
+                'with_original_language': language_code,
+                'sort_by': 'popularity.desc'
+            }
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, params=params) as response:
+                    data = await response.json()
+                    return data.get('results', [])[:10]
+        except Exception as e:
+            print(f"Error fetching regional content for {language_code}: {e}")
+            return []
+
+    async def fetch_anime_trending(self):
+        """Fetch trending anime from Jikan API"""
+        try:
+            url = f"{self.jikan_base}/top/anime"
+            params = {'limit': 10}
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, params=params) as response:
+                    data = await response.json()
+                    anime_list = data.get('data', [])
+                    
+                    # Convert to TMDB-like format
+                    formatted_anime = []
+                    for anime in anime_list:
+                        formatted_anime.append({
+                            'id': anime.get('mal_id'),
+                            'title': anime.get('title'),
+                            'name': anime.get('title'),
+                            'overview': anime.get('synopsis', ''),
+                            'poster_path': anime.get('images', {}).get('jpg', {}).get('image_url'),
+                            'backdrop_path': anime.get('images', {}).get('jpg', {}).get('large_image_url'),
+                            'vote_average': anime.get('score'),
+                            'popularity': anime.get('popularity', 0),
+                            'genre_ids': [genre.get('mal_id') for genre in anime.get('genres', [])],
+                            'content_type': 'anime'
+                        })
+                    
+                    return formatted_anime
+        except Exception as e:
+            print(f"Error fetching anime trending: {e}")
+            return []
+
+    async def get_content_details(self, content_id, content_type='movie'):
+        """Get detailed content information from TMDB"""
+        try:
+            url = f"{self.tmdb_base}/{content_type}/{content_id}"
+            params = {'api_key': TMDB_API_KEY}
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, params=params) as response:
+                    data = await response.json()
+                    return data
+        except Exception as e:
+            print(f"Error fetching content details for {content_id}: {e}")
+            return {}
 class RedisRateLimiter:
     def __init__(self, redis_url=None):
         try:
