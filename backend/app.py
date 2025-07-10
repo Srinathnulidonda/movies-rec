@@ -1092,18 +1092,11 @@ def get_watch_options(content_id):
             in_theaters = async_to_sync(aggregator.check_if_in_theaters)(
                 content.tmdb_id, content.content_type
             )
-            
-            # Get theater showtimes if in theaters
             if in_theaters:
                 theater_info = async_to_sync(aggregator.get_theater_showtimes)(
                     content.tmdb_id, content_type=content.content_type
                 )
-            
-            # Store in database for caching
-            # Clear existing platforms
-            StreamingPlatform.query.filter_by(content_id=content.id).delete()
-            
-            # Add new platforms
+            StreamingPlatform.query.filter_by(content_id=content.id).delete()            
             for platform in platforms:
                 db_platform = StreamingPlatform(
                     content_id=content.id,
@@ -1113,9 +1106,7 @@ def get_watch_options(content_id):
                     is_free=platform.get('is_free', False),
                     updated_at=datetime.utcnow()
                 )
-                db.session.add(db_platform)
-            
-            # Add theater information
+                db.session.add(db_platform)            
             if theater_info:
                 TheaterShowtime.query.filter_by(content_id=content.id).delete()
                 for theater in theater_info:
@@ -1141,7 +1132,6 @@ def get_watch_options(content_id):
             
         except Exception as e:
             print(f"Error fetching watch options: {e}")
-            # Fallback to database
             db_platforms = StreamingPlatform.query.filter_by(content_id=content.id).all()
             streaming_platforms = [
                 {
@@ -1164,8 +1154,6 @@ def get_watch_options(content_id):
                     'booking_url': t.booking_url
                 } for t in db_theaters
             ]
-    
-    # Categorize platforms
     free_platforms = [p for p in streaming_platforms if p.get('is_free', False)]
     paid_platforms = [p for p in streaming_platforms if not p.get('is_free', False)]
     
@@ -1181,19 +1169,13 @@ def get_watch_options(content_id):
         'in_theaters': len(theater_info) > 0,
         'last_updated': datetime.utcnow().isoformat()
     })
-
-
 @app.route('/health')
 def health_check():
     return jsonify({'status': 'healthy', 'timestamp': datetime.utcnow().isoformat()})
-
-
 def create_tables():
     try:
         with app.app_context():
             db.create_all()
-            
-            # Create admin user if not exists
             admin_user = User.query.filter_by(username='admin').first()
             if not admin_user:
                 admin_user = User(
@@ -1205,16 +1187,12 @@ def create_tables():
                 db.session.add(admin_user)
                 db.session.commit()
                 print("Admin user created - Username: admin, Password: admin123")
-            
-            # Initial content sync (only if no content exists)
             if Content.query.count() == 0:
                 print("Starting initial content sync...")
                 
     except Exception as e:
         print(f"Error creating tables: {e}")
-# Always create tables when the app starts
 create_tables()
-
 if __name__ == '__main__':
     CORS(app)
     app.run(debug=True, port=5000)
