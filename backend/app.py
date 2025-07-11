@@ -29,6 +29,7 @@ CORS(app,
      origins=["http://127.0.0.1:5500", 
               "http://localhost:5500", 
               "https://movies-rec.vercel.app",
+              "https://movies-frontend-jade.vercel.app"
               "https://backend-app-970m.onrender.com"],
      methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
      allow_headers=["Content-Type", "Authorization"],
