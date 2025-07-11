@@ -23,20 +23,29 @@ from functools import wraps
 import json
 from datetime import datetime, timedelta
 import requests
+from dotenv import load_dotenv
+from functools import lru_cache
+from datetime import datetime, timedelta
+import asyncio
+import aiohttp
+import logging
+from logging.handlers import RotatingFileHandler
+import signal
+import sys
 
 app = Flask(__name__)
 CORS(app, 
      origins=["http://127.0.0.1:5500", 
               "http://localhost:5500", 
               "https://movies-rec.vercel.app",
-              "https://movies-frontend-jade.vercel.app"
+              "https://movies-frontend-jade.vercel.app",
               "https://backend-app-970m.onrender.com"],
      methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
      allow_headers=["Content-Type", "Authorization"],
      supports_credentials=True)
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///movie_rec.db'
+app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'your-fallback-secret-key-change-in-production')
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///movie_rec.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['JWT_SECRET_KEY'] = 'your-secret-key'
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(days=30)
 
 db = SQLAlchemy(app)
@@ -48,7 +57,7 @@ JUSTWATCH_API_BASE = "https://apis.justwatch.com/content"
 TMDB_API_KEY = os.getenv('TMDB_API_KEY', '1cf86635f20bb2aff8e70940e7c3ddd5')
 OMDB_API_KEY = os.getenv('OMDB_API_KEY', '52260795')
 ML_SERVICE_URL = os.getenv('ML_SERVICE_URL', 'https://movies-rec-xmf5.onrender.com')
-
+load_dotenv()
 # Database Models
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -118,6 +127,12 @@ class TheaterShowtime(db.Model):
     city = db.Column(db.String(100))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    'pool_pre_ping': True,
+    'pool_recycle': 300,
+    'pool_timeout': 20,
+    'max_overflow': 0
+}
 # Content Aggregator Service
 class ContentAggregator:
     def __init__(self):
@@ -389,6 +404,29 @@ def redis_rate_limit(limit=100, window=3600):
         return decorated_function
     return decorator
 
+def enhanced_rate_limit(requests_per_minute=60):
+    def decorator(f):
+        @wraps(f)
+        def decorated_function(*args, **kwargs):
+            if redis_limiter and redis_limiter.redis_client:
+                key = f"rate_limit:{request.remote_addr}:{f.__name__}"
+                if not redis_limiter.is_allowed(key, requests_per_minute, 60):
+                    return jsonify({
+                        'error': 'Rate limit exceeded',
+                        'retry_after': 60
+                    }), 429
+            return f(*args, **kwargs)
+        return decorated_function
+    return decorator
+@app.route('/health/db')
+def db_health_check():
+    try:
+        # Simple query to check database connectivity
+        db.session.execute('SELECT 1')
+        return jsonify({'status': 'healthy', 'database': 'connected'})
+    except Exception as e:
+        return jsonify({'status': 'unhealthy', 'database': 'disconnected', 'error': str(e)}), 500
+
 # Recommendation Engine
 class RecommendationEngine:
     def __init__(self):
@@ -583,7 +621,24 @@ def serialize_content(content):
         'popularity': content.popularity
     }
 
-
+def validate_json_input(required_fields):
+    def decorator(f):
+        @wraps(f)
+        def decorated_function(*args, **kwargs):
+            if not request.is_json:
+                return jsonify({'error': 'Content-Type must be application/json'}), 400
+            
+            data = request.get_json()
+            if not data:
+                return jsonify({'error': 'No JSON data provided'}), 400
+            
+            missing_fields = [field for field in required_fields if field not in data]
+            if missing_fields:
+                return jsonify({'error': f'Missing required fields: {", ".join(missing_fields)}'}), 400
+            
+            return f(*args, **kwargs)
+        return decorated_function
+    return decorator
 
 
 # API Routes
@@ -632,67 +687,12 @@ def register():
         return jsonify({'error': 'Internal server error'}), 500
 
 @app.route('/api/login', methods=['POST'])
+@validate_json_input(['username', 'password'])
 def login():
     try:
-        # Get raw data for debugging
-        raw_data = request.get_data()
-        content_type = request.content_type
-        
-        print(f"Raw data: {raw_data}")
-        print(f"Content type: {content_type}")
-        
-        # Try multiple ways to get data
-        data = None
-        
-        # Method 1: JSON
-        try:
-            data = request.get_json(force=True)
-            print(f"JSON data: {data}")
-        except Exception as e:
-            print(f"JSON parsing failed: {e}")
-        
-        # Method 2: Form data
-        if not data:
-            try:
-                data = request.form.to_dict()
-                print(f"Form data: {data}")
-            except Exception as e:
-                print(f"Form parsing failed: {e}")
-        
-        # Method 3: Raw JSON parsing
-        if not data and raw_data:
-            try:
-                import json
-                data = json.loads(raw_data.decode('utf-8'))
-                print(f"Raw JSON data: {data}")
-            except Exception as e:
-                print(f"Raw JSON parsing failed: {e}")
-        
-        # Method 4: Args
-        if not data:
-            data = request.args.to_dict()
-            print(f"Args data: {data}")
-        
-        if not data:
-            return jsonify({'error': 'No data provided', 'debug': {
-                'raw_data': raw_data.decode('utf-8') if raw_data else None,
-                'content_type': content_type
-            }}), 400
-        
-        username = data.get('username') or data.get('email')
+        data = request.get_json()
+        username = data.get('username')
         password = data.get('password')
-        
-        print(f"Extracted - Username: {username}, Password: {'*' * len(password) if password else None}")
-        
-        if not username or not password:
-            return jsonify({
-                'error': 'Username and password are required',
-                'received': data,
-                'debug': {
-                    'username_received': bool(username),
-                    'password_received': bool(password)
-                }
-            }), 400
         
         # Check both username and email fields
         user = User.query.filter(
@@ -704,17 +704,63 @@ def login():
             return jsonify({
                 'token': token, 
                 'user_id': user.id,
-                'username': user.username
+                'username': user.username,
+                'message': 'Login successful'
             })
         
         return jsonify({'error': 'Invalid credentials'}), 401
         
     except Exception as e:
-        print(f"Login error: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({'error': 'Internal server error', 'debug': str(e)}), 500
+        app.logger.error(f"Login error: {str(e)}")
+        return jsonify({'error': 'Login failed'}), 500    
     
+def get_user_interactions_optimized(user_id, interaction_type=None):
+    """Optimized query for user interactions"""
+    query = db.session.query(UserInteraction).filter_by(user_id=user_id)
+    
+    if interaction_type:
+        query = query.filter_by(interaction_type=interaction_type)
+    
+    return query.options(
+        db.joinedload(UserInteraction.content)
+    ).all()
+
+async def fetch_and_store_content(tmdb_id, content_type):
+    """Async content fetching and storage"""
+    try:
+        details = await aggregator.get_content_details(tmdb_id, content_type)
+        
+        if details and 'id' in details:
+            # Check if content already exists
+            existing = Content.query.filter_by(tmdb_id=str(details['id'])).first()
+            if existing:
+                return existing
+            
+            # Create new content
+            content = Content(
+                tmdb_id=str(details['id']),
+                title=details.get('title', details.get('name', 'Unknown')),
+                original_title=details.get('original_title', details.get('original_name')),
+                overview=details.get('overview'),
+                genres=[g['id'] if isinstance(g, dict) else g for g in details.get('genres', [])],
+                language=details.get('original_language'),
+                release_date=datetime.strptime(details['release_date'], '%Y-%m-%d').date() 
+                        if details.get('release_date') else None,
+                runtime=details.get('runtime'),
+                rating=details.get('vote_average'),
+                poster_path=details.get('poster_path'),
+                backdrop_path=details.get('backdrop_path'),
+                content_type=content_type,
+                popularity=details.get('popularity', 0)
+            )
+            
+            db.session.add(content)
+            db.session.commit()
+            return content
+    except Exception as e:
+        app.logger.error(f"Error fetching content {tmdb_id}: {str(e)}")
+        return None
+
 
 @app.route('/api/test', methods=['GET', 'POST'])
 def test_api():
@@ -1097,9 +1143,6 @@ def admin_dashboard():
         'recent_interactions': [{'user_id': i.user_id, 'content_id': i.content_id, 'type': i.interaction_type} for i in recent_interactions]
     })
 
-
-
-
 @app.route('/api/search')
 def search_content():
     """Search content across all sources"""
@@ -1268,6 +1311,42 @@ def get_watch_options(content_id):
         'in_theaters': len(theater_info) > 0,
         'last_updated': datetime.utcnow().isoformat()
     })
+
+@lru_cache(maxsize=1)
+def get_cached_homepage_data():
+    """Cache homepage data for 30 minutes"""
+    cache_key = f"homepage_{datetime.now().strftime('%Y%m%d%H%M')}"
+    # Implementation would use Redis or similar
+    return None
+
+
+if not app.debug:
+    file_handler = RotatingFileHandler('logs/movie_app.log', maxBytes=10240, backupCount=10)
+    file_handler.setFormatter(logging.Formatter(
+        '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'
+    ))
+    file_handler.setLevel(logging.INFO)
+    app.logger.addHandler(file_handler)
+    app.logger.setLevel(logging.INFO)
+
+# 13. Security Headers
+@app.after_request
+def after_request(response):
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['X-XSS-Protection'] = '1; mode=block'
+    return response
+
+# 14. Graceful Shutdown
+
+def signal_handler(sig, frame):
+    print('Shutting down gracefully...')
+    db.session.close()
+    sys.exit(0)
+
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
+
 @app.route('/health')
 def health_check():
     return jsonify({'status': 'healthy', 'timestamp': datetime.utcnow().isoformat()})

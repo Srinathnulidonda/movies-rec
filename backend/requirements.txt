@@ -3,11 +3,13 @@ Flask-SQLAlchemy
 Flask-JWT-Extended
 Flask-CORS
 Werkzeug
-requests
 pandas
 numpy
 scikit-learn
-aiohttp
+requests
 asyncio
+aiohttp
 redis
+python-dotenv
 gunicorn
+psycopg2-binary
