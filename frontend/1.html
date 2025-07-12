@@ -1,0 +1,1055 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CineRec - Movie & TV Recommendations</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        * { scrollbar-width: thin; scrollbar-color: #e50914 #141414; }
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #141414; }
+        ::-webkit-scrollbar-thumb { background: #e50914; border-radius: 4px; }
+        body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background: linear-gradient(135deg, #141414 0%, #1f1f1f 100%); color: #ffffff; }
+        .hero-gradient { background: linear-gradient(45deg, rgba(20, 20, 20, 0.9), rgba(229, 9, 20, 0.3)), url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 600"><rect fill="%23141414" width="1000" height="600"/><circle fill="%23e50914" opacity="0.1" cx="200" cy="200" r="100"/><circle fill="%23e50914" opacity="0.05" cx="800" cy="400" r="150"/></svg>'); }
+        .glass { backdrop-filter: blur(10px); background: rgba(31, 31, 31, 0.8); border: 1px solid rgba(255, 255, 255, 0.1); }
+        .card-hover { transform: scale(1.05); box-shadow: 0 20px 40px rgba(229, 9, 20, 0.3); }
+        .content-card { background: linear-gradient(145deg, #1f1f1f, #2a2a2a); border: 1px solid rgba(255, 255, 255, 0.1); transition: all 0.3s ease; }
+        .content-card:hover { transform: translateY(-8px); box-shadow: 0 15px 30px rgba(229, 9, 20, 0.4); }
+        .btn-primary { background: linear-gradient(45deg, #e50914, #ff1e2d); border: none; transition: all 0.3s ease; }
+        .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 10px 20px rgba(229, 9, 20, 0.5); }
+        .carousel-container { scroll-behavior: smooth; }
+        .loading { border: 2px solid #1f1f1f; border-top: 2px solid #e50914; border-radius: 50%; width: 20px; height: 20px; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .fade-in { animation: fadeIn 0.5s ease-in; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+        .search-container { position: relative; }
+        .search-results { position: absolute; top: 100%; left: 0; right: 0; background: rgba(31, 31, 31, 0.95); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 8px; z-index: 1000; max-height: 400px; overflow-y: auto; }
+        .genre-tag { background: linear-gradient(45deg, #e50914, #ff1e2d); color: white; padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; margin: 2px; }
+        .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.8); backdrop-filter: blur(5px); }
+        .modal-content { background: linear-gradient(145deg, #1f1f1f, #2a2a2a); margin: 5% auto; padding: 0; border-radius: 16px; max-width: 800px; position: relative; overflow: hidden; }
+        .carousel-scroll { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; gap: 16px; padding: 20px 0; }
+        .carousel-scroll::-webkit-scrollbar { display: none; }
+        .carousel-item { flex: 0 0 200px; scroll-snap-align: start; }
+        @media (max-width: 768px) { .carousel-item { flex: 0 0 150px; } .hero-title { font-size: 2rem; } }
+    </style>
+</head>
+<body class="bg-gray-900 text-white min-h-screen">
+    <!-- Navigation -->
+    <nav class="glass fixed top-0 left-0 right-0 z-50 p-4">
+        <div class="max-w-7xl mx-auto flex items-center justify-between">
+            <div class="flex items-center space-x-2">
+                <i class="fas fa-film text-red-600 text-2xl"></i>
+                <h1 class="text-2xl font-bold text-white">CineRec</h1>
+            </div>
+            
+            <div class="flex items-center space-x-4">
+                <div class="search-container">
+                    <input type="text" id="searchInput" placeholder="Search movies, TV shows..." 
+                           class="bg-gray-800 text-white px-4 py-2 rounded-lg border border-gray-700 focus:border-red-600 focus:outline-none w-64">
+                    <div id="searchResults" class="search-results hidden"></div>
+                </div>
+                
+                <div id="authButtons" class="space-x-2">
+                    <button onclick="openModal('loginModal')" class="btn-primary px-4 py-2 rounded-lg">Login</button>
+                    <button onclick="openModal('registerModal')" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg">Sign Up</button>
+                </div>
+                
+                <div id="userMenu" class="hidden">
+                    <button onclick="logout()" class="text-red-400 hover:text-red-300">
+                        <i class="fas fa-sign-out-alt"></i> Logout
+                    </button>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <section class="hero-gradient pt-20 pb-20 text-center">
+        <div class="max-w-4xl mx-auto px-4">
+            <h2 class="hero-title text-5xl font-bold mb-6">Discover Your Next Favorite Movie</h2>
+            <p class="text-xl mb-8 text-gray-300">Personalized recommendations powered by AI</p>
+            <button onclick="scrollToContent()" class="btn-primary px-8 py-3 rounded-lg text-lg font-semibold">
+                <i class="fas fa-play mr-2"></i>Explore Now
+            </button>
+        </div>
+    </section>
+
+    <!-- Main Content -->
+    <main class="max-w-7xl mx-auto px-4 py-8">
+        <!-- Trending Section -->
+        <section class="mb-12">
+            <h3 class="text-3xl font-bold mb-6 text-red-400">Trending Now</h3>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <div>
+                    <h4 class="text-xl mb-4">Movies</h4>
+                    <div id="trendingMovies" class="carousel-scroll"></div>
+                </div>
+                <div>
+                    <h4 class="text-xl mb-4">TV Shows</h4>
+                    <div id="trendingTV" class="carousel-scroll"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Categories -->
+        <section class="mb-12">
+            <h3 class="text-3xl font-bold mb-6 text-red-400">Browse by Genre</h3>
+            <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+                <div class="genre-card content-card p-6 rounded-lg text-center cursor-pointer" onclick="loadGenre('Action')">
+                    <i class="fas fa-fist-raised text-3xl mb-3 text-red-400"></i>
+                    <h4 class="font-semibold">Action</h4>
+                </div>
+                <div class="genre-card content-card p-6 rounded-lg text-center cursor-pointer" onclick="loadGenre('Comedy')">
+                    <i class="fas fa-laugh text-3xl mb-3 text-yellow-400"></i>
+                    <h4 class="font-semibold">Comedy</h4>
+                </div>
+                <div class="genre-card content-card p-6 rounded-lg text-center cursor-pointer" onclick="loadGenre('Drama')">
+                    <i class="fas fa-masks-theater text-3xl mb-3 text-blue-400"></i>
+                    <h4 class="font-semibold">Drama</h4>
+                </div>
+                <div class="genre-card content-card p-6 rounded-lg text-center cursor-pointer" onclick="loadGenre('Horror')">
+                    <i class="fas fa-ghost text-3xl mb-3 text-purple-400"></i>
+                    <h4 class="font-semibold">Horror</h4>
+                </div>
+                <div class="genre-card content-card p-6 rounded-lg text-center cursor-pointer" onclick="loadGenre('Sci-Fi')">
+                    <i class="fas fa-rocket text-3xl mb-3 text-green-400"></i>
+                    <h4 class="font-semibold">Sci-Fi</h4>
+                </div>
+                <div class="genre-card content-card p-6 rounded-lg text-center cursor-pointer" onclick="loadGenre('Romance')">
+                    <i class="fas fa-heart text-3xl mb-3 text-pink-400"></i>
+                    <h4 class="font-semibold">Romance</h4>
+                </div>
+            </div>
+        </section>
+
+        <!-- Regional Content -->
+        <section class="mb-12">
+            <h3 class="text-3xl font-bold mb-6 text-red-400">Regional Cinema</h3>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                <div class="regional-card content-card p-6 rounded-lg text-center cursor-pointer" onclick="loadRegional('Telugu')">
+                    <h4 class="text-xl font-semibold mb-2">Telugu</h4>
+                    <p class="text-gray-400">Tollywood Movies</p>
+                </div>
+                <div class="regional-card content-card p-6 rounded-lg text-center cursor-pointer" onclick="loadRegional('Hindi')">
+                    <h4 class="text-xl font-semibold mb-2">Hindi</h4>
+                    <p class="text-gray-400">Bollywood Movies</p>
+                </div>
+                <div class="regional-card content-card p-6 rounded-lg text-center cursor-pointer" onclick="loadRegional('Tamil')">
+                    <h4 class="text-xl font-semibold mb-2">Tamil</h4>
+                    <p class="text-gray-400">Kollywood Movies</p>
+                </div>
+                <div class="regional-card content-card p-6 rounded-lg text-center cursor-pointer" onclick="loadRegional('Kannada')">
+                    <h4 class="text-xl font-semibold mb-2">Kannada</h4>
+                    <p class="text-gray-400">Sandalwood Movies</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Anime Section -->
+        <section class="mb-12">
+            <h3 class="text-3xl font-bold mb-6 text-red-400">Popular Anime</h3>
+            <div id="animeSection" class="carousel-scroll"></div>
+        </section>
+
+        <!-- Critics Choice -->
+        <section class="mb-12">
+            <h3 class="text-3xl font-bold mb-6 text-red-400">Critics' Choice</h3>
+            <div id="criticsChoice" class="carousel-scroll"></div>
+        </section>
+    </main>
+
+    <!-- Login Modal -->
+    <div id="loginModal" class="modal">
+        <div class="modal-content">
+            <div class="p-6">
+                <div class="flex justify-between items-center mb-6">
+                    <h3 class="text-2xl font-bold">Login</h3>
+                    <button onclick="closeModal('loginModal')" class="text-gray-400 hover:text-white">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <form id="loginForm">
+                    <div class="mb-4">
+                        <input type="text" id="loginUsername" placeholder="Username or Email" 
+                               class="w-full bg-gray-800 text-white px-4 py-3 rounded-lg border border-gray-700 focus:border-red-600 focus:outline-none">
+                    </div>
+                    <div class="mb-6">
+                        <input type="password" id="loginPassword" placeholder="Password" 
+                               class="w-full bg-gray-800 text-white px-4 py-3 rounded-lg border border-gray-700 focus:border-red-600 focus:outline-none">
+                    </div>
+                    <button type="submit" class="btn-primary w-full py-3 rounded-lg font-semibold">
+                        <span id="loginBtnText">Login</span>
+                        <div id="loginLoading" class="loading hidden inline-block ml-2"></div>
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Register Modal -->
+    <div id="registerModal" class="modal">
+        <div class="modal-content">
+            <div class="p-6">
+                <div class="flex justify-between items-center mb-6">
+                    <h3 class="text-2xl font-bold">Sign Up</h3>
+                    <button onclick="closeModal('registerModal')" class="text-gray-400 hover:text-white">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <form id="registerForm">
+                    <div class="mb-4">
+                        <input type="text" id="registerUsername" placeholder="Username" 
+                               class="w-full bg-gray-800 text-white px-4 py-3 rounded-lg border border-gray-700 focus:border-red-600 focus:outline-none">
+                    </div>
+                    <div class="mb-4">
+                        <input type="email" id="registerEmail" placeholder="Email" 
+                               class="w-full bg-gray-800 text-white px-4 py-3 rounded-lg border border-gray-700 focus:border-red-600 focus:outline-none">
+                    </div>
+                    <div class="mb-6">
+                        <input type="password" id="registerPassword" placeholder="Password" 
+                               class="w-full bg-gray-800 text-white px-4 py-3 rounded-lg border border-gray-700 focus:border-red-600 focus:outline-none">
+                    </div>
+                    <button type="submit" class="btn-primary w-full py-3 rounded-lg font-semibold">
+                        <span id="registerBtnText">Sign Up</span>
+                        <div id="registerLoading" class="loading hidden inline-block ml-2"></div>
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Content Modal -->
+    <div id="contentModal" class="modal">
+        <div class="modal-content max-w-4xl">
+            <div id="contentDetails"></div>
+        </div>
+    </div>
+
+    <script>
+        // CineRec - Movie & TV Recommendation Platform JavaScript
+
+// Configuration
+const CONFIG = {
+    API_BASE: 'https://backend-app-970m.onrender.com',
+    TMDB_IMAGE_BASE: 'https://image.tmdb.org/t/p/w500',
+    TMDB_BACKDROP_BASE: 'https://image.tmdb.org/t/p/w1280',
+    PLACEHOLDER_IMAGE: 'https://via.placeholder.com/300x450/1f1f1f/ffffff?text=No+Image'
+};
+
+// Global State Management
+const AppState = {
+    user: null,
+    token: null,
+    currentContent: null,
+    searchResults: [],
+    isLoading: false,
+    preferences: {},
+    cache: new Map()
+};
+
+// Authentication Manager
+class AuthManager {
+    static init() {
+        const token = localStorage.getItem('cinerec_token');
+        const user = localStorage.getItem('cinerec_user');
+        
+        if (token && user) {
+            AppState.token = token;
+            AppState.user = JSON.parse(user);
+            this.updateUI();
+        }
+    }
+
+    static async login(credentials) {
+        try {
+            showLoading('loginLoading');
+            
+            const response = await fetch(`${CONFIG.API_BASE}/api/login`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(credentials)
+            });
+
+            const data = await response.json();
+            
+            if (response.ok) {
+                AppState.token = data.token;
+                AppState.user = { id: data.user_id, username: data.username };
+                
+                localStorage.setItem('cinerec_token', data.token);
+                localStorage.setItem('cinerec_user', JSON.stringify(AppState.user));
+                
+                this.updateUI();
+                closeModal('loginModal');
+                showNotification('Login successful!', 'success');
+                
+                // Load personalized content
+                ContentManager.loadPersonalizedContent();
+            } else {
+                showNotification(data.error || 'Login failed', 'error');
+            }
+        } catch (error) {
+            console.error('Login error:', error);
+            showNotification('Login failed. Please try again.', 'error');
+        } finally {
+            hideLoading('loginLoading');
+        }
+    }
+
+    static async register(userData) {
+        try {
+            showLoading('registerLoading');
+            
+            const response = await fetch(`${CONFIG.API_BASE}/api/register`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(userData)
+            });
+
+            const data = await response.json();
+            
+            if (response.ok) {
+                AppState.token = data.token;
+                AppState.user = { id: data.user_id, username: data.username };
+                
+                localStorage.setItem('cinerec_token', data.token);
+                localStorage.setItem('cinerec_user', JSON.stringify(AppState.user));
+                
+                this.updateUI();
+                closeModal('registerModal');
+                showNotification('Registration successful!', 'success');
+                
+                // Load personalized content
+                ContentManager.loadPersonalizedContent();
+            } else {
+                showNotification(data.error || 'Registration failed', 'error');
+            }
+        } catch (error) {
+            console.error('Registration error:', error);
+            showNotification('Registration failed. Please try again.', 'error');
+        } finally {
+            hideLoading('registerLoading');
+        }
+    }
+
+    static logout() {
+        AppState.token = null;
+        AppState.user = null;
+        localStorage.removeItem('cinerec_token');
+        localStorage.removeItem('cinerec_user');
+        this.updateUI();
+        showNotification('Logged out successfully', 'info');
+        
+        // Reload homepage content
+        ContentManager.loadHomepage();
+    }
+
+    static updateUI() {
+        const authButtons = document.getElementById('authButtons');
+        const userMenu = document.getElementById('userMenu');
+        
+        if (AppState.user) {
+            authButtons.classList.add('hidden');
+            userMenu.classList.remove('hidden');
+            userMenu.innerHTML = `
+                <span class="text-white mr-4">Welcome, ${AppState.user.username}!</span>
+                <button onclick="AuthManager.logout()" class="text-red-400 hover:text-red-300">
+                    <i class="fas fa-sign-out-alt"></i> Logout
+                </button>
+            `;
+        } else {
+            authButtons.classList.remove('hidden');
+            userMenu.classList.add('hidden');
+        }
+    }
+}
+
+// Content Manager
+class ContentManager {
+    static async loadHomepage() {
+        try {
+            AppState.isLoading = true;
+            const response = await fetch(`${CONFIG.API_BASE}/api/homepage`);
+            const data = await response.json();
+            
+            if (response.ok) {
+                this.renderTrendingContent(data.trending);
+                this.renderPopularByGenre(data.popular_by_genre);
+                this.renderRegionalContent(data.regional);
+                this.renderAnimeSection(data.trending.anime);
+                this.renderCriticsChoice(data.critics_choice);
+            } else {
+                showNotification('Failed to load content', 'error');
+            }
+        } catch (error) {
+            console.error('Homepage loading error:', error);
+            showNotification('Failed to load content', 'error');
+        } finally {
+            AppState.isLoading = false;
+        }
+    }
+
+    static async loadPersonalizedContent() {
+        if (!AppState.token) return;
+        
+        try {
+            const response = await fetch(`${CONFIG.API_BASE}/api/recommendations`, {
+                headers: {
+                    'Authorization': `Bearer ${AppState.token}`
+                }
+            });
+            
+            const data = await response.json();
+            
+            if (response.ok) {
+                this.renderPersonalizedRecommendations(data);
+            }
+        } catch (error) {
+            console.error('Personalized content loading error:', error);
+        }
+    }
+
+    static renderTrendingContent(trending) {
+        const moviesContainer = document.getElementById('trendingMovies');
+        const tvContainer = document.getElementById('trendingTV');
+        
+        if (moviesContainer) {
+            moviesContainer.innerHTML = this.createCarouselItems(trending.movies || []);
+        }
+        
+        if (tvContainer) {
+            tvContainer.innerHTML = this.createCarouselItems(trending.tv || []);
+        }
+    }
+
+    static renderAnimeSection(anime) {
+        const animeContainer = document.getElementById('animeSection');
+        if (!animeContainer) return;
+        
+        const animeItems = anime.map(item => ({
+            id: item.mal_id,
+            title: item.title,
+            poster_path: item.images?.jpg?.image_url,
+            vote_average: item.score,
+            overview: item.synopsis,
+            type: 'anime'
+        }));
+        
+        animeContainer.innerHTML = this.createCarouselItems(animeItems);
+    }
+
+    static renderCriticsChoice(critics) {
+        const criticsContainer = document.getElementById('criticsChoice');
+        if (!criticsContainer) return;
+        
+        criticsContainer.innerHTML = this.createCarouselItems(critics || []);
+    }
+
+    static renderPopularByGenre(genreData) {
+        // This would be implemented based on your specific genre display needs
+        console.log('Genre data:', genreData);
+    }
+
+    static renderRegionalContent(regional) {
+        // This would be implemented based on your specific regional content display needs
+        console.log('Regional data:', regional);
+    }
+
+    static renderPersonalizedRecommendations(data) {
+        // Add personalized sections to the page
+        const main = document.querySelector('main');
+        if (!main) return;
+        
+        const personalizedSection = `
+            <section class="mb-12 fade-in">
+                <h3 class="text-3xl font-bold mb-6 text-red-400">Recommended for You</h3>
+                <div class="carousel-scroll" id="personalizedRecs">
+                    ${this.createCarouselItems(data.hybrid_recommendations || [])}
+                </div>
+            </section>
+        `;
+        
+        main.insertAdjacentHTML('afterbegin', personalizedSection);
+    }
+
+    static createCarouselItems(items) {
+        if (!items || items.length === 0) {
+            return '<div class="text-gray-400 text-center py-8">No content available</div>';
+        }
+        
+        return items.map(item => {
+            const imageUrl = item.poster_path 
+                ? `${CONFIG.TMDB_IMAGE_BASE}${item.poster_path}`
+                : CONFIG.PLACEHOLDER_IMAGE;
+            
+            const title = item.title || item.name || 'Unknown Title';
+            const rating = item.vote_average || item.score || 0;
+            const year = item.release_date ? new Date(item.release_date).getFullYear() : '';
+            
+            return `
+                <div class="carousel-item content-card rounded-lg overflow-hidden cursor-pointer" 
+                     onclick="ContentManager.showContentDetails(${item.id || item.tmdb_id}, '${item.type || 'movie'}')">
+                    <img src="${imageUrl}" alt="${title}" class="w-full h-64 object-cover">
+                    <div class="p-4">
+                        <h5 class="font-semibold text-sm mb-1 truncate">${title}</h5>
+                        <div class="flex items-center justify-between text-xs text-gray-400">
+                            <span>${year}</span>
+                            <span class="flex items-center">
+                                <i class="fas fa-star text-yellow-400 mr-1"></i>
+                                ${rating.toFixed(1)}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+    }
+
+    static async showContentDetails(contentId, type = 'movie') {
+        try {
+            let endpoint = '';
+            
+            if (type === 'anime') {
+                // Handle anime differently
+                this.showAnimeDetails(contentId);
+                return;
+            }
+            
+            // Check if it's a TMDB ID or internal ID
+            if (type === 'tmdb' || contentId > 100000) {
+                endpoint = `${CONFIG.API_BASE}/api/content/tmdb/${contentId}`;
+            } else {
+                endpoint = `${CONFIG.API_BASE}/api/content/${contentId}`;
+            }
+            
+            const response = await fetch(endpoint);
+            const data = await response.json();
+            
+            if (response.ok) {
+                this.renderContentModal(data);
+            } else {
+                showNotification('Failed to load content details', 'error');
+            }
+        } catch (error) {
+            console.error('Content details error:', error);
+            showNotification('Failed to load content details', 'error');
+        }
+    }
+
+    static renderContentModal(data) {
+        const modal = document.getElementById('contentModal');
+        const modalContent = document.getElementById('contentDetails');
+        
+        const content = data.content || data.details;
+        const details = data.details || {};
+        
+        const backdropUrl = content.backdrop_path 
+            ? `${CONFIG.TMDB_BACKDROP_BASE}${content.backdrop_path}`
+            : CONFIG.PLACEHOLDER_IMAGE;
+        
+        const posterUrl = content.poster_path 
+            ? `${CONFIG.TMDB_IMAGE_BASE}${content.poster_path}`
+            : CONFIG.PLACEHOLDER_IMAGE;
+        
+        const genres = content.genres || [];
+        const genreNames = Array.isArray(genres) ? genres.map(g => 
+            typeof g === 'object' ? g.name : g
+        ).join(', ') : '';
+        
+        const runtime = content.runtime ? `${content.runtime} min` : '';
+        const releaseDate = content.release_date ? new Date(content.release_date).getFullYear() : '';
+        
+        modalContent.innerHTML = `
+            <div class="relative">
+                <img src="${backdropUrl}" alt="${content.title}" class="w-full h-64 object-cover">
+                <div class="absolute inset-0 bg-gradient-to-t from-black via-transparent to-transparent"></div>
+                <button onclick="closeModal('contentModal')" 
+                        class="absolute top-4 right-4 text-white hover:text-red-400 text-2xl">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            
+            <div class="p-6">
+                <div class="flex flex-col md:flex-row gap-6">
+                    <div class="md:w-1/3">
+                        <img src="${posterUrl}" alt="${content.title}" class="w-full rounded-lg">
+                    </div>
+                    
+                    <div class="md:w-2/3">
+                        <h2 class="text-3xl font-bold mb-2">${content.title}</h2>
+                        
+                        <div class="flex items-center gap-4 mb-4 text-sm text-gray-400">
+                            <span>${releaseDate}</span>
+                            <span>${runtime}</span>
+                            <span class="flex items-center">
+                                <i class="fas fa-star text-yellow-400 mr-1"></i>
+                                ${(content.rating || content.vote_average || 0).toFixed(1)}
+                            </span>
+                        </div>
+                        
+                        <div class="mb-4">
+                            ${genreNames.split(', ').map(genre => 
+                                `<span class="genre-tag">${genre}</span>`
+                            ).join('')}
+                        </div>
+                        
+                        <p class="text-gray-300 mb-6">${content.overview || 'No description available.'}</p>
+                        
+                        <div class="flex gap-4">
+                            ${AppState.user ? `
+                                <button onclick="UserInteraction.addToFavorites(${content.id})" 
+                                        class="btn-primary px-6 py-2 rounded-lg">
+                                    <i class="fas fa-heart mr-2"></i>Add to Favorites
+                                </button>
+                                <button onclick="UserInteraction.addToWatchlist(${content.id})" 
+                                        class="bg-gray-700 hover:bg-gray-600 px-6 py-2 rounded-lg">
+                                    <i class="fas fa-plus mr-2"></i>Watchlist
+                                </button>
+                            ` : `
+                                <button onclick="openModal('loginModal')" 
+                                        class="btn-primary px-6 py-2 rounded-lg">
+                                    Login to Add Favorites
+                                </button>
+                            `}
+                        </div>
+                    </div>
+                </div>
+                
+                ${data.similar && data.similar.length > 0 ? `
+                    <div class="mt-8">
+                        <h3 class="text-xl font-bold mb-4">Similar Content</h3>
+                        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                            ${data.similar.map(item => `
+                                <div class="content-card rounded-lg overflow-hidden cursor-pointer" 
+                                     onclick="ContentManager.showContentDetails(${item.id}, 'internal')">
+                                    <img src="${item.poster_path ? CONFIG.TMDB_IMAGE_BASE + item.poster_path : CONFIG.PLACEHOLDER_IMAGE}" 
+                                         alt="${item.title}" class="w-full h-48 object-cover">
+                                    <div class="p-2">
+                                        <h5 class="font-semibold text-sm truncate">${item.title}</h5>
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                ` : ''}
+            </div>
+        `;
+        
+        modal.style.display = 'block';
+        AppState.currentContent = content;
+    }
+
+    static showAnimeDetails(animeId) {
+        // Simplified anime details - you could expand this to fetch from Jikan API
+        const modal = document.getElementById('contentModal');
+        const modalContent = document.getElementById('contentDetails');
+        
+        modalContent.innerHTML = `
+            <div class="p-6">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-2xl font-bold">Anime Details</h2>
+                    <button onclick="closeModal('contentModal')" class="text-gray-400 hover:text-white">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <p class="text-gray-300">Loading anime details...</p>
+            </div>
+        `;
+        
+        modal.style.display = 'block';
+    }
+}
+
+// Search Manager
+class SearchManager {
+    static init() {
+        const searchInput = document.getElementById('searchInput');
+        const searchResults = document.getElementById('searchResults');
+        
+        if (!searchInput || !searchResults) return;
+        
+        let searchTimeout;
+        
+        searchInput.addEventListener('input', (e) => {
+            clearTimeout(searchTimeout);
+            const query = e.target.value.trim();
+            
+            if (query.length < 2) {
+                searchResults.classList.add('hidden');
+                return;
+            }
+            
+            searchTimeout = setTimeout(() => {
+                this.performSearch(query);
+            }, 300);
+        });
+        
+        // Close search results when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!searchInput.contains(e.target) && !searchResults.contains(e.target)) {
+                searchResults.classList.add('hidden');
+            }
+        });
+    }
+
+    static async performSearch(query) {
+        try {
+            const response = await fetch(`${CONFIG.API_BASE}/api/search?q=${encodeURIComponent(query)}`);
+            const data = await response.json();
+            
+            if (response.ok) {
+                this.renderSearchResults(data);
+            }
+        } catch (error) {
+            console.error('Search error:', error);
+        }
+    }
+
+    static renderSearchResults(data) {
+        const searchResults = document.getElementById('searchResults');
+        if (!searchResults) return;
+        
+        const allResults = [
+            ...(data.database_results || []),
+            ...(data.tmdb_results || [])
+        ];
+        
+        if (allResults.length === 0) {
+            searchResults.innerHTML = '<div class="p-4 text-gray-400">No results found</div>';
+            searchResults.classList.remove('hidden');
+            return;
+        }
+        
+        searchResults.innerHTML = allResults.map(item => {
+            const title = item.title || item.name || 'Unknown Title';
+            const year = item.release_date ? new Date(item.release_date).getFullYear() : '';
+            const imageUrl = item.poster_path 
+                ? `${CONFIG.TMDB_IMAGE_BASE}${item.poster_path}`
+                : CONFIG.PLACEHOLDER_IMAGE;
+            
+            return `
+                <div class="flex items-center p-3 hover:bg-gray-800 cursor-pointer" 
+                     onclick="SearchManager.selectResult(${item.id || item.tmdb_id}, '${item.tmdb_id ? 'tmdb' : 'internal'}')">
+                    <img src="${imageUrl}" alt="${title}" class="w-12 h-16 object-cover rounded mr-3">
+                    <div>
+                        <h5 class="font-semibold">${title}</h5>
+                        <p class="text-sm text-gray-400">${year}</p>
+                    </div>
+                </div>
+            `;
+        }).join('');
+        
+        searchResults.classList.remove('hidden');
+    }
+
+    static selectResult(id, type) {
+        const searchResults = document.getElementById('searchResults');
+        const searchInput = document.getElementById('searchInput');
+        
+        searchResults.classList.add('hidden');
+        searchInput.value = '';
+        
+        ContentManager.showContentDetails(id, type);
+    }
+}
+
+// User Interaction Manager
+class UserInteraction {
+    static async addToFavorites(contentId) {
+        if (!AppState.token) {
+            showNotification('Please login to add favorites', 'error');
+            return;
+        }
+        
+        try {
+            const response = await fetch(`${CONFIG.API_BASE}/api/interact`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${AppState.token}`
+                },
+                body: JSON.stringify({
+                    content_id: contentId,
+                    interaction_type: 'favorite'
+                })
+            });
+            
+            if (response.ok) {
+                showNotification('Added to favorites!', 'success');
+            } else {
+                showNotification('Failed to add to favorites', 'error');
+            }
+        } catch (error) {
+            console.error('Add to favorites error:', error);
+            showNotification('Failed to add to favorites', 'error');
+        }
+    }
+
+    static async addToWatchlist(contentId) {
+        if (!AppState.token) {
+            showNotification('Please login to add to watchlist', 'error');
+            return;
+        }
+        
+        try {
+            const response = await fetch(`${CONFIG.API_BASE}/api/interact`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${AppState.token}`
+                },
+                body: JSON.stringify({
+                    content_id: contentId,
+                    interaction_type: 'wishlist'
+                })
+            });
+            
+            if (response.ok) {
+                showNotification('Added to watchlist!', 'success');
+            } else {
+                showNotification('Failed to add to watchlist', 'error');
+            }
+        } catch (error) {
+            console.error('Add to watchlist error:', error);
+            showNotification('Failed to add to watchlist', 'error');
+        }
+    }
+
+    static async rateContent(contentId, rating) {
+        if (!AppState.token) {
+            showNotification('Please login to rate content', 'error');
+            return;
+        }
+        
+        try {
+            const response = await fetch(`${CONFIG.API_BASE}/api/interact`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${AppState.token}`
+                },
+                body: JSON.stringify({
+                    content_id: contentId,
+                    interaction_type: 'rating',
+                    rating: rating
+                })
+            });
+            
+            if (response.ok) {
+                showNotification('Rating submitted!', 'success');
+            } else {
+                showNotification('Failed to submit rating', 'error');
+            }
+        } catch (error) {
+            console.error('Rating error:', error);
+            showNotification('Failed to submit rating', 'error');
+        }
+    }
+}
+
+// Genre and Regional Content Loaders
+function loadGenre(genre) {
+    showNotification(`Loading ${genre} content...`, 'info');
+    // Implement genre-specific content loading
+}
+
+function loadRegional(language) {
+    showNotification(`Loading ${language} content...`, 'info');
+    // Implement regional content loading
+}
+
+// UI Utility Functions
+function openModal(modalId) {
+    const modal = document.getElementById(modalId);
+    if (modal) {
+        modal.style.display = 'block';
+    }
+}
+
+function closeModal(modalId) {
+    const modal = document.getElementById(modalId);
+    if (modal) {
+        modal.style.display = 'none';
+    }
+}
+
+function showLoading(elementId) {
+    const element = document.getElementById(elementId);
+    if (element) {
+        element.classList.remove('hidden');
+    }
+}
+
+function hideLoading(elementId) {
+    const element = document.getElementById(elementId);
+    if (element) {
+        element.classList.add('hidden');
+    }
+}
+
+function showNotification(message, type = 'info') {
+    // Create notification element
+    const notification = document.createElement('div');
+    notification.className = `fixed top-20 right-4 z-50 p-4 rounded-lg text-white max-w-sm fade-in`;
+    
+    // Set color based on type
+    switch (type) {
+        case 'success':
+            notification.className += ' bg-green-600';
+            break;
+        case 'error':
+            notification.className += ' bg-red-600';
+            break;
+        case 'warning':
+            notification.className += ' bg-yellow-600';
+            break;
+        default:
+            notification.className += ' bg-blue-600';
+    }
+    
+    notification.innerHTML = `
+        <div class="flex items-center justify-between">
+            <span>${message}</span>
+            <button onclick="this.parentElement.parentElement.remove()" class="ml-4 text-white hover:text-gray-200">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+    `;
+    
+    document.body.appendChild(notification);
+    
+    // Auto remove after 5 seconds
+    setTimeout(() => {
+        if (notification.parentElement) {
+            notification.remove();
+        }
+    }, 5000);
+}
+
+function scrollToContent() {
+    const mainContent = document.querySelector('main');
+    if (mainContent) {
+        mainContent.scrollIntoView({ behavior: 'smooth' });
+    }
+}
+
+// Form Handlers
+function handleLogin(event) {
+    event.preventDefault();
+    const username = document.getElementById('loginUsername').value;
+    const password = document.getElementById('loginPassword').value;
+    
+    if (!username || !password) {
+        showNotification('Please fill in all fields', 'error');
+        return;
+    }
+    
+    AuthManager.login({ username, password });
+}
+
+function handleRegister(event) {
+    event.preventDefault();
+    const username = document.getElementById('registerUsername').value;
+    const email = document.getElementById('registerEmail').value;
+    const password = document.getElementById('registerPassword').value;
+    
+    if (!username || !email || !password) {
+        showNotification('Please fill in all fields', 'error');
+        return;
+    }
+    
+    if (password.length < 6) {
+        showNotification('Password must be at least 6 characters', 'error');
+        return;
+    }
+    
+    AuthManager.register({ username, email, password });
+}
+
+// Initialize Application
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('CineRec Application Initializing...');
+    
+    // Initialize components
+    AuthManager.init();
+    SearchManager.init();
+    
+    // Load initial content
+    ContentManager.loadHomepage();
+    
+    // Set up form handlers
+    const loginForm = document.getElementById('loginForm');
+    const registerForm = document.getElementById('registerForm');
+    
+    if (loginForm) {
+        loginForm.addEventListener('submit', handleLogin);
+    }
+    
+    if (registerForm) {
+        registerForm.addEventListener('submit', handleRegister);
+    }
+    
+    // Set up modal click handlers
+    document.querySelectorAll('.modal').forEach(modal => {
+        modal.addEventListener('click', function(e) {
+            if (e.target === this) {
+                this.style.display = 'none';
+            }
+        });
+    });
+    
+    // Set up keyboard shortcuts
+    document.addEventListener('keydown', function(e) {
+        // Escape key closes modals
+        if (e.key === 'Escape') {
+            document.querySelectorAll('.modal').forEach(modal => {
+                modal.style.display = 'none';
+            });
+        }
+        
+        // Ctrl+K for search
+        if (e.ctrlKey && e.key === 'k') {
+            e.preventDefault();
+            const searchInput = document.getElementById('searchInput');
+            if (searchInput) {
+                searchInput.focus();
+            }
+        }
+    });
+    
+    console.log('CineRec Application Initialized Successfully!');
+});
+
+// Error Handling
+window.addEventListener('error', function(e) {
+    console.error('Application error:', e.error);
+    showNotification('An unexpected error occurred', 'error');
+});
+
+// Handle network errors
+window.addEventListener('online', function() {
+    showNotification('Connection restored', 'success');
+});
+
+window.addEventListener('offline', function() {
+    showNotification('Connection lost. Some features may not work.', 'warning');
+});
+
+// Export for global access
+window.CineRec = {
+    AuthManager,
+    ContentManager,
+    SearchManager,
+    UserInteraction,
+    AppState,
+    CONFIG
+};
+    </script>
+</body>
+</html>

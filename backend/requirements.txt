@@ -13,3 +13,5 @@ redis
 python-dotenv
 gunicorn
 psycopg2-binary
+python-telegram-bot
+telegram

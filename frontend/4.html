@@ -1,0 +1,748 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CineRec - Movie & TV Recommendations</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        /* Basic styling will be added via external CSS */
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #141414; color: #ffffff; line-height: 1.6; transition: all 0.3s ease; }
+body.light-mode { background-color: #f5f5f5; color: #333333; }
+.navbar { background-color: #1f1f1f; padding: 1rem 0; position: fixed; top: 0; left: 0; right: 0; z-index: 1000; box-shadow: 0 2px 10px rgba(0,0,0,0.5); }
+.light-mode .navbar { background-color: #ffffff; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+.nav-container { max-width: 1200px; margin: 0 auto; padding: 0 2rem; display: flex; justify-content: space-between; align-items: center; }
+.nav-brand h1 { color: #e50914; font-size: 2rem; font-weight: bold; cursor: pointer; }
+.nav-menu { display: flex; gap: 1rem; align-items: center; }
+.nav-btn { background: none; border: none; color: #ffffff; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer; transition: all 0.3s ease; display: flex; align-items: center; gap: 0.5rem; }
+.light-mode .nav-btn { color: #333333; }
+.nav-btn:hover { background-color: #e50914; transform: translateY(-2px); }
+.nav-btn i { font-size: 1rem; }
+.hidden { display: none !important; }
+.main-content { margin-top: 80px; min-height: 100vh; }
+.hero { background: linear-gradient(135deg, #0f0f23 0%, #1f1f1f 50%, #e50914 100%); padding: 4rem 2rem; text-align: center; position: relative; overflow: hidden; }
+.hero::before { content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><pattern id="grain" width="100" height="100" patternUnits="userSpaceOnUse"><circle cx="10" cy="10" r="1" fill="rgba(255,255,255,0.1)"/><circle cx="90" cy="20" r="1" fill="rgba(255,255,255,0.1)"/><circle cx="30" cy="80" r="1" fill="rgba(255,255,255,0.1)"/></pattern></defs><rect width="100%" height="100%" fill="url(%23grain)"/></svg>'); opacity: 0.3; }
+.hero-content { position: relative; z-index: 2; max-width: 600px; margin: 0 auto; }
+.hero h1 { font-size: 3.5rem; margin-bottom: 1rem; text-shadow: 2px 2px 4px rgba(0,0,0,0.5); }
+.hero p { font-size: 1.2rem; margin-bottom: 2rem; color: #cccccc; }
+.cta-btn { background: linear-gradient(45deg, #e50914, #ff6b6b); border: none; color: white; padding: 1rem 2rem; font-size: 1.1rem; border-radius: 50px; cursor: pointer; transition: all 0.3s ease; display: inline-flex; align-items: center; gap: 0.5rem; box-shadow: 0 4px 15px rgba(229,9,20,0.3); }
+.cta-btn:hover { transform: translateY(-3px); box-shadow: 0 6px 20px rgba(229,9,20,0.5); }
+.cta-btn i { font-size: 1.2rem; }
+.section { padding: 2rem; max-width: 1200px; margin: 0 auto; }
+.section-title { font-size: 2rem; margin-bottom: 1.5rem; color: #ffffff; position: relative; }
+.light-mode .section-title { color: #333333; }
+.section-title::after { content: ''; position: absolute; bottom: -5px; left: 0; width: 50px; height: 3px; background: linear-gradient(90deg, #e50914, #ff6b6b); }
+.content-carousel { display: flex; gap: 1rem; overflow-x: auto; padding: 1rem 0; scroll-behavior: smooth; }
+.content-carousel::-webkit-scrollbar { height: 8px; }
+.content-carousel::-webkit-scrollbar-track { background: #2a2a2a; border-radius: 4px; }
+.content-carousel::-webkit-scrollbar-thumb { background: #e50914; border-radius: 4px; }
+.content-carousel::-webkit-scrollbar-thumb:hover { background: #ff6b6b; }
+.content-item { min-width: 200px; position: relative; border-radius: 8px; overflow: hidden; transition: all 0.3s ease; cursor: pointer; }
+.content-item:hover { transform: scale(1.05); box-shadow: 0 8px 25px rgba(229,9,20,0.4); }
+.content-item img { width: 100%; height: 300px; object-fit: cover; }
+.content-overlay { position: absolute; bottom: 0; left: 0; right: 0; background: linear-gradient(transparent, rgba(0,0,0,0.9)); padding: 1rem; transform: translateY(100%); transition: transform 0.3s ease; }
+.content-item:hover .content-overlay { transform: translateY(0); }
+.content-overlay h3 { font-size: 1.1rem; margin-bottom: 0.5rem; color: #ffffff; }
+.content-overlay .rating { color: #ffd700; font-weight: bold; }
+.content-overlay .year { color: #cccccc; font-size: 0.9rem; }
+.content-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 1rem; margin-top: 1rem; }
+.tabs { display: flex; gap: 1rem; margin-bottom: 1rem; }
+.tab-btn { background: none; border: 2px solid #333333; color: #ffffff; padding: 0.5rem 1rem; border-radius: 25px; cursor: pointer; transition: all 0.3s ease; }
+.light-mode .tab-btn { border-color: #cccccc; color: #333333; }
+.tab-btn.active { background-color: #e50914; border-color: #e50914; color: #ffffff; }
+.tab-btn:hover { border-color: #e50914; }
+.genre-filter { background-color: #2a2a2a; color: #ffffff; border: 2px solid #333333; padding: 0.5rem 1rem; border-radius: 4px; margin-bottom: 1rem; }
+.light-mode .genre-filter { background-color: #ffffff; color: #333333; border-color: #cccccc; }
+.modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.8); z-index: 2000; }
+.modal-content { background-color: #1f1f1f; margin: 5% auto; padding: 2rem; border-radius: 10px; max-width: 600px; position: relative; animation: slideIn 0.3s ease; }
+.light-mode .modal-content { background-color: #ffffff; color: #333333; }
+@keyframes slideIn { from { transform: translateY(-50px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+.close { position: absolute; top: 1rem; right: 1.5rem; font-size: 2rem; cursor: pointer; color: #cccccc; transition: color 0.3s ease; }
+.close:hover { color: #e50914; }
+.search-box { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+.search-box input { flex: 1; padding: 0.5rem; border: 2px solid #333333; border-radius: 4px; background-color: #2a2a2a; color: #ffffff; }
+.light-mode .search-box input { background-color: #ffffff; color: #333333; border-color: #cccccc; }
+.search-box button { background-color: #e50914; border: none; color: white; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer; transition: background-color 0.3s ease; }
+.search-box button:hover { background-color: #ff6b6b; }
+.search-results { max-height: 400px; overflow-y: auto; }
+.search-result-item { display: flex; gap: 1rem; padding: 1rem; border-bottom: 1px solid #333333; cursor: pointer; transition: background-color 0.3s ease; }
+.light-mode .search-result-item { border-color: #cccccc; }
+.search-result-item:hover { background-color: #2a2a2a; }
+.light-mode .search-result-item:hover { background-color: #f0f0f0; }
+.search-result-item img { width: 80px; height: 120px; object-fit: cover; border-radius: 4px; }
+.search-result-info h4 { margin-bottom: 0.5rem; color: #ffffff; }
+.light-mode .search-result-info h4 { color: #333333; }
+.search-result-info p { color: #cccccc; margin-bottom: 0.25rem; }
+.light-mode .search-result-info p { color: #666666; }
+.search-result-info .rating { color: #ffd700; font-weight: bold; }
+.auth-container { text-align: center; }
+.auth-tabs { display: flex; margin-bottom: 2rem; }
+.auth-tab { flex: 1; background: none; border: none; color: #cccccc; padding: 1rem; cursor: pointer; border-bottom: 2px solid #333333; transition: all 0.3s ease; }
+.light-mode .auth-tab { color: #666666; border-color: #cccccc; }
+.auth-tab.active { color: #e50914; border-color: #e50914; }
+.auth-form { display: flex; flex-direction: column; gap: 1rem; }
+.auth-form h3 { margin-bottom: 1rem; color: #ffffff; }
+.light-mode .auth-form h3 { color: #333333; }
+.auth-form input { padding: 0.8rem; border: 2px solid #333333; border-radius: 4px; background-color: #2a2a2a; color: #ffffff; }
+.light-mode .auth-form input { background-color: #ffffff; color: #333333; border-color: #cccccc; }
+.auth-form input:focus { outline: none; border-color: #e50914; }
+.auth-form button { background-color: #e50914; border: none; color: white; padding: 0.8rem; border-radius: 4px; cursor: pointer; transition: background-color 0.3s ease; font-size: 1rem; }
+.auth-form button:hover { background-color: #ff6b6b; }
+.movie-modal { max-width: 800px; }
+.movie-details { display: flex; gap: 2rem; }
+.movie-poster img { width: 300px; height: 450px; object-fit: cover; border-radius: 8px; }
+.movie-info { flex: 1; }
+.movie-info h2 { font-size: 2rem; margin-bottom: 1rem; color: #ffffff; }
+.light-mode .movie-info h2 { color: #333333; }
+.movie-meta { display: flex; gap: 1rem; margin-bottom: 1rem; }
+.movie-meta span { background-color: #2a2a2a; padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.9rem; }
+.light-mode .movie-meta span { background-color: #f0f0f0; color: #333333; }
+.genres { display: flex; gap: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap; }
+.genre-tag { background-color: #e50914; color: white; padding: 0.25rem 0.5rem; border-radius: 15px; font-size: 0.8rem; }
+.movie-actions { display: flex; gap: 1rem; margin-top: 1rem; }
+.action-btn { background-color: #2a2a2a; border: 2px solid #333333; color: #ffffff; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer; transition: all 0.3s ease; display: flex; align-items: center; gap: 0.5rem; }
+.light-mode .action-btn { background-color: #ffffff; color: #333333; border-color: #cccccc; }
+.action-btn:hover { background-color: #e50914; border-color: #e50914; color: #ffffff; }
+.loading-skeleton { display: none; padding: 2rem; }
+.skeleton-item { height: 200px; background: linear-gradient(90deg, #2a2a2a 25%, #3a3a3a 50%, #2a2a2a 75%); background-size: 200% 100%; animation: loading 1.5s infinite; margin-bottom: 1rem; border-radius: 8px; }
+.light-mode .skeleton-item { background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%); }
+@keyframes loading { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+.footer { background-color: #1f1f1f; padding: 2rem; text-align: center; margin-top: 4rem; }
+.light-mode .footer { background-color: #333333; }
+.footer-content { max-width: 1200px; margin: 0 auto; }
+.footer-links { display: flex; justify-content: center; gap: 2rem; margin-top: 1rem; }
+.footer-links a { color: #cccccc; text-decoration: none; transition: color 0.3s ease; }
+.footer-links a:hover { color: #e50914; }
+@media (max-width: 768px) { .nav-container { padding: 0 1rem; } .nav-menu { gap: 0.5rem; } .nav-btn { padding: 0.5rem; } .nav-btn span { display: none; } .hero h1 { font-size: 2.5rem; } .hero p { font-size: 1rem; } .section { padding: 1rem; } .movie-details { flex-direction: column; } .movie-poster img { width: 100%; height: 400px; } .movie-actions { flex-wrap: wrap; } .action-btn { flex: 1; min-width: 120px; } .footer-links { flex-direction: column; gap: 1rem; } }
+@media (max-width: 480px) { .hero h1 { font-size: 2rem; } .section-title { font-size: 1.5rem; } .content-item { min-width: 150px; } .content-item img { height: 225px; } .movie-poster img { height: 300px; } }
+    </style>
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar">
+        <div class="nav-container">
+            <div class="nav-brand">
+                <h1>CineRec</h1>
+            </div>
+            <div class="nav-menu">
+                <button class="nav-btn" onclick="showSearch()">
+                    <i class="fas fa-search"></i> Search
+                </button>
+                <button class="nav-btn" id="themeToggle">
+                    <i class="fas fa-sun"></i>
+                </button>
+                <button class="nav-btn" id="loginBtn" onclick="showLogin()">
+                    <i class="fas fa-user"></i> Login
+                </button>
+                <button class="nav-btn hidden" id="logoutBtn" onclick="logout()">
+                    <i class="fas fa-sign-out-alt"></i> Logout
+                </button>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Search Modal -->
+    <div id="searchModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeSearch()">&times;</span>
+            <h2>Search Movies & TV Shows</h2>
+            <div class="search-box">
+                <input type="text" id="searchInput" placeholder="Search for movies, TV shows, anime...">
+                <button onclick="performSearch()">
+                    <i class="fas fa-search"></i>
+                </button>
+            </div>
+            <div id="searchResults" class="search-results"></div>
+        </div>
+    </div>
+
+    <!-- Auth Modal -->
+    <div id="authModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeAuth()">&times;</span>
+            <div class="auth-container">
+                <div class="auth-tabs">
+                    <button class="auth-tab active" onclick="switchTab('login')">Login</button>
+                    <button class="auth-tab" onclick="switchTab('register')">Register</button>
+                </div>
+                
+                <form id="loginForm" class="auth-form">
+                    <h3>Welcome Back</h3>
+                    <input type="text" id="loginUsername" placeholder="Username or Email" required>
+                    <input type="password" id="loginPassword" placeholder="Password" required>
+                    <button type="submit">Login</button>
+                </form>
+                
+                <form id="registerForm" class="auth-form hidden">
+                    <h3>Create Account</h3>
+                    <input type="text" id="registerUsername" placeholder="Username" required>
+                    <input type="email" id="registerEmail" placeholder="Email" required>
+                    <input type="password" id="registerPassword" placeholder="Password" required>
+                    <button type="submit">Register</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <!-- Hero Section -->
+        <section class="hero">
+            <div class="hero-content">
+                <h1>Discover Your Next Favorite</h1>
+                <p>Get personalized movie and TV show recommendations powered by AI</p>
+                <button class="cta-btn" onclick="showSearch()">
+                    <i class="fas fa-play"></i> Start Exploring
+                </button>
+            </div>
+        </section>
+
+        <!-- Loading Skeleton -->
+        <div id="loadingSkeleton" class="loading-skeleton">
+            <div class="skeleton-item"></div>
+            <div class="skeleton-item"></div>
+            <div class="skeleton-item"></div>
+            <div class="skeleton-item"></div>
+        </div>
+
+        <!-- Trending Movies -->
+        <section class="section">
+            <h2 class="section-title">Trending Movies</h2>
+            <div class="content-carousel" id="trendingMovies">
+                <!-- Content will be loaded here -->
+            </div>
+        </section>
+
+        <!-- Trending TV Shows -->
+        <section class="section">
+            <h2 class="section-title">Trending TV Shows</h2>
+            <div class="content-carousel" id="trendingTV">
+                <!-- Content will be loaded here -->
+            </div>
+        </section>
+
+        <!-- Personalized Recommendations (for logged-in users) -->
+        <section class="section hidden" id="personalizedSection">
+            <h2 class="section-title">Recommended for You</h2>
+            <div class="content-carousel" id="personalizedRecs">
+                <!-- Content will be loaded here -->
+            </div>
+        </section>
+
+        <!-- Anime Section -->
+        <section class="section">
+            <h2 class="section-title">Popular Anime</h2>
+            <div class="content-carousel" id="animeContent">
+                <!-- Content will be loaded here -->
+            </div>
+        </section>
+
+        <!-- Critics' Choice -->
+        <section class="section">
+            <h2 class="section-title">Critics' Choice</h2>
+            <div class="content-carousel" id="criticsChoice">
+                <!-- Content will be loaded here -->
+            </div>
+        </section>
+
+        <!-- Popular by Genre -->
+        <section class="section">
+            <h2 class="section-title">Browse by Genre</h2>
+            <select class="genre-filter" id="genreFilter">
+                <option value="">All Genres</option>
+                <option value="Action">Action</option>
+                <option value="Comedy">Comedy</option>
+                <option value="Drama">Drama</option>
+                <option value="Horror">Horror</option>
+                <option value="Sci-Fi">Sci-Fi</option>
+                <option value="Romance">Romance</option>
+            </select>
+            <div class="content-grid" id="genreContent"></div>
+        </section>
+
+        <!-- Regional Content -->
+        <section class="section">
+            <h2 class="section-title">Regional Cinema</h2>
+            <div class="tabs">
+                <button class="tab-btn active" data-region="Telugu" onclick="switchRegion('Telugu')">Telugu</button>
+                <button class="tab-btn" data-region="Hindi" onclick="switchRegion('Hindi')">Hindi</button>
+                <button class="tab-btn" data-region="Tamil" onclick="switchRegion('Tamil')">Tamil</button>
+                <button class="tab-btn" data-region="Kannada" onclick="switchRegion('Kannada')">Kannada</button>
+            </div>
+            <div class="content-grid" id="regionalContent"></div>
+        </section>
+    </main>
+
+    <!-- Movie Details Modal -->
+    <div id="movieModal" class="modal">
+        <div class="modal-content movie-modal">
+            <span class="close" onclick="closeMovieModal()">&times;</span>
+            <div class="movie-details">
+                <div class="movie-poster">
+                    <img id="modalPoster" src="" alt="Movie Poster">
+                </div>
+                <div class="movie-info">
+                    <h2 id="modalTitle"></h2>
+                    <div class="movie-meta">
+                        <span id="modalYear"></span>
+                        <span id="modalRating"></span>
+                        <span id="modalRuntime"></span>
+                    </div>
+                    <div id="modalGenres" class="genres"></div>
+                    <p id="modalOverview"></p>
+                    <div class="movie-actions">
+                        <button class="action-btn" onclick="addToWatchlist()">
+                            <i class="fas fa-plus"></i> Watchlist
+                        </button>
+                        <button class="action-btn" onclick="markFavorite()">
+                            <i class="fas fa-heart"></i> Favorite
+                        </button>
+                        <button class="action-btn" onclick="viewDetails()">
+                            <i class="fas fa-info"></i> Details
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="footer-content">
+            <p>&copy; 2024 CineRec. All rights reserved.</p>
+            <div class="footer-links">
+                <a href="#">Privacy Policy</a>
+                <a href="#">Terms of Service</a>
+                <a href="#">Contact</a>
+            </div>
+        </div>
+    </footer>
+
+    <script>
+        // Configuration
+        const API_BASE = 'https://backend-app-970m.onrender.com/api';
+        const TMDB_IMAGE_BASE = 'https://image.tmdb.org/t/p/w500';
+        let currentUser = null;
+        let currentMovieId = null;
+        let currentRegion = 'Telugu';
+
+        // Initialize app
+        document.addEventListener('DOMContentLoaded', function() {
+            checkAuth();
+            loadHomepageContent();
+            setupEventListeners();
+        });
+
+        function setupEventListeners() {
+            // Auth forms
+            document.getElementById('loginForm').addEventListener('submit', handleLogin);
+            document.getElementById('registerForm').addEventListener('submit', handleRegister);
+            
+            // Search
+            document.getElementById('searchInput').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') performSearch();
+            });
+            
+            // Genre filter
+            document.getElementById('genreFilter').addEventListener('change', filterByGenre);
+            
+            // Theme toggle
+            document.getElementById('themeToggle').addEventListener('click', toggleTheme);
+            
+            // Close modals on outside click
+            window.addEventListener('click', function(e) {
+                if (e.target.classList.contains('modal')) {
+                    e.target.style.display = 'none';
+                }
+            });
+        }
+
+        async function checkAuth() {
+            const token = localStorage.getItem('token');
+            if (token) {
+                currentUser = {
+                    token: token,
+                    username: localStorage.getItem('username')
+                };
+                updateAuthUI();
+                loadPersonalizedContent();
+            }
+        }
+
+        function updateAuthUI() {
+            const loginBtn = document.getElementById('loginBtn');
+            const logoutBtn = document.getElementById('logoutBtn');
+            const personalizedSection = document.getElementById('personalizedSection');
+            
+            if (currentUser) {
+                loginBtn.classList.add('hidden');
+                logoutBtn.classList.remove('hidden');
+                personalizedSection.classList.remove('hidden');
+                logoutBtn.innerHTML = `<i class="fas fa-user"></i> ${currentUser.username}`;
+            } else {
+                loginBtn.classList.remove('hidden');
+                logoutBtn.classList.add('hidden');
+                personalizedSection.classList.add('hidden');
+            }
+        }
+
+        async function loadHomepageContent() {
+            showLoading();
+            try {
+                const response = await fetch(`${API_BASE}/homepage`);
+                const data = await response.json();
+                
+                renderContent('trendingMovies', data.trending.movies, 'movie');
+                renderContent('trendingTV', data.trending.tv, 'tv');
+                renderContent('animeContent', data.trending.anime, 'anime');
+                renderContent('criticsChoice', data.critics_choice, 'movie');
+                
+                // Load genre content
+                if (data.popular_by_genre) {
+                    loadGenreContent(data.popular_by_genre);
+                }
+                
+                // Load regional content
+                if (data.regional) {
+                    loadRegionalContent(data.regional);
+                }
+            } catch (error) {
+                console.error('Error loading homepage:', error);
+            } finally {
+                hideLoading();
+            }
+        }
+
+        async function loadPersonalizedContent() {
+            if (!currentUser) return;
+            
+            try {
+                const response = await fetch(`${API_BASE}/recommendations`, {
+                    headers: {
+                        'Authorization': `Bearer ${currentUser.token}`
+                    }
+                });
+                const data = await response.json();
+                
+                renderContent('personalizedRecs', data.hybrid_recommendations, 'movie');
+            } catch (error) {
+                console.error('Error loading personalized content:', error);
+            }
+        }
+
+        function renderContent(containerId, items, type) {
+            const container = document.getElementById(containerId);
+            if (!container || !items) return;
+            
+            container.innerHTML = items.map(item => `
+                <div class="content-item" onclick="showMovieDetails(${item.id || item.tmdb_id}, '${type}')">
+                    <img src="${TMDB_IMAGE_BASE}${item.poster_path || ''}" 
+                         alt="${item.title || item.name}" 
+                         onerror="this.src='https://via.placeholder.com/300x450?text=No+Image'">
+                    <div class="content-overlay">
+                        <h3>${item.title || item.name}</h3>
+                        <p class="rating">⭐ ${item.rating || item.vote_average || 'N/A'}</p>
+                        <p class="year">${item.release_date ? new Date(item.release_date).getFullYear() : 'N/A'}</p>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function loadGenreContent(genreData) {
+            const container = document.getElementById('genreContent');
+            let allContent = [];
+            
+            Object.values(genreData).forEach(items => {
+                allContent = allContent.concat(items);
+            });
+            
+            renderContent('genreContent', allContent.slice(0, 20), 'movie');
+        }
+
+        function loadRegionalContent(regionalData) {
+            const container = document.getElementById('regionalContent');
+            if (regionalData[currentRegion]) {
+                container.innerHTML = regionalData[currentRegion].map(item => `
+                    <div class="content-item" onclick="showMovieDetails(${item.id}, 'movie')">
+                        <img src="${TMDB_IMAGE_BASE}${item.poster_path}" 
+                             alt="${item.title}" 
+                             onerror="this.src='https://via.placeholder.com/300x450?text=No+Image'">
+                        <div class="content-overlay">
+                            <h3>${item.title}</h3>
+                            <p class="rating">⭐ ${item.vote_average || 'N/A'}</p>
+                        </div>
+                    </div>
+                `).join('');
+            }
+        }
+
+        function switchRegion(region) {
+            currentRegion = region;
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+            document.querySelector(`[data-region="${region}"]`).classList.add('active');
+            loadHomepageContent();
+        }
+
+        async function filterByGenre() {
+            const selectedGenre = document.getElementById('genreFilter').value;
+            if (!selectedGenre) {
+                loadHomepageContent();
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${API_BASE}/search?q=${selectedGenre}&type=movie`);
+                const data = await response.json();
+                renderContent('genreContent', data.tmdb_results, 'movie');
+            } catch (error) {
+                console.error('Error filtering by genre:', error);
+            }
+        }
+
+        async function showMovieDetails(movieId, type) {
+            currentMovieId = movieId;
+            
+            try {
+                const response = await fetch(`${API_BASE}/content/tmdb/${movieId}`);
+                const data = await response.json();
+                
+                if (data.content || data.details) {
+                    const movie = data.content || data.details;
+                    
+                    document.getElementById('modalPoster').src = `${TMDB_IMAGE_BASE}${movie.poster_path}`;
+                    document.getElementById('modalTitle').textContent = movie.title || movie.name;
+                    document.getElementById('modalYear').textContent = movie.release_date ? 
+                        new Date(movie.release_date).getFullYear() : 'N/A';
+                    document.getElementById('modalRating').textContent = `⭐ ${movie.rating || movie.vote_average || 'N/A'}`;
+                    document.getElementById('modalRuntime').textContent = movie.runtime ? 
+                        `${movie.runtime} min` : 'N/A';
+                    document.getElementById('modalOverview').textContent = movie.overview || 'No overview available';
+                    
+                    // Render genres
+                    if (movie.genres) {
+                        document.getElementById('modalGenres').innerHTML = movie.genres
+                            .map(genre => `<span class="genre-tag">${genre.name || genre}</span>`)
+                            .join('');
+                    }
+                    
+                    document.getElementById('movieModal').style.display = 'block';
+                }
+            } catch (error) {
+                console.error('Error loading movie details:', error);
+            }
+        }
+
+        function viewDetails() {
+            if (currentMovieId) {
+                localStorage.setItem('selectedMovie', currentMovieId);
+                window.location.href = 'details.html';
+            }
+        }
+
+        async function addToWatchlist() {
+            if (!currentUser) {
+                showLogin();
+                return;
+            }
+            
+            try {
+                await fetch(`${API_BASE}/interact`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${currentUser.token}`
+                    },
+                    body: JSON.stringify({
+                        content_id: currentMovieId,
+                        interaction_type: 'wishlist'
+                    })
+                });
+                alert('Added to watchlist!');
+            } catch (error) {
+                console.error('Error adding to watchlist:', error);
+            }
+        }
+
+        async function markFavorite() {
+            if (!currentUser) {
+                showLogin();
+                return;
+            }
+            
+            try {
+                await fetch(`${API_BASE}/interact`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${currentUser.token}`
+                    },
+                    body: JSON.stringify({
+                        content_id: currentMovieId,
+                        interaction_type: 'favorite'
+                    })
+                });
+                alert('Added to favorites!');
+            } catch (error) {
+                console.error('Error marking as favorite:', error);
+            }
+        }
+
+        async function performSearch() {
+            const query = document.getElementById('searchInput').value.trim();
+            if (!query) return;
+            
+            try {
+                const response = await fetch(`${API_BASE}/search?q=${encodeURIComponent(query)}`);
+                const data = await response.json();
+                
+                const resultsContainer = document.getElementById('searchResults');
+                const allResults = [...(data.database_results || []), ...(data.tmdb_results || [])];
+                
+                resultsContainer.innerHTML = allResults.map(item => `
+                    <div class="search-result-item" onclick="showMovieDetails(${item.id || item.tmdb_id}, 'movie')">
+                        <img src="${TMDB_IMAGE_BASE}${item.poster_path}" 
+                             alt="${item.title || item.name}" 
+                             onerror="this.src='https://via.placeholder.com/100x150?text=No+Image'">
+                        <div class="search-result-info">
+                            <h4>${item.title || item.name}</h4>
+                            <p>${item.release_date ? new Date(item.release_date).getFullYear() : 'N/A'}</p>
+                            <p class="rating">⭐ ${item.rating || item.vote_average || 'N/A'}</p>
+                        </div>
+                    </div>
+                `).join('');
+            } catch (error) {
+                console.error('Error searching:', error);
+            }
+        }
+
+        async function handleLogin(e) {
+            e.preventDefault();
+            const username = document.getElementById('loginUsername').value;
+            const password = document.getElementById('loginPassword').value;
+            
+            try {
+                const response = await fetch(`${API_BASE}/login`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ username, password })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    localStorage.setItem('token', data.token);
+                    localStorage.setItem('username', data.username);
+                    currentUser = data;
+                    updateAuthUI();
+                    closeAuth();
+                    loadPersonalizedContent();
+                    alert('Login successful!');
+                } else {
+                    alert(data.error || 'Login failed');
+                }
+            } catch (error) {
+                console.error('Login error:', error);
+                alert('Login failed. Please try again.');
+            }
+        }
+
+        async function handleRegister(e) {
+            e.preventDefault();
+            const username = document.getElementById('registerUsername').value;
+            const email = document.getElementById('registerEmail').value;
+            const password = document.getElementById('registerPassword').value;
+            
+            try {
+                const response = await fetch(`${API_BASE}/register`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ username, email, password })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    localStorage.setItem('token', data.token);
+                    localStorage.setItem('username', data.username);
+                    currentUser = data;
+                    updateAuthUI();
+                    closeAuth();
+                    loadPersonalizedContent();
+                    alert('Registration successful!');
+                } else {
+                    alert(data.error || 'Registration failed');
+                }
+            } catch (error) {
+                console.error('Registration error:', error);
+                alert('Registration failed. Please try again.');
+            }
+        }
+
+        function logout() {
+            localStorage.removeItem('token');
+            localStorage.removeItem('username');
+            currentUser = null;
+            updateAuthUI();
+            location.reload();
+        }
+
+        function showLogin() {
+            document.getElementById('authModal').style.display = 'block';
+        }
+
+        function closeAuth() {
+            document.getElementById('authModal').style.display = 'none';
+        }
+
+        function switchTab(tab) {
+            document.querySelectorAll('.auth-tab').forEach(btn => btn.classList.remove('active'));
+            document.querySelectorAll('.auth-form').forEach(form => form.classList.add('hidden'));
+            
+            if (tab === 'login') {
+                document.querySelector('.auth-tab').classList.add('active');
+                document.getElementById('loginForm').classList.remove('hidden');
+            } else {
+                document.querySelectorAll('.auth-tab')[1].classList.add('active');
+                document.getElementById('registerForm').classList.remove('hidden');
+            }
+        }
+
+        function showSearch() {
+            document.getElementById('searchModal').style.display = 'block';
+        }
+
+        function closeSearch() {
+            document.getElementById('searchModal').style.display = 'none';
+        }
+
+        function closeMovieModal() {
+            document.getElementById('movieModal').style.display = 'none';
+        }
+
+        function showLoading() {
+            document.getElementById('loadingSkeleton').style.display = 'block';
+        }
+
+        function hideLoading() {
+            document.getElementById('loadingSkeleton').style.display = 'none';
+        }
+
+        function toggleTheme() {
+            document.body.classList.toggle('light-mode');
+            const themeIcon = document.querySelector('#themeToggle i');
+            if (document.body.classList.contains('light-mode')) {
+                themeIcon.classList.remove('fa-sun');
+                themeIcon.classList.add('fa-moon');
+            } else {
+                themeIcon.classList.remove('fa-moon');
+                themeIcon.classList.add('fa-sun');
+            }
+        }
+    </script>
+</body>
+</html>

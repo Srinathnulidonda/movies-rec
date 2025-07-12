@@ -1,0 +1,136 @@
+Create a comprehensive movie, anime and TV show recommendation system backend with the following requirements:
+
+mainly focus on telugu, tamil, hindi and english movies
+
+DEPLOYMENT & DATABASE:
+- Deploy backend on Render for reliable hosting
+- Use PostgreSQL as the free database (Render PostgreSQL)
+- Configure environment variables for production deployment
+- Set up database connection pooling and optimization
+
+HOMEPAGE RECOMMENDATIONS (NON-LOGGED USERS):
+- Generate custom recommendations based on trending content
+- Show popular content by genre (Action, Comedy, Drama, Horror, Sci-Fi, Romance)
+- Display "What's Hot" section with most viewed content
+-  (Telugu, Hindi, Tamil, Kannada movies)
+- Include "Critics' Choice" and "User Favorites" sections
+- Cache recommendations for better performance
+
+PERSONALIZED RECOMMENDATIONS (LOGGED-IN USERS):
+- Watch history analysis and similar content suggestions
+- Favorites-based recommendations with genre weighting
+- Wishlist-influenced suggestions
+- Favorite genres priority scoring
+- Collaborative filtering based on similar users
+- Content-based filtering using metadata analysis
+- Hybrid recommendation combining multiple approaches
+- Real-time preference learning and adaptation
+
+MULTI-SOURCE CONTENT INTEGRATION:
+- TMDB API for international movies, TV shows, and basic Indian content
+- OMDb API for additional movie metadata and ratings
+- Regional movie databases/APIs for Telugu, Hindi, Tamil, Kannada content
+- Jikan API for anime content
+- Custom web scraping for regional content if needed
+- Content deduplication and metadata merging
+
+DETAILED CONTENT PAGES:
+- Complete movie/show information fetching
+- Synopsis and plot details
+- Trailers, teasers, and video content
+- Full cast and crew information with roles
+- User ratings and professional critic scores
+- High-quality posters and backdrop images
+- Release information and runtime details
+- Genre tags and content warnings
+- Similar content recommendations
+- User reviews and comments system
+
+ADMIN FEATURES:
+- Content browsing interface for TMDB/Jikan databases
+- Search and filter capabilities for content selection
+- Public recommendation creation with rich metadata
+- User management and analytics
+- System monitoring and health checks
+- Telegram notifications for community engagement
+- Content scheduling and expiration management
+
+ADVANCED FEATURES:
+- ML-powered search suggestions
+- Trending content discovery
+- Personalization scoring
+- Diversity metrics for recommendations
+- Enhanced content metadata and similarity
+- Real-time preference learning
+- Admin content curation workflow
+- Public recommendation feed with admin-selected content
+- Anonymous user recommendation engine
+- Detailed content information system
+
+RECOMMENDATION ALGORITHMS:
+- Collaborative filtering based on user similarity
+- Content-based filtering using genre and metadata
+- Matrix factorization for advanced recommendations
+- Deep learning integration via ML service
+- Trending and popularity-based suggestions
+- Regional content boosting for Indian users
+- Fallback strategies for new users
+
+USER MANAGEMENT & INTERACTIONS:
+- User registration and authentication
+- Watch history tracking and analysis
+- Favorites and wishlist management
+- User rating and review system
+- Preference learning and genre weighting
+- Viewing session analytics
+
+DATABASE SCHEMA:
+- Users table with preferences and demographics
+- Content table with multi-source metadata
+- User interactions (ratings, watchlist, favorites, history)
+- Viewing sessions and analytics
+- Admin curated recommendations
+- Content similarity matrices
+- Regional content categorization
+
+REAL-TIME FEATURES:
+- Background learning processes that update user preferences
+- Session tracking and viewing behavior analysis
+- Real-time ML model updates based on user interactions
+- Personalization and diversity scoring
+- Anonymous user behavior tracking for non-logged users
+
+API ENDPOINTS:
+- /api/recommendations/homepage (non-logged users)
+- /api/recommendations/personalized (logged-in users)
+- /api/content/{id}/details (complete movie details)
+- /api/search (multi-source search)
+- /api/trending (regional and global trending)
+- /api/admin/curate (admin content selection)
+- /api/user/interactions (watchlist, favorites, ratings)
+
+EXTERNAL INTEGRATIONS:
+- TMDB API for movies and TV shows (admin browsing + user discovery + detailed metadata)
+- Jikan API for anime content (admin browsing + user discovery + detailed metadata)
+- Custom ML service for advanced recommendations
+- Telegram bot for notifications and featured content
+- YouTube API for trailer and teaser integration
+
+REGIONAL CONTENT SUPPORT:
+- Telugu movie database integration
+- Hindi movie database integration
+- Tamil movie database integration
+- Kannada movie database integration
+- Regional trending and popular content
+- Language-specific genre categorization
+- Multi-language metadata support
+
+TECHNICAL REQUIREMENTS:
+- Flask backend with PostgreSQL database
+- CORS configuration for Vercel frontend
+- Environment variable management
+- Error handling and logging
+- Rate limiting and security measures
+- Background task processing
+- RESTful API design
+- Production-ready deployment configuration

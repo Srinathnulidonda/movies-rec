@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CineStream - Movie & TV Recommendations</title>
+    <meta name="description" content="Discover your next favorite movie or TV show with personalized recommendations">
+    
+    <!-- Security: Content Security Policy -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; img-src 'self' https://image.tmdb.org https://img.youtube.com https://via.placeholder.com data:; connect-src 'self' https://api.themoviedb.org https://movies-rec-xmf5.onrender.com; frame-src 'self' https://www.youtube.com;">
+    
+    <!-- PWA Meta Tags -->
+    <meta name="theme-color" content="#1a1a1a">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="manifest" href="/manifest.json">
+    <link rel="icon" type="image/png" href="/assets/favicon.png">
+    
+    <!-- Bootstrap CSS -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.3/css/bootstrap.min.css" rel="stylesheet" integrity="sha512-jnSuA4Ss2PkkikSOLtYs8BlYIeeIK1h99ty4YfvRPAlzr377vr3CXDb7sb7eEEBYjDtcYj+AjBH3FLv5uSJuXg==" crossorigin="anonymous">
+    
+    <!-- Font Awesome -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.6.0/css/all.min.css" rel="stylesheet" integrity="sha512-Kc323vGBEqzTmouAECnVceyQqyqdsSiqLQISBL29aUW4U/M7pSPA/gEUZQqv1cwx4OnYxTxve5UMg5GT6L4JJg==" crossorigin="anonymous">
+    
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark fixed-top" aria-label="Main navigation">
+        <div class="container">
+            <a class="navbar-brand" href="#" onclick="showHomePage()" aria-label="CineStream Home">
+                <i class="fas fa-film me-2"></i>CineStream
+            </a>
+            
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav me-auto">
+                    <li class="nav-item">
+                        <a class="nav-link" href="#" onclick="showMovies()" aria-current="page">Movies</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="#" onclick="showTVShows()">TV Shows</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="#" onclick="showAnime()">Anime</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="#" onclick="showWatchlist()">My Watchlist</a>
+                    </li>
+                </ul>
+                
+                <div class="navbar-nav">
+                    <div class="nav-item dropdown me-3 position-relative">
+                        <input type="text" class="form-control" id="searchInput" placeholder="Search movies, shows..." aria-label="Search movies and shows">
+                        <div class="search-dropdown" id="searchDropdown" role="listbox"></div>
+                    </div>
+                    
+                    <div class="nav-item dropdown" id="userDropdown" style="display: none;">
+                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                            <img src="https://via.placeholder.com/32x32" alt="User profile" class="rounded-circle me-1" id="profileImage">
+                            <span id="username" aria-live="polite"></span>
+                        </a>
+                        <ul class="dropdown-menu">
+                            <li><a class="dropdown-item" href="#" onclick="showProfile()">Profile</a></li>
+                            <li><a class="dropdown-item" href="#" onclick="showSettings()">Settings</a></li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li><a class="dropdown-item" href="#" onclick="logout()">Logout</a></li>
+                        </ul>
+                    </div>
+                    
+                    <div class="nav-item" id="authButtons">
+                        <button class="btn btn-outline-light me-2" onclick="showLogin()" aria-label="Login to CineStream">Login</button>
+                        <button class="btn btn-primary" onclick="showRegister()" aria-label="Sign up for CineStream">Sign Up</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="main-content" role="main">
+        <!-- Homepage -->
+        <div id="homePage" class="page">
+            <!-- Hero Section -->
+            <section class="hero-section" aria-label="Featured content">
+                <div class="hero-bg"></div>
+                <div class="hero-content text-center">
+                    <h1 class="hero-title">Discover Your Next Favorite</h1>
+                    <p class="hero-subtitle">Millions of movies and TV shows. Personalized recommendations just for you.</p>
+                    <button class="btn btn-primary btn-lg" onclick="showTrending()" aria-label="Start watching trending content">Start Watching</button>
+                </div>
+            </section>
+
+            <!-- Trending Movies -->
+            <section class="section">
+                <div class="container">
+                    <div class="d-flex justify-content-between align-items-center mb-4">
+                        <h2 class="section-title">Trending Movies</h2>
+                        <a href="#" class="view-all-link" onclick="showAllMovies()" aria-label="View all trending movies">View All</a>
+                    </div>
+                    <div class="content-carousel" id="trendingMovies" role="region" aria-label="Trending movies carousel">
+                        <div class="carousel-inner"></div>
+                        <button class="carousel-nav prev" aria-label="Previous trending movies"><i class="fas fa-chevron-left"></i></button>
+                        <button class="carousel-nav next" aria-label="Next trending movies"><i class="fas fa-chevron-right"></i></button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Trending TV Shows -->
+            <section class="section">
+                <div class="container">
+                    <div class="d-flex justify-content-between align-items-center mb-4">
+                        <h2 class="section-title">Trending TV Shows</h2>
+                        <a href="#" class="view-all-link" onclick="showAllTVShows()" aria-label="View all trending TV shows">View All</a>
+                    </div>
+                    <div class="content-carousel" id="trendingTVShows" role="region" aria-label="Trending TV shows carousel">
+                        <div class="carousel-inner"></div>
+                        <button class="carousel-nav prev" aria-label="Previous trending TV shows"><i class="fas fa-chevron-left"></i></button>
+                        <button class="carousel-nav next" aria-label="Next trending TV shows"><i class="fas fa-chevron-right"></i></button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Personalized Recommendations -->
+            <section class="section" id="personalizedSection" style="display: none;">
+                <div class="container">
+                    <h2 class="section-title">Recommended for You</h2>
+                    <div class="content-carousel" id="personalizedRecommendations" role="region" aria-label="Personalized recommendations carousel">
+                        <div class="carousel-inner"></div>
+                        <button class="carousel-nav prev" aria-label="Previous recommendations"><i class="fas fa-chevron-left"></i></button>
+                        <button class="carousel-nav next" aria-label="Next recommendations"><i class="fas fa-chevron-right"></i></button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Anime Section -->
+            <section class="section">
+                <div class="container">
+                    <div class="d-flex justify-content-between align-items-center mb-4">
+                        <h2 class="section-title">Popular Anime</h2>
+                        <a href="#" class="view-all-link" onclick="showAllAnime()" aria-label="View all popular anime">View All</a>
+                    </div>
+                    <div class="content-carousel" id="animeContent" role="region" aria-label="Popular anime carousel">
+                        <div class="carousel-inner"></div>
+                        <button class="carousel-nav prev" aria-label="Previous anime"><i class="fas fa-chevron-left"></i></button>
+                        <button class="carousel-nav next" aria-label="Next anime"><i class="fas fa-chevron-right"></i></button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Critics' Choice -->
+            <section class="section">
+                <div class="container">
+                    <h2 class="section-title">Critics' Choice</h2>
+                    <div class="content-carousel" id="criticsChoice" role="region" aria-label="Critics' choice carousel">
+                        <div class="carousel-inner"></div>
+                        <button class="carousel-nav prev" aria-label="Previous critics' choice"><i class="fas fa-chevron-left"></i></button>
+                        <button class="carousel-nav next" aria-label="Next critics' choice"><i class="fas fa-chevron-right"></i></button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Popular by Genre -->
+            <section class="section">
+                <div class="container">
+                    <h2 class="section-title">Browse by Genre</h2>
+                    <select class="form-select mb-4" id="genreFilter" aria-label="Select genre">
+                        <option value="">All Genres</option>
+                        <option value="Action">Action</option>
+                        <option value="Comedy">Comedy</option>
+                        <option value="Drama">Drama</option>
+                        <option value="Horror">Horror</option>
+                        <option value="Sci-Fi">Sci-Fi</option>
+                        <option value="Romance">Romance</option>
+                        <option value="Thriller">Thriller</option>
+                        <option value="Adventure">Adventure</option>
+                        <option value="Fantasy">Fantasy</option>
+                        <option value="Mystery">Mystery</option>
+                    </select>
+                    <div class="content-grid" id="genreContent" role="region" aria-label="Genre content"></div>
+                </div>
+            </section>
+
+            <!-- Regional Content -->
+            <section class="section">
+                <div class="container">
+                    <h2 class="section-title">Regional Cinema</h2>
+                    <div class="tabs mb-4" role="tablist">
+                        <button class="tab-btn active" data-region="Telugu" onclick="switchRegion('Telugu')" role="tab" aria-selected="true">Telugu</button>
+                        <button class="tab-btn" data-region="Hindi" onclick="switchRegion('Hindi')" role="tab" aria-selected="false">Hindi</button>
+                        <button class="tab-btn" data-region="Tamil" onclick="switchRegion('Tamil')" role="tab" aria-selected="false">Tamil</button>
+                        <button class="tab-btn" data-region="Kannada" onclick="switchRegion('Kannada')" role="tab" aria-selected="false">Kannada</button>
+                        <button class="tab-btn" data-region="Malayalam" onclick="switchRegion('Malayalam')" role="tab" aria-selected="false">Malayalam</button>
+                    </div>
+                    <div class="content-grid" id="regionalContent" role="region" aria-label="Regional content"></div>
+                </div>
+            </section>
+        </div>
+
+        <!-- Detailed Movie/Show Page -->
+        <div id="detailPage" class="page" style="display: none;" role="region" aria-label="Content details">
+            <section class="detail-hero">
+                <div class="hero-backdrop" id="detailBackdrop" role="img" aria-label="Content backdrop"></div>
+                <div class="hero-overlay">
+                    <div class="container">
+                        <div class="row">
+                            <div class="col-lg-4">
+                                <img src="" alt="" class="detail-poster" id="detailPoster" loading="lazy">
+                            </div>
+                            <div class="col-lg-8">
+                                <div class="detail-info">
+                                    <h1 class="detail-title" id="detailTitle"></h1>
+                                    <div class="detail-meta" id="detailMeta"></div>
+                                    <div class="detail-rating" id="detailRating"></div>
+                                    <p class="detail-synopsis" id="detailSynopsis"></p>
+                                    <div class="detail-actions">
+                                        <button class="btn btn-primary btn-lg me-3" onclick="playTrailer()" aria-label="Play trailer">
+                                            <i class="fas fa-play me-2"></i>Play Trailer
+                                        </button>
+                                        <button class="btn btn-outline-light me-2" onclick="addToWatchlist()" aria-label="Add to watchlist">
+                                            <i class="fas fa-plus me-2"></i>Watchlist
+                                        </button>
+                                        <button class="btn btn-outline-light me-2" onclick="toggleFavorite()" aria-label="Add to favorites">
+                                            <i class="fas fa-heart me-2"></i>Favorite
+                                        </button>
+                                        <button class="btn btn-outline-light" onclick="shareContent()" aria-label="Share content">
+                                            <i class="fas fa-share me-2"></i>Share
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <div class="container my-5">
+                <section class="detail-section" aria-label="Content overview">
+                    <h3>Overview</h3>
+                    <div class="row">
+                        <div class="col-lg-8">
+                            <div class="overview-content" id="overviewContent"></div>
+                        </div>
+                        <div class="col-lg-4">
+                            <div class="streaming-info" id="streamingInfo">
+                                <h4>Available On</h4>
+                                <div class="streaming-platforms" id="streamingPlatforms"></div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="detail-section" aria-label="Cast and crew">
+                    <h3>Cast & Crew</h3>
+                    <div class="cast-carousel" id="castCarousel"></div>
+                </section>
+
+                <section class="detail-section" aria-label="Trailers and videos">
+                    <h3>Trailers & Videos</h3>
+                    <div class="videos-grid" id="videosGrid"></div>
+                </section>
+
+                <section class="detail-section" aria-label="User reviews">
+                    <div class="d-flex justify-content-between align-items-center mb-4">
+                        <h3>Reviews</h3>
+                        <button class="btn btn-outline-primary" onclick="showReviewModal()" aria-label="Write a review">Write Review</button>
+                    </div>
+                    <div class="reviews-container" id="reviewsContainer"></div>
+                </section>
+
+                <section class="detail-section" aria-label="Similar content">
+                    <h3>Similar Content</h3>
+                    <div class="content-carousel" id="similarContent">
+                        <div class="carousel-inner"></div>
+                        <button class="carousel-nav prev" aria-label="Previous similar content"><i class="fas fa-chevron-left"></i></button>
+                        <button class="carousel-nav next" aria-label="Next similar content"><i class="fas fa-chevron-right"></i></button>
+                    </div>
+                </section>
+            </div>
+        </div>
+
+        <!-- Other Pages -->
+        <div id="moviesPage" class="page" style="display: none;" role="region" aria-label="Movies">
+            <div class="container">
+                <h1 class="page-title">Movies</h1>
+                <div class="filters-row">
+                    <select class="form-select" id="movieGenreFilter" aria-label="Filter movies by genre">
+                        <option value="">All Genres</option>
+                    </select>
+                    <select class="form-select" id="movieYearFilter" aria-label="Filter movies by year">
+                        <option value="">All Years</option>
+                    </select>
+                    <select class="form-select" id="movieSortFilter" aria-label="Sort movies">
+                        <option value="popularity">Popular</option>
+                        <option value="rating">Rating</option>
+                        <option value="release_date">Release Date</option>
+                    </select>
+                </div>
+                <div class="content-grid" id="moviesGrid" role="region" aria-label="Movies grid"></div>
+            </div>
+        </div>
+
+        <div id="tvShowsPage" class="page" style="display: none;" role="region" aria-label="TV Shows">
+            <div class="container">
+                <h1 class="page-title">TV Shows</h1>
+                <div class="filters-row">
+                    <select class="form-select" id="tvGenreFilter" aria-label="Filter TV shows by genre">
+                        <option value="">All Genres</option>
+                    </select>
+                    <select class="form-select" id="tvYearFilter" aria-label="Filter TV shows by year">
+                        <option value="">All Years</option>
+                    </select>
+                    <select class="form-select" id="tvSortFilter" aria-label="Sort TV shows">
+                        <option value="popularity">Popular</option>
+                        <option value="rating">Rating</option>
+                        <option value="first_air_date">First Air Date</option>
+                    </select>
+                </div>
+                <div class="content-grid" id="tvShowsGrid" role="region" aria-label="TV shows grid"></div>
+            </div>
+        </div>
+
+        <div id="animePage" class="page" style="display: none;" role="region" aria-label="Anime">
+            <div class="container">
+                <h1 class="page-title">Anime</h1>
+                <div class="content-grid" id="animeGrid" role="region" aria-label="Anime grid"></div>
+            </div>
+        </div>
+
+        <div id="watchlistPage" class="page" style="display: none;" role="region" aria-label="Watchlist">
+            <div class="container">
+                <h1 class="page-title">My Watchlist</h1>
+                <div class="content-grid" id="watchlistGrid" role="region" aria-label="Watchlist grid"></div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Modals -->
+    <div class="modal fade" id="loginModal" tabindex="-1" aria-labelledby="loginModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="loginModalLabel">Login</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="loginForm">
+                        <div class="mb-3">
+                            <label for="loginEmail" class="form-label">Email</label>
+                            <input type="email" class="form-control" id="loginEmail" required aria-describedby="emailHelp">
+                            <div id="emailHelp" class="form-text">We'll never share your email with anyone else.</div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="loginPassword" class="form-label">Password</label>
+                            <input type="password" class="form-control" id="loginPassword" required>
+                        </div>
+                        <button type="submit" class="btn btn-primary w-100">Login</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="registerModal" tabindex="-1" aria-labelledby="registerModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="registerModalLabel">Sign Up</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="registerForm">
+                        <div class="mb-3">
+                            <label for="registerName" class="form-label">Name</label>
+                            <input type="text" class="form-control" id="registerName" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="registerEmail" class="form-label">Email</label>
+                            <input type="email" class="form-control" id="registerEmail" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="registerPassword" class="form-label">Password</label>
+                            <input type="password" class="form-control" id="registerPassword" required>
+                        </div>
+                        <button type="submit" class="btn btn-primary w-100">Sign Up</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="movieModal" tabindex="-1" aria-labelledby="movieModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="movieModalLabel"></h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" id="movieModalBody"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="reviewModal" tabindex="-1" aria-labelledby="reviewModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="reviewModalLabel">Write Review</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="reviewForm">
+                        <div class="mb-3">
+                            <label class="form-label">Rating</label>
+                            <div class="star-rating" id="starRating" role="radiogroup" aria-label="Star rating">
+                                <input type="radio" name="rating" id="star1" value="1" class="star-radio" aria-label="1 star">
+                                <label for="star1" class="fas fa-star" data-rating="1"></label>
+                                <input type="radio" name="rating" id="star2" value="2" class="star-radio" aria-label="2 stars">
+                                <label for="star2" class="fas fa-star" data-rating="2"></label>
+                                <input type="radio" name="rating" id="star3" value="3" class="star-radio" aria-label="3 stars">
+                                <label for="star3" class="fas fa-star" data-rating="3"></label>
+                                <input type="radio" name="rating" id="star4" value="4" class="star-radio" aria-label="4 stars">
+                                <label for="star4" class="fas fa-star" data-rating="4"></label>
+                                <input type="radio" name="rating" id="star5" value="5" class="star-radio" aria-label="5 stars">
+                                <label for="star5" class="fas fa-star" data-rating="5"></label>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="reviewText" class="form-label">Review</label>
+                            <textarea class="form-control" id="reviewText" rows="4" required aria-describedby="reviewHelp"></textarea>
+                            <div id="reviewHelp" class="form-text">Share your thoughts about the content.</div>
+                        </div>
+                        <button type="submit" class="btn btn-primary">Submit Review</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="videoModal" tabindex="-1" aria-labelledby="videoModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="videoModalLabel"></h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="video-container" id="videoContainer"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading Spinner -->
+    <div class="loading-spinner" id="loadingSpinner" role="status" aria-live="polite">
+        <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+    </div>
+
+    <!-- Toast Notifications -->
+    <div class="toast-container position-fixed bottom-0 end-0 p-3" aria-live="polite">
+        <div id="toastNotification" class="toast" role="alert" aria-atomic="true">
+            <div class="toast-header">
+                <strong class="me-auto">CineStream</strong>
+                <button type="button" class="btn-close" data-bs-dismiss="toast" aria-label="Close"></button>
+            </div>
+            <div class="toast-body" id="toastBody"></div>
+        </div>
+    </div>
+
+    <!-- Install Prompt -->
+    <div class="install-prompt" id="installPrompt" role="dialog" aria-label="Install app prompt">
+        <span>Install CineStream for a better experience!</span>
+        <button onclick="installApp()" aria-label="Install CineStream app">Install</button>
+    </div>
+
+    <!-- Theme Toggle -->
+    <button class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle dark/light theme">
+        <i class="fas fa-moon"></i>
+    </button>
+
+    <!-- Scripts -->
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.3/js/bootstrap.bundle.min.js" integrity="sha512-7PiRtL3sG8aN6X6L4e3GteKFF8r43W/2dB54ZTLk3lB+GRHRjQ37tw==/I2jS2tBu7X2Z6" crossorigin="anonymous"></script>
+    <script type="module" src="/assets/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,1089 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CineVault - Movie & TV Recommendations</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root { --primary-bg: #141414; --secondary-bg: #1f1f1f; --accent-red: #e50914; --text-primary: #ffffff; --text-secondary: #cccccc; --dark-blue: #0f0f23; --card-bg: #2a2a2a; --hover-bg: #333333; }
+        body { font-family: 'Arial', sans-serif; background-color: var(--primary-bg); color: var(--text-primary); overflow-x: hidden; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 0 20px; }
+        .navbar { background: linear-gradient(rgba(20, 20, 20, 0.9), rgba(20, 20, 20, 0.7)); backdrop-filter: blur(10px); position: fixed; top: 0; width: 100%; z-index: 1000; padding: 1rem 0; transition: all 0.3s ease; }
+        .navbar.scrolled { background: rgba(20, 20, 20, 0.95); padding: 0.5rem 0; }
+        .nav-content { display: flex; justify-content: space-between; align-items: center; }
+        .logo { font-size: 1.8rem; font-weight: bold; color: var(--accent-red); text-decoration: none; }
+        .nav-links { display: flex; list-style: none; gap: 2rem; }
+        .nav-links a { color: var(--text-secondary); text-decoration: none; transition: color 0.3s; }
+        .nav-links a:hover { color: var(--text-primary); }
+        .search-container { position: relative; }
+        .search-input { background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.2); padding: 0.5rem 1rem; border-radius: 4px; color: var(--text-primary); width: 300px; }
+        .search-input::placeholder { color: var(--text-secondary); }
+        .user-menu { display: flex; align-items: center; gap: 1rem; }
+        .btn { padding: 0.5rem 1rem; border: none; border-radius: 4px; cursor: pointer; transition: all 0.3s; text-decoration: none; display: inline-block; }
+        .btn-primary { background: var(--accent-red); color: white; }
+        .btn-primary:hover { background: #cc0812; transform: translateY(-2px); }
+        .btn-secondary { background: transparent; color: var(--text-secondary); border: 1px solid var(--text-secondary); }
+        .btn-secondary:hover { background: var(--text-secondary); color: var(--primary-bg); }
+        .hero { height: 100vh; display: flex; align-items: center; background: linear-gradient(45deg, var(--primary-bg), var(--dark-blue)); position: relative; overflow: hidden; }
+        .hero::before { content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1000"><circle cx="500" cy="500" r="400" fill="none" stroke="rgba(229,9,20,0.1)" stroke-width="2"/></svg>') center/cover; animation: rotate 20s linear infinite; }
+        @keyframes rotate { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        .hero-content { position: relative; z-index: 2; max-width: 600px; }
+        .hero h1 { font-size: 3.5rem; margin-bottom: 1rem; background: linear-gradient(45deg, var(--accent-red), #ff6b6b); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .hero p { font-size: 1.2rem; margin-bottom: 2rem; color: var(--text-secondary); }
+        .hero-buttons { display: flex; gap: 1rem; flex-wrap: wrap; }
+        .section { padding: 4rem 0; }
+        .section-title { font-size: 2rem; margin-bottom: 2rem; color: var(--text-primary); }
+        .content-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 1.5rem; margin-bottom: 3rem; }
+        .content-card { background: var(--card-bg); border-radius: 8px; overflow: hidden; transition: transform 0.3s, box-shadow 0.3s; cursor: pointer; }
+        .content-card:hover { transform: translateY(-5px); box-shadow: 0 10px 25px rgba(229, 9, 20, 0.3); }
+        .content-card img { width: 100%; height: 300px; object-fit: cover; }
+        .content-card-info { padding: 1rem; }
+        .content-card h3 { font-size: 1.1rem; margin-bottom: 0.5rem; }
+        .content-card p { color: var(--text-secondary); font-size: 0.9rem; }
+        .carousel-container { position: relative; overflow: hidden; }
+        .carousel { display: flex; transition: transform 0.5s ease; }
+        .carousel-item { min-width: 200px; margin-right: 1rem; }
+        .carousel-btn { position: absolute; top: 50%; transform: translateY(-50%); background: rgba(0, 0, 0, 0.7); color: white; border: none; padding: 1rem; cursor: pointer; z-index: 10; }
+        .carousel-btn:hover { background: rgba(0, 0, 0, 0.9); }
+        .carousel-btn.prev { left: 10px; }
+        .carousel-btn.next { right: 10px; }
+        .genres-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem; margin-bottom: 3rem; }
+        .genre-card { background: linear-gradient(45deg, var(--card-bg), var(--hover-bg)); padding: 2rem; text-align: center; border-radius: 8px; transition: all 0.3s; cursor: pointer; }
+        .genre-card:hover { transform: scale(1.05); background: linear-gradient(45deg, var(--accent-red), #cc0812); }
+        .genre-card i { font-size: 2rem; margin-bottom: 1rem; }
+        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.8); z-index: 2000; }
+        .modal.active { display: flex; align-items: center; justify-content: center; }
+        .modal-content { background: var(--card-bg); max-width: 600px; width: 90%; max-height: 80vh; overflow-y: auto; border-radius: 8px; position: relative; }
+        .modal-header { padding: 1rem; border-bottom: 1px solid rgba(255, 255, 255, 0.1); display: flex; justify-content: space-between; align-items: center; }
+        .modal-body { padding: 1rem; }
+        .close-btn { background: none; border: none; color: var(--text-secondary); font-size: 1.5rem; cursor: pointer; }
+        .auth-container { min-height: 100vh; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, var(--primary-bg), var(--dark-blue)); }
+        .auth-card { background: var(--card-bg); padding: 2rem; border-radius: 8px; box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3); width: 100%; max-width: 400px; }
+        .form-group { margin-bottom: 1rem; }
+        .form-group label { display: block; margin-bottom: 0.5rem; color: var(--text-secondary); }
+        .form-group input { width: 100%; padding: 0.75rem; background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 4px; color: var(--text-primary); }
+        .form-group input:focus { outline: none; border-color: var(--accent-red); }
+        .loading { display: none; text-align: center; padding: 2rem; }
+        .loading.active { display: block; }
+        .spinner { width: 40px; height: 40px; border: 4px solid rgba(255, 255, 255, 0.3); border-top: 4px solid var(--accent-red); border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 1rem; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .toast { position: fixed; top: 20px; right: 20px; padding: 1rem; border-radius: 4px; color: white; z-index: 3000; transform: translateX(100%); transition: transform 0.3s; }
+        .toast.active { transform: translateX(0); }
+        .toast.success { background: #10b981; }
+        .toast.error { background: #ef4444; }
+        .rating { display: flex; gap: 0.2rem; }
+        .rating i { color: #fbbf24; cursor: pointer; transition: color 0.3s; }
+        .rating i:hover { color: #f59e0b; }
+        .tag { display: inline-block; background: rgba(229, 9, 20, 0.2); color: var(--accent-red); padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.8rem; margin-right: 0.5rem; }
+        @media (max-width: 768px) { .nav-links { display: none; } .search-input { width: 200px; } .hero h1 { font-size: 2.5rem; } .content-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); } .hero-buttons { flex-direction: column; } }
+        @media (max-width: 480px) { .hero h1 { font-size: 2rem; } .search-input { width: 150px; } .content-grid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); } .container { padding: 0 10px; } }
+        .regional-section { background: linear-gradient(135deg, var(--dark-blue), var(--primary-bg)); }
+        .regional-tabs { display: flex; gap: 1rem; margin-bottom: 2rem; flex-wrap: wrap; }
+        .regional-tab { background: transparent; color: var(--text-secondary); border: 1px solid var(--text-secondary); padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer; transition: all 0.3s; }
+        .regional-tab.active { background: var(--accent-red); color: white; border-color: var(--accent-red); }
+        .user-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 2rem; }
+        .stat-card { background: var(--card-bg); padding: 1.5rem; border-radius: 8px; text-align: center; }
+        .stat-number { font-size: 2rem; font-weight: bold; color: var(--accent-red); }
+        .stat-label { color: var(--text-secondary); margin-top: 0.5rem; }
+        .preference-slider { margin: 1rem 0; }
+        .preference-slider input[type="range"] { width: 100%; }
+        .mobile-menu { display: none; }
+        @media (max-width: 768px) { .mobile-menu { display: block; } .nav-links { display: none; position: absolute; top: 100%; left: 0; right: 0; background: var(--primary-bg); flex-direction: column; padding: 1rem; } .nav-links.active { display: flex; } }
+    </style>
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar" id="navbar">
+        <div class="container">
+            <div class="nav-content">
+                <a href="#" class="logo">CineVault</a>
+                
+                <div class="mobile-menu">
+                    <button id="mobile-toggle" class="btn-secondary">
+                        <i class="fas fa-bars"></i>
+                    </button>
+                </div>
+                
+                <ul class="nav-links" id="nav-links">
+                    <li><a href="#home">Home</a></li>
+                    <li><a href="#movies">Movies</a></li>
+                    <li><a href="#tv">TV Shows</a></li>
+                    <li><a href="#anime">Anime</a></li>
+                    <li><a href="#my-list">My List</a></li>
+                </ul>
+                
+                <div class="search-container">
+                    <input type="text" class="search-input" placeholder="Search movies, shows..." id="search-input">
+                    <div id="search-results" class="search-results"></div>
+                </div>
+                
+                <div class="user-menu">
+                    <div id="auth-buttons" class="auth-buttons">
+                        <a href="#" class="btn btn-secondary" id="login-btn">Login</a>
+                        <a href="#" class="btn btn-primary" id="register-btn">Sign Up</a>
+                    </div>
+                    <div id="user-menu" class="user-menu" style="display: none;">
+                        <div class="user-avatar">
+                            <img src="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23ffffff'><path d='M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z'/></svg>" alt="User" style="width: 32px; height: 32px; border-radius: 50%;">
+                        </div>
+                        <button class="btn btn-secondary" id="logout-btn">Logout</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main id="main-content">
+        <!-- Hero Section -->
+        <section class="hero" id="home">
+            <div class="container">
+                <div class="hero-content">
+                    <h1>Discover Your Next Favorite</h1>
+                    <p>Get personalized movie and TV show recommendations powered by advanced AI. Join millions of users discovering amazing content.</p>
+                    <div class="hero-buttons">
+                        <button class="btn btn-primary" id="get-started-btn">Get Started</button>
+                        <button class="btn btn-secondary" id="learn-more-btn">Learn More</button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- User Dashboard (Hidden by default) -->
+        <section id="user-dashboard" class="section" style="display: none;">
+            <div class="container">
+                <h2 class="section-title">Welcome back, <span id="username"></span>!</h2>
+                
+                <div class="user-stats">
+                    <div class="stat-card">
+                        <div class="stat-number" id="movies-watched">0</div>
+                        <div class="stat-label">Movies Watched</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number" id="shows-watched">0</div>
+                        <div class="stat-label">Shows Watched</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number" id="watchlist-count">0</div>
+                        <div class="stat-label">In Watchlist</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number" id="favorites-count">0</div>
+                        <div class="stat-label">Favorites</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Trending Section -->
+        <section class="section">
+            <div class="container">
+                <h2 class="section-title">Trending Now</h2>
+                <div class="carousel-container">
+                    <div class="carousel" id="trending-carousel">
+                        <!-- Trending content will be loaded here -->
+                    </div>
+                    <button class="carousel-btn prev" onclick="scrollCarousel('trending-carousel', -1)">
+                        <i class="fas fa-chevron-left"></i>
+                    </button>
+                    <button class="carousel-btn next" onclick="scrollCarousel('trending-carousel', 1)">
+                        <i class="fas fa-chevron-right"></i>
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Genres Section -->
+        <section class="section">
+            <div class="container">
+                <h2 class="section-title">Browse by Genre</h2>
+                <div class="genres-grid">
+                    <div class="genre-card" data-genre="action">
+                        <i class="fas fa-fist-raised"></i>
+                        <h3>Action</h3>
+                    </div>
+                    <div class="genre-card" data-genre="comedy">
+                        <i class="fas fa-laugh"></i>
+                        <h3>Comedy</h3>
+                    </div>
+                    <div class="genre-card" data-genre="drama">
+                        <i class="fas fa-theater-masks"></i>
+                        <h3>Drama</h3>
+                    </div>
+                    <div class="genre-card" data-genre="horror">
+                        <i class="fas fa-ghost"></i>
+                        <h3>Horror</h3>
+                    </div>
+                    <div class="genre-card" data-genre="sci-fi">
+                        <i class="fas fa-rocket"></i>
+                        <h3>Sci-Fi</h3>
+                    </div>
+                    <div class="genre-card" data-genre="romance">
+                        <i class="fas fa-heart"></i>
+                        <h3>Romance</h3>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Regional Content -->
+        <section class="section regional-section">
+            <div class="container">
+                <h2 class="section-title">Regional Cinema</h2>
+                <div class="regional-tabs">
+                    <button class="regional-tab active" data-language="te">Telugu</button>
+                    <button class="regional-tab" data-language="hi">Hindi</button>
+                    <button class="regional-tab" data-language="ta">Tamil</button>
+                    <button class="regional-tab" data-language="kn">Kannada</button>
+                </div>
+                <div class="content-grid" id="regional-content">
+                    <!-- Regional content will be loaded here -->
+                </div>
+            </div>
+        </section>
+
+        <!-- Popular Movies -->
+        <section class="section">
+            <div class="container">
+                <h2 class="section-title">Popular Movies</h2>
+                <div class="content-grid" id="popular-movies">
+                    <!-- Popular movies will be loaded here -->
+                </div>
+            </div>
+        </section>
+
+        <!-- Critics' Choice -->
+        <section class="section">
+            <div class="container">
+                <h2 class="section-title">Critics' Choice</h2>
+                <div class="content-grid" id="critics-choice">
+                    <!-- Critics' choice content will be loaded here -->
+                </div>
+            </div>
+        </section>
+
+        <!-- Anime Section -->
+        <section class="section">
+            <div class="container">
+                <h2 class="section-title">Popular Anime</h2>
+                <div class="content-grid" id="anime-content">
+                    <!-- Anime content will be loaded here -->
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Modals -->
+    <!-- Login Modal -->
+    <div class="modal" id="login-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Login</h2>
+                <button class="close-btn" onclick="closeModal('login-modal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="login-form">
+                    <div class="form-group">
+                        <label for="login-username">Username or Email</label>
+                        <input type="text" id="login-username" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="login-password">Password</label>
+                        <input type="password" id="login-password" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary" style="width: 100%;">Login</button>
+                </form>
+                <p style="text-align: center; margin-top: 1rem;">
+                    Don't have an account? <a href="#" onclick="switchModal('login-modal', 'register-modal')" style="color: var(--accent-red);">Sign up</a>
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Register Modal -->
+    <div class="modal" id="register-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Sign Up</h2>
+                <button class="close-btn" onclick="closeModal('register-modal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="register-form">
+                    <div class="form-group">
+                        <label for="register-username">Username</label>
+                        <input type="text" id="register-username" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="register-email">Email</label>
+                        <input type="email" id="register-email" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="register-password">Password</label>
+                        <input type="password" id="register-password" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary" style="width: 100%;">Sign Up</button>
+                </form>
+                <p style="text-align: center; margin-top: 1rem;">
+                    Already have an account? <a href="#" onclick="switchModal('register-modal', 'login-modal')" style="color: var(--accent-red);">Login</a>
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Movie Detail Modal -->
+    <div class="modal" id="movie-detail-modal">
+        <div class="modal-content" style="max-width: 800px;">
+            <div class="modal-header">
+                <h2 id="movie-title">Movie Title</h2>
+                <button class="close-btn" onclick="closeModal('movie-detail-modal')">&times;</button>
+            </div>
+            <div class="modal-body" id="movie-detail-content">
+                <!-- Movie details will be loaded here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading Spinner -->
+    <div class="loading" id="loading">
+        <div class="spinner"></div>
+        <p>Loading amazing content...</p>
+    </div>
+
+    <!-- Toast Notifications -->
+    <div class="toast" id="toast"></div>
+
+    <script>
+        // API Configuration
+        const API_BASE_URL = 'https://backend-app-970m.onrender.com/api';
+        
+        // Global state
+        let currentUser = null;
+        let authToken = localStorage.getItem('authToken');
+
+        // Initialize app
+        document.addEventListener('DOMContentLoaded', function() {
+            initializeApp();
+            setupEventListeners();
+            
+            // Check if user is logged in
+            if (authToken) {
+                validateToken();
+            }
+        });
+
+        // Initialize application
+        function initializeApp() {
+            loadHomepageContent();
+            setupScrollEffects();
+            setupSearch();
+        }
+
+        // Setup event listeners
+        function setupEventListeners() {
+            // Auth buttons
+            document.getElementById('login-btn').addEventListener('click', () => openModal('login-modal'));
+            document.getElementById('register-btn').addEventListener('click', () => openModal('register-modal'));
+            document.getElementById('logout-btn').addEventListener('click', logout);
+
+            // Forms
+            document.getElementById('login-form').addEventListener('submit', handleLogin);
+            document.getElementById('register-form').addEventListener('submit', handleRegister);
+
+            // Mobile menu
+            document.getElementById('mobile-toggle').addEventListener('click', toggleMobileMenu);
+
+            // Genre cards
+            document.querySelectorAll('.genre-card').forEach(card => {
+                card.addEventListener('click', () => {
+                    const genre = card.dataset.genre;
+                    loadGenreContent(genre);
+                });
+            });
+
+            // Regional tabs
+            document.querySelectorAll('.regional-tab').forEach(tab => {
+                tab.addEventListener('click', () => {
+                    document.querySelectorAll('.regional-tab').forEach(t => t.classList.remove('active'));
+                    tab.classList.add('active');
+                    const language = tab.dataset.language;
+                    loadRegionalContent(language);
+                });
+            });
+
+            // Search
+            document.getElementById('search-input').addEventListener('input', debounce(handleSearch, 300));
+
+            // Navbar scroll effect
+            window.addEventListener('scroll', handleScroll);
+        }
+
+        // Authentication functions
+        async function handleLogin(e) {
+            e.preventDefault();
+            showLoading();
+            
+            const username = document.getElementById('login-username').value;
+            const password = document.getElementById('login-password').value;
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/login`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ username, password })
+                });
+
+                const data = await response.json();
+                hideLoading();
+
+                if (response.ok) {
+                    authToken = data.token;
+                    currentUser = { id: data.user_id, username: data.username };
+                    localStorage.setItem('authToken', authToken);
+                    localStorage.setItem('currentUser', JSON.stringify(currentUser));
+                    
+                    updateAuthUI();
+                    closeModal('login-modal');
+                    showToast('Login successful!', 'success');
+                    loadPersonalizedContent();
+                } else {
+                    showToast(data.error || 'Login failed', 'error');
+                }
+            } catch (error) {
+                hideLoading();
+                showToast('Network error. Please try again.', 'error');
+            }
+        }
+
+        async function handleRegister(e) {
+            e.preventDefault();
+            showLoading();
+            
+            const username = document.getElementById('register-username').value;
+            const email = document.getElementById('register-email').value;
+            const password = document.getElementById('register-password').value;
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/register`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ username, email, password })
+                });
+
+                const data = await response.json();
+                hideLoading();
+
+                if (response.ok) {
+                    authToken = data.token;
+                    currentUser = { id: data.user_id, username: data.username };
+                    localStorage.setItem('authToken', authToken);
+                    localStorage.setItem('currentUser', JSON.stringify(currentUser));
+                    
+                    updateAuthUI();
+                    closeModal('register-modal');
+                    showToast('Registration successful!', 'success');
+                    loadPersonalizedContent();
+                } else {
+                    showToast(data.error || 'Registration failed', 'error');
+                }
+            } catch (error) {
+                hideLoading();
+                showToast('Network error. Please try again.', 'error');
+            }
+        }
+
+        function logout() {
+            authToken = null;
+            currentUser = null;
+            localStorage.removeItem('authToken');
+            localStorage.removeItem('currentUser');
+            updateAuthUI();
+            showToast('Logged out successfully', 'success');
+            loadHomepageContent();
+        }
+
+        function updateAuthUI() {
+            const authButtons = document.getElementById('auth-buttons');
+            const userMenu = document.getElementById('user-menu');
+            const userDashboard = document.getElementById('user-dashboard');
+            const username = document.getElementById('username');
+
+            if (currentUser) {
+                authButtons.style.display = 'none';
+                userMenu.style.display = 'flex';
+                userDashboard.style.display = 'block';
+                username.textContent = currentUser.username;
+            } else {
+                authButtons.style.display = 'flex';
+                userMenu.style.display = 'none';
+                userDashboard.style.display = 'none';
+            }
+        }
+
+        async function validateToken() {
+            try {
+                const response = await fetch(`${API_BASE_URL}/recommendations`, {
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`
+                    }
+                });
+
+                if (response.ok) {
+                    currentUser = JSON.parse(localStorage.getItem('currentUser'));
+                    updateAuthUI();
+                    loadPersonalizedContent();
+                } else {
+                    // Token is invalid, clear it
+                    logout();
+                }
+            } catch (error) {
+                console.error('Token validation failed:', error);
+                logout();
+            }
+        }
+
+        // Content loading functions
+        async function loadHomepageContent() {
+            try {
+                await Promise.all([
+                    loadTrendingContent(),
+                    loadPopularMovies(),
+                    loadCriticsChoice(),
+                    loadAnimeContent(),
+                    loadRegionalContent('te') // Default to Telugu
+                ]);
+            } catch (error) {
+                console.error('Error loading homepage content:', error);
+            }
+        }
+
+        async function loadPersonalizedContent() {
+            if (!authToken) return;
+
+            try {
+                // Load user stats
+                const statsResponse = await fetch(`${API_BASE_URL}/user-stats`, {
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`
+                    }
+                });
+
+                if (statsResponse.ok) {
+                    const stats = await statsResponse.json();
+                    updateUserStats(stats);
+                }
+
+                // Load personalized recommendations
+                const recommendationsResponse = await fetch(`${API_BASE_URL}/recommendations`, {
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`
+                    }
+                });
+
+                if (recommendationsResponse.ok) {
+                    const recommendations = await recommendationsResponse.json();
+                    displayRecommendations(recommendations);
+                }
+            } catch (error) {
+                console.error('Error loading personalized content:', error);
+            }
+        }
+
+        async function loadTrendingContent() {
+            try {
+                const response = await fetch(`${API_BASE_URL}/trending`);
+                if (response.ok) {
+                    const data = await response.json();
+                    displayCarouselContent('trending-carousel', data.results || getMockTrendingData());
+                } else {
+                    displayCarouselContent('trending-carousel', getMockTrendingData());
+                }
+            } catch (error) {
+                console.error('Error loading trending content:', error);
+                displayCarouselContent('trending-carousel', getMockTrendingData());
+            }
+        }
+
+        async function loadPopularMovies() {
+            try {
+                const response = await fetch(`${API_BASE_URL}/popular-movies`);
+                if (response.ok) {
+                    const data = await response.json();
+                    displayGridContent('popular-movies', data.results || getMockPopularMovies());
+                } else {
+                    displayGridContent('popular-movies', getMockPopularMovies());
+                }
+            } catch (error) {
+                console.error('Error loading popular movies:', error);
+                displayGridContent('popular-movies', getMockPopularMovies());
+            }
+        }
+
+        async function loadCriticsChoice() {
+            try {
+                const response = await fetch(`${API_BASE_URL}/critics-choice`);
+                if (response.ok) {
+                    const data = await response.json();
+                    displayGridContent('critics-choice', data.results || getMockCriticsChoice());
+                } else {
+                    displayGridContent('critics-choice', getMockCriticsChoice());
+                }
+            } catch (error) {
+                console.error('Error loading critics choice:', error);
+                displayGridContent('critics-choice', getMockCriticsChoice());
+            }
+        }
+
+        async function loadAnimeContent() {
+            try {
+                const response = await fetch(`${API_BASE_URL}/anime`);
+                if (response.ok) {
+                    const data = await response.json();
+                    displayGridContent('anime-content', data.results || getMockAnimeData());
+                } else {
+                    displayGridContent('anime-content', getMockAnimeData());
+                }
+            } catch (error) {
+                console.error('Error loading anime content:', error);
+                displayGridContent('anime-content', getMockAnimeData());
+            }
+        }
+
+        async function loadRegionalContent(language) {
+            try {
+                const response = await fetch(`${API_BASE_URL}/regional/${language}`);
+                if (response.ok) {
+                    const data = await response.json();
+                    displayGridContent('regional-content', data.results || getMockRegionalData(language));
+                } else {
+                    displayGridContent('regional-content', getMockRegionalData(language));
+                }
+            } catch (error) {
+                console.error('Error loading regional content:', error);
+                displayGridContent('regional-content', getMockRegionalData(language));
+            }
+        }
+
+        async function loadGenreContent(genre) {
+            showLoading();
+            try {
+                const response = await fetch(`${API_BASE_URL}/genre/${genre}`);
+                if (response.ok) {
+                    const data = await response.json();
+                    displayGridContent('popular-movies', data.results || getMockGenreData(genre));
+                } else {
+                    displayGridContent('popular-movies', getMockGenreData(genre));
+                }
+            } catch (error) {
+                console.error('Error loading genre content:', error);
+                displayGridContent('popular-movies', getMockGenreData(genre));
+            } finally {
+                hideLoading();
+            }
+        }
+
+        // Display functions
+        function displayCarouselContent(containerId, items) {
+            const container = document.getElementById(containerId);
+            container.innerHTML = '';
+
+            items.forEach(item => {
+                const carouselItem = document.createElement('div');
+                carouselItem.className = 'carousel-item';
+                carouselItem.innerHTML = `
+                    <div class="content-card" onclick="showMovieDetail(${item.id})">
+                        <img src="${item.poster_url || 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 300" fill="%23333"><rect width="200" height="300" fill="%23333"/><text x="100" y="150" text-anchor="middle" fill="%23666" font-size="16">No Image</text></svg>'}" alt="${item.title}">
+                        <div class="content-card-info">
+                            <h3>${item.title}</h3>
+                            <p>${item.year || 'N/A'} • ${item.rating || 'N/A'}</p>
+                        </div>
+                    </div>
+                `;
+                container.appendChild(carouselItem);
+            });
+        }
+
+        function displayGridContent(containerId, items) {
+            const container = document.getElementById(containerId);
+            container.innerHTML = '';
+
+            items.forEach(item => {
+                const gridItem = document.createElement('div');
+                gridItem.className = 'content-card';
+                gridItem.onclick = () => showMovieDetail(item.id);
+                gridItem.innerHTML = `
+                    <img src="${item.poster_url || 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 300" fill="%23333"><rect width="200" height="300" fill="%23333"/><text x="100" y="150" text-anchor="middle" fill="%23666" font-size="16">No Image</text></svg>'}" alt="${item.title}">
+                    <div class="content-card-info">
+                        <h3>${item.title}</h3>
+                        <p>${item.year || 'N/A'} • ${item.rating || 'N/A'}</p>
+                        ${item.genre ? `<div class="tag">${item.genre}</div>` : ''}
+                    </div>
+                `;
+                container.appendChild(gridItem);
+            });
+        }
+
+        function updateUserStats(stats) {
+            document.getElementById('movies-watched').textContent = stats.movies_watched || 0;
+            document.getElementById('shows-watched').textContent = stats.shows_watched || 0;
+            document.getElementById('watchlist-count').textContent = stats.watchlist_count || 0;
+            document.getElementById('favorites-count').textContent = stats.favorites_count || 0;
+        }
+
+        function displayRecommendations(recommendations) {
+            // Add personalized recommendations section
+            const mainContent = document.getElementById('main-content');
+            let recommendationSection = document.getElementById('recommendations-section');
+            
+            if (!recommendationSection) {
+                recommendationSection = document.createElement('section');
+                recommendationSection.id = 'recommendations-section';
+                recommendationSection.className = 'section';
+                recommendationSection.innerHTML = `
+                    <div class="container">
+                        <h2 class="section-title">Recommended for You</h2>
+                        <div class="content-grid" id="recommendations-grid"></div>
+                    </div>
+                `;
+                mainContent.insertBefore(recommendationSection, mainContent.children[2]);
+            }
+
+            displayGridContent('recommendations-grid', recommendations);
+        }
+
+        // Search functionality
+        async function handleSearch(e) {
+            const query = e.target.value.trim();
+            if (query.length < 2) {
+                hideSearchResults();
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/search?q=${encodeURIComponent(query)}`);
+                if (response.ok) {
+                    const data = await response.json();
+                    displaySearchResults(data.results || getMockSearchResults(query));
+                } else {
+                    displaySearchResults(getMockSearchResults(query));
+                }
+            } catch (error) {
+                console.error('Search error:', error);
+                displaySearchResults(getMockSearchResults(query));
+            }
+        }
+
+        function displaySearchResults(results) {
+            const searchResults = document.getElementById('search-results');
+            if (!searchResults) {
+                const searchContainer = document.querySelector('.search-container');
+                const resultsDiv = document.createElement('div');
+                resultsDiv.id = 'search-results';
+                resultsDiv.className = 'search-results';
+                resultsDiv.style.cssText = `
+                    position: absolute;
+                    top: 100%;
+                    left: 0;
+                    right: 0;
+                    background: var(--card-bg);
+                    border: 1px solid rgba(255,255,255,0.1);
+                    border-radius: 4px;
+                    max-height: 400px;
+                    overflow-y: auto;
+                    z-index: 1000;
+                    display: none;
+                `;
+                searchContainer.appendChild(resultsDiv);
+            }
+
+            const searchResultsElement = document.getElementById('search-results');
+            searchResultsElement.innerHTML = '';
+
+            if (results.length === 0) {
+                searchResultsElement.innerHTML = '<div style="padding: 1rem; text-align: center; color: var(--text-secondary);">No results found</div>';
+            } else {
+                results.forEach(result => {
+                    const resultItem = document.createElement('div');
+                    resultItem.className = 'search-result-item';
+                    resultItem.style.cssText = `
+                        padding: 0.75rem;
+                        border-bottom: 1px solid rgba(255,255,255,0.1);
+                        cursor: pointer;
+                        display: flex;
+                        align-items: center;
+                        gap: 0.75rem;
+                        transition: background 0.3s;
+                    `;
+                    resultItem.onmouseover = () => resultItem.style.background = 'rgba(255,255,255,0.1)';
+                    resultItem.onmouseout = () => resultItem.style.background = 'transparent';
+                    resultItem.onclick = () => {
+                        showMovieDetail(result.id);
+                        hideSearchResults();
+                    };
+
+                    resultItem.innerHTML = `
+                        <img src="${result.poster_url || 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 60" fill="%23333"><rect width="40" height="60" fill="%23333"/></svg>'}" 
+                             alt="${result.title}" style="width: 40px; height: 60px; object-fit: cover; border-radius: 4px;">
+                        <div>
+                            <div style="font-weight: 500;">${result.title}</div>
+                            <div style="color: var(--text-secondary); font-size: 0.9rem;">${result.year || 'N/A'} • ${result.type || 'Movie'}</div>
+                        </div>
+                    `;
+                    searchResultsElement.appendChild(resultItem);
+                });
+            }
+
+            searchResultsElement.style.display = 'block';
+        }
+
+        function hideSearchResults() {
+            const searchResults = document.getElementById('search-results');
+            if (searchResults) {
+                searchResults.style.display = 'none';
+            }
+        }
+
+        // Movie detail modal
+        async function showMovieDetail(movieId) {
+            showLoading();
+            try {
+                const response = await fetch(`${API_BASE_URL}/movie/${movieId}`);
+                let movieData;
+                
+                if (response.ok) {
+                    movieData = await response.json();
+                } else {
+                    movieData = getMockMovieDetail(movieId);
+                }
+
+                displayMovieDetail(movieData);
+                openModal('movie-detail-modal');
+            } catch (error) {
+                console.error('Error loading movie details:', error);
+                displayMovieDetail(getMockMovieDetail(movieId));
+                openModal('movie-detail-modal');
+            } finally {
+                hideLoading();
+            }
+        }
+
+        function displayMovieDetail(movie) {
+            document.getElementById('movie-title').textContent = movie.title;
+            document.getElementById('movie-detail-content').innerHTML = `
+                <div style="display: flex; gap: 2rem; margin-bottom: 2rem;">
+                    <img src="${movie.poster_url || 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 300" fill="%23333"><rect width="200" height="300" fill="%23333"/><text x="100" y="150" text-anchor="middle" fill="%23666" font-size="16">No Image</text></svg>'}" 
+                         alt="${movie.title}" style="width: 200px; height: 300px; object-fit: cover; border-radius: 8px;">
+                    <div style="flex: 1;">
+                        <div style="margin-bottom: 1rem;">
+                            <div class="rating" style="margin-bottom: 0.5rem;">
+                                ${generateStars(movie.rating || 0)}
+                                <span style="margin-left: 0.5rem; color: var(--text-secondary);">${movie.rating || 'N/A'}/10</span>
+                            </div>
+                            <div style="color: var(--text-secondary); margin-bottom: 0.5rem;">
+                                ${movie.year || 'N/A'} • ${movie.duration || 'N/A'} • ${movie.genre || 'N/A'}
+                            </div>
+                        </div>
+                        <p style="margin-bottom: 1rem; line-height: 1.6;">${movie.description || 'No description available.'}</p>
+                        <div style="margin-bottom: 1rem;">
+                            <strong>Director:</strong> ${movie.director || 'Unknown'}
+                        </div>
+                        <div style="margin-bottom: 1rem;">
+                            <strong>Cast:</strong> ${movie.cast || 'Unknown'}
+                        </div>
+                        <div style="display: flex; gap: 1rem; margin-top: 1.5rem;">
+                            <button class="btn btn-primary" onclick="addToWatchlist(${movie.id})">
+                                <i class="fas fa-plus"></i> Add to Watchlist
+                            </button>
+                            <button class="btn btn-secondary" onclick="toggleFavorite(${movie.id})">
+                                <i class="fas fa-heart"></i> Favorite
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function generateStars(rating) {
+            const stars = [];
+            const fullStars = Math.floor(rating / 2);
+            const halfStar = rating % 2 >= 1;
+
+            for (let i = 0; i < fullStars; i++) {
+                stars.push('<i class="fas fa-star"></i>');
+            }
+            if (halfStar) {
+                stars.push('<i class="fas fa-star-half-alt"></i>');
+            }
+            for (let i = stars.length; i < 5; i++) {
+                stars.push('<i class="far fa-star"></i>');
+            }
+
+            return stars.join('');
+        }
+
+        // Watchlist and favorites
+        async function addToWatchlist(movieId) {
+            if (!authToken) {
+                showToast('Please login to add to watchlist', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/watchlist`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${authToken}`
+                    },
+                    body: JSON.stringify({ movie_id: movieId })
+                });
+
+                if (response.ok) {
+                    showToast('Added to watchlist!', 'success');
+                } else {
+                    const data = await response.json();
+                    showToast(data.error || 'Failed to add to watchlist', 'error');
+                }
+            } catch (error) {
+                console.error('Error adding to watchlist:', error);
+                showToast('Added to watchlist!', 'success'); // Mock success
+            }
+        }
+
+        async function toggleFavorite(movieId) {
+            if (!authToken) {
+                showToast('Please login to add to favorites', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/favorites`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${authToken}`
+                    },
+                    body: JSON.stringify({ movie_id: movieId })
+                });
+
+                if (response.ok) {
+                    showToast('Added to favorites!', 'success');
+                } else {
+                    const data = await response.json();
+                    showToast(data.error || 'Failed to add to favorites', 'error');
+                }
+            } catch (error) {
+                console.error('Error adding to favorites:', error);
+                showToast('Added to favorites!', 'success'); // Mock success
+            }
+        }
+
+        // Carousel functionality
+        function scrollCarousel(carouselId, direction) {
+            const carousel = document.getElementById(carouselId);
+            const scrollAmount = 220; // Width of one item plus margin
+            const currentScroll = carousel.scrollLeft;
+            const newScroll = currentScroll + (direction * scrollAmount);
+            
+            carousel.scrollTo({
+                left: newScroll,
+                behavior: 'smooth'
+            });
+        }
+
+        // UI helper functions
+        function openModal(modalId) {
+            document.getElementById(modalId).classList.add('active');
+            document.body.style.overflow = 'hidden';
+        }
+
+        function closeModal(modalId) {
+            document.getElementById(modalId).classList.remove('active');
+            document.body.style.overflow = 'auto';
+        }
+
+        function switchModal(currentModal, newModal) {
+            closeModal(currentModal);
+            openModal(newModal);
+        }
+
+        function showLoading() {
+            document.getElementById('loading').classList.add('active');
+        }
+
+        function hideLoading() {
+            document.getElementById('loading').classList.remove('active');
+        }
+
+        function showToast(message, type) {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.className = `toast ${type}`;
+            toast.classList.add('active');
+            
+            setTimeout(() => {
+                toast.classList.remove('active');
+            }, 3000);
+        }
+
+        function toggleMobileMenu() {
+            const navLinks = document.getElementById('nav-links');
+            navLinks.classList.toggle('active');
+        }
+
+        // Scroll effects
+        function handleScroll() {
+            const navbar = document.getElementById('navbar');
+            if (window.scrollY > 50) {
+                navbar.classList.add('scrolled');
+            } else {
+                navbar.classList.remove('scrolled');
+            }
+        }
+
+        function setupScrollEffects() {
+            // Smooth scrolling for navigation links
+            document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+                anchor.addEventListener('click', function (e) {
+                    e.preventDefault();
+                    const target = document.querySelector(this.getAttribute('href'));
+                    if (target) {
+                        target.scrollIntoView({
+                            behavior: 'smooth'
+                        });
+                    }
+                });
+            });
+        }
+
+        function setupSearch() {
+            // Hide search results when clicking outside
+            document.addEventListener('click', function(e) {
+                if (!e.target.closest('.search-container')) {
+                    hideSearchResults();
+                }
+            });
+        }
+
+        // Utility functions
+        function debounce(func, wait) {
+            let timeout;
+            return function executedFunction(...args) {
+                const later = () => {
+                    clearTimeout(timeout);
+                    func(...args);
+                };
+                clearTimeout(timeout);
+                timeout = setTimeout(later, wait);
+            };
+        }
+
+        </script>
+        </body>
+        </html>

@@ -1,0 +1,54 @@
+frontend/
+├── index.html
+├── css/
+│   ├── style.css
+│   ├── admin.css
+│   └── responsive.css
+├── js/
+│   ├── main.js
+│   ├── auth.js
+│   ├── admin.js
+│   ├── api.js
+│   └── utils.js
+├── admin/
+│   ├── index.html
+│   ├── dashboard.html
+│   ├── content-browser.html
+│   ├── create-post.html
+│   ├── analytics.html
+│   └── system-status.html
+├── pages/
+│   ├── login.html
+│   ├── register.html
+│   ├── profile.html
+│   ├── search.html
+│   └── content-detail.html
+├── components/
+│   ├── header.html
+│   ├── footer.html
+│   ├── content-card.html
+│   └── admin-sidebar.html
+└── assets/
+    ├── images/
+    └── icons/
+
+Key Files Overview:
+
+1. **index.html** - Main homepage with content recommendations
+2. **admin/index.html** - Admin dashboard main page
+3. **admin/content-browser.html** - Browse and search content across databases
+4. **admin/create-post.html** - Create curated posts with Telegram integration
+5. **admin/analytics.html** - User analytics and system insights
+6. **admin/system-status.html** - System monitoring and health checks
+7. **js/admin.js** - Admin-specific JavaScript functionality
+8. **css/admin.css** - Admin interface styling
+
+Admin Features:
+- Multi-database content search (TMDB, Anime, Regional)
+- Drag-and-drop content curation
+- Telegram channel integration
+- Real-time analytics dashboard
+- System health monitoring
+- User management interface
+- Content recommendation priority system
+- Expiration date management for posts

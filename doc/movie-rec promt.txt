@@ -1,0 +1,433 @@
+BACKEND PROMT
+
+Create a comprehensive movie and TV show recommendation system with the following requirements:
+
+CORE FUNCTIONALITY:
+- User authentication and session management
+- Multi-source content discovery (movies, TV shows, anime) with regional language support
+- Advanced recommendation algorithms (collaborative filtering, content-based, hybrid, ML-powered)
+- Real-time learning and preference adaptation
+- Watchlist, favorites, and rating system
+- Admin panel for content management
+
+HOMEPAGE RECOMMENDATIONS (Non-logged users):
+- Custom recommendations based on anonymous user's search history (stored in browser/session)
+- Popular content recommendations by genre
+- Trending movies/shows/anime
+- Regional content suggestions based on user's IP location
+- Genre-based recommendations from popular content
+- Recently added content showcase
+
+PERSONALIZED RECOMMENDATIONS (Logged-in users):
+- Watch history analysis and similar content suggestions
+- Favorites-based recommendations using content similarity
+- Wishlist completion suggestions
+- Favorite genres deep-dive recommendations
+- Cross-genre discovery based on user patterns
+- Time-based recommendations (weekend movies, binge-worthy series)
+- Mood-based suggestions (action, comedy, drama, etc.)
+
+DETAILED CONTENT INFORMATION:
+- Complete movie/show details with synopsis, plot, storyline
+- Multiple trailers and teasers integration
+- Full cast and crew information with roles
+- User ratings and professional critic scores
+- High-quality posters and backdrop images
+- Release information and runtime details
+- Genre tags and content warnings
+- Similar content recommendations
+- User reviews and community ratings
+
+MULTI-LANGUAGE & REGIONAL CONTENT:
+- TMDB API for international movies and TV shows
+- Jikan API for anime content
+- Regional APIs for Indian cinema:
+  * Telugu movies (Tollywood)
+  * Hindi movies (Bollywood) 
+  * Tamil movies (Kollywood)
+  * Kannada movies (Sandalwood)
+  * English movies (Hollywood)
+- Regional streaming platform integration where available
+- Language-specific trending and popular content
+- Regional festival and cultural event-based recommendations
+
+ADMIN CONTENT CURATION SYSTEM:
+- Admin dashboard to browse multiple databases (TMDB, Jikan, regional APIs)
+- Admin interface to search across all supported languages and regions
+- Admin can select specific content from any database
+- Admin can create custom public recommendations with selected content
+- Admin can write personalized descriptions and reasons for recommendations
+- Admin can set priority levels and expiration dates for recommendations
+- Admin can tag recommendations with categories and languages
+- System automatically fetches full metadata when admin selects content
+- Admin recommendations appear in public feed and get shared via Telegram
+
+RECOMMENDATION ALGORITHMS:
+- Implement hybrid recommendation combining multiple approaches
+- Collaborative filtering based on user similarity
+- Content-based filtering using genre, language, and metadata analysis
+- ML service integration for deep learning recommendations
+- Regional preference learning (local vs international content)
+- Language preference tracking and suggestions
+- Fallback strategies for new users and service failures
+
+REAL-TIME FEATURES:
+- Background learning processes that update user preferences
+- Session tracking and viewing behavior analysis
+- Real-time ML model updates based on user interactions
+- Personalization and diversity scoring
+- Anonymous user behavior tracking for homepage recommendations
+
+EXTERNAL INTEGRATIONS:
+- TMDB API for international movies and TV shows
+- Jikan API for anime content
+- Regional movie databases for Indian languages
+- Custom ML service for advanced recommendations
+- Telegram bot for notifications and featured content
+- IP-based location detection for regional content
+
+DATABASE DESIGN:
+- User management with preferences and regional settings
+- Content caching with multi-language metadata
+- User interactions (ratings, watchlist, favorites, viewing sessions)
+- Featured content and public recommendations system
+- Admin-curated content with custom descriptions and metadata
+- Anonymous user session tracking for homepage recommendations
+- Regional content categorization and tagging
+
+DEPLOYMENT REQUIREMENTS:
+- Backend optimized for Render deployment
+- Database migrations and environment configuration
+- API rate limiting and caching for external services
+- Error handling and logging for production environment
+- Health checks and monitoring endpoints
+- CORS configuration for Vercel frontend integration
+
+TECHNICAL REQUIREMENTS:
+- Flask backend with SQLite database
+- CORS support for cross-origin requests
+- Error handling and logging
+- Rate limiting and caching strategies
+- Background task processing
+- RESTful API design
+- Regional content API integration
+- Performance optimization for external API calls
+
+ADVANCED FEATURES:
+- ML-powered search suggestions with regional content
+- Multi-language trending content discovery
+- Personalization scoring with regional preferences
+- Diversity metrics for recommendations
+- Enhanced content metadata with regional information
+- Real-time preference learning
+- Admin content curation workflow
+- Public recommendation feed with multi-language content
+- Regional festival and cultural event-based content highlighting
+
+API ENDPOINTS STRUCTURE:
+- GET /api/homepage-recommendations (for non-logged users)
+- GET /api/personalized-recommendations (for logged-in users)
+- GET /api/content/:id/details (complete content information)
+- GET /api/search (multi-language search)
+- GET /api/trending (regional and global trending)
+- POST /api/admin/curate-content (admin content selection)
+- GET /api/regional-content (language-specific content)
+
+
+
+Frontend Prompt
+
+Create a modern, responsive movie and TV show recommendation website frontend with the following requirements:
+
+FRONTEND TECHNOLOGY STACK:
+- HTML5, CSS3, and Modern JavaScript (ES6+)
+- Tailwind CSS for utility-first styling and design system
+- Bootstrap for responsive grid system and components
+- Responsive design for mobile, tablet, and desktop
+- Progressive Web App (PWA) features for better performance
+
+HOMEPAGE DESIGN (Non-logged users):
+- Hero section with featured movie/show carousel
+- Popular movies section with horizontal scrolling cards
+- Trending TV shows section
+- Anime recommendations section
+- Regional content sections (Telugu, Hindi, Tamil, Kannada movies)
+- Genre-based recommendation grids
+- Search bar with autocomplete suggestions
+- Clean, modern movie poster card design
+- Infinite scroll or pagination for content loading
+- Mobile-first responsive design
+
+PERSONALIZED DASHBOARD (Logged-in users):
+- Welcome section with user's name and quick stats
+- "Continue Watching" section based on watch history
+- "Recommended for You" based on favorites and preferences
+- "Because You Liked" sections showing similar content
+- "Trending in Your Languages" for regional preferences
+- "New Releases" in favorite genres
+- Quick access to watchlist and favorites
+- Personalized genre cards with content counts
+
+DETAILED MOVIE/SHOW PAGE:
+- Large hero banner with backdrop image and play button
+- Movie poster on the left, details on the right
+- Synopsis/plot section with expandable text
+- Cast and crew horizontal scrolling cards with photos
+- Trailers and teasers embedded video player
+- User rating system with stars/numbers
+- Add to watchlist/favorites buttons
+- Similar content recommendations grid
+- User reviews and comments section
+- Technical details (runtime, release date, genre tags)
+- Social sharing buttons
+
+SEARCH AND DISCOVERY:
+- Advanced search page with filters (genre, language, year, rating)
+- Search results with infinite scroll
+- Filter sidebar for content type, language, genre
+- Sort options (popularity, rating, release date)
+- Search history for logged-in users
+- Trending searches display
+- Voice search capability (optional)
+
+USER INTERFACE COMPONENTS:
+- Clean navigation bar with logo, search, and user menu
+- Movie/show cards with hover effects and quick actions
+- Loading skeletons for smooth content loading
+- Modal windows for quick actions (add to watchlist, rate)
+- Toast notifications for user feedback
+- Responsive image galleries with lazy loading
+- Smooth transitions and animations
+
+RESPONSIVE DESIGN:
+- Mobile-first approach with breakpoints
+- Touch-friendly interface for mobile devices
+- Optimized image loading with different sizes
+- Collapsible navigation for mobile
+- Swipeable carousels for touch devices
+- Responsive typography and spacing
+
+AUTHENTICATION PAGES:
+- Modern login/register forms with validation
+- Social login options (Google, Facebook) - optional
+- Password reset functionality
+- User profile management page
+- Account settings and preferences
+
+ADMIN INTERFACE:
+- Admin dashboard for content management
+- Content search and selection interface
+- Public recommendation creation form
+- User management interface
+- Analytics and statistics dashboard
+- Content moderation tools
+
+PERFORMANCE OPTIMIZATION:
+- Lazy loading for images and content
+- Progressive image loading with placeholders
+- Efficient API calls with caching
+- Code splitting for faster initial load
+- Service worker for offline functionality
+- Optimized for Vercel deployment
+
+STYLING GUIDELINES:
+- Dark mode support with toggle
+- Consistent color scheme and typography
+- Custom Tailwind configuration for brand colors
+- Bootstrap grid system for layout structure
+- Smooth animations and transitions
+- Modern card-based design with shadows and borders
+- Accessibility features (ARIA labels, keyboard navigation)
+
+JAVASCRIPT FUNCTIONALITY:
+- Fetch API for backend communication
+- Local storage for user preferences and search history
+- Session management for authentication
+- Dynamic content loading and rendering
+- Form validation and error handling
+- Smooth scrolling and navigation
+- Image optimization and lazy loading
+- Real-time search suggestions
+
+VERCEL DEPLOYMENT OPTIMIZATION:
+- Static site generation where possible
+- Optimized build process
+- Environment variable configuration
+- Custom 404 and error pages
+- SEO optimization with meta tags
+- Performance monitoring setup
+- CDN optimization for assets
+
+REGIONAL CONTENT FEATURES:
+- Language selection dropdown
+- Regional content sections with appropriate styling
+- Multi-language search functionality
+- Regional trending content display
+- Cultural event-based content highlighting
+- Language-specific typography and fonts
+
+USER EXPERIENCE FEATURES:
+- Smooth page transitions
+- Loading states and skeleton screens
+- Error handling with user-friendly messages
+- Offline mode with cached content
+- Bookmark and sharing functionality
+- Recently viewed content tracking
+- Keyboard shortcuts for power users
+
+COMPONENT STRUCTURE:
+- Reusable card components for movies/shows
+- Modal components for quick actions
+- Navigation components with responsive behavior
+- Form components with validation
+- Loading and error state components
+- Carousel components for content sections
+- Filter and search components
+
+
+
+
+
+
+
+
+
+Create a modern, responsive movie and TV show recommendation system frontend with the following requirements:
+
+FRONTEND TECHNOLOGY STACK:
+
+Pure HTML5, CSS3, and Modern JavaScript (ES6+) - No frameworks for maximum performance
+Tailwind CSS for utility-first styling and design system
+Bootstrap Grid System for responsive layouts
+Fetch API for seamless backend communication
+JWT Authentication for secure user sessions
+Progressive Web App (PWA) features for better performance
+Local Storage for user preferences and offline capability
+Responsive Design for mobile, tablet, and desktop
+
+STYLING GUIDELINES:
+
+Netflix-inspired Dark Theme with red accent colors
+Dark Mode Default with light mode toggle option
+Color Palette:
+
+Primary: Dark grays (#141414, #1f1f1f)
+Accent: Netflix red (#e50914)
+Text: White/Light gray (#ffffff, #cccccc)
+Secondary: Dark blue (#0f0f23)
+
+
+HOMEPAGE DESIGN (Non-logged users):
+
+Hero Section with trending movie/show carousel
+Categories Grid: Action, Comedy, Drama, Horror, Sci-Fi, Romance
+trending and recommendation of Telugu, Hindi, Tamil, Kannada movies
+Trending Now: Weekly/Daily trending content
+Anime Section: Popular anime recommendations
+Critics' Choice: Admin-curated premium content
+User Favorites: Most popular content across platform
+
+PERSONALIZED DASHBOARD (Logged-in users):
+
+Welcome Banner with user name and quick stats
+Continue Watching - Resume from last position
+Recommended For You - Hybrid ML recommendations
+Based on Your Recent Activity - Content-based filtering
+Genre-based Recommendations - From user preferences
+Similar to What You Liked - Collaborative filtering
+Watchlist Quick Access - User's saved content
+Recently Added - New content in preferred genres
+Interactive Preference Tuning - Real-time recommendation updates
+
+DETAILED MOVIE/SHOW PAGE:
+
+Hero Section with backdrop image and play button
+Movie Information Panel: Title, year, rating, runtime, genres
+Synopsis and Overview with expandable text
+Cast and Crew with profile images and roles
+Trailers and Videos with embedded player
+User Reviews and Ratings with interactive rating system
+Similar Content recommendations carousel
+Action Buttons: Add to Watchlist, Mark as Favorite, Rate
+Streaming Availability information
+Social Features: Share, Review, Recommend to friends
+
+SEARCH AND DISCOVERY:
+
+Global Search Bar with auto-suggestions
+Advanced Filters: Genre, Year, Rating, Language, Type
+Search Results Grid with poster view and list view toggle
+Filter Sidebar: Multiple filter combinations
+Sort Options: Popularity, Rating, Release Date, Alphabetical
+Search History for quick access
+Trending Searches suggestions
+Voice Search capability (Web Speech API)
+
+USER INTERFACE COMPONENTS:
+
+Navigation Bar: Logo, Search, Profile, Notifications
+Content Cards: Hover effects with quick actions
+Modal Windows: Movie details, trailers, user actions
+Loading Skeletons for better perceived performance
+Infinite Scroll for content discovery
+Toast Notifications for user feedback
+Rating Component: Interactive star ratings
+Tag System: Genre tags, content type badges
+
+RESPONSIVE DESIGN:
+
+Mobile-First Approach with touch-friendly interfaces
+Tablet Optimization with grid adjustments
+Desktop Enhancement with hover states and extended layouts
+Flexible Grid System adapting to screen sizes
+Touch Gestures for mobile navigation
+Swipe Support for carousels and navigation
+
+AUTHENTICATION PAGES:
+
+Login Page: Email/Username and password with social options
+Registration Page: Full form with validation
+Profile Management: Edit preferences, change password
+Forgot Password: Email recovery system
+Welcome Flow: Onboarding for new users with preference setup
+Account Settings: Privacy, notifications, data management
+Social login options (Google, Facebook) - optional
+
+ADMIN INTERFACE:
+
+Admin Dashboard: User stats, content stats, activity monitoring
+Content Curation: Add to critics choice, featured content
+User Management: View user activity, manage accounts
+Analytics Panel: Usage statistics, popular content
+Content Management: Add/edit/remove content
+Recommendation Tuning: Manual recommendation overrides
+
+
+movie-recommendation-frontend/
+├── index.html                 # Main entry point
+├── css/
+│   ├── styles.css            # Main stylesheet
+│   ├── components.css        # Reusable components
+│   └── responsive.css        # Media queries
+├── js/
+│   ├── app.js               # Main application logic
+│   ├── auth.js              # Authentication handling
+│   ├── api.js               # API communication
+│   ├── components.js        # UI components
+│   └── utils.js             # Utility functions
+├── pages/
+│   ├── login.html           # Login page
+│   ├── register.html        # Registration page
+│   ├── search.html          # Search page
+│   ├── movie-detail.html    # Movie details
+│   ├── profile.html         # User profile
+│   ├── watchlist.html       # User watchlist
+│   ├── favorites.html       # User favorites
+│   └── admin.html           # Admin panel
+├── assets/
+│   ├── images/
+│   │   ├── logo.png
+│   │   ├── placeholder.jpg
+│   │   └── icons/
+│   └── fonts/
+└── README.md

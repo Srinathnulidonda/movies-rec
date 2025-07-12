@@ -1,0 +1,133 @@
+movie-recommendation-frontend/
+├── index.html                          # Landing page
+├── manifest.json                       # PWA manifest
+├── sw.js                              # Service worker for PWA
+├── favicon.ico                        # Favicon
+├── robots.txt                         # SEO robots file
+├── sitemap.xml                        # SEO sitemap
+├── 
+├── assets/
+│   ├── css/
+│   │   ├── main.css                   # Main stylesheet
+│   │   ├── components.css             # Component styles
+│   │   ├── utilities.css              # Utility classes
+│   │   ├── responsive.css             # Responsive breakpoints
+│   │   ├── animations.css             # Animations and transitions
+│   │   └── themes.css                 # Theme variables (light/dark)
+│   │
+│   ├── js/
+│   │   ├── main.js                    # Main application logic
+│   │   ├── api.js                     # API service layer
+│   │   ├── auth.js                    # Authentication handler
+│   │   ├── router.js                  # Client-side routing
+│   │   ├── components/
+│   │   │   ├── header.js              # Header component
+│   │   │   ├── footer.js              # Footer component
+│   │   │   ├── modal.js               # Modal component
+│   │   │   ├── carousel.js            # Carousel component
+│   │   │   ├── movieCard.js           # Movie card component
+│   │   │   ├── searchBar.js           # Search component
+│   │   │   ├── notification.js        # Notification system
+│   │   │   └── loader.js              # Loading component
+│   │   ├── pages/
+│   │   │   ├── home.js                # Home page logic
+│   │   │   ├── login.js               # Login page logic
+│   │   │   ├── register.js            # Register page logic
+│   │   │   ├── profile.js             # Profile page logic
+│   │   │   ├── search.js              # Search page logic
+│   │   │   ├── movie-detail.js        # Movie detail page
+│   │   │   ├── recommendations.js     # Recommendations page
+│   │   │   └── admin.js               # Admin dashboard
+│   │   ├── utils/
+│   │   │   ├── constants.js           # App constants
+│   │   │   ├── helpers.js             # Helper functions
+│   │   │   ├── validation.js          # Form validation
+│   │   │   ├── storage.js             # Local storage utilities
+│   │   │   └── date.js                # Date utilities
+│   │   └── libs/
+│   │       ├── tailwind.min.css       # Tailwind CSS
+│   │       └── bootstrap-grid.min.css # Bootstrap Grid
+│   │
+│   ├── images/
+│   │   ├── icons/
+│   │   │   ├── app-icon-192.png       # PWA icon 192x192
+│   │   │   ├── app-icon-512.png       # PWA icon 512x512
+│   │   │   ├── favicon-16x16.png      # Favicon 16x16
+│   │   │   ├── favicon-32x32.png      # Favicon 32x32
+│   │   │   └── apple-touch-icon.png   # Apple touch icon
+│   │   ├── placeholders/
+│   │   │   ├── movie-placeholder.jpg  # Movie poster placeholder
+│   │   │   ├── profile-placeholder.jpg # Profile placeholder
+│   │   │   └── bg-placeholder.jpg     # Background placeholder
+│   │   └── backgrounds/
+│   │       ├── hero-bg.jpg            # Hero section background
+│   │       ├── login-bg.jpg           # Login page background
+│   │       └── pattern-bg.svg         # Pattern background
+│   │
+│   └── fonts/
+│       ├── Inter-Regular.woff2        # Primary font
+│       ├── Inter-Medium.woff2         # Medium weight
+│       ├── Inter-Bold.woff2           # Bold weight
+│       └── font-display.css           # Font loading CSS
+│
+├── pages/
+│   ├── login.html                     # Login page
+│   ├── register.html                  # Registration page
+│   ├── home.html                      # Home/Dashboard
+│   ├── search.html                    # Search results
+│   ├── movie-detail.html              # Movie detail page
+│   ├── recommendations.html           # Recommendations page
+│   ├── profile.html                   # User profile
+│   ├── admin/
+│   │   ├── dashboard.html             # Admin dashboard
+│   │   ├── content-manager.html       # Content management
+│   │   ├── user-manager.html          # User management
+│   │   └── analytics.html             # Analytics
+│   └── error/
+│       ├── 404.html                   # 404 error page
+│       └── 500.html                   # 500 error page
+│
+├── components/
+│   ├── header.html                    # Header component template
+│   ├── footer.html                    # Footer component template
+│   ├── sidebar.html                   # Sidebar component template
+│   ├── movie-card.html                # Movie card template
+│   ├── carousel.html                  # Carousel template
+│   ├── search-bar.html                # Search bar template
+│   ├── modal.html                     # Modal template
+│   ├── notification.html              # Notification template
+│   └── loader.html                    # Loader template
+│
+├── data/
+│   ├── genres.json                    # Movie genres data
+│   ├── languages.json                 # Language options
+│   ├── countries.json                 # Country options
+│   └── platforms.json                 # Streaming platforms
+│
+├── docs/
+│   ├── README.md                      # Project documentation
+│   ├── DEPLOYMENT.md                  # Deployment guide
+│   ├── API.md                         # API documentation
+│   └── CONTRIBUTING.md                # Contribution guidelines
+│
+├── tests/
+│   ├── unit/
+│   │   ├── api.test.js                # API tests
+│   │   ├── auth.test.js               # Auth tests
+│   │   └── utils.test.js              # Utility tests
+│   ├── integration/
+│   │   ├── user-flow.test.js          # User flow tests
+│   │   └── component.test.js          # Component tests
+│   └── test-utils.js                  # Test utilities
+│
+├── config/
+│   ├── env.js                         # Environment config
+│   ├── api-endpoints.js               # API endpoints
+│   └── app-config.js                  # App configuration
+│
+└── build/
+    ├── webpack.config.js              # Webpack configuration
+    ├── package.json                   # Dependencies
+    └── deployment-scripts/
+        ├── deploy.sh                  # Deployment script
+        └── build.sh                   # Build script
