@@ -20,17 +20,14 @@ import time
 from flask_cors import CORS
 import redis
 from functools import wraps
-import json
-from datetime import datetime, timedelta
-import requests
+
 
 app = Flask(__name__)
 CORS(app, 
      origins=["http://127.0.0.1:5500", 
               "http://localhost:5500", 
               "https://movies-rec.vercel.app",
-              "https://movies-frontend-jade.vercel.app",
-              "https://backend-app-970m.onrender.com"],#h
+              "https://backend-app-970m.onrender.com"],
      methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
      allow_headers=["Content-Type", "Authorization"],
      supports_credentials=True)
@@ -43,11 +40,9 @@ db = SQLAlchemy(app)
 jwt = JWTManager(app)
 
 # API Keys
-WATCHMODE_API_KEY = os.getenv('WATCHMODE_API_KEY', 'WtcKDji9i20pjOl5Lg0AiyG2bddfUs3nSZRZJIsY')
-JUSTWATCH_API_BASE = "https://apis.justwatch.com/content"
 TMDB_API_KEY = os.getenv('TMDB_API_KEY', '1cf86635f20bb2aff8e70940e7c3ddd5')
 OMDB_API_KEY = os.getenv('OMDB_API_KEY', '52260795')
-ML_SERVICE_URL = os.getenv('ML_SERVICE_URL', 'https://movies-rec-xmf5.onrender.com')
+ML_SERVICE_URL = os.getenv('ML_SERVICE_URL', 'https://ml-service-s2pr.onrender.com')
 
 # Database Models
 class User(db.Model):
@@ -92,266 +87,74 @@ class AdminRecommendation(db.Model):
     expires_at = db.Column(db.DateTime)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-class StreamingPlatform(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    content_id = db.Column(db.Integer, db.ForeignKey('content.id'))
-    platform_name = db.Column(db.String(100), nullable=False)
-    platform_type = db.Column(db.String(50))  # streaming, rental, purchase, free, theater
-    watch_url = db.Column(db.String(500))
-    price = db.Column(db.Float)
-    currency = db.Column(db.String(10), default='USD')
-    quality = db.Column(db.String(20))  # HD, 4K, SD
-    region = db.Column(db.String(10), default='US')
-    is_free = db.Column(db.Boolean, default=False)
-    expires_at = db.Column(db.DateTime)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow)
-
-# Add new model for theater showtimes
-class TheaterShowtime(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    content_id = db.Column(db.Integer, db.ForeignKey('content.id'))
-    theater_name = db.Column(db.String(200))
-    theater_address = db.Column(db.String(300))
-    showtime = db.Column(db.DateTime)
-    ticket_price = db.Column(db.Float)
-    booking_url = db.Column(db.String(500))
-    city = db.Column(db.String(100))
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-
 # Content Aggregator Service
 class ContentAggregator:
     def __init__(self):
         self.tmdb_base = "https://api.themoviedb.org/3"
         self.omdb_base = "http://www.omdbapi.com"
         self.jikan_base = "https://api.jikan.moe/v4"
-        self.watchmode_base = "https://api.watchmode.com/v1"
-        self.justwatch_base = "https://apis.justwatch.com/content"
         
-    async def get_streaming_platforms(self, tmdb_id, content_type='movie', region='US'):
-        """Get streaming platforms for content"""
-        platforms = []
-        
-        # Method 1: TMDB Watch Providers
-        try:
-            url = f"{self.tmdb_base}/{content_type}/{tmdb_id}/watch/providers"
-            params = {'api_key': TMDB_API_KEY}
-            
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, params=params) as response:
-                    data = await response.json()
-                    
-                    if 'results' in data and region in data['results']:
-                        region_data = data['results'][region]
-                        
-                        # Free platforms
-                        if 'free' in region_data:
-                            for provider in region_data['free']:
-                                platforms.append({
-                                    'platform_name': provider['provider_name'],
-                                    'platform_type': 'free',
-                                    'watch_url': provider.get('link', ''),
-                                    'is_free': True,
-                                    'logo_path': provider.get('logo_path', ''),
-                                    'provider_id': provider.get('provider_id')
-                                })
-                        
-                        # Streaming platforms
-                        if 'flatrate' in region_data:
-                            for provider in region_data['flatrate']:
-                                platforms.append({
-                                    'platform_name': provider['provider_name'],
-                                    'platform_type': 'streaming',
-                                    'watch_url': provider.get('link', ''),
-                                    'is_free': False,
-                                    'logo_path': provider.get('logo_path', ''),
-                                    'provider_id': provider.get('provider_id')
-                                })
-                        
-                        # Rental platforms
-                        if 'rent' in region_data:
-                            for provider in region_data['rent']:
-                                platforms.append({
-                                    'platform_name': provider['provider_name'],
-                                    'platform_type': 'rental',
-                                    'watch_url': provider.get('link', ''),
-                                    'is_free': False,
-                                    'logo_path': provider.get('logo_path', ''),
-                                    'provider_id': provider.get('provider_id')
-                                })
-                        
-                        # Purchase platforms
-                        if 'buy' in region_data:
-                            for provider in region_data['buy']:
-                                platforms.append({
-                                    'platform_name': provider['provider_name'],
-                                    'platform_type': 'purchase',
-                                    'watch_url': provider.get('link', ''),
-                                    'is_free': False,
-                                    'logo_path': provider.get('logo_path', ''),
-                                    'provider_id': provider.get('provider_id')
-                                })
-                                
-        except Exception as e:
-            print(f"Error fetching TMDB watch providers: {e}")
-        
-        # Method 2: Add popular free platforms manually for better coverage
-        free_platforms = [
-            {'name': 'YouTube', 'url': f'https://www.youtube.com/results?search_query=', 'type': 'free'},
-            {'name': 'Tubi', 'url': 'https://tubitv.com/search/', 'type': 'free'},
-            {'name': 'Crackle', 'url': 'https://www.crackle.com/search?q=', 'type': 'free'},
-            {'name': 'Pluto TV', 'url': 'https://pluto.tv/search?q=', 'type': 'free'},
-            {'name': 'IMDb TV', 'url': 'https://www.imdb.com/find?q=', 'type': 'free'}
-        ]
-        
-        return platforms
-    
-    async def get_theater_showtimes(self, tmdb_id, city='New York', content_type='movie'):
-        """Get theater showtimes - using mock data for demonstration"""
-        # In a real implementation, you would integrate with:
-        # - Fandango API
-        # - MovieTickets.com API
-        # - Local theater APIs
-        
-        # Mock theater data for demonstration
-        theaters = [
-            {
-                'theater_name': 'AMC Empire 25',
-                'theater_address': '234 W 42nd St, New York, NY 10036',
-                'showtimes': ['2:00 PM', '5:30 PM', '8:00 PM', '10:45 PM'],
-                'ticket_price': 15.99,
-                'booking_url': 'https://www.fandango.com/amc-empire-25-AACQX/theater-page'
-            },
-            {
-                'theater_name': 'Regal Union Square',
-                'theater_address': '850 Broadway, New York, NY 10003',
-                'showtimes': ['1:15 PM', '4:00 PM', '7:30 PM', '10:15 PM'],
-                'ticket_price': 14.50,
-                'booking_url': 'https://www.fandango.com/regal-union-square-AABKX/theater-page'
-            }
-        ]
-        
-        return theaters
-    
-    async def check_if_in_theaters(self, tmdb_id, content_type='movie'):
-        """Check if content is currently in theaters"""
-        try:
-            url = f"{self.tmdb_base}/{content_type}/{tmdb_id}"
-            params = {'api_key': TMDB_API_KEY}
-            
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, params=params) as response:
-                    data = await response.json()
-                    
-                    if content_type == 'movie' and 'release_date' in data:
-                        release_date = datetime.strptime(data['release_date'], '%Y-%m-%d')
-                        now = datetime.now()
-                        
-                        # Consider movie in theaters if released within last 3 months
-                        # and not yet available on streaming (simplified logic)
-                        if (now - release_date).days <= 90 and (now - release_date).days >= 0:
-                            return True
-                    
-                    return False
-        except:
-            return False
-        
-    # Add these methods to the ContentAggregator class
-
-    async def fetch_trending(self, content_type='movie'):
+    async def fetch_trending(self, content_type='movie', time_window='week'):
         """Fetch trending content from TMDB"""
-        try:
-            url = f"{self.tmdb_base}/trending/{content_type}/week"
-            params = {'api_key': TMDB_API_KEY}
-            
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, params=params) as response:
-                    data = await response.json()
-                    return data.get('results', [])
-        except Exception as e:
-            print(f"Error fetching trending {content_type}: {e}")
-            return []
-
+        url = f"{self.tmdb_base}/trending/{content_type}/{time_window}"
+        params = {'api_key': TMDB_API_KEY}
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, params=params) as response:
+                data = await response.json()
+                return data.get('results', [])
+    
     async def fetch_popular_by_genre(self, genre_id, content_type='movie'):
         """Fetch popular content by genre"""
-        try:
-            url = f"{self.tmdb_base}/discover/{content_type}"
-            params = {
-                'api_key': TMDB_API_KEY,
-                'with_genres': genre_id,
-                'sort_by': 'popularity.desc'
-            }
-            
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, params=params) as response:
-                    data = await response.json()
-                    return data.get('results', [])[:10]
-        except Exception as e:
-            print(f"Error fetching popular content for genre {genre_id}: {e}")
-            return []
-
-    async def fetch_regional_content(self, language_code):
-        """Fetch regional content by language"""
-        try:
-            url = f"{self.tmdb_base}/discover/movie"
-            params = {
-                'api_key': TMDB_API_KEY,
-                'with_original_language': language_code,
-                'sort_by': 'popularity.desc'
-            }
-            
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, params=params) as response:
-                    data = await response.json()
-                    return data.get('results', [])[:10]
-        except Exception as e:
-            print(f"Error fetching regional content for {language_code}: {e}")
-            return []
-
+        url = f"{self.tmdb_base}/discover/{content_type}"
+        params = {
+            'api_key': TMDB_API_KEY,
+            'with_genres': genre_id,
+            'sort_by': 'popularity.desc'
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, params=params) as response:
+                data = await response.json()
+                return data.get('results', [])
+    
+    async def fetch_regional_content(self, language='te'):
+        """Fetch regional content"""
+        url = f"{self.tmdb_base}/discover/movie"
+        params = {
+            'api_key': TMDB_API_KEY,
+            'with_original_language': language,
+            'sort_by': 'popularity.desc'
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, params=params) as response:
+                data = await response.json()
+                return data.get('results', [])
+    
     async def fetch_anime_trending(self):
         """Fetch trending anime from Jikan API"""
-        try:
-            url = f"{self.jikan_base}/top/anime"
-            params = {'limit': 10}
-            
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, params=params) as response:
-                    data = await response.json()
-                    anime_list = data.get('data', [])
-                    
-                    # Convert to TMDB-like format
-                    formatted_anime = []
-                    for anime in anime_list:
-                        formatted_anime.append({
-                            'id': anime.get('mal_id'),
-                            'title': anime.get('title'),
-                            'name': anime.get('title'),
-                            'overview': anime.get('synopsis', ''),
-                            'poster_path': anime.get('images', {}).get('jpg', {}).get('image_url'),
-                            'backdrop_path': anime.get('images', {}).get('jpg', {}).get('large_image_url'),
-                            'vote_average': anime.get('score'),
-                            'popularity': anime.get('popularity', 0),
-                            'genre_ids': [genre.get('mal_id') for genre in anime.get('genres', [])],
-                            'content_type': 'anime'
-                        })
-                    
-                    return formatted_anime
-        except Exception as e:
-            print(f"Error fetching anime trending: {e}")
-            return []
-
+        url = f"{self.jikan_base}/top/anime"
+        params = {'filter': 'bypopularity', 'limit': 20}
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, params=params) as response:
+                data = await response.json()
+                return data.get('data', [])
+    
     async def get_content_details(self, content_id, content_type='movie'):
-        """Get detailed content information from TMDB"""
-        try:
-            url = f"{self.tmdb_base}/{content_type}/{content_id}"
-            params = {'api_key': TMDB_API_KEY}
-            
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, params=params) as response:
-                    data = await response.json()
-                    return data
-        except Exception as e:
-            print(f"Error fetching content details for {content_id}: {e}")
-            return {}
+        """Get detailed content information"""
+        url = f"{self.tmdb_base}/{content_type}/{content_id}"
+        params = {
+            'api_key': TMDB_API_KEY,
+            'append_to_response': 'credits,videos,similar,reviews'
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, params=params) as response:
+                return await response.json()
+
+
 class RedisRateLimiter:
     def __init__(self, redis_url=None):
         try:
@@ -837,7 +640,7 @@ def get_recommendations():
 
 @app.route('/api/content/<int:content_id>')
 def get_content_details(content_id):
-    """Get detailed content information including watch options"""
+    """Get detailed content information"""
     content = Content.query.get(content_id)
     
     # If content doesn't exist in database, try to fetch from TMDB
@@ -882,10 +685,6 @@ def get_content_details(content_id):
         except:
             details = {}
     
-    # Get streaming platforms and theater info
-    streaming_platforms = StreamingPlatform.query.filter_by(content_id=content.id).all()
-    theater_showtimes = TheaterShowtime.query.filter_by(content_id=content.id).all()
-    
     # Get user reviews
     reviews = UserInteraction.query.filter_by(
         content_id=content.id
@@ -905,53 +704,12 @@ def get_content_details(content_id):
         except:
             pass
     
-    # Format streaming platforms
-    streaming_data = {
-        'free': [],
-        'paid': [],
-        'all': []
-    }
-    
-    for platform in streaming_platforms:
-        platform_data = {
-            'platform_name': platform.platform_name,
-            'platform_type': platform.platform_type,
-            'watch_url': platform.watch_url,
-            'is_free': platform.is_free,
-            'price': platform.price,
-            'currency': platform.currency,
-            'quality': platform.quality
-        }
-        
-        if platform.is_free:
-            streaming_data['free'].append(platform_data)
-        else:
-            streaming_data['paid'].append(platform_data)
-        
-        streaming_data['all'].append(platform_data)
-    
-    # Format theater info
-    theater_data = []
-    for showtime in theater_showtimes:
-        theater_data.append({
-            'theater_name': showtime.theater_name,
-            'theater_address': showtime.theater_address,
-            'showtime': showtime.showtime.strftime('%I:%M %p'),
-            'ticket_price': showtime.ticket_price,
-            'booking_url': showtime.booking_url
-        })
-    
     return jsonify({
         'content': serialize_content(content),
         'details': details,
         'reviews': [{'user_id': r.user_id, 'rating': r.rating, 'created_at': r.created_at} 
                    for r in reviews],
-        'similar': similar_content,
-        'watch_options': {
-            'streaming_platforms': streaming_data,
-            'theater_info': theater_data,
-            'in_theaters': len(theater_data) > 0
-        }
+        'similar': similar_content
     })
 
 @app.route('/api/interact', methods=['POST'])
@@ -1171,110 +929,31 @@ def sync_content():
     return jsonify({'status': 'sync_started'})
 
 
-@app.route('/api/content/<int:content_id>/watch-options')
-def get_watch_options(content_id):
-    """Get streaming platforms and theater information for content"""
-    content = Content.query.get_or_404(content_id)
-    
-    # Get streaming platforms
-    streaming_platforms = []
-    theater_info = []
-    
-    if content.tmdb_id:
-        try:
-            # Get streaming platforms
-            platforms = async_to_sync(aggregator.get_streaming_platforms)(
-                content.tmdb_id, content.content_type
-            )
-            
-            # Check if in theaters
-            in_theaters = async_to_sync(aggregator.check_if_in_theaters)(
-                content.tmdb_id, content.content_type
-            )
-            if in_theaters:
-                theater_info = async_to_sync(aggregator.get_theater_showtimes)(
-                    content.tmdb_id, content_type=content.content_type
-                )
-            StreamingPlatform.query.filter_by(content_id=content.id).delete()            
-            for platform in platforms:
-                db_platform = StreamingPlatform(
-                    content_id=content.id,
-                    platform_name=platform['platform_name'],
-                    platform_type=platform['platform_type'],
-                    watch_url=platform.get('watch_url', ''),
-                    is_free=platform.get('is_free', False),
-                    updated_at=datetime.utcnow()
-                )
-                db.session.add(db_platform)            
-            if theater_info:
-                TheaterShowtime.query.filter_by(content_id=content.id).delete()
-                for theater in theater_info:
-                    for showtime in theater['showtimes']:
-                        # Parse showtime (simplified)
-                        showtime_dt = datetime.now().replace(
-                            hour=int(showtime.split(':')[0]) % 12 + (12 if 'PM' in showtime else 0),
-                            minute=int(showtime.split(':')[1].split()[0])
-                        )
-                        
-                        db_showtime = TheaterShowtime(
-                            content_id=content.id,
-                            theater_name=theater['theater_name'],
-                            theater_address=theater['theater_address'],
-                            showtime=showtime_dt,
-                            ticket_price=theater['ticket_price'],
-                            booking_url=theater['booking_url']
-                        )
-                        db.session.add(db_showtime)
-            
-            db.session.commit()
-            streaming_platforms = platforms
-            
-        except Exception as e:
-            print(f"Error fetching watch options: {e}")
-            db_platforms = StreamingPlatform.query.filter_by(content_id=content.id).all()
-            streaming_platforms = [
-                {
-                    'platform_name': p.platform_name,
-                    'platform_type': p.platform_type,
-                    'watch_url': p.watch_url,
-                    'is_free': p.is_free,
-                    'price': p.price,
-                    'currency': p.currency
-                } for p in db_platforms
-            ]
-            
-            db_theaters = TheaterShowtime.query.filter_by(content_id=content.id).all()
-            theater_info = [
-                {
-                    'theater_name': t.theater_name,
-                    'theater_address': t.theater_address,
-                    'showtime': t.showtime.strftime('%I:%M %p'),
-                    'ticket_price': t.ticket_price,
-                    'booking_url': t.booking_url
-                } for t in db_theaters
-            ]
-    free_platforms = [p for p in streaming_platforms if p.get('is_free', False)]
-    paid_platforms = [p for p in streaming_platforms if not p.get('is_free', False)]
-    
+@app.route('/')
+def home():
     return jsonify({
-        'content_id': content.id,
-        'title': content.title,
-        'streaming_platforms': {
-            'free': free_platforms,
-            'paid': paid_platforms,
-            'all': streaming_platforms
-        },
-        'theater_info': theater_info,
-        'in_theaters': len(theater_info) > 0,
-        'last_updated': datetime.utcnow().isoformat()
+        'message': 'Movie Recommendation API',
+        'version': '1.0',
+        'endpoints': {
+            'homepage': '/api/homepage',
+            'login': '/api/login',
+            'register': '/api/register',
+            'search': '/api/search'
+        }
     })
+
+
 @app.route('/health')
 def health_check():
     return jsonify({'status': 'healthy', 'timestamp': datetime.utcnow().isoformat()})
+
+
 def create_tables():
     try:
         with app.app_context():
             db.create_all()
+            
+            # Create admin user if not exists
             admin_user = User.query.filter_by(username='admin').first()
             if not admin_user:
                 admin_user = User(
@@ -1286,12 +965,17 @@ def create_tables():
                 db.session.add(admin_user)
                 db.session.commit()
                 print("Admin user created - Username: admin, Password: admin123")
+            
+            # Initial content sync (only if no content exists)
             if Content.query.count() == 0:
                 print("Starting initial content sync...")
+                # Don't call sync_content() here as it's async, just log
                 
     except Exception as e:
         print(f"Error creating tables: {e}")
+# Always create tables when the app starts
 create_tables()
+
 if __name__ == '__main__':
     CORS(app)
     app.run(debug=True, port=5000)
