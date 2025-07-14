@@ -1,51 +1,20 @@
-# ml-service/requirements.txt
-# Core Web Framework
 Flask
 Flask-CORS
-requests
-aiohttp
-
-# Machine Learning Core
-torch
-numpy
 pandas
+numpy
 scikit-learn
-scipy
-
-# Advanced Recommendation Systems (Stable versions)
-implicit
-scikit-surprise
-
-# NLP & Embeddings
-sentence-transformers
-transformers
-spacy
-
-# Feature Engineering
-gensim
-
-# High Performance Computing
-faiss-cpu
-numba
-
-# Graph Processing
-networkx
-
-# Optimization & AutoML
-optuna
-xgboost
 lightgbm
-catboost
-
-# Database & Caching
+scikit-surprise
+implicit
+networkx
+scipy
+requests
 redis
-SQLAlchemy
-
-# Monitoring & Utilities
-prometheus-client
+python-dateutil
+pytz
+urllib3
+certifi
+six
 joblib
-
-# Additional ML utilities
-threadpoolctl
-
+threadpoolct
 gunicorn
