@@ -1,3 +1,4 @@
+#backend/app.py 
 from flask import Flask, request, jsonify, g
 from flask_sqlalchemy import SQLAlchemy
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
@@ -21,6 +22,7 @@ import redis
 import telegram
 from telegram.error import TelegramError
 from sqlalchemy import text
+from sqlalchemy import text, or_
 
 app = Flask(__name__)
 CORS(app, 
@@ -193,7 +195,7 @@ class ContentAggregator:
 class RedisRateLimiter:
     def __init__(self, redis_url=None):
         try:
-            self.redis_client = redis.from_url(redis_url or 'redis://red-d1l75ap5pdvs73bk295g:rE0xu32o3U2bNUQKz6mG7KIybWzle9xf@red-d1l75ap5pdvs73bk295g:6379')
+            self.redis_client = redis.from_url(redis_url or os.getenv('REDIS_URL', 'redis://localhost:6379'))
         except:
             self.redis_client = None
     
@@ -420,7 +422,7 @@ def serialize_content(content):
         'runtime': content.runtime,
         'rating': content.rating,
         'poster_path': content.poster_path,
-        'backdrop_path': content.backpath_path,
+        'backdrop_path': content.backdrop_path,
         'content_type': content.content_type,
         'popularity': content.popularity
     }
@@ -649,7 +651,11 @@ def get_recommendations():
     user_id = get_jwt_identity()
     
     # Get hybrid recommendations
-    recommendations = recommender.get_hybrid_recommendations(user_id, 20)
+    try:
+        recommendations = recommender.get_hybrid_recommendations(user_id, 20)
+    except Exception as e:
+        print(f"Error getting recommendations: {e}")
+        recommendations = []
     
     # Get ML service recommendations
     try:
