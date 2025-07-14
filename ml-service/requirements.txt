@@ -8,3 +8,4 @@ implicit
 networkx
 requests
 redis
+gunicorn
