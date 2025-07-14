@@ -5,37 +5,31 @@ Flask-CORS
 requests
 aiohttp
 
-# Core ML & Deep Learning
+# Machine Learning Core
 torch
-torchvision
-torchaudio
-pytorch-lightning
-torch-geometric
 numpy
 pandas
 scikit-learn
 scipy
 
-# Advanced Recommendation Systems
+# Advanced Recommendation Systems (Stable versions)
 implicit
-lightfm
 scikit-surprise
-recbole
 
-# Advanced Embeddings & NLP
+# NLP & Embeddings
 sentence-transformers
 transformers
 spacy
+
+# Feature Engineering
 gensim
+
+# High Performance Computing
+faiss-cpu
+numba
 
 # Graph Processing
 networkx
-
-# High-Performance Computing
-faiss-cpu
-# faiss-gpu  # Uncomment if using GPU
-numba
-cupy-cuda12x  # Optional: for GPU acceleration
 
 # Optimization & AutoML
 optuna
@@ -43,43 +37,15 @@ xgboost
 lightgbm
 catboost
 
-# Time Series & Statistical Models
-statsmodels
-
-# Database & Storage
+# Database & Caching
 redis
 SQLAlchemy
-psycopg2-binary
 
-# Monitoring & MLOps
-mlflow
+# Monitoring & Utilities
 prometheus-client
 joblib
 
-# Utilities
-python-dotenv
-python-dateutil
-
-# Additional ML Libraries
-imbalanced-learn
-plotly
-seaborn
-matplotlib
-
-# Text Processing
-nltk
-textblob
-
-# Data Processing
-openpyxl
-xlrd
-
-# Optional: If using spaCy models
-# python -m spacy download en_core_web_sm
-
-# System Requirements
-setuptools
-wheel
-pip
+# Additional ML utilities
+threadpoolctl
 
 gunicorn
