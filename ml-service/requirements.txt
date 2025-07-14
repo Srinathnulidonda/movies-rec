@@ -4,17 +4,7 @@ pandas
 numpy
 scikit-learn
 lightgbm
-scikit-surprise
 implicit
 networkx
-scipy
 requests
 redis
-python-dateutil
-pytz
-urllib3
-certifi
-six
-joblib
-threadpoolct
-gunicorn
