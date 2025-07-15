@@ -1,4 +1,4 @@
-## Enhanced Backend/app.py
+#Backend/app.py
 from flask import Flask, request, jsonify, g
 from flask_sqlalchemy import SQLAlchemy
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
@@ -62,8 +62,8 @@ cache = Cache(app)
 # API Keys and URLs
 TMDB_API_KEY = os.getenv('TMDB_API_KEY', '1cf86635f20bb2aff8e70940e7c3ddd5')
 OMDB_API_KEY = os.getenv('OMDB_API_KEY', '52260795')
-YOUTUBE_API_KEY = os.getenv('YOUTUBE_API_KEY', '')
-ML_SERVICE_URL = os.getenv('ML_SERVICE_URL', '')
+YOUTUBE_API_KEY = os.getenv('YOUTUBE_API_KEY', 'AIzaSyDU-JLASTdIdoLOmlpWuJYLTZDUspqw2T4')
+ML_SERVICE_URL = os.getenv('ML_SERVICE_URL', 'https://movies-rec-xmf5.onrender.com')
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '7689567537:AAGvDtu94OlLlTiWpfjSfpl_dd_Osi_2W7c')
 TELEGRAM_CHANNEL_ID = os.getenv('TELEGRAM_CHANNEL_ID', '-1002566510721')
 
