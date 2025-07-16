@@ -25,15 +25,6 @@ from sqlalchemy import text
 from sqlalchemy import text, or_
 
 app = Flask(__name__)
-CORS(app, 
-     origins=["http://127.0.0.1:5500", 
-              "http://localhost:5500", 
-              "https://movies-rec.vercel.app",
-              "https://frontend-moviesrec.vercel.app/",
-              "https://backend-app-970m.onrender.com"],
-     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-     allow_headers=["Content-Type", "Authorization"],
-     supports_credentials=True)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///movie_rec.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['JWT_SECRET_KEY'] = 'your-secret-key'
