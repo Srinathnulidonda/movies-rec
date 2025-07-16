@@ -1437,6 +1437,7 @@ def create_tables():
         print(f"Error creating tables: {e}")
 create_tables()
 if __name__ == '__main__':
+    CORS(app)
     try:
         # Environment-based configuration
         debug_mode = os.getenv('FLASK_DEBUG', 'False').lower() == 'true'
