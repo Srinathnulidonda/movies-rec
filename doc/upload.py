@@ -1,4 +1,302 @@
-#backend/app.py 
+based on backend/app.py file and file 
+Create a modern, responsive movie and TV show recommendation system frontend with the following requirements:
+
+FRONTEND TECHNOLOGY STACK:
+
+Pure HTML5, CSS3, and Modern JavaScript (ES6+) - No frameworks for maximum performance
+Tailwind CSS for utility-first styling and design system
+Bootstrap Grid System for responsive layouts
+Fetch API for seamless backend communication
+JWT Authentication for secure user sessions
+Progressive Web App (PWA) features for better performance
+Local Storage for user preferences and offline capability
+Responsive Design for mobile, tablet, and desktop
+
+STYLING GUIDELINES:
+
+Netflix-inspired Dark Theme with red accent colors
+Dark Mode Default with light mode toggle option
+Color Palette:
+
+Primary: Dark grays (#141414, #1f1f1f)
+Accent: Netflix red (#e50914)
+Text: White/Light gray (#ffffff, #cccccc)
+Secondary: Dark blue (#0f0f23)
+
+Movie Recommendation App - Frontend Structure & Implementation
+Project Structure
+movie-recommendation-frontend/
+├── index.html                 # Landing/Home page
+├── auth/
+│   ├── login.html
+│   ├── register.html
+│   └── forgot-password.html
+├── pages/
+│   ├── dashboard.html         # User dashboard
+│   ├── recommendations.html   # Personalized recommendations
+│   ├── content-details.html   # Movie/TV show details
+│   ├── search.html           # Search page
+│   ├── profile.html          # User profile
+│   └── favorites.html        # User favorites
+├── admin/
+│   ├── dashboard.html        # Admin dashboard
+│   ├── content-manager.html  # Content management
+│   ├── post-creator.html     # Create admin posts
+│   ├── analytics.html        # Analytics dashboard
+│   └── system-status.html    # System monitoring
+├── assets/
+│   ├── css/
+│   │   ├── main.css          # Main stylesheet
+│   │   ├── components.css    # Component styles
+│   │   └── responsive.css    # Responsive styles
+│   ├── js/
+│   │   ├── app.js           # Main app logic
+│   │   ├── auth.js          # Authentication
+│   │   ├── api.js           # API communication
+│   │   ├── components.js    # Reusable components
+│   │   ├── utils.js         # Utility functions
+│   │   └── admin.js         # Admin functionality
+│   └── images/
+│       ├── logo.png
+│       ├── placeholder.jpg
+│       └── icons/
+├── components/
+│   ├── navbar.html          # Navigation component
+│   ├── sidebar.html         # Sidebar component
+│   ├── movie-card.html      # Movie card component
+│   └── footer.html          # Footer component
+└── config/
+    └── config.js            # Configuration settings
+Technology Stack Implementation
+1. Core Technologies
+
+HTML5: Semantic markup with modern features
+CSS3: Flexbox, Grid, Variables, Animations
+JavaScript ES6+: Modules, Classes, Async/Await, Destructuring
+Tailwind CSS: Utility-first framework via CDN
+Bootstrap Grid: Responsive grid system
+Fetch API: RESTful API communication
+
+2. External Dependencies (CDN)
+html<!-- Tailwind CSS -->
+<link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+
+<!-- Bootstrap Grid Only -->
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap-grid.min.css" rel="stylesheet">
+
+<!-- Font Awesome Icons -->
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+
+<!-- Google Fonts -->
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+Page-by-Page Implementation
+1. Landing Page (index.html)
+Purpose: Welcome page with trending content for non-authenticated users
+Features:
+
+Hero section with trending movies/shows
+Popular content by genre
+Regional content sections
+Admin curated recommendations
+Authentication prompts
+
+2. Authentication Pages
+Login Page (auth/login.html)
+Purpose: User authentication
+Features:
+
+Email/Username login
+Password field with show/hide toggle
+Remember me option
+Forgot password link
+Registration redirect
+
+Register Page (auth/register.html)
+Purpose: New user registration
+Features:
+
+Username, email, password fields
+Password strength indicator
+Terms and conditions
+Login redirect
+
+3. User Dashboard (pages/dashboard.html)
+Purpose: Personalized user home page
+Features:
+
+Welcome message
+Quick stats (favorites, watchlist)
+Recent interactions
+Personalized recommendations preview
+Quick actions (search, browse)
+
+4. Recommendations Page (pages/recommendations.html)
+Purpose: AI-powered personalized recommendations
+Features:
+
+Hybrid recommendations
+ML-based suggestions
+Genre-based recommendations
+Based on recent activity
+Infinite scroll loading
+
+5. Content Details Page (pages/content-details.html)
+Purpose: Detailed movie/TV show information
+Features:
+
+Movie poster and backdrop
+Synopsis and details
+Cast and crew
+User ratings and reviews
+Similar content suggestions
+Add to favorites/watchlist
+
+6. Search Page (pages/search.html)
+Purpose: Content search and discovery
+Features:
+
+Search bar with filters
+Real-time search suggestions
+Filter by genre, year, rating
+Search results grid
+Advanced search options
+
+7. User Profile (pages/profile.html)
+Purpose: User account management
+Features:
+
+Profile information
+Preference settings
+Viewing history
+Account settings
+Privacy controls
+
+8. Favorites Page (pages/favorites.html)
+Purpose: User's saved content
+Features:
+
+Favorites grid
+Watchlist
+Sorting options
+Bulk actions
+Export options
+
+Admin Panel Pages
+1. Admin Dashboard (admin/dashboard.html)
+Purpose: Admin overview and quick actions
+Features:
+
+System statistics
+Recent activities
+Quick actions menu
+User metrics
+Content metrics
+
+2. Content Manager (admin/content-manager.html)
+Purpose: Browse and manage content from multiple sources
+Features:
+
+Multi-source content browser (TMDB, Anime, Regional)
+Search across databases
+Content preview
+Bulk operations
+Import/export functionality
+
+3. Post Creator (admin/post-creator.html)
+Purpose: Create curated content posts
+Features:
+
+Content selection interface
+Rich text editor for descriptions
+Custom tags management
+Priority settings
+Telegram posting options
+Expiration date settings
+
+4. Analytics Dashboard (admin/analytics.html)
+Purpose: System analytics and insights
+Features:
+
+User engagement metrics
+Content popularity charts
+Genre preference analysis
+Interactive dashboards
+Export reports
+
+5. System Status (admin/system-status.html)
+Purpose: System monitoring and health checks
+Features:
+
+Database status
+API health checks
+Telegram bot status
+Performance metrics
+Error logs
+
+Key Features Implementation
+1. Responsive Design
+
+Mobile-first approach
+Breakpoint system: xs, sm, md, lg, xl
+Flexible grid layouts
+Touch-friendly interactions
+
+2. Progressive Web App (PWA) Features
+
+Offline capability
+App-like experience
+Push notifications (future)
+Service worker implementation
+
+3. Performance Optimizations
+
+Lazy loading for images
+Infinite scroll pagination
+Debounced search
+Cached API responses
+Optimized asset delivery
+
+4. User Experience Enhancements
+
+Loading states and skeletons
+Error handling with user feedback
+Toast notifications
+Smooth transitions
+Keyboard navigation
+
+5. Security Features
+
+JWT token management
+XSS prevention
+CSRF protection
+Input sanitization
+Secure authentication flow
+
+API Integration Points
+Authentication Endpoints
+
+POST /api/register
+POST /api/login
+Token refresh mechanism
+
+Content Endpoints
+
+GET /api/homepage
+GET /api/recommendations
+GET /api/content/:id
+GET /api/search
+POST /api/interact
+
+Admin Endpoints
+
+GET /api/admin/browse-content
+POST /api/admin/create-post
+GET /api/admin/analytics
+GET /api/admin/system-status
+
+
+
+
 from flask import Flask, request, jsonify, g
 from flask_sqlalchemy import SQLAlchemy
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
@@ -29,7 +327,6 @@ CORS(app,
      origins=["http://127.0.0.1:5500", 
               "http://localhost:5500", 
               "https://movies-rec.vercel.app",
-              "https://movies-frontend-jade.vercel.app",
               "https://backend-app-970m.onrender.com"],
      methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
      allow_headers=["Content-Type", "Authorization"],
@@ -38,17 +335,15 @@ app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///movie_rec.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['JWT_SECRET_KEY'] = 'your-secret-key'
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(days=30)
-TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '7689567537:AAGvDtu94OlLlTiWpfjSfpl_dd_Osi_2W7c')
-TELEGRAM_CHANNEL_ID = os.getenv('TELEGRAM_CHANNEL_ID', '-1002566510721')
+TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '')
+TELEGRAM_CHANNEL_ID = os.getenv('TELEGRAM_CHANNEL_ID', '')
 db = SQLAlchemy(app)
 jwt = JWTManager(app)
 
 # API Keys
 TMDB_API_KEY = os.getenv('TMDB_API_KEY', '1cf86635f20bb2aff8e70940e7c3ddd5')
 OMDB_API_KEY = os.getenv('OMDB_API_KEY', '52260795')
-ML_SERVICE_URL = os.getenv('ML_SERVICE_URL', 'https://movies-rec-xmf5.onrender.com')
-YOUTUBE_API_KEY = os.getenv('YOUTUBE_API_KEY', 'your-youtube-api-key')
-YOUTUBE_BASE_URL = "https://www.googleapis.com/youtube/v3"
+ML_SERVICE_URL = os.getenv('ML_SERVICE_URL', 'https://ml-service-s2pr.onrender.com')
 
 # Global Genre Map
 GENRE_MAP = {
@@ -58,12 +353,6 @@ GENRE_MAP = {
     10770: "TV Movie", 53: "Thriller", 10752: "War", 37: "Western", 10759: "Action & Adventure",
     10762: "Kids", 10763: "News", 10764: "Reality", 10765: "Sci-Fi & Fantasy", 10766: "Soap",
     10767: "Talk", 10768: "War & Politics"
-}
-REGIONAL_GENRE_MAP = {
-    'telugu': ['Action', 'Comedy', 'Drama', 'Family', 'Romance', 'Thriller'],
-    'hindi': ['Action', 'Comedy', 'Drama', 'Romance', 'Thriller', 'Musical'],
-    'tamil': ['Action', 'Comedy', 'Drama', 'Romance', 'Thriller', 'Historical'],
-    'kannada': ['Action', 'Comedy', 'Drama', 'Romance', 'Thriller', 'Family']
 }
 
 # Database Models
@@ -139,7 +428,6 @@ class ContentAggregator:
         self.tmdb_base = "https://api.themoviedb.org/3"
         self.omdb_base = "http://www.omdbapi.com"
         self.jikan_base = "https://api.jikan.moe/v4"
-        self.youtube_base = YOUTUBE_BASE_URL
         
     async def fetch_trending(self, content_type='movie', time_window='week'):
         """Fetch trending content from TMDB"""
@@ -200,78 +488,6 @@ class ContentAggregator:
         async with aiohttp.ClientSession() as session:
             async with session.get(url, params=params) as response:
                 return await response.json()
-            
-    async def fetch_youtube_videos(self, search_query, content_type='trailer'):
-        """Fetch trailers and teasers from YouTube"""
-        search_terms = f"{search_query} {content_type}"
-        url = f"{self.youtube_base}/search"
-        params = {
-            'part': 'snippet',
-            'q': search_terms,
-            'type': 'video',
-            'key': YOUTUBE_API_KEY,
-            'maxResults': 5,
-            'order': 'relevance'
-        }
-        
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, params=params) as response:
-                data = await response.json()
-                videos = []
-                for item in data.get('items', []):
-                    videos.append({
-                        'video_id': item['id']['videoId'],
-                        'title': item['snippet']['title'],
-                        'thumbnail': item['snippet']['thumbnails']['high']['url'],
-                        'url': f"https://www.youtube.com/watch?v={item['id']['videoId']}",
-                        'type': content_type
-                    })
-                return videos
-    async def fetch_enhanced_trending(self, content_type='movie', region='US'):
-        """Enhanced trending with regional support"""
-        url = f"{self.tmdb_base}/trending/{content_type}/week"
-        params = {
-            'api_key': TMDB_API_KEY,
-            'region': region
-        }
-        
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, params=params) as response:
-                data = await response.json()
-                results = data.get('results', [])
-                
-                # Enhance with YouTube videos
-                for item in results:
-                    title = item.get('title', item.get('name', ''))
-                    item['youtube_videos'] = await self.fetch_youtube_videos(title)
-                    
-                return results
-
-    async def fetch_critics_choice(self, content_type='movie'):
-        """Fetch critically acclaimed content"""
-        url = f"{self.tmdb_base}/discover/{content_type}"
-        params = {
-            'api_key': TMDB_API_KEY,
-            'sort_by': 'vote_average.desc',
-            'vote_count.gte': 1000,
-            'with_watch_monetization_types': 'flatrate'
-        }
-        
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, params=params) as response:
-                data = await response.json()
-                return data.get('results', [])
-
-    async def fetch_whats_hot(self, time_window='day'):
-        """Fetch what's hot based on popularity"""
-        url = f"{self.tmdb_base}/trending/all/{time_window}"
-        params = {'api_key': TMDB_API_KEY}
-        
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, params=params) as response:
-                data = await response.json()
-                return data.get('results', [])
-
 
 # Redis Rate Limiter
 class RedisRateLimiter:
@@ -317,7 +533,6 @@ class RecommendationEngine:
         self.content_vectorizer = TfidfVectorizer(stop_words='english', max_features=5000)
         self.content_matrix = None
         self.content_similarity = None
-        self.user_similarity_cache = {}
 
     def build_content_matrix(self):
         """Build content similarity matrix"""
@@ -460,88 +675,6 @@ class RecommendationEngine:
                 unique_recs.append(rec)
         
         return unique_recs[:limit]
-    def get_user_preference_vector(self, user_id):
-        """Generate user preference vector based on interactions"""
-        interactions = UserInteraction.query.filter_by(user_id=user_id).all()
-        genre_weights = defaultdict(float)
-        total_interactions = len(interactions)
-        
-        for interaction in interactions:
-            content = Content.query.get(interaction.content_id)
-            if content and content.genres:
-                weight = 1.0
-                if interaction.interaction_type == 'favorite':
-                    weight = 2.0
-                elif interaction.interaction_type == 'like':
-                    weight = 1.5
-                elif interaction.rating:
-                    weight = interaction.rating / 5.0
-                
-                for genre in content.genres:
-                    genre_name = GENRE_MAP.get(genre, str(genre))
-                    genre_weights[genre_name] += weight
-        
-        # Normalize weights
-        if total_interactions > 0:
-            for genre in genre_weights:
-                genre_weights[genre] /= total_interactions
-        
-        return dict(genre_weights)
-
-    def get_watch_history_recommendations(self, user_id, limit=10):
-        """Get recommendations based on watch history"""
-        recent_interactions = UserInteraction.query.filter_by(
-            user_id=user_id, interaction_type='view'
-        ).order_by(UserInteraction.created_at.desc()).limit(20).all()
-        
-        genre_scores = defaultdict(float)
-        viewed_content_ids = set()
-        
-        for interaction in recent_interactions:
-            content = Content.query.get(interaction.content_id)
-            viewed_content_ids.add(content.id)
-            
-            if content and content.genres:
-                for genre in content.genres:
-                    genre_scores[genre] += 1.0
-        
-        # Get recommendations based on preferred genres
-        recommendations = []
-        for genre, score in sorted(genre_scores.items(), key=lambda x: x[1], reverse=True):
-            genre_content = Content.query.filter(
-                Content.genres.contains(genre),
-                ~Content.id.in_(viewed_content_ids)
-            ).order_by(Content.popularity.desc()).limit(5).all()
-            
-            recommendations.extend(genre_content)
-            if len(recommendations) >= limit:
-                break
-        
-        return recommendations[:limit]
-
-    def get_regional_recommendations(self, user_id, language='te', limit=10):
-        """Get regional content recommendations"""
-        user_preferences = self.get_user_preference_vector(user_id)
-        
-        regional_content = Content.query.filter_by(language=language).order_by(
-            Content.popularity.desc()
-        ).limit(limit * 2).all()
-        
-        # Score based on user preferences
-        scored_content = []
-        for content in regional_content:
-            score = 0
-            if content.genres:
-                for genre in content.genres:
-                    genre_name = GENRE_MAP.get(genre, str(genre))
-                    score += user_preferences.get(genre_name, 0)
-            
-            scored_content.append((content, score))
-        
-        # Sort by score and return top items
-        scored_content.sort(key=lambda x: x[1], reverse=True)
-        return [content for content, _ in scored_content[:limit]]
-
 
 # Initialize services
 aggregator = ContentAggregator()
@@ -574,7 +707,7 @@ def async_to_sync(async_func):
 
 
 def serialize_content(content):
-    """Enhanced content serialization"""
+    """Serialize content object"""
     return {
         'id': content.id,
         'tmdb_id': content.tmdb_id,
@@ -582,16 +715,14 @@ def serialize_content(content):
         'original_title': content.original_title,
         'overview': content.overview,
         'genres': content.genres,
-        'genre_names': [GENRE_MAP.get(g, str(g)) for g in (content.genres or [])],
         'language': content.language,
         'release_date': content.release_date.isoformat() if content.release_date else None,
         'runtime': content.runtime,
         'rating': content.rating,
-        'poster_path': f"https://image.tmdb.org/t/p/w500{content.poster_path}" if content.poster_path else None,
-        'backdrop_path': f"https://image.tmdb.org/t/p/w1280{content.backdrop_path}" if content.backdrop_path else None,
+        'poster_path': content.poster_path,
+        'backdrop_path': content.backdrop_path,
         'content_type': content.content_type,
-        'popularity': content.popularity,
-        'updated_at': content.updated_at.isoformat() if content.updated_at else None
+        'popularity': content.popularity
     }
 
 def create_content_from_tmdb(tmdb_data, content_type='movie'):
@@ -750,114 +881,66 @@ def login():
         return jsonify({'error': 'Internal server error'}), 500
 
 @app.route('/api/homepage')
-@redis_rate_limit(limit=50, window=300)  # 50 requests per 5 minutes
-def enhanced_homepage():
-    """Enhanced homepage with comprehensive recommendations"""
-    try:
-        # Trending content with YouTube videos
-        trending_movies = async_to_sync(aggregator.fetch_enhanced_trending)('movie')
-        trending_tv = async_to_sync(aggregator.fetch_enhanced_trending)('tv')
-        
-        # What's Hot section
-        whats_hot = async_to_sync(aggregator.fetch_whats_hot)('day')
-        
-        # Critics' Choice
-        critics_choice = async_to_sync(aggregator.fetch_critics_choice)('movie')
-        
-        # Regional content for all languages
-        regional_content = {}
-        for lang_code, lang_name in [('te', 'Telugu'), ('hi', 'Hindi'), ('ta', 'Tamil'), ('kn', 'Kannada')]:
-            regional_content[lang_name] = async_to_sync(aggregator.fetch_regional_content)(lang_code)
-        
-        # User Favorites (most interacted content)
-        user_favorites = db.session.query(
-            Content, db.func.count(UserInteraction.id).label('interaction_count')
-        ).join(UserInteraction).group_by(Content.id).order_by(
-            db.func.count(UserInteraction.id).desc()
-        ).limit(10).all()
-        
-        # Admin curated content
-        admin_curated = AdminPost.query.filter_by(
-            is_active=True, post_to_website=True
-        ).filter(
-            db.or_(AdminPost.expires_at.is_(None), AdminPost.expires_at > datetime.utcnow())
-        ).order_by(AdminPost.priority.desc()).limit(15).all()
-        
-        curated_content = []
-        for post in admin_curated:
-            content_data = serialize_content(post.content)
-            content_data.update({
-                'admin_title': post.title,
-                'admin_description': post.description,
-                'custom_tags': post.custom_tags,
-                'priority': post.priority
-            })
-            curated_content.append(content_data)
-        
-        return jsonify({
-            'trending': {
-                'movies': trending_movies[:12],
-                'tv': trending_tv[:12],
-                'anime': async_to_sync(aggregator.fetch_anime_trending)()[:12]
-            },
-            'whats_hot': whats_hot[:15],
-            'critics_choice': critics_choice[:10],
-            'regional': regional_content,
-            'user_favorites': [serialize_content(content) for content, _ in user_favorites],
-            'admin_curated': curated_content
-        })
-    except Exception as e:
-        return jsonify({'error': 'Failed to fetch homepage data'}), 500
+def homepage():
+    """Get homepage recommendations for non-logged users"""
+    # Get trending content
+    trending_movies = async_to_sync(aggregator.fetch_trending)('movie')
+    trending_tv = async_to_sync(aggregator.fetch_trending)('tv')
     
-@app.route('/api/recommendations/personalized')
-@jwt_required()
-@redis_rate_limit(limit=30, window=300)
-def enhanced_personalized_recommendations():
-    """Enhanced personalized recommendations"""
-    user_id = get_jwt_identity()
+    # Genre mapping
+    HOMEPAGE_GENRES = {
+        'Action': 28, 'Comedy': 35, 'Drama': 18, 'Horror': 27,
+        'Sci-Fi': 878, 'Romance': 10749
+    }
     
-    try:
-        # Watch history recommendations
-        watch_history_recs = recommender.get_watch_history_recommendations(user_id, 15)
-        
-        # Favorites-based recommendations
-        favorites_recs = recommender.get_content_based_recommendations(user_id, 15)
-        
-        # Wishlist-influenced suggestions
-        wishlist_items = UserInteraction.query.filter_by(
-            user_id=user_id, interaction_type='wishlist'
-        ).all()
-        
-        wishlist_recs = []
-        for item in wishlist_items:
-            content = Content.query.get(item.content_id)
-            if content and content.genres:
-                similar_content = Content.query.filter(
-                    Content.genres.overlap(content.genres),
-                    Content.id != content.id
-                ).order_by(Content.popularity.desc()).limit(3).all()
-                wishlist_recs.extend(similar_content)
-        
-        # Regional recommendations based on user location
-        regional_recs = recommender.get_regional_recommendations(user_id, 'te', 10)
-        
-        # Collaborative filtering
-        collab_recs = recommender.get_collaborative_recommendations(user_id, 15)
-        
-        # Hybrid approach
-        hybrid_recs = recommender.get_hybrid_recommendations(user_id, 20)
-        
-        return jsonify({
-            'watch_history_based': [serialize_content(r) for r in watch_history_recs],
-            'favorites_based': [serialize_content(r) for r in favorites_recs],
-            'wishlist_influenced': [serialize_content(r) for r in wishlist_recs[:10]],
-            'regional_suggestions': [serialize_content(r) for r in regional_recs],
-            'collaborative_filtering': [serialize_content(r) for r in collab_recs],
-            'hybrid_recommendations': [serialize_content(r) for r in hybrid_recs]
+    # Get popular by genre
+    popular_by_genre = {}
+    for genre, genre_id in HOMEPAGE_GENRES.items():
+        popular_by_genre[genre] = async_to_sync(aggregator.fetch_popular_by_genre)(genre_id)
+    
+    # Regional content
+    regional_content = {
+        'Telugu': async_to_sync(aggregator.fetch_regional_content)('te'),
+        'Hindi': async_to_sync(aggregator.fetch_regional_content)('hi'),
+        'Tamil': async_to_sync(aggregator.fetch_regional_content)('ta'),
+        'Kannada': async_to_sync(aggregator.fetch_regional_content)('kn')
+    }
+    
+    # Anime trending
+    anime_trending = async_to_sync(aggregator.fetch_anime_trending)()
+    
+    # Admin curated content (replace the old AdminRecommendation logic)
+    admin_posts = AdminPost.query.filter_by(
+        is_active=True, 
+        post_to_website=True
+    ).filter(
+        db.or_(AdminPost.expires_at.is_(None), AdminPost.expires_at > datetime.utcnow())
+    ).order_by(AdminPost.priority.desc(), AdminPost.created_at.desc()).limit(10).all()
+    
+    curated_content = []
+    for post in admin_posts:
+        content_data = serialize_content(post.content)
+        content_data.update({
+            'admin_title': post.title,
+            'admin_description': post.description,
+            'custom_tags': post.custom_tags,
+            'priority': post.priority
         })
-    except Exception as e:
-        return jsonify({'error': 'Failed to generate recommendations'}), 500
-
+        curated_content.append(content_data)
+    
+    user_favorites = Content.query.order_by(Content.popularity.desc()).limit(10).all()
+    
+    return jsonify({
+        'trending': {
+            'movies': trending_movies[:10],
+            'tv': trending_tv[:10],
+            'anime': anime_trending[:10]
+        },
+        'popular_by_genre': popular_by_genre,
+        'regional': regional_content,
+        'admin_curated': curated_content,
+        'user_favorites': [serialize_content(c) for c in user_favorites]
+    })
 
 @app.route('/api/recommendations')
 @jwt_required()
@@ -952,60 +1035,6 @@ def get_content_details(content_id):
         'similar': similar_content
     })
 
-@app.route('/api/content/<int:content_id>/details')
-@redis_rate_limit(limit=100, window=300)
-def enhanced_content_details(content_id):
-    """Enhanced content details with YouTube integration"""
-    content = Content.query.get_or_404(content_id)
-    
-    try:
-        # Get YouTube videos for this content
-        title = content.title
-        trailers = async_to_sync(aggregator.fetch_youtube_videos)(f"{title} trailer")
-        teasers = async_to_sync(aggregator.fetch_youtube_videos)(f"{title} teaser")
-        
-        # Get TMDB details
-        tmdb_details = {}
-        if content.tmdb_id:
-            tmdb_details = async_to_sync(aggregator.get_content_details)(
-                content.tmdb_id, content.content_type
-            )
-        
-        # Get user reviews and ratings
-        reviews = db.session.query(
-            UserInteraction, User.username
-        ).join(User).filter(
-            UserInteraction.content_id == content.id,
-            UserInteraction.rating.isnot(None)
-        ).order_by(UserInteraction.created_at.desc()).limit(10).all()
-        
-        # Similar content recommendations
-        similar_content = []
-        if content.genres:
-            similar_content = Content.query.filter(
-                Content.genres.overlap(content.genres),
-                Content.id != content.id
-            ).order_by(Content.popularity.desc()).limit(8).all()
-        
-        return jsonify({
-            'content': serialize_content(content),
-            'tmdb_details': tmdb_details,
-            'youtube_videos': {
-                'trailers': trailers,
-                'teasers': teasers
-            },
-            'user_reviews': [{
-                'username': username,
-                'rating': interaction.rating,
-                'created_at': interaction.created_at.isoformat(),
-                'interaction_type': interaction.interaction_type
-            } for interaction, username in reviews],
-            'similar_content': [serialize_content(c) for c in similar_content]
-        })
-    except Exception as e:
-        return jsonify({'error': 'Failed to fetch content details'}), 500
-
-
 @app.route('/api/interact', methods=['POST'])
 @jwt_required()
 def user_interact():
@@ -1064,59 +1093,40 @@ def admin_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
-@app.route('/api/admin/enhanced-browse')
+@app.route('/api/admin/browse-content')
 @admin_required
-def enhanced_admin_browse():
-    """Enhanced admin content browsing with multi-source support"""
+def admin_browse_content():
+    """Browse content from multiple databases"""
     source = request.args.get('source', 'tmdb')
     query = request.args.get('q', '')
     content_type = request.args.get('type', 'movie')
-    language = request.args.get('language', 'en')
     page = int(request.args.get('page', 1))
     
-    try:
-        if source == 'tmdb':
-            if query:
-                url = f"{aggregator.tmdb_base}/search/{content_type}"
-                params = {
-                    'api_key': TMDB_API_KEY,
-                    'query': query,
-                    'page': page,
-                    'language': language
-                }
-            else:
-                url = f"{aggregator.tmdb_base}/discover/{content_type}"
-                params = {
-                    'api_key': TMDB_API_KEY,
-                    'page': page,
-                    'sort_by': 'popularity.desc',
-                    'with_original_language': language if language != 'en' else None
-                }
-            
+    if source == 'tmdb':
+        if query:
+            # Search TMDB
+            url = f"{aggregator.tmdb_base}/search/{content_type}"
+            params = {'api_key': TMDB_API_KEY, 'query': query, 'page': page}
+        else:
+            # Get popular/trending
+            url = f"{aggregator.tmdb_base}/trending/{content_type}/week"
+            params = {'api_key': TMDB_API_KEY, 'page': page}
+        
+        try:
             response = requests.get(url, params=params)
             data = response.json()
-            
-            # Enhance results with YouTube videos
-            for item in data.get('results', []):
-                title = item.get('title', item.get('name', ''))
-                item['youtube_videos'] = async_to_sync(aggregator.fetch_youtube_videos)(title)
-            
             return jsonify({
                 'source': 'tmdb',
                 'results': data.get('results', []),
                 'total_pages': data.get('total_pages', 1),
                 'current_page': page
             })
-        
-        elif source == 'regional':
-            regional_content = async_to_sync(aggregator.fetch_regional_content)(language)
-            return jsonify({
-                'source': 'regional',
-                'results': regional_content,
-                'language': language
-            })
-        
-        elif source == 'anime':
+        except:
+            return jsonify({'error': 'Failed to fetch from TMDB'}), 500
+    
+    elif source == 'anime':
+        # Browse anime from Jikan API
+        try:
             if query:
                 url = f"{aggregator.jikan_base}/anime"
                 params = {'q': query, 'page': page}
@@ -1126,20 +1136,28 @@ def enhanced_admin_browse():
             
             response = requests.get(url, params=params)
             data = response.json()
-            
             return jsonify({
                 'source': 'anime',
                 'results': data.get('data', []),
                 'pagination': data.get('pagination', {}),
                 'current_page': page
             })
-        
-        else:
-            return jsonify({'error': 'Invalid source'}), 400
-            
-    except Exception as e:
-        return jsonify({'error': f'Failed to browse content: {str(e)}'}), 500
+        except:
+            return jsonify({'error': 'Failed to fetch anime content'}), 500
     
+    elif source == 'regional':
+        # Browse regional content
+        language = request.args.get('language', 'hi')
+        regional_content = async_to_sync(aggregator.fetch_regional_content)(language)
+        return jsonify({
+            'source': 'regional',
+            'results': regional_content,
+            'language': language
+        })
+    
+    else:
+        return jsonify({'error': 'Invalid source'}), 400
+
 @app.route('/api/admin/create-post', methods=['POST'])
 @admin_required
 def admin_create_post():
@@ -1365,52 +1383,23 @@ def search_content():
         'tmdb_results': tmdb_results[:10]
     })
 
-@app.route('/api/enhanced-sync', methods=['POST'])
-@admin_required
-def enhanced_sync_content():
-    """Enhanced content sync with YouTube integration"""
-    def enhanced_sync_task():
+@app.route('/api/sync-content', methods=['POST'])
+def sync_content():
+    """Sync content from external APIs"""
+    def sync_task():
         with app.app_context():
-            try:
-                # Sync trending content
-                trending_movies = async_to_sync(aggregator.fetch_enhanced_trending)('movie')
-                trending_tv = async_to_sync(aggregator.fetch_enhanced_trending)('tv')
-                
-                for item in trending_movies + trending_tv:
-                    existing = Content.query.filter_by(tmdb_id=str(item['id'])).first()
-                    if not existing:
-                        content = create_content_from_tmdb(item, 'movie' if 'title' in item else 'tv')
-                        db.session.add(content)
-                    else:
-                        # Update existing content
-                        existing.popularity = item.get('popularity', existing.popularity)
-                        existing.rating = item.get('vote_average', existing.rating)
-                        existing.updated_at = datetime.utcnow()
-                
-                # Sync regional content
-                for lang in ['te', 'hi', 'ta', 'kn']:
-                    regional_content = async_to_sync(aggregator.fetch_regional_content)(lang)
-                    for item in regional_content:
-                        existing = Content.query.filter_by(tmdb_id=str(item['id'])).first()
-                        if not existing:
-                            content = create_content_from_tmdb(item, 'movie')
-                            db.session.add(content)
-                
-                db.session.commit()
-                recommender.build_content_matrix()
-                
-                return True
-            except Exception as e:
-                print(f"Sync error: {e}")
-                return False
-    
-    thread = Thread(target=enhanced_sync_task)
+            trending_movies = async_to_sync(aggregator.fetch_trending)('movie')
+            trending_tv = async_to_sync(aggregator.fetch_trending)('tv')
+            for item in trending_movies + trending_tv:
+                existing = Content.query.filter_by(tmdb_id=str(item['id'])).first()
+                if not existing:
+                    content = create_content_from_tmdb(item, 'movie' if 'title' in item else 'tv')
+                    db.session.add(content)
+            db.session.commit()
+            recommender.build_content_matrix()    
+    thread = Thread(target=sync_task)
     thread.start()
-    return jsonify({'status': 'enhanced_sync_started'})
-
-# Initialize enhanced services
-aggregator = ContentAggregator()
-recommender = RecommendationEngine()
+    return jsonify({'status': 'sync_started'})
 
 @app.route('/health')
 def health_check():
@@ -1437,4 +1426,4 @@ def create_tables():
         print(f"Error creating tables: {e}")
 create_tables()
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)##
+    app.run(debug=True, port=5000)
