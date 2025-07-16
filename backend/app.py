@@ -29,7 +29,7 @@ CORS(app,
      origins=["http://127.0.0.1:5500", 
               "http://localhost:5500", 
               "https://movies-rec.vercel.app",
-              "https://movies-frontend-jade.vercel.app",
+              "https://moviesfrontend1.vercel.app/",
               "https://backend-app-970m.onrender.com"],
      methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
      allow_headers=["Content-Type", "Authorization"],
@@ -1437,4 +1437,41 @@ def create_tables():
         print(f"Error creating tables: {e}")
 create_tables()
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)##
+    try:
+        # Environment-based configuration
+        debug_mode = os.getenv('FLASK_DEBUG', 'False').lower() == 'true'
+        port = int(os.getenv('PORT', 5000))
+        host = os.getenv('HOST', '0.0.0.0' if not debug_mode else '127.0.0.1')
+        
+        # Initialize recommendation matrix in background
+        def init_recommendations():
+            try:
+                with app.app_context():
+                    if Content.query.count() > 0:
+                        print("Building recommendation matrix...")
+                        recommender.build_content_matrix()
+                        print("Recommendation matrix built successfully")
+            except Exception as e:
+                print(f"Error building recommendation matrix: {e}")
+        
+        # Start recommendation matrix building in background
+        init_thread = Thread(target=init_recommendations, daemon=True)
+        init_thread.start()
+        
+        print(f"Starting Movie Recommendation API on {host}:{port}")
+        print(f"Debug mode: {debug_mode}")
+        print(f"Database: {app.config['SQLALCHEMY_DATABASE_URI']}")
+        
+        app.run(
+            debug=debug_mode,
+            host=host,
+            port=port,
+            threaded=True,
+            use_reloader=debug_mode
+        )
+        
+    except KeyboardInterrupt:
+        print("\nShutting down gracefully...")
+    except Exception as e:
+        print(f"Failed to start application: {e}")
+        exit(1)
