@@ -23,6 +23,10 @@ import telegram
 from telegram import Bot, ParseMode, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import TelegramError
 import html
+from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.constants import ParseMode
+from telegram import InputMediaPhoto
+
 
 # App initialization
 app = Flask(__name__)
@@ -376,9 +380,9 @@ class ContentAggregator:
 # Telegram Service
 class TelegramService:
     def __init__(self):
-        self.bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
+        self.bot_token = os.getenv('TELEGRAM_BOT_TOKEN','7689567537:AAGvDtu94OlLlTiWpfjSfpl_dd_Osi_2W7c')
         self.bot = Bot(token=self.bot_token) if self.bot_token else None
-        self.admin_channel = os.getenv('TELEGRAM_ADMIN_CHANNEL', '@movierecommendations')
+        self.admin_channel = os.getenv('TELEGRAM_ADMIN_CHANNEL', '@movie_updates_1')
         
     def format_movie_post(self, content, recommendation):
         """Format content for Telegram post"""
@@ -503,11 +507,11 @@ class TelegramService:
                 
                 # Send photo with caption
                 message = await self.bot.send_photo(
-                    chat_id=channel,
-                    photo=poster_url,
-                    caption=message_text,
-                    parse_mode=ParseMode.HTML,
-                    reply_markup=keyboard
+                            chat_id=channel,
+                            photo=poster_url,
+                            caption=message_text,
+                            parse_mode=ParseMode.HTML,
+                            reply_markup=keyboard
                 )
             else:
                 # Send text message
@@ -545,7 +549,7 @@ class TelegramService:
                     caption = self.format_movie_post(content, rec) if i == 0 else None
                     
                     media_group.append(
-                        telegram.InputMediaPhoto(
+                        InputMediaPhoto(
                             media=poster_url,
                             caption=caption,
                             parse_mode=ParseMode.HTML
