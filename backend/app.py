@@ -38,16 +38,22 @@ db = SQLAlchemy(app)
 CORS(app)
 
 # API Keys - Set these in your environment
-TMDB_API_KEY = os.environ.get('TMDB_API_KEY', '1cf86635f20bb2aff8e70940e7c3ddd5')
-OMDB_API_KEY = os.environ.get('OMDB_API_KEY', '52260795')
-YOUTUBE_API_KEY = os.environ.get('YOUTUBE_API_KEY', 'AIzaSyDU-JLASTdIdoLOmlpWuJYLTZDUspqw2T4')
-TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '7689567537:AAGvDtu94OlLlTiWpfjSfpl_dd_Osi_2W7c')
-TELEGRAM_CHANNEL_ID = os.environ.get('TELEGRAM_CHANNEL_ID', '1002566510721')
-ML_SERVICE_URL = os.environ.get('ML_SERVICE_URL', 'https://movies-rec-xmf5.onrender.com')
+TMDB_API_KEY = os.environ.get('TMDB_API_KEY', 'your_tmdb_api_key')
+OMDB_API_KEY = os.environ.get('OMDB_API_KEY', 'your_omdb_api_key')
+YOUTUBE_API_KEY = os.environ.get('YOUTUBE_API_KEY', 'your_youtube_api_key')
+TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', 'your_telegram_bot_token')
+TELEGRAM_CHANNEL_ID = os.environ.get('TELEGRAM_CHANNEL_ID', 'your_channel_id')
+ML_SERVICE_URL = os.environ.get('ML_SERVICE_URL', 'http://localhost:5001')
 
 # Initialize Telegram bot
-if TELEGRAM_BOT_TOKEN:
-    bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
+if TELEGRAM_BOT_TOKEN and TELEGRAM_BOT_TOKEN != 'your_telegram_bot_token':
+    try:
+        bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
+    except:
+        bot = None
+        logging.warning("Failed to initialize Telegram bot")
+else:
+    bot = None
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -612,25 +618,56 @@ class TelegramService:
     @staticmethod
     def send_admin_recommendation(content, admin_name, description):
         try:
-            if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHANNEL_ID:
+            if not bot or not TELEGRAM_CHANNEL_ID:
+                logger.warning("Telegram bot or channel ID not configured")
                 return False
             
-            message = f"""
-🎬 **Admin's Choice** by {admin_name}
+            # Format genre list
+            genres_list = []
+            if content.genres:
+                try:
+                    genres_list = json.loads(content.genres)
+                except:
+                    genres_list = []
+            
+            # Create poster URL
+            poster_url = None
+            if content.poster_path:
+                if content.poster_path.startswith('http'):
+                    poster_url = content.poster_path
+                else:
+                    poster_url = f"https://image.tmdb.org/t/p/w500{content.poster_path}"
+            
+            # Create message
+            message = f"""🎬 **Admin's Choice** by {admin_name}
 
 **{content.title}**
-⭐ Rating: {content.rating}/10
-📅 Release: {content.release_date}
-🎭 Genres: {', '.join(json.loads(content.genres or '[]'))}
+⭐ Rating: {content.rating or 'N/A'}/10
+📅 Release: {content.release_date or 'N/A'}
+🎭 Genres: {', '.join(genres_list[:3]) if genres_list else 'N/A'}
+🎬 Type: {content.content_type.upper()}
 
 📝 **Admin's Note:** {description}
 
-📖 **Synopsis:** {content.overview[:200]}...
+📖 **Synopsis:** {(content.overview[:200] + '...') if content.overview else 'No synopsis available'}
 
-#AdminChoice #MovieRecommendation #TVShow
-            """
+#AdminChoice #MovieRecommendation #CineScope"""
             
-            bot.send_message(TELEGRAM_CHANNEL_ID, message, parse_mode='Markdown')
+            # Send message with photo if available
+            if poster_url:
+                try:
+                    bot.send_photo(
+                        chat_id=TELEGRAM_CHANNEL_ID,
+                        photo=poster_url,
+                        caption=message,
+                        parse_mode='Markdown'
+                    )
+                except Exception as photo_error:
+                    logger.error(f"Failed to send photo, sending text only: {photo_error}")
+                    bot.send_message(TELEGRAM_CHANNEL_ID, message, parse_mode='Markdown')
+            else:
+                bot.send_message(TELEGRAM_CHANNEL_ID, message, parse_mode='Markdown')
+            
             return True
         except Exception as e:
             logger.error(f"Telegram send error: {e}")
@@ -1043,39 +1080,42 @@ def get_personalized_recommendations(current_user):
         }
         
         # Call ML service
-        response = requests.post(f"{ML_SERVICE_URL}/api/recommendations", json=user_data, timeout=30)
+        try:
+            response = requests.post(f"{ML_SERVICE_URL}/api/recommendations", json=user_data, timeout=30)
+            
+            if response.status_code == 200:
+                ml_recommendations = response.json().get('recommendations', [])
+                
+                # Get content details for recommended content IDs
+                content_ids = [rec['content_id'] for rec in ml_recommendations]
+                contents = Content.query.filter(Content.id.in_(content_ids)).all()
+                
+                # Create response with ML scores
+                result = []
+                content_dict = {content.id: content for content in contents}
+                
+                for rec in ml_recommendations:
+                    content = content_dict.get(rec['content_id'])
+                    if content:
+                        result.append({
+                            'id': content.id,
+                            'title': content.title,
+                            'content_type': content.content_type,
+                            'genres': json.loads(content.genres or '[]'),
+                            'rating': content.rating,
+                            'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path else None,
+                            'overview': content.overview[:150] + '...' if content.overview else '',
+                            'ott_platforms': json.loads(content.ott_platforms or '[]'),
+                            'recommendation_score': rec.get('score', 0),
+                            'recommendation_reason': rec.get('reason', '')
+                        })
+                
+                return jsonify({'recommendations': result}), 200
+        except:
+            pass
         
-        if response.status_code == 200:
-            ml_recommendations = response.json().get('recommendations', [])
-            
-            # Get content details for recommended content IDs
-            content_ids = [rec['content_id'] for rec in ml_recommendations]
-            contents = Content.query.filter(Content.id.in_(content_ids)).all()
-            
-            # Create response with ML scores
-            result = []
-            content_dict = {content.id: content for content in contents}
-            
-            for rec in ml_recommendations:
-                content = content_dict.get(rec['content_id'])
-                if content:
-                    result.append({
-                        'id': content.id,
-                        'title': content.title,
-                        'content_type': content.content_type,
-                        'genres': json.loads(content.genres or '[]'),
-                        'rating': content.rating,
-                        'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path else None,
-                        'overview': content.overview[:150] + '...' if content.overview else '',
-                        'ott_platforms': json.loads(content.ott_platforms or '[]'),
-                        'recommendation_score': rec.get('score', 0),
-                        'recommendation_reason': rec.get('reason', '')
-                    })
-            
-            return jsonify({'recommendations': result}), 200
-        else:
-            # Fallback to basic recommendations
-            return get_trending()
+        # Fallback to basic recommendations
+        return get_trending()
         
     except Exception as e:
         logger.error(f"Personalized recommendations error: {e}")
@@ -1219,6 +1259,73 @@ def admin_search(current_user):
         logger.error(f"Admin search error: {e}")
         return jsonify({'error': 'Search failed'}), 500
 
+@app.route('/api/admin/content', methods=['POST'])
+@require_admin
+def save_external_content(current_user):
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({'error': 'No content data provided'}), 400
+        
+        # Check if content already exists by external ID
+        existing_content = None
+        if data.get('id'):
+            # Check by TMDB ID or other external ID
+            existing_content = Content.query.filter_by(tmdb_id=data['id']).first()
+        
+        if existing_content:
+            return jsonify({
+                'message': 'Content already exists',
+                'content_id': existing_content.id
+            }), 200
+        
+        # Create new content from external data
+        try:
+            # Handle release date
+            release_date = None
+            if data.get('release_date'):
+                try:
+                    release_date = datetime.strptime(data['release_date'], '%Y-%m-%d').date()
+                except:
+                    release_date = None
+            
+            # Create content object
+            content = Content(
+                tmdb_id=data.get('id'),
+                title=data.get('title'),
+                original_title=data.get('original_title'),
+                content_type=data.get('content_type', 'movie'),
+                genres=json.dumps(data.get('genres', [])),
+                languages=json.dumps(data.get('languages', ['en'])),
+                release_date=release_date,
+                runtime=data.get('runtime'),
+                rating=data.get('rating'),
+                vote_count=data.get('vote_count'),
+                popularity=data.get('popularity'),
+                overview=data.get('overview'),
+                poster_path=data.get('poster_path'),
+                backdrop_path=data.get('backdrop_path'),
+                ott_platforms=json.dumps(data.get('ott_platforms', []))
+            )
+            
+            db.session.add(content)
+            db.session.commit()
+            
+            return jsonify({
+                'message': 'Content saved successfully',
+                'content_id': content.id
+            }), 201
+            
+        except Exception as e:
+            db.session.rollback()
+            logger.error(f"Error saving content: {e}")
+            return jsonify({'error': 'Failed to save content to database'}), 500
+        
+    except Exception as e:
+        logger.error(f"Save content error: {e}")
+        return jsonify({'error': 'Failed to process content'}), 500
+
 @app.route('/api/admin/recommendations', methods=['POST'])
 @require_admin
 def create_admin_recommendation(current_user):
@@ -1229,10 +1336,14 @@ def create_admin_recommendation(current_user):
         if not all(field in data for field in required_fields):
             return jsonify({'error': 'Missing required fields'}), 400
         
-        # Get or create content
+        # Get content - handle both internal ID and external ID
         content = Content.query.get(data['content_id'])
         if not content:
-            return jsonify({'error': 'Content not found'}), 404
+            # Try to find by TMDB ID if direct ID lookup fails
+            content = Content.query.filter_by(tmdb_id=data['content_id']).first()
+        
+        if not content:
+            return jsonify({'error': 'Content not found. Please save content first.'}), 404
         
         # Create admin recommendation
         admin_rec = AdminRecommendation(
@@ -1246,9 +1357,12 @@ def create_admin_recommendation(current_user):
         db.session.commit()
         
         # Send to Telegram channel
-        TelegramService.send_admin_recommendation(content, current_user.username, data['description'])
+        telegram_success = TelegramService.send_admin_recommendation(content, current_user.username, data['description'])
         
-        return jsonify({'message': 'Admin recommendation created successfully'}), 201
+        return jsonify({
+            'message': 'Admin recommendation created successfully',
+            'telegram_sent': telegram_success
+        }), 201
         
     except Exception as e:
         logger.error(f"Admin recommendation error: {e}")
@@ -1384,6 +1498,15 @@ def get_public_admin_recommendations():
         logger.error(f"Public admin recommendations error: {e}")
         return jsonify({'error': 'Failed to get admin recommendations'}), 500
 
+# Health check endpoint
+@app.route('/api/health', methods=['GET'])
+def health_check():
+    return jsonify({
+        'status': 'healthy',
+        'timestamp': datetime.utcnow().isoformat(),
+        'version': '1.0.0'
+    }), 200
+
 # Initialize database
 def create_tables():
     try:
@@ -1404,15 +1527,6 @@ def create_tables():
                 logger.info("Admin user created with username: admin, password: admin123")
     except Exception as e:
         logger.error(f"Database initialization error: {e}")
-
-# Health check endpoint
-@app.route('/api/health', methods=['GET'])
-def health_check():
-    return jsonify({
-        'status': 'healthy',
-        'timestamp': datetime.utcnow().isoformat(),
-        'version': '1.0.0'
-    }), 200
 
 # Initialize database when app starts
 create_tables()
