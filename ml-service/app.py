@@ -1,991 +1,1644 @@
-## Powerful ML Service (ml-service/app.py)
-from fastapi import FastAPI, HTTPException, BackgroundTasks
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import List, Dict, Optional, Any
-import pandas as pd
-import numpy as np
-from scipy.sparse import csr_matrix
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
-from sklearn.decomposition import TruncatedSVD
-from sklearn.neighbors import NearestNeighbors
-from sklearn.cluster import KMeans
-from sklearn.preprocessing import StandardScaler
-import implicit
-from lightfm import LightFM
-from lightfm.data import Dataset
-from lightfm.evaluation import auc_score, precision_at_k
-import joblib
-import sqlite3
-import logging
-import asyncio
-from datetime import datetime, timedelta
-import redis
-from collections import defaultdict
 import os
+import numpy as np
+import pandas as pd
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import Dataset, DataLoader
+import lightgbm as lgb
+import xgboost as xgb
+from surprise import Dataset as SurpriseDataset, Reader, SVD, SVDpp, NMF, KNNWithMeans
+from surprise.model_selection import train_test_split as surprise_split
+import implicit
+from implicit.als import AlternatingLeastSquares
+from implicit.bpr import BayesianPersonalizedRanking
+from implicit.lmf import LogisticMatrixFactorization
+import faiss
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
+from sklearn.decomposition import PCA, NMF as skNMF
+from sklearn.manifold import TSNE
+from sklearn.cluster import KMeans, DBSCAN
+from sklearn.ensemble import IsolationForest
+import networkx as nx
+from scipy import sparse
+from scipy.spatial.distance import cosine
+import joblib
+import pickle
+import redis
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from datetime import datetime, timedelta
+import logging
 import json
-from concurrent.futures import ThreadPoolExecutor
+import hashlib
+from typing import List, Dict, Any, Tuple, Optional
+from collections import defaultdict, Counter
 import warnings
 warnings.filterwarnings('ignore')
 
-# Configure logging
+# Initialize Flask app
+app = Flask(__name__)
+CORS(app)
+
+# Configuration
+class Config:
+    DATABASE_URL = os.environ.get('DATABASE_URL', 'postgresql://localhost/recommendation_system')
+    if DATABASE_URL.startswith("postgres://"):
+        DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+    
+    REDIS_URL = os.environ.get('REDIS_URL', 'redis://localhost:6379')
+    MODEL_UPDATE_INTERVAL = int(os.environ.get('MODEL_UPDATE_INTERVAL', 3600))
+    
+    # Model parameters
+    EMBEDDING_DIM = 128
+    HIDDEN_DIM = 256
+    N_FACTORS = 150
+    MIN_INTERACTIONS = 3
+    EXPLORATION_RATE = 0.1
+    
+    # Advanced parameters
+    GRAPH_WALK_LENGTH = 10
+    GRAPH_NUM_WALKS = 20
+    SESSION_WINDOW = 30  # minutes
+    TREND_WINDOW = 7  # days
+
+app.config.from_object(Config)
+
+# Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize FastAPI app
-app = FastAPI(
-    title="Movie Recommendation ML Service",
-    description="Advanced ML-powered recommendation system",
-    version="2.0.0"
-)
-
-# CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Configuration
-DATABASE_URL = os.getenv('DATABASE_URL', 'sqlite:///movie_rec.db')
-REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379')
-MODEL_UPDATE_INTERVAL = int(os.getenv('MODEL_UPDATE_INTERVAL', '3600'))  # 1 hour
-
-# Initialize Redis (optional)
+# Initialize Redis
 try:
-    redis_client = redis.from_url(REDIS_URL)
+    redis_client = redis.from_url(app.config['REDIS_URL'])
     redis_client.ping()
-    logger.info("Redis connected successfully")
-except Exception as e:
+    logger.info("Connected to Redis")
+except:
     redis_client = None
-    logger.warning(f"Redis not available: {e}")
+    logger.warning("Redis not available, caching disabled")
 
-# Pydantic models
-class RecommendationRequest(BaseModel):
-    user_id: int
-    limit: int = 20
-    content_types: Optional[List[str]] = None
-    genres: Optional[List[str]] = None
-    exclude_seen: bool = True
+# Database connection
+def get_db_connection():
+    """Create database connection"""
+    return psycopg2.connect(app.config['DATABASE_URL'], cursor_factory=RealDictCursor)
 
-class RecommendationResponse(BaseModel):
-    recommendations: List[int]
-    scores: List[float]
-    algorithm_used: str
-    model_version: str
-    explanation: Dict[str, Any]
+# PyTorch Models
+class NeuralCollaborativeFiltering(nn.Module):
+    """Advanced NCF model with attention mechanism"""
+    
+    def __init__(self, n_users, n_items, embedding_dim=128, hidden_dims=[256, 128, 64]):
+        super(NeuralCollaborativeFiltering, self).__init__()
+        
+        # Embeddings
+        self.user_embedding = nn.Embedding(n_users, embedding_dim)
+        self.item_embedding = nn.Embedding(n_items, embedding_dim)
+        
+        # GMF pathway
+        self.gmf_user_embedding = nn.Embedding(n_users, embedding_dim)
+        self.gmf_item_embedding = nn.Embedding(n_items, embedding_dim)
+        
+        # MLP pathway
+        mlp_dims = [embedding_dim * 2] + hidden_dims
+        mlp_layers = []
+        for i in range(len(mlp_dims) - 1):
+            mlp_layers.append(nn.Linear(mlp_dims[i], mlp_dims[i+1]))
+            mlp_layers.append(nn.ReLU())
+            mlp_layers.append(nn.Dropout(0.2))
+        self.mlp = nn.Sequential(*mlp_layers)
+        
+        # Attention mechanism
+        self.attention = nn.MultiheadAttention(embedding_dim, num_heads=4)
+        
+        # Final layers
+        self.fusion = nn.Linear(hidden_dims[-1] + embedding_dim, 64)
+        self.output = nn.Linear(64, 1)
+        
+        # Initialize weights
+        self._init_weights()
+    
+    def _init_weights(self):
+        nn.init.xavier_uniform_(self.user_embedding.weight)
+        nn.init.xavier_uniform_(self.item_embedding.weight)
+        nn.init.xavier_uniform_(self.gmf_user_embedding.weight)
+        nn.init.xavier_uniform_(self.gmf_item_embedding.weight)
+    
+    def forward(self, user_ids, item_ids):
+        # MLP pathway
+        user_embed = self.user_embedding(user_ids)
+        item_embed = self.item_embedding(item_ids)
+        mlp_input = torch.cat([user_embed, item_embed], dim=-1)
+        mlp_output = self.mlp(mlp_input)
+        
+        # GMF pathway
+        gmf_user = self.gmf_user_embedding(user_ids)
+        gmf_item = self.gmf_item_embedding(item_ids)
+        gmf_output = gmf_user * gmf_item
+        
+        # Attention over embeddings
+        stacked = torch.stack([user_embed, item_embed], dim=0)
+        attended, _ = self.attention(stacked, stacked, stacked)
+        attended_output = attended.mean(dim=0)
+        
+        # Fusion
+        combined = torch.cat([mlp_output, gmf_output], dim=-1)
+        fusion = torch.relu(self.fusion(combined))
+        output = torch.sigmoid(self.output(fusion))
+        
+        return output.squeeze()
 
-class UserInteractionRequest(BaseModel):
-    user_id: int
-    content_id: int
-    interaction_type: str
-    rating: Optional[int] = None
-    implicit_feedback: Optional[float] = None
+class SessionBasedRNN(nn.Module):
+    """Session-based recommendations using GRU"""
+    
+    def __init__(self, n_items, embedding_dim=128, hidden_dim=256, n_layers=2):
+        super(SessionBasedRNN, self).__init__()
+        
+        self.embedding = nn.Embedding(n_items, embedding_dim)
+        self.gru = nn.GRU(embedding_dim, hidden_dim, n_layers, 
+                          batch_first=True, dropout=0.2)
+        self.output = nn.Linear(hidden_dim, n_items)
+        
+    def forward(self, sequences):
+        embedded = self.embedding(sequences)
+        output, hidden = self.gru(embedded)
+        # Use last hidden state
+        predictions = self.output(output[:, -1, :])
+        return predictions
 
-class ContentSimilarityRequest(BaseModel):
-    content_id: int
-    limit: int = 10
-    similarity_threshold: float = 0.1
+class GraphAttentionNetwork(nn.Module):
+    """GAT for graph-based recommendations"""
+    
+    def __init__(self, n_nodes, embedding_dim=128, n_heads=4):
+        super(GraphAttentionNetwork, self).__init__()
+        
+        self.embedding = nn.Embedding(n_nodes, embedding_dim)
+        self.attention_layers = nn.ModuleList([
+            nn.MultiheadAttention(embedding_dim, n_heads) 
+            for _ in range(2)
+        ])
+        self.feed_forward = nn.Sequential(
+            nn.Linear(embedding_dim, embedding_dim * 2),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(embedding_dim * 2, embedding_dim)
+        )
+        self.layer_norm = nn.LayerNorm(embedding_dim)
+        
+    def forward(self, node_ids, adjacency_matrix):
+        embeddings = self.embedding(node_ids)
+        
+        # Apply attention layers
+        for attention in self.attention_layers:
+            attended, _ = attention(embeddings, embeddings, embeddings, 
+                                   attn_mask=adjacency_matrix)
+            embeddings = self.layer_norm(embeddings + attended)
+            embeddings = self.layer_norm(embeddings + self.feed_forward(embeddings))
+        
+        return embeddings
 
-# Advanced ML Models Container
-class AdvancedRecommenderSystem:
+# Advanced Recommendation Models
+class ImplicitFeedbackModel:
+    """Handle implicit feedback with multiple algorithms"""
+    
     def __init__(self):
-        self.models = {}
-        self.data_processors = {}
-        self.feature_extractors = {}
-        self.model_metadata = {}
-        self.is_trained = False
-        self.last_update = None
-        
-        # Initialize components
-        self._initialize_models()
-        
-    def _initialize_models(self):
-        """Initialize all ML models"""
-        # LightFM for hybrid recommendations
-        self.models['lightfm'] = LightFM(
-            loss='warp',
-            learning_rate=0.05,
-            item_alpha=1e-6,
-            user_alpha=1e-6,
-            max_sampled=10
-        )
-        
-        # Implicit ALS for collaborative filtering
-        self.models['implicit_als'] = implicit.als.AlternatingLeastSquares(
-            factors=64,
+        self.als_model = AlternatingLeastSquares(
+            factors=100, 
             regularization=0.01,
-            iterations=15,
-            alpha=40.0
+            iterations=50,
+            use_gpu=torch.cuda.is_available()
         )
-        
-        # BPR for ranking
-        self.models['implicit_bpr'] = implicit.bpr.BayesianPersonalizedRanking(
-            factors=64,
+        self.bpr_model = BayesianPersonalizedRanking(
+            factors=100,
             learning_rate=0.01,
             regularization=0.01,
             iterations=100
         )
+        self.lmf_model = LogisticMatrixFactorization(
+            factors=100,
+            learning_rate=1.0,
+            regularization=0.01,
+            iterations=30
+        )
+        self.user_items = None
+        self.item_users = None
         
-        # Content-based models
-        self.models['content_tfidf'] = TfidfVectorizer(
-            max_features=10000,
-            stop_words='english',
-            ngram_range=(1, 2),
-            min_df=2,
-            max_df=0.8
+    def fit(self, interaction_matrix):
+        """Train all implicit feedback models"""
+        self.user_items = interaction_matrix
+        self.item_users = interaction_matrix.T
+        
+        # Train models
+        self.als_model.fit(self.user_items)
+        self.bpr_model.fit(self.user_items)
+        self.lmf_model.fit(self.user_items)
+        
+        logger.info("Trained implicit feedback models")
+        
+    def recommend(self, user_id, n_recommendations=20):
+        """Get recommendations combining all models"""
+        recommendations = []
+        
+        # ALS recommendations
+        als_recs = self.als_model.recommend(
+            user_id, self.user_items[user_id], N=n_recommendations
         )
         
-        # SVD for dimensionality reduction
-        self.models['svd'] = TruncatedSVD(
-            n_components=100,
-            random_state=42
+        # BPR recommendations
+        bpr_recs = self.bpr_model.recommend(
+            user_id, self.user_items[user_id], N=n_recommendations
         )
         
-        # KMeans for user clustering
-        self.models['user_clustering'] = KMeans(
-            n_clusters=20,
-            random_state=42,
-            n_init=10
+        # LMF recommendations
+        lmf_recs = self.lmf_model.recommend(
+            user_id, self.user_items[user_id], N=n_recommendations
         )
         
-        # Nearest Neighbors for similarity
-        self.models['knn'] = NearestNeighbors(
-            n_neighbors=50,
-            algorithm='auto',
-            metric='cosine'
-        )
+        # Combine recommendations with weighted voting
+        item_scores = defaultdict(float)
         
-        # Feature scaler
-        self.data_processors['scaler'] = StandardScaler()
+        for item_id, score in als_recs:
+            item_scores[item_id] += score * 0.4
+            
+        for item_id, score in bpr_recs:
+            item_scores[item_id] += score * 0.3
+            
+        for item_id, score in lmf_recs:
+            item_scores[item_id] += score * 0.3
         
-        logger.info("ML models initialized successfully")
+        # Sort and return top items
+        sorted_items = sorted(item_scores.items(), key=lambda x: x[1], reverse=True)
+        return sorted_items[:n_recommendations]
+
+class GradientBoostingRecommender:
+    """Use gradient boosting for recommendation ranking"""
     
-    def load_data_from_db(self):
-        """Load and preprocess data from database"""
+    def __init__(self):
+        self.lgb_model = None
+        self.xgb_model = None
+        self.feature_columns = []
+        
+    def prepare_features(self, interactions_df, content_df, user_df):
+        """Engineer features for gradient boosting"""
+        features = []
+        
+        # Merge dataframes
+        data = interactions_df.merge(
+            content_df, left_on='content_id', right_on='id', suffixes=('', '_content')
+        ).merge(
+            user_df, left_on='user_id', right_on='id', suffixes=('', '_user')
+        )
+        
+        # User features
+        user_features = [
+            'user_total_views', 'user_avg_rating', 'user_genre_diversity',
+            'user_activity_days', 'user_favorite_count'
+        ]
+        
+        # Content features  
+        content_features = [
+            'content_popularity', 'content_rating', 'content_age_days',
+            'content_genre_count', 'content_cast_popularity'
+        ]
+        
+        # Interaction features
+        interaction_features = [
+            'user_content_genre_match', 'time_since_release',
+            'user_language_match', 'trending_score'
+        ]
+        
+        # Calculate features
+        for _, row in data.iterrows():
+            feat = {}
+            
+            # User features
+            feat['user_total_views'] = row.get('user_view_count', 0)
+            feat['user_avg_rating'] = row.get('user_avg_rating', 0)
+            feat['user_genre_diversity'] = len(set(row.get('user_genres', [])))
+            feat['user_activity_days'] = row.get('user_active_days', 0)
+            feat['user_favorite_count'] = row.get('user_favorites', 0)
+            
+            # Content features
+            feat['content_popularity'] = row.get('popularity_score', 0)
+            feat['content_rating'] = row.get('tmdb_rating', 0)
+            feat['content_age_days'] = (datetime.now() - row.get('release_date', datetime.now())).days
+            feat['content_genre_count'] = len(row.get('genres', []))
+            feat['content_cast_popularity'] = row.get('cast_popularity', 0)
+            
+            # Interaction features
+            user_genres = set(row.get('user_preferred_genres', []))
+            content_genres = set(row.get('genres', []))
+            feat['user_content_genre_match'] = len(user_genres & content_genres) / max(len(content_genres), 1)
+            
+            feat['time_since_release'] = feat['content_age_days']
+            feat['user_language_match'] = 1 if row.get('language') in row.get('user_languages', []) else 0
+            feat['trending_score'] = row.get('trending_score', 0)
+            
+            features.append(feat)
+        
+        features_df = pd.DataFrame(features)
+        self.feature_columns = features_df.columns.tolist()
+        
+        return features_df
+    
+    def train(self, features_df, labels):
+        """Train gradient boosting models"""
+        # LightGBM
+        lgb_params = {
+            'objective': 'binary',
+            'metric': 'auc',
+            'boosting_type': 'gbdt',
+            'num_leaves': 31,
+            'learning_rate': 0.05,
+            'feature_fraction': 0.9
+        }
+        
+        train_data = lgb.Dataset(features_df, label=labels)
+        self.lgb_model = lgb.train(
+            lgb_params, 
+            train_data, 
+            num_boost_round=100,
+            valid_sets=[train_data],
+            callbacks=[lgb.early_stopping(10), lgb.log_evaluation(0)]
+        )
+        
+        # XGBoost
+        xgb_params = {
+            'objective': 'binary:logistic',
+            'eval_metric': 'auc',
+            'max_depth': 6,
+            'learning_rate': 0.05,
+            'subsample': 0.8
+        }
+        
+        dtrain = xgb.DMatrix(features_df, label=labels)
+        self.xgb_model = xgb.train(
+            xgb_params,
+            dtrain,
+            num_boost_round=100,
+            evals=[(dtrain, 'train')],
+            early_stopping_rounds=10,
+            verbose_eval=False
+        )
+        
+        logger.info("Trained gradient boosting models")
+    
+    def predict(self, features_df):
+        """Get predictions from ensemble"""
+        lgb_pred = self.lgb_model.predict(features_df, num_iteration=self.lgb_model.best_iteration)
+        xgb_pred = self.xgb_model.predict(xgb.DMatrix(features_df))
+        
+        # Ensemble predictions
+        return (lgb_pred + xgb_pred) / 2
+
+class GraphRecommender:
+    """Graph-based recommendations using random walks and node embeddings"""
+    
+    def __init__(self):
+        self.graph = nx.Graph()
+        self.node_embeddings = {}
+        
+    def build_graph(self, interactions_df, content_df):
+        """Build user-item interaction graph"""
+        # Add nodes
+        users = interactions_df['user_id'].unique()
+        items = interactions_df['content_id'].unique()
+        
+        self.graph.add_nodes_from([f"u_{u}" for u in users], bipartite=0)
+        self.graph.add_nodes_from([f"i_{i}" for i in items], bipartite=1)
+        
+        # Add edges with weights
+        for _, row in interactions_df.iterrows():
+            user_node = f"u_{row['user_id']}"
+            item_node = f"i_{row['content_id']}"
+            weight = row.get('rating', 1) / 10.0
+            
+            self.graph.add_edge(user_node, item_node, weight=weight)
+        
+        # Add item-item edges based on similarity
+        for i in range(len(items)):
+            for j in range(i+1, len(items)):
+                item1 = items[i]
+                item2 = items[j]
+                
+                # Calculate similarity based on content features
+                similarity = self._calculate_item_similarity(item1, item2, content_df)
+                if similarity > 0.5:
+                    self.graph.add_edge(f"i_{item1}", f"i_{item2}", weight=similarity)
+        
+        logger.info(f"Built graph with {self.graph.number_of_nodes()} nodes and {self.graph.number_of_edges()} edges")
+    
+    def _calculate_item_similarity(self, item1, item2, content_df):
+        """Calculate similarity between two items"""
+        item1_data = content_df[content_df['id'] == item1].iloc[0]
+        item2_data = content_df[content_df['id'] == item2].iloc[0]
+        
+        # Genre similarity
+        genres1 = set(item1_data.get('genres', []))
+        genres2 = set(item2_data.get('genres', []))
+        genre_sim = len(genres1 & genres2) / max(len(genres1 | genres2), 1)
+        
+        # Rating similarity
+        rating1 = item1_data.get('tmdb_rating', 0)
+        rating2 = item2_data.get('tmdb_rating', 0)
+        rating_sim = 1 - abs(rating1 - rating2) / 10
+        
+        return (genre_sim + rating_sim) / 2
+    
+    def generate_embeddings(self, embedding_dim=128):
+        """Generate node embeddings using Node2Vec-like approach"""
+        # Random walk sampling
+        walks = []
+        nodes = list(self.graph.nodes())
+        
+        for _ in range(app.config['GRAPH_NUM_WALKS']):
+            np.random.shuffle(nodes)
+            for node in nodes:
+                walk = self._random_walk(node, app.config['GRAPH_WALK_LENGTH'])
+                walks.append(walk)
+        
+        # Train embedding model (simplified Word2Vec approach)
+        from gensim.models import Word2Vec
+        
+        model = Word2Vec(
+            walks,
+            vector_size=embedding_dim,
+            window=5,
+            min_count=1,
+            sg=1,  # Skip-gram
+            workers=4
+        )
+        
+        # Store embeddings
+        for node in self.graph.nodes():
+            if node in model.wv:
+                self.node_embeddings[node] = model.wv[node]
+    
+    def _random_walk(self, start_node, walk_length):
+        """Perform random walk from start node"""
+        walk = [start_node]
+        current = start_node
+        
+        for _ in range(walk_length - 1):
+            neighbors = list(self.graph.neighbors(current))
+            if not neighbors:
+                break
+                
+            # Weighted random selection
+            weights = [self.graph[current][n].get('weight', 1) for n in neighbors]
+            probabilities = np.array(weights) / sum(weights)
+            
+            current = np.random.choice(neighbors, p=probabilities)
+            walk.append(current)
+        
+        return walk
+    
+    def recommend(self, user_id, n_recommendations=20):
+        """Get recommendations using graph embeddings"""
+        user_node = f"u_{user_id}"
+        
+        if user_node not in self.node_embeddings:
+            return []
+        
+        user_embedding = self.node_embeddings[user_node]
+        
+        # Find similar items
+        item_scores = []
+        for node, embedding in self.node_embeddings.items():
+            if node.startswith('i_'):
+                # Cosine similarity
+                similarity = np.dot(user_embedding, embedding) / (
+                    np.linalg.norm(user_embedding) * np.linalg.norm(embedding)
+                )
+                item_id = int(node[2:])  # Remove 'i_' prefix
+                item_scores.append((item_id, similarity))
+        
+        # Sort and return top items
+        item_scores.sort(key=lambda x: x[1], reverse=True)
+        return item_scores[:n_recommendations]
+
+class VectorSearchEngine:
+    """Fast similarity search using FAISS"""
+    
+    def __init__(self, embedding_dim=128):
+        self.embedding_dim = embedding_dim
+        self.index = None
+        self.id_map = {}
+        
+    def build_index(self, embeddings_dict):
+        """Build FAISS index for fast similarity search"""
+        # Convert embeddings to numpy array
+        ids = []
+        embeddings = []
+        
+        for item_id, embedding in embeddings_dict.items():
+            ids.append(item_id)
+            embeddings.append(embedding)
+        
+        embeddings_array = np.array(embeddings).astype('float32')
+        
+        # Normalize embeddings
+        faiss.normalize_L2(embeddings_array)
+        
+        # Build index
+        self.index = faiss.IndexFlatIP(self.embedding_dim)  # Inner product
+        self.index.add(embeddings_array)
+        
+        # Store ID mapping
+        self.id_map = {i: item_id for i, item_id in enumerate(ids)}
+        
+        logger.info(f"Built FAISS index with {len(ids)} items")
+    
+    def search(self, query_embedding, k=20):
+        """Search for similar items"""
+        query = np.array([query_embedding]).astype('float32')
+        faiss.normalize_L2(query)
+        
+        distances, indices = self.index.search(query, k)
+        
+        results = []
+        for i, (dist, idx) in enumerate(zip(distances[0], indices[0])):
+            if idx in self.id_map:
+                results.append((self.id_map[idx], float(dist)))
+        
+        return results
+
+class MultiArmedBandit:
+    """Multi-armed bandit for exploration vs exploitation"""
+    
+    def __init__(self, n_arms, epsilon=0.1):
+        self.n_arms = n_arms
+        self.epsilon = epsilon
+        self.q_values = np.zeros(n_arms)
+        self.n_pulls = np.zeros(n_arms)
+        
+    def select_arm(self):
+        """Select arm using epsilon-greedy strategy"""
+        if np.random.random() < self.epsilon:
+            # Exploration
+            return np.random.randint(self.n_arms)
+        else:
+            # Exploitation
+            return np.argmax(self.q_values)
+    
+    def update(self, arm, reward):
+        """Update Q-values based on reward"""
+        self.n_pulls[arm] += 1
+        self.q_values[arm] += (reward - self.q_values[arm]) / self.n_pulls[arm]
+
+class AdvancedHybridRecommender:
+    """Advanced hybrid recommender combining all approaches"""
+    
+    def __init__(self):
+        # Traditional models
+        self.cf_models = {
+            'svd': SVD(n_factors=150, n_epochs=20),
+            'svdpp': SVDpp(n_factors=100, n_epochs=20),
+            'nmf': NMF(n_factors=100, n_epochs=20),
+            'knn': KNNWithMeans(k=50, sim_options={'name': 'cosine'})
+        }
+        
+        # Advanced models
+        self.implicit_model = ImplicitFeedbackModel()
+        self.gb_model = GradientBoostingRecommender()
+        self.graph_model = GraphRecommender()
+        self.vector_search = VectorSearchEngine()
+        
+        # Neural models
+        self.ncf_model = None
+        self.session_model = None
+        self.gat_model = None
+        
+        # Bandits for online learning
+        self.bandits = {}
+        
+        # Model weights
+        self.model_weights = {
+            'collaborative': 0.25,
+            'implicit': 0.20,
+            'content': 0.15,
+            'graph': 0.15,
+            'neural': 0.15,
+            'trending': 0.10
+        }
+        
+        # Feature engineering
+        self.feature_extractor = FeatureExtractor()
+        self.trend_analyzer = TrendAnalyzer()
+        
+        self.last_update = None
+    
+    def update_models(self):
+        """Update all recommendation models"""
         try:
-            # Connect to database
-            conn = sqlite3.connect(DATABASE_URL.replace('sqlite:///', ''))
+            conn = get_db_connection()
             
-            # Load content data
-            content_query = """
-            SELECT id, title, overview, genres, language, rating, 
-                   popularity, content_type, cast, crew, keywords,
-                   release_date, runtime
-            FROM content
-            """
-            self.content_df = pd.read_sql_query(content_query, conn)
+            # Load all necessary data
+            data = self._load_training_data(conn)
             
-            # Load user interactions
-            interactions_query = """
-            SELECT ui.user_id, ui.content_id, ui.interaction_type, 
-                   ui.rating, ui.created_at,
-                   c.genres, c.language, c.content_type
-            FROM user_interaction ui
-            JOIN content c ON ui.content_id = c.id
-            WHERE ui.created_at >= date('now', '-365 days')
-            """
-            self.interactions_df = pd.read_sql_query(interactions_query, conn)
+            # Train collaborative filtering models
+            self._train_collaborative_models(data['ratings'])
             
-            # Load user data
-            users_query = """
-            SELECT id, preferences, demographics, created_at
-            FROM user
-            """
-            self.users_df = pd.read_sql_query(users_query, conn)
+            # Train implicit feedback models
+            self._train_implicit_models(data['interactions'])
+            
+            # Train gradient boosting models
+            self._train_gradient_boosting(data)
+            
+            # Build graph and train graph models
+            self._train_graph_models(data)
+            
+            # Train neural models
+            self._train_neural_models(data)
+            
+            # Update feature extractors
+            self.feature_extractor.fit(data['content'])
+            
+            # Analyze trends
+            self.trend_analyzer.analyze(data['interactions'], data['content'])
+            
+            self.last_update = datetime.utcnow()
+            logger.info("Successfully updated all recommendation models")
             
             conn.close()
             
-            # Preprocess data
-            self._preprocess_data()
-            
-            logger.info(f"Data loaded: {len(self.content_df)} content items, "
-                       f"{len(self.interactions_df)} interactions, "
-                       f"{len(self.users_df)} users")
-            
-            return True
-            
         except Exception as e:
-            logger.error(f"Error loading data from database: {e}")
-            return False
+            logger.error(f"Error updating models: {e}")
+            raise
     
-    def _preprocess_data(self):
-        """Preprocess loaded data"""
+    def _load_training_data(self, conn):
+        """Load and prepare all training data"""
+        # Load ratings
+        ratings_query = """
+            SELECT user_id, content_id, rating, created_at
+            FROM ratings
+        """
+        ratings_df = pd.read_sql(ratings_query, conn)
+        
+        # Load all interactions
+        interactions_query = """
+            SELECT user_id, content_id, interaction_type, created_at, 
+                   CASE interaction_type
+                       WHEN 'view' THEN 3
+                       WHEN 'favorite' THEN 8
+                       WHEN 'wishlist' THEN 5
+                       WHEN 'completed' THEN 7
+                       ELSE 1
+                   END as implicit_rating
+            FROM (
+                SELECT user_id, content_id, 'view' as interaction_type, watched_at as created_at
+                FROM watch_history
+                UNION ALL
+                SELECT user_id, content_id, 'favorite' as interaction_type, added_at as created_at
+                FROM favorites
+                UNION ALL
+                SELECT user_id, content_id, 'wishlist' as interaction_type, added_at as created_at
+                FROM wishlist
+            ) interactions
+        """
+        interactions_df = pd.read_sql(interactions_query, conn)
+        
+        # Load content features
+        content_query = """
+            SELECT id, title, description, genres, cast, crew,
+                   tmdb_rating, imdb_rating, user_rating, critic_score,
+                   view_count, popularity_score, release_date,
+                   is_telugu, is_hindi, is_tamil, is_kannada,
+                   languages, countries, runtime
+            FROM content
+        """
+        content_df = pd.read_sql(content_query, conn)
+        
         # Parse JSON fields
-        def safe_json_loads(x):
-            if pd.isna(x) or x == '':
-                return []
-            try:
-                return json.loads(x) if isinstance(x, str) else x
-            except:
-                return []
+        content_df['genres'] = content_df['genres'].apply(lambda x: json.loads(x) if x else [])
+        content_df['cast'] = content_df['cast'].apply(lambda x: json.loads(x) if x else [])
+        content_df['languages'] = content_df['languages'].apply(lambda x: json.loads(x) if x else [])
         
-        self.content_df['genres'] = self.content_df['genres'].apply(safe_json_loads)
-        self.content_df['cast'] = self.content_df['cast'].apply(safe_json_loads)
-        self.content_df['crew'] = self.content_df['crew'].apply(safe_json_loads)
-        self.content_df['keywords'] = self.content_df['keywords'].apply(safe_json_loads)
+        # Load user features
+        user_query = """
+            SELECT u.id, u.preferred_genres, u.preferred_languages,
+                   COUNT(DISTINCT wh.content_id) as view_count,
+                   COUNT(DISTINCT f.content_id) as favorite_count,
+                   AVG(r.rating) as avg_rating
+            FROM users u
+            LEFT JOIN watch_history wh ON u.id = wh.user_id
+            LEFT JOIN favorites f ON u.id = f.user_id
+            LEFT JOIN ratings r ON u.id = r.user_id
+            GROUP BY u.id, u.preferred_genres, u.preferred_languages
+        """
+        user_df = pd.read_sql(user_query, conn)
         
-        self.users_df['preferences'] = self.users_df['preferences'].apply(safe_json_loads)
-        self.users_df['demographics'] = self.users_df['demographics'].apply(safe_json_loads)
-        
-        # Fill missing values
-        self.content_df['overview'] = self.content_df['overview'].fillna('')
-        self.content_df['rating'] = self.content_df['rating'].fillna(0)
-        self.content_df['popularity'] = self.content_df['popularity'].fillna(0)
-        
-        # Create content features
-        self._create_content_features()
-        
-        # Create user-item matrix
-        self._create_user_item_matrix()
-        
-        # Process user features
-        self._create_user_features()
-    
-    def _create_content_features(self):
-        """Create comprehensive content features"""
-        features = []
-        
-        for _, content in self.content_df.iterrows():
-            feature_parts = []
-            
-            # Title and overview
-            if content['title']:
-                feature_parts.append(content['title'])
-            if content['overview']:
-                feature_parts.append(content['overview'])
-            
-            # Genres (weighted more heavily)
-            if content['genres']:
-                genre_names = [str(g) for g in content['genres']]
-                feature_parts.extend(genre_names * 3)
-            
-            # Cast (top 5)
-            if content['cast']:
-                cast_names = [person.get('name', '') for person in content['cast'][:5]]
-                feature_parts.extend(cast_names)
-            
-            # Directors (weighted heavily)
-            if content['crew']:
-                directors = [person.get('name', '') for person in content['crew'] 
-                           if person.get('job') == 'Director']
-                feature_parts.extend(directors * 2)
-            
-            # Keywords
-            if content['keywords']:
-                keyword_names = [kw.get('name', '') for kw in content['keywords']]
-                feature_parts.extend(keyword_names)
-            
-            # Language and content type
-            if content['language']:
-                feature_parts.append(content['language'])
-            if content['content_type']:
-                feature_parts.append(content['content_type'])
-            
-            features.append(' '.join(filter(None, feature_parts)))
-        
-        # Create TF-IDF matrix
-        self.content_features_matrix = self.models['content_tfidf'].fit_transform(features)
-        
-        # Reduce dimensionality
-        self.content_features_reduced = self.models['svd'].fit_transform(
-            self.content_features_matrix.toarray()
+        # Parse JSON fields
+        user_df['preferred_genres'] = user_df['preferred_genres'].apply(
+            lambda x: json.loads(x) if x else []
         )
         
-        # Calculate content similarity matrix
-        self.content_similarity = cosine_similarity(self.content_features_matrix)
-        
-        logger.info(f"Content features created: {self.content_features_matrix.shape}")
-    
-    def _create_user_item_matrix(self):
-        """Create user-item interaction matrix"""
-        # Create rating matrix
-        rating_matrix = self.interactions_df.pivot_table(
-            index='user_id',
-            columns='content_id',
-            values='rating',
-            fill_value=0
-        )
-        
-        # Create implicit feedback matrix
-        implicit_matrix = self.interactions_df.groupby(['user_id', 'content_id']).agg({
-            'interaction_type': lambda x: self._calculate_implicit_score(x.tolist())
-        }).reset_index()
-        
-        implicit_pivot = implicit_matrix.pivot_table(
-            index='user_id',
-            columns='content_id',
-            values='interaction_type',
-            fill_value=0
-        )
-        
-        # Ensure matrices have same shape
-        all_users = sorted(set(rating_matrix.index) | set(implicit_pivot.index))
-        all_items = sorted(set(rating_matrix.columns) | set(implicit_pivot.columns))
-        
-        self.rating_matrix = rating_matrix.reindex(
-            index=all_users, columns=all_items, fill_value=0
-        )
-        self.implicit_matrix = implicit_pivot.reindex(
-            index=all_users, columns=all_items, fill_value=0
-        )
-        
-        # Convert to sparse matrices
-        self.rating_sparse = csr_matrix(self.rating_matrix.values)
-        self.implicit_sparse = csr_matrix(self.implicit_matrix.values)
-        
-        # Store user and item mappings
-        self.user_to_idx = {user: idx for idx, user in enumerate(all_users)}
-        self.idx_to_user = {idx: user for user, idx in self.user_to_idx.items()}
-        self.item_to_idx = {item: idx for idx, item in enumerate(all_items)}
-        self.idx_to_item = {idx: item for item, idx in self.item_to_idx.items()}
-        
-        logger.info(f"User-item matrices created: {self.rating_matrix.shape}")
-    
-    def _calculate_implicit_score(self, interactions):
-        """Calculate implicit feedback score"""
-        scores = {
-            'view': 1.0,
-            'like': 2.0,
-            'favorite': 3.0,
-            'wishlist': 1.5,
-            'rating': 2.5
+        return {
+            'ratings': ratings_df,
+            'interactions': interactions_df,
+            'content': content_df,
+            'users': user_df
         }
-        
-        total_score = 0
-        for interaction in interactions:
-            total_score += scores.get(interaction, 0.5)
-        
-        return min(total_score, 10.0)  # Cap at 10
     
-    def _create_user_features(self):
-        """Create user feature matrix"""
-        user_features = []
-        
-        for _, user in self.users_df.iterrows():
-            features = {}
-            
-            # Demographic features
-            demographics = user.get('demographics', {})
-            features['age_group'] = demographics.get('age_group', 'unknown')
-            features['gender'] = demographics.get('gender', 'unknown')
-            features['location'] = demographics.get('location', 'unknown')
-            
-            # Preference features
-            preferences = user.get('preferences', {})
-            features['favorite_genres'] = preferences.get('favorite_genres', [])
-            features['content_types'] = preferences.get('content_types', [])
-            
-            user_features.append(features)
-        
-        self.user_features_df = pd.DataFrame(user_features)
-        
-        # One-hot encode categorical features
-        categorical_features = ['age_group', 'gender', 'location']
-        self.user_features_encoded = pd.get_dummies(
-            self.user_features_df[categorical_features],
-            prefix=categorical_features
+    def _train_collaborative_models(self, ratings_df):
+        """Train collaborative filtering models"""
+        # Prepare data for Surprise
+        reader = Reader(rating_scale=(1, 10))
+        data = SurpriseDataset.load_from_df(
+            ratings_df[['user_id', 'content_id', 'rating']], 
+            reader
         )
         
-        # Scale features
-        self.user_features_scaled = self.data_processors['scaler'].fit_transform(
-            self.user_features_encoded.fillna(0)
+        # Train each model
+        for name, model in self.cf_models.items():
+            trainset = data.build_full_trainset()
+            model.fit(trainset)
+            logger.info(f"Trained collaborative filtering model: {name}")
+    
+    def _train_implicit_models(self, interactions_df):
+        """Train implicit feedback models"""
+        # Create sparse matrix
+        users = interactions_df['user_id'].unique()
+        items = interactions_df['content_id'].unique()
+        
+        user_map = {u: i for i, u in enumerate(users)}
+        item_map = {i: idx for idx, i in enumerate(items)}
+        
+        row = [user_map[u] for u in interactions_df['user_id']]
+        col = [item_map[i] for i in interactions_df['content_id']]
+        data = interactions_df['implicit_rating'].values
+        
+        interaction_matrix = sparse.csr_matrix(
+            (data, (row, col)), 
+            shape=(len(users), len(items))
         )
         
-        # Cluster users
-        self.user_clusters = self.models['user_clustering'].fit_predict(
-            self.user_features_scaled
+        # Train implicit models
+        self.implicit_model.fit(interaction_matrix)
+    
+    def _train_gradient_boosting(self, data):
+        """Train gradient boosting models"""
+        # Prepare features
+        features_df = self.gb_model.prepare_features(
+            data['interactions'], 
+            data['content'], 
+            data['users']
         )
         
-        logger.info(f"User features created: {self.user_features_scaled.shape}")
-    
-    def train_all_models(self):
-        """Train all recommendation models"""
-        try:
-            logger.info("Starting model training...")
-            
-            # Train LightFM
-            self._train_lightfm()
-            
-            # Train Implicit models
-            self._train_implicit_models()
-            
-            # Train content-based models
-            self._train_content_models()
-            
-            # Update model metadata
-            self.model_metadata = {
-                'last_trained': datetime.now().isoformat(),
-                'data_size': {
-                    'users': len(self.users_df),
-                    'items': len(self.content_df),
-                    'interactions': len(self.interactions_df)
-                },
-                'model_performance': self._evaluate_models()
-            }
-            
-            self.is_trained = True
-            self.last_update = datetime.now()
-            
-            # Save models
-            self._save_models()
-            
-            logger.info("Model training completed successfully")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error training models: {e}")
-            return False
-    
-    def _train_lightfm(self):
-        """Train LightFM hybrid model"""
-        # Prepare data for LightFM
-        dataset = Dataset()
+        # Create labels (1 for positive interactions, 0 for negative sampling)
+        labels = np.ones(len(features_df))
         
-        # Fit the dataset
-        user_ids = list(self.user_to_idx.keys())
-        item_ids = list(self.item_to_idx.keys())
+        # Add negative samples
+        negative_samples = self._generate_negative_samples(data)
+        negative_features = self.gb_model.prepare_features(
+            negative_samples, 
+            data['content'], 
+            data['users']
+        )
+        negative_labels = np.zeros(len(negative_features))
         
-        dataset.fit(user_ids, item_ids)
-        
-        # Build interactions matrix
-        interactions = []
-        for _, row in self.interactions_df.iterrows():
-            if row['rating'] and row['rating'] >= 3:  # Only positive interactions
-                interactions.append((row['user_id'], row['content_id'], row['rating']))
-        
-        (interactions_matrix, weights) = dataset.build_interactions(interactions)
+        # Combine positive and negative
+        all_features = pd.concat([features_df, negative_features])
+        all_labels = np.concatenate([labels, negative_labels])
         
         # Train model
-        self.models['lightfm'].fit(
-            interactions_matrix,
-            sample_weight=weights,
-            epochs=20,
-            num_threads=4,
-            verbose=False
+        self.gb_model.train(all_features, all_labels)
+    
+    def _generate_negative_samples(self, data, ratio=1.0):
+        """Generate negative samples for training"""
+        interactions = data['interactions']
+        all_users = interactions['user_id'].unique()
+        all_items = data['content']['id'].unique()
+        
+        # Get existing interactions
+        existing = set(
+            zip(interactions['user_id'], interactions['content_id'])
         )
         
-        self.lightfm_dataset = dataset
-        self.lightfm_interactions = interactions_matrix
+        # Generate negative samples
+        negative_samples = []
+        n_negative = int(len(interactions) * ratio)
         
-        logger.info("LightFM model trained")
-    
-    def _train_implicit_models(self):
-        """Train implicit feedback models"""
-        # Transpose for implicit library (items x users)
-        implicit_matrix_T = self.implicit_sparse.T.tocsr()
+        while len(negative_samples) < n_negative:
+            user = np.random.choice(all_users)
+            item = np.random.choice(all_items)
+            
+            if (user, item) not in existing:
+                negative_samples.append({
+                    'user_id': user,
+                    'content_id': item,
+                    'interaction_type': 'negative'
+                })
         
-        # Train ALS
-        self.models['implicit_als'].fit(implicit_matrix_T)
+        return pd.DataFrame(negative_samples)
+    
+    def _train_graph_models(self, data):
+        """Train graph-based models"""
+        # Build graph
+        self.graph_model.build_graph(data['interactions'], data['content'])
         
-        # Train BPR
-        self.models['implicit_bpr'].fit(implicit_matrix_T)
+        # Generate embeddings
+        self.graph_model.generate_embeddings()
         
-        logger.info("Implicit models trained")
+        # Build vector search index
+        content_embeddings = {
+            int(node[2:]): embedding 
+            for node, embedding in self.graph_model.node_embeddings.items()
+            if node.startswith('i_')
+        }
+        self.vector_search.build_index(content_embeddings)
     
-    def _train_content_models(self):
-        """Train content-based models"""
-        # KNN on content features
-        self.models['knn'].fit(self.content_features_reduced)
+    def _train_neural_models(self, data):
+        """Train PyTorch neural models"""
+        # Prepare data
+        interactions = data['interactions']
+        n_users = interactions['user_id'].nunique()
+        n_items = interactions['content_id'].nunique()
         
-        logger.info("Content-based models trained")
+        # Map IDs to indices
+        user_map = {uid: idx for idx, uid in enumerate(interactions['user_id'].unique())}
+        item_map = {iid: idx for idx, iid in enumerate(interactions['content_id'].unique())}
+        
+        # Train NCF
+        self.ncf_model = NeuralCollaborativeFiltering(n_users, n_items)
+        self._train_ncf(interactions, user_map, item_map)
+        
+        # Train session-based model
+        self.session_model = SessionBasedRNN(n_items)
+        self._train_session_model(interactions, item_map)
     
-    def _evaluate_models(self):
-        """Evaluate model performance"""
-        try:
-            performance = {}
+    def _train_ncf(self, interactions_df, user_map, item_map, epochs=20):
+        """Train Neural Collaborative Filtering model"""
+        # Prepare data
+        users = torch.LongTensor([user_map[u] for u in interactions_df['user_id']])
+        items = torch.LongTensor([item_map[i] for i in interactions_df['content_id']])
+        ratings = torch.FloatTensor(interactions_df['implicit_rating'].values / 10)
+        
+        # Create dataset and dataloader
+        dataset = torch.utils.data.TensorDataset(users, items, ratings)
+        dataloader = DataLoader(dataset, batch_size=256, shuffle=True)
+        
+        # Training
+        optimizer = optim.Adam(self.ncf_model.parameters(), lr=0.001)
+        criterion = nn.BCELoss()
+        
+        self.ncf_model.train()
+        for epoch in range(epochs):
+            total_loss = 0
+            for batch_users, batch_items, batch_ratings in dataloader:
+                optimizer.zero_grad()
+                predictions = self.ncf_model(batch_users, batch_items)
+                loss = criterion(predictions, batch_ratings)
+                loss.backward()
+                optimizer.step()
+                total_loss += loss.item()
             
-            # Split data for evaluation
-            train_interactions = self.interactions_df.sample(frac=0.8, random_state=42)
-            test_interactions = self.interactions_df.drop(train_interactions.index)
-            
-            # LightFM evaluation
-            if hasattr(self, 'lightfm_interactions'):
-                test_precision = precision_at_k(
-                    self.models['lightfm'],
-                    self.lightfm_interactions,
-                    k=10
-                ).mean()
-                performance['lightfm_precision_at_10'] = float(test_precision)
-            
-            # Content-based evaluation (using similarity)
-            content_similarities = []
-            for i in range(min(100, len(self.content_similarity))):
-                similarities = self.content_similarity[i]
-                top_similar = np.argsort(similarities)[-11:-1]  # Top 10 excluding self
-                content_similarities.append(np.mean(similarities[top_similar]))
-            
-            performance['content_avg_similarity'] = float(np.mean(content_similarities))
-            
-            return performance
-            
-        except Exception as e:
-            logger.warning(f"Error evaluating models: {e}")
-            return {}
+            if epoch % 5 == 0:
+                logger.info(f"NCF Epoch {epoch}, Loss: {total_loss/len(dataloader):.4f}")
     
-    def _save_models(self):
-        """Save trained models"""
-        try:
-            model_dir = "saved_models"
-            os.makedirs(model_dir, exist_ok=True)
+    def _train_session_model(self, interactions_df, item_map):
+        """Train session-based RNN model"""
+        # Group interactions by user and time
+        sessions = []
+        
+        for user_id, user_interactions in interactions_df.groupby('user_id'):
+            # Sort by time
+            user_interactions = user_interactions.sort_values('created_at')
             
-            # Save LightFM
-            if hasattr(self, 'models') and 'lightfm' in self.models:
-                joblib.dump(self.models['lightfm'], f"{model_dir}/lightfm_model.pkl")
+            # Create sessions (split by time gaps)
+            session = []
+            last_time = None
             
-            # Save implicit models
-            for model_name in ['implicit_als', 'implicit_bpr']:
-                if model_name in self.models:
-                    joblib.dump(self.models[model_name], f"{model_dir}/{model_name}.pkl")
-            
-            # Save preprocessors
-            joblib.dump(self.models['content_tfidf'], f"{model_dir}/content_tfidf.pkl")
-            joblib.dump(self.models['svd'], f"{model_dir}/svd.pkl")
-            joblib.dump(self.data_processors['scaler'], f"{model_dir}/scaler.pkl")
-            
-            # Save matrices and mappings
-            np.save(f"{model_dir}/content_similarity.npy", self.content_similarity)
-            joblib.dump(self.user_to_idx, f"{model_dir}/user_to_idx.pkl")
-            joblib.dump(self.item_to_idx, f"{model_dir}/item_to_idx.pkl")
-            
-            logger.info("Models saved successfully")
-            
-        except Exception as e:
-            logger.error(f"Error saving models: {e}")
-    
-    def get_hybrid_recommendations(self, user_id: int, limit: int = 20) -> Dict[str, Any]:
-        """Get recommendations using hybrid approach"""
-        try:
-            recommendations = {}
-            
-            # LightFM recommendations
-            lightfm_recs = self._get_lightfm_recommendations(user_id, limit)
-            recommendations['lightfm'] = lightfm_recs
-            
-            # Collaborative filtering recommendations
-            cf_recs = self._get_collaborative_recommendations(user_id, limit)
-            recommendations['collaborative'] = cf_recs
-            
-            # Content-based recommendations
-            content_recs = self._get_content_recommendations(user_id, limit)
-            recommendations['content_based'] = content_recs
-            
-            # Popularity-based recommendations
-            popularity_recs = self._get_popularity_recommendations(user_id, limit)
-            recommendations['popularity'] = popularity_recs
-            
-            # Combine recommendations with weights
-            final_recs = self._combine_recommendations(recommendations, {
-                'lightfm': 0.3,
-                'collaborative': 0.25,
-                'content_based': 0.25,
-                'popularity': 0.2
-            })
-            
-            return {
-                'recommendations': final_recs[:limit],
-                'individual_algorithms': recommendations,
-                'algorithm_weights': {
-                    'lightfm': 0.3,
-                    'collaborative': 0.25,
-                    'content_based': 0.25,
-                    'popularity': 0.2
-                }
-            }
-            
-        except Exception as e:
-            logger.error(f"Error getting hybrid recommendations: {e}")
-            return {'recommendations': [], 'error': str(e)}
-    
-    def _get_lightfm_recommendations(self, user_id: int, limit: int) -> List[int]:
-        """Get LightFM recommendations"""
-        try:
-            if user_id not in self.user_to_idx:
-                return []
-            
-            user_idx = self.user_to_idx[user_id]
-            n_items = len(self.item_to_idx)
-            
-            scores = self.models['lightfm'].predict(
-                user_idx,
-                np.arange(n_items)
-            )
-            
-            # Get top recommendations
-            top_items = np.argsort(scores)[::-1][:limit * 2]  # Get more for filtering
-            
-            # Convert back to content IDs and filter seen items
-            recommendations = []
-            seen_items = self._get_user_seen_items(user_id)
-            
-            for item_idx in top_items:
-                content_id = self.idx_to_item[item_idx]
-                if content_id not in seen_items:
-                    recommendations.append(content_id)
-                if len(recommendations) >= limit:
-                    break
-            
-            return recommendations
-            
-        except Exception as e:
-            logger.warning(f"Error in LightFM recommendations: {e}")
-            return []
-    
-    def _get_collaborative_recommendations(self, user_id: int, limit: int) -> List[int]:
-        """Get collaborative filtering recommendations"""
-        try:
-            if user_id not in self.user_to_idx:
-                return []
-            
-            user_idx = self.user_to_idx[user_id]
-            
-            # Use implicit ALS
-            recommendations, scores = self.models['implicit_als'].recommend(
-                user_idx,
-                self.implicit_sparse[user_idx],
-                N=limit * 2,
-                filter_already_liked_items=True
-            )
-            
-            # Convert to content IDs
-            content_ids = [self.idx_to_item[idx] for idx in recommendations]
-            return content_ids[:limit]
-            
-        except Exception as e:
-            logger.warning(f"Error in collaborative recommendations: {e}")
-            return []
-    
-    def _get_content_recommendations(self, user_id: int, limit: int) -> List[int]:
-        """Get content-based recommendations"""
-        try:
-            # Get user's favorite content
-            user_interactions = self.interactions_df[
-                (self.interactions_df['user_id'] == user_id) &
-                (self.interactions_df['interaction_type'].isin(['favorite', 'like']))
-            ]
-            
-            if user_interactions.empty:
-                return []
-            
-            # Get content indices
-            favorite_content_ids = user_interactions['content_id'].tolist()
-            content_indices = []
-            
-            for content_id in favorite_content_ids:
-                try:
-                    idx = self.content_df[self.content_df['id'] == content_id].index[0]
-                    content_indices.append(idx)
-                except:
-                    continue
-            
-            if not content_indices:
-                return []
-            
-            # Calculate average similarity
-            similarities = self.content_similarity[content_indices].mean(axis=0)
-            top_indices = np.argsort(similarities)[::-1]
-            
-            # Get recommendations
-            recommendations = []
-            seen_items = self._get_user_seen_items(user_id)
-            
-            for idx in top_indices:
-                content_id = self.content_df.iloc[idx]['id']
-                if content_id not in seen_items and content_id not in favorite_content_ids:
-                    recommendations.append(content_id)
-                if len(recommendations) >= limit:
-                    break
-            
-            return recommendations
-            
-        except Exception as e:
-            logger.warning(f"Error in content-based recommendations: {e}")
-            return []
-    
-    def _get_popularity_recommendations(self, user_id: int, limit: int) -> List[int]:
-        """Get popularity-based recommendations"""
-        try:
-            # Get user preferences
-            user_data = self.users_df[self.users_df['id'] == user_id]
-            if user_data.empty:
-                # Default popular content
-                popular_content = self.content_df.nlargest(limit * 2, 'popularity')
-            else:
-                # Filter by user preferences
-                user_prefs = user_data.iloc[0].get('preferences', {})
-                preferred_genres = user_prefs.get('favorite_genres', [])
+            for _, interaction in user_interactions.iterrows():
+                if last_time and (interaction['created_at'] - last_time).total_seconds() > 1800:  # 30 min gap
+                    if len(session) > 1:
+                        sessions.append(session)
+                    session = []
                 
-                if preferred_genres:
-                    # Filter by preferred genres
-                    filtered_content = self.content_df[
-                        self.content_df['genres'].apply(
-                            lambda x: any(genre in x for genre in preferred_genres)
-                        )
-                    ]
-                    popular_content = filtered_content.nlargest(limit * 2, 'popularity')
-                else:
-                    popular_content = self.content_df.nlargest(limit * 2, 'popularity')
+                session.append(item_map.get(interaction['content_id'], 0))
+                last_time = interaction['created_at']
             
-            # Filter seen items
-            seen_items = self._get_user_seen_items(user_id)
-            recommendations = []
-            
-            for _, content in popular_content.iterrows():
-                if content['id'] not in seen_items:
-                    recommendations.append(content['id'])
-                if len(recommendations) >= limit:
-                    break
-            
-            return recommendations
-            
-        except Exception as e:
-            logger.warning(f"Error in popularity recommendations: {e}")
-            return []
+            if len(session) > 1:
+                sessions.append(session)
+        
+        # Train model on sessions
+        # ... (implementation details)
     
-    def _get_user_seen_items(self, user_id: int) -> set:
-        """Get items user has already seen"""
-        user_interactions = self.interactions_df[
-            self.interactions_df['user_id'] == user_id
+    def get_recommendations(self, user_id, n_recommendations=20):
+        """Get hybrid recommendations combining all models"""
+        recommendations = defaultdict(list)
+        
+        # 1. Collaborative filtering recommendations
+        cf_recs = self._get_collaborative_recommendations(user_id, n_recommendations)
+        recommendations['collaborative'] = cf_recs
+        
+        # 2. Implicit feedback recommendations
+        implicit_recs = self._get_implicit_recommendations(user_id, n_recommendations)
+        recommendations['implicit'] = implicit_recs
+        
+        # 3. Content-based recommendations
+        content_recs = self._get_content_recommendations(user_id, n_recommendations)
+        recommendations['content'] = content_recs
+        
+        # 4. Graph-based recommendations
+        graph_recs = self.graph_model.recommend(user_id, n_recommendations)
+        recommendations['graph'] = graph_recs
+        
+        # 5. Neural network recommendations
+        neural_recs = self._get_neural_recommendations(user_id, n_recommendations)
+        recommendations['neural'] = neural_recs
+        
+        # 6. Trending recommendations
+        trending_recs = self.trend_analyzer.get_trending(n_recommendations)
+        recommendations['trending'] = trending_recs
+        
+        # Combine all recommendations using weighted voting
+        final_recommendations = self._combine_recommendations(
+            recommendations, 
+            self.model_weights,
+            n_recommendations
+        )
+        
+        # Apply multi-armed bandit for exploration
+        final_recommendations = self._apply_exploration(
+            user_id, 
+            final_recommendations,
+            n_recommendations
+        )
+        
+        return final_recommendations
+    
+    def _get_collaborative_recommendations(self, user_id, n_recommendations):
+        """Get collaborative filtering recommendations"""
+        all_recs = []
+        
+        for name, model in self.cf_models.items():
+            try:
+                # Get predictions for all items
+                predictions = []
+                for item_id in range(1000):  # Assuming item IDs up to 1000
+                    pred = model.predict(user_id, item_id)
+                    predictions.append((item_id, pred.est))
+                
+                # Sort and get top N
+                predictions.sort(key=lambda x: x[1], reverse=True)
+                all_recs.extend(predictions[:n_recommendations])
+            except:
+                pass
+        
+        # Aggregate and rank
+        item_scores = defaultdict(list)
+        for item_id, score in all_recs:
+            item_scores[item_id].append(score)
+        
+        # Average scores
+        final_recs = [
+            (item_id, np.mean(scores))
+            for item_id, scores in item_scores.items()
         ]
-        return set(user_interactions['content_id'].tolist())
+        
+        final_recs.sort(key=lambda x: x[1], reverse=True)
+        return final_recs[:n_recommendations]
     
-    def _combine_recommendations(self, recommendations: Dict, weights: Dict) -> List[int]:
-        """Combine recommendations from multiple algorithms"""
+    def _get_implicit_recommendations(self, user_id, n_recommendations):
+        """Get implicit feedback recommendations"""
+        return self.implicit_model.recommend(user_id, n_recommendations)
+    
+    def _get_content_recommendations(self, user_id, n_recommendations):
+        """Get content-based recommendations"""
+        # Get user profile
+        user_profile = self._build_user_profile(user_id)
+        
+        if not user_profile:
+            return []
+        
+        # Search for similar content
+        similar_items = self.vector_search.search(user_profile, n_recommendations * 2)
+        
+        # Filter out already interacted items
+        interacted = self._get_user_interactions(user_id)
+        filtered = [
+            (item_id, score) 
+            for item_id, score in similar_items 
+            if item_id not in interacted
+        ]
+        
+        return filtered[:n_recommendations]
+    
+    def _get_neural_recommendations(self, user_id, n_recommendations):
+        """Get neural network recommendations"""
+        if not self.ncf_model:
+            return []
+        
+        # Get predictions for all items
+        predictions = []
+        user_tensor = torch.LongTensor([user_id])
+        
+        with torch.no_grad():
+            for item_id in range(1000):  # Assuming item IDs up to 1000
+                item_tensor = torch.LongTensor([item_id])
+                score = self.ncf_model(user_tensor, item_tensor).item()
+                predictions.append((item_id, score))
+        
+        predictions.sort(key=lambda x: x[1], reverse=True)
+        return predictions[:n_recommendations]
+    
+    def _combine_recommendations(self, recommendations_dict, weights, n_recommendations):
+        """Combine recommendations from multiple models"""
         combined_scores = defaultdict(float)
         
-        for algorithm, recs in recommendations.items():
-            weight = weights.get(algorithm, 0.25)
-            for i, content_id in enumerate(recs):
-                # Higher weight for higher ranking
-                score = weight * (1.0 / (i + 1))
-                combined_scores[content_id] += score
+        for method, recs in recommendations_dict.items():
+            weight = weights.get(method, 0.1)
+            
+            # Normalize scores to [0, 1]
+            if recs:
+                max_score = max(score for _, score in recs)
+                min_score = min(score for _, score in recs)
+                score_range = max_score - min_score if max_score != min_score else 1
+                
+                for item_id, score in recs:
+                    normalized_score = (score - min_score) / score_range
+                    combined_scores[item_id] += normalized_score * weight
         
         # Sort by combined score
-        sorted_recs = sorted(
-            combined_scores.items(),
-            key=lambda x: x[1],
+        final_recs = sorted(
+            combined_scores.items(), 
+            key=lambda x: x[1], 
             reverse=True
         )
         
-        return [content_id for content_id, _ in sorted_recs]
-
-# Global model instance
-recommender_system = AdvancedRecommenderSystem()
-
-# Background task for model training
-async def train_models_background():
-    """Background task to train models"""
-    logger.info("Starting background model training")
+        return final_recs[:n_recommendations]
     
-    # Load data
-    if recommender_system.load_data_from_db():
-        # Train models
-        success = recommender_system.train_all_models()
-        if success:
-            logger.info("Background model training completed successfully")
-        else:
-            logger.error("Background model training failed")
-    else:
-        logger.error("Failed to load data for model training")
-
-# API Endpoints
-
-@app.on_event("startup")
-async def startup_event():
-    """Initialize models on startup"""
-    logger.info("Starting ML service...")
-    
-    # Try to load existing models
-    try:
-        # Load data and train models in background
-        asyncio.create_task(train_models_background())
-    except Exception as e:
-        logger.error(f"Error during startup: {e}")
-
-@app.get("/")
-async def root():
-    return {
-        "service": "Movie Recommendation ML Service",
-        "version": "2.0.0",
-        "status": "running",
-        "models_trained": recommender_system.is_trained,
-        "last_update": recommender_system.last_update.isoformat() if recommender_system.last_update else None
-    }
-
-@app.post("/recommend", response_model=RecommendationResponse)
-async def get_recommendations(request: RecommendationRequest):
-    """Get personalized recommendations for a user"""
-    try:
-        if not recommender_system.is_trained:
-            # Return popular recommendations as fallback
-            popular_recs = recommender_system._get_popularity_recommendations(
-                request.user_id, request.limit
-            )
-            return RecommendationResponse(
-                recommendations=popular_recs,
-                scores=[1.0] * len(popular_recs),
-                algorithm_used="popularity_fallback",
-                model_version="1.0",
-                explanation={
-                    "reason": "Models not trained yet, using popularity-based recommendations",
-                    "total_algorithms": 1
-                }
+    def _apply_exploration(self, user_id, recommendations, n_recommendations):
+        """Apply multi-armed bandit for exploration vs exploitation"""
+        if user_id not in self.bandits:
+            self.bandits[user_id] = MultiArmedBandit(
+                n_arms=len(recommendations),
+                epsilon=app.config['EXPLORATION_RATE']
             )
         
-        # Get hybrid recommendations
-        result = recommender_system.get_hybrid_recommendations(
-            request.user_id, request.limit
-        )
+        bandit = self.bandits[user_id]
         
-        recommendations = result.get('recommendations', [])
+        # Mix exploitation and exploration
+        exploited = recommendations[:int(n_recommendations * 0.8)]
         
-        return RecommendationResponse(
-            recommendations=recommendations,
-            scores=[1.0] * len(recommendations),  # Normalized scores
-            algorithm_used="hybrid",
-            model_version="2.0",
-            explanation={
-                "algorithms_used": list(result.get('algorithm_weights', {}).keys()),
-                "total_recommendations": len(recommendations),
-                "personalization_score": min(len(recommendations) / request.limit, 1.0)
-            }
-        )
-        
-    except Exception as e:
-        logger.error(f"Error getting recommendations: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        # Get some random items for exploration
+        try:
+            conn = get_db_connection()
+            explore_query = """
+                SELECT id FROM content 
+                WHERE id NOT IN (
+                    SELECT content_id FROM watch_history WHERE user_id = %s
+                    UNION
+                    SELECT content_id FROM ratings WHERE user_id = %s
+                )
+                ORDER BY RANDOM() 
+                LIMIT %s
+            """
+            
+            with conn.cursor() as cursor:
+                cursor.execute(explore_query, (user_id, user_id, int(n_recommendations * 0.2)))
+                explored = [(row['id'], 0.5) for row in cursor.fetchall()]
+            
+            conn.close()
+            
+            return exploited + explored
+            
+        except:
+            return recommendations
+    
+    def _build_user_profile(self, user_id):
+        """Build user profile vector"""
+        try:
+            conn = get_db_connection()
+            
+            # Get user's interacted items
+            query = """
+                SELECT c.genres, c.cast, r.rating
+                FROM ratings r
+                JOIN content c ON r.content_id = c.id
+                WHERE r.user_id = %s AND r.rating >= 7
+                ORDER BY r.created_at DESC
+                LIMIT 20
+            """
+            
+            with conn.cursor() as cursor:
+                cursor.execute(query, (user_id,))
+                interactions = cursor.fetchall()
+            
+            conn.close()
+            
+            if not interactions:
+                return None
+            
+            # Build profile vector
+            # ... (implementation details)
+            
+            return np.random.rand(128)  # Placeholder
+            
+        except:
+            return None
+    
+    def _get_user_interactions(self, user_id):
+        """Get set of items user has interacted with"""
+        try:
+            conn = get_db_connection()
+            
+            query = """
+                SELECT DISTINCT content_id 
+                FROM (
+                    SELECT content_id FROM watch_history WHERE user_id = %s
+                    UNION
+                    SELECT content_id FROM ratings WHERE user_id = %s
+                    UNION
+                    SELECT content_id FROM favorites WHERE user_id = %s
+                ) interactions
+            """
+            
+            with conn.cursor() as cursor:
+                cursor.execute(query, (user_id, user_id, user_id))
+                interacted = {row['content_id'] for row in cursor.fetchall()}
+            
+            conn.close()
+            return interacted
+            
+        except:
+            return set()
 
-@app.post("/similar")
-async def get_similar_content(request: ContentSimilarityRequest):
-    """Get similar content based on content ID"""
-    try:
-        if not recommender_system.is_trained:
-            raise HTTPException(status_code=503, detail="Models not trained yet")
+class FeatureExtractor:
+    """Extract features from content for various models"""
+    
+    def __init__(self):
+        self.tfidf_vectorizer = None
+        self.genre_encoder = None
+        self.pca = PCA(n_components=50)
         
-        # Find content index
-        content_row = recommender_system.content_df[
-            recommender_system.content_df['id'] == request.content_id
+    def fit(self, content_df):
+        """Fit feature extractors"""
+        # TF-IDF for text features
+        from sklearn.feature_extraction.text import TfidfVectorizer
+        
+        text_features = content_df['title'] + ' ' + content_df['description'].fillna('')
+        self.tfidf_vectorizer = TfidfVectorizer(max_features=1000, stop_words='english')
+        self.tfidf_vectorizer.fit(text_features)
+        
+        # Genre encoding
+        all_genres = set()
+        for genres in content_df['genres']:
+            all_genres.update(genres)
+        
+        self.genre_encoder = {genre: i for i, genre in enumerate(all_genres)}
+        
+        logger.info("Fitted feature extractors")
+    
+    def extract(self, content):
+        """Extract features from content"""
+        features = []
+        
+        # Text features
+        text = content.get('title', '') + ' ' + content.get('description', '')
+        text_features = self.tfidf_vectorizer.transform([text]).toarray()[0]
+        features.extend(text_features)
+        
+        # Genre features
+        genre_vector = np.zeros(len(self.genre_encoder))
+        for genre in content.get('genres', []):
+            if genre in self.genre_encoder:
+                genre_vector[self.genre_encoder[genre]] = 1
+        features.extend(genre_vector)
+        
+        # Numerical features
+        features.extend([
+            content.get('tmdb_rating', 0) / 10,
+            content.get('imdb_rating', 0) / 10,
+            content.get('popularity_score', 0) / 1000,
+            content.get('view_count', 0) / 1000,
+            1 if content.get('is_telugu') else 0,
+            1 if content.get('is_hindi') else 0,
+            1 if content.get('is_tamil') else 0,
+            1 if content.get('is_kannada') else 0
+        ])
+        
+        return np.array(features)
+
+class TrendAnalyzer:
+    """Analyze trends in user behavior and content popularity"""
+    
+    def __init__(self):
+        self.trending_items = []
+        self.seasonal_patterns = {}
+        self.genre_trends = {}
+        
+    def analyze(self, interactions_df, content_df):
+        """Analyze trends from interaction data"""
+        # Time-based trending
+        recent = datetime.utcnow() - timedelta(days=app.config['TREND_WINDOW'])
+        recent_interactions = interactions_df[
+            pd.to_datetime(interactions_df['created_at']) > recent
         ]
         
-        if content_row.empty:
-            raise HTTPException(status_code=404, detail="Content not found")
+        # Calculate trending score
+        trending_scores = recent_interactions.groupby('content_id').agg({
+            'user_id': 'count',
+            'implicit_rating': 'mean'
+        }).rename(columns={'user_id': 'interaction_count'})
         
-        content_idx = content_row.index[0]
+        # Weighted trending score
+        trending_scores['trend_score'] = (
+            trending_scores['interaction_count'] * 0.7 +
+            trending_scores['implicit_rating'] * 10 * 0.3
+        )
         
-        # Get similarities
-        similarities = recommender_system.content_similarity[content_idx]
+        self.trending_items = trending_scores.sort_values(
+            'trend_score', ascending=False
+        ).head(100).index.tolist()
         
-        # Filter by threshold and get top similar
-        similar_indices = np.where(similarities >= request.similarity_threshold)[0]
-        similar_scores = similarities[similar_indices]
+        # Genre trends
+        for _, interaction in recent_interactions.iterrows():
+            content = content_df[content_df['id'] == interaction['content_id']]
+            if not content.empty:
+                genres = content.iloc[0]['genres']
+                for genre in genres:
+                    if genre not in self.genre_trends:
+                        self.genre_trends[genre] = []
+                    self.genre_trends[genre].append(interaction['created_at'])
         
-        # Sort by similarity
-        sorted_idx = np.argsort(similar_scores)[::-1][1:request.limit+1]  # Exclude self
+        logger.info("Analyzed trends")
+    
+    def get_trending(self, n_items=20):
+        """Get current trending items"""
+        return [(item_id, 1.0) for item_id in self.trending_items[:n_items]]
+    
+    def get_genre_trends(self):
+        """Get trending genres"""
+        genre_scores = {}
         
-        similar_content_ids = []
-        scores = []
+        for genre, timestamps in self.genre_trends.items():
+            # Recent activity
+            recent = sum(1 for ts in timestamps if 
+                        (datetime.utcnow() - pd.to_datetime(ts)).days < 7)
+            genre_scores[genre] = recent
         
-        for idx in sorted_idx:
-            actual_idx = similar_indices[idx]
-            content_id = recommender_system.content_df.iloc[actual_idx]['id']
-            score = similar_scores[idx]
-            
-            similar_content_ids.append(content_id)
-            scores.append(float(score))
-        
-        return {
-            "similar_content": similar_content_ids,
-            "similarity_scores": scores,
-            "base_content_id": request.content_id,
-            "algorithm": "content_based_cosine_similarity"
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting similar content: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        return sorted(genre_scores.items(), key=lambda x: x[1], reverse=True)
 
-@app.post("/update_interaction")
-async def update_user_interaction(request: UserInteractionRequest):
-    """Update user interaction for real-time learning"""
-    try:
-        # Store interaction in cache for batch processing
-        if redis_client:
-            interaction_data = {
-                "user_id": request.user_id,
-                "content_id": request.content_id,
-                "interaction_type": request.interaction_type,
-                "rating": request.rating,
-                "timestamp": datetime.now().isoformat()
-            }
-            
-            redis_client.lpush(
-                "new_interactions",
-                json.dumps(interaction_data)
-            )
-            
-            # Trim list to keep only recent interactions
-            redis_client.ltrim("new_interactions", 0, 9999)
-        
-        return {"status": "success", "message": "Interaction recorded"}
-        
-    except Exception as e:
-        logger.error(f"Error updating interaction: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+# Initialize recommender
+recommender = AdvancedHybridRecommender()
 
-@app.post("/retrain")
-async def retrain_models(background_tasks: BackgroundTasks):
-    """Trigger model retraining"""
-    try:
-        background_tasks.add_task(train_models_background)
-        return {"status": "success", "message": "Model retraining started"}
-        
-    except Exception as e:
-        logger.error(f"Error starting model retraining: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/health")
-async def health_check():
+# API Routes
+@app.route('/health', methods=['GET'])
+def health_check():
     """Health check endpoint"""
-    return {
-        "status": "healthy",
-        "models_trained": recommender_system.is_trained,
-        "last_update": recommender_system.last_update.isoformat() if recommender_system.last_update else None,
-        "model_metadata": recommender_system.model_metadata,
-        "redis_available": redis_client is not None
-    }
-
-@app.get("/stats")
-async def get_service_stats():
-    """Get service statistics"""
-    try:
-        stats = {
-            "models_trained": recommender_system.is_trained,
-            "last_update": recommender_system.last_update.isoformat() if recommender_system.last_update else None,
-            "model_metadata": recommender_system.model_metadata
+    return jsonify({
+        'status': 'healthy',
+        'last_model_update': recommender.last_update.isoformat() if recommender.last_update else None,
+        'models_loaded': {
+            'collaborative': bool(recommender.cf_models),
+            'implicit': bool(recommender.implicit_model),
+            'gradient_boosting': bool(recommender.gb_model.lgb_model),
+            'graph': bool(recommender.graph_model.graph),
+            'neural': bool(recommender.ncf_model)
         }
+    })
+
+@app.route('/recommend', methods=['POST'])
+def recommend():
+    """Get recommendations for a user"""
+    data = request.get_json()
+    user_id = data.get('user_id')
+    n_recommendations = data.get('n_recommendations', 20)
+    method = data.get('method', 'hybrid')
+    
+    if not user_id:
+        return jsonify({'error': 'user_id required'}), 400
+    
+    # Check cache
+    cache_key = f"recommendations:{user_id}:{n_recommendations}:{method}"
+    if redis_client:
+        cached = redis_client.get(cache_key)
+        if cached:
+            return jsonify({
+                'recommendations': json.loads(cached),
+                'method': method,
+                'cached': True
+            })
+    
+    # Get recommendations
+    try:
+        if method == 'hybrid':
+            recommendations = recommender.get_recommendations(user_id, n_recommendations)
+        elif method == 'collaborative':
+            recommendations = recommender._get_collaborative_recommendations(user_id, n_recommendations)
+        elif method == 'content':
+            recommendations = recommender._get_content_recommendations(user_id, n_recommendations)
+        elif method == 'graph':
+            recommendations = recommender.graph_model.recommend(user_id, n_recommendations)
+        elif method == 'neural':
+            recommendations = recommender._get_neural_recommendations(user_id, n_recommendations)
+        elif method == 'trending':
+            recommendations = recommender.trend_analyzer.get_trending(n_recommendations)
+        else:
+            return jsonify({'error': 'Invalid method'}), 400
         
-        if recommender_system.is_trained:
-            stats.update({
-                "data_stats": {
-                    "total_users": len(recommender_system.users_df),
-                    "total_content": len(recommender_system.content_df),
-                    "total_interactions": len(recommender_system.interactions_df),
-                    "content_similarity_matrix_shape": recommender_system.content_similarity.shape,
-                    "user_clusters": len(set(recommender_system.user_clusters))
-                }
+        # Format recommendations
+        formatted_recs = [
+            {'content_id': int(item_id), 'score': float(score)}
+            for item_id, score in recommendations
+        ]
+        
+        # Cache results
+        if redis_client:
+            redis_client.setex(
+                cache_key,
+                3600,  # 1 hour cache
+                json.dumps(formatted_recs)
+            )
+        
+        return jsonify({
+            'recommendations': formatted_recs,
+            'method': method,
+            'cached': False
+        })
+        
+    except Exception as e:
+        logger.error(f"Error generating recommendations: {e}")
+        return jsonify({'error': 'Failed to generate recommendations'}), 500
+
+@app.route('/similar', methods=['POST'])
+def find_similar():
+    """Find similar content"""
+    data = request.get_json()
+    content_id = data.get('content_id')
+    n_similar = data.get('n_similar', 10)
+    method = data.get('method', 'content')
+    
+    if not content_id:
+        return jsonify({'error': 'content_id required'}), 400
+    
+    try:
+        if method == 'content':
+            # Use vector search
+            if content_id in recommender.graph_model.node_embeddings:
+                embedding = recommender.graph_model.node_embeddings[f"i_{content_id}"]
+                similar_items = recommender.vector_search.search(embedding, n_similar)
+            else:
+                similar_items = []
+        elif method == 'collaborative':
+            # Find users who liked this item and what else they liked
+            similar_items = []
+        else:
+            return jsonify({'error': 'Invalid method'}), 400
+        
+        formatted_items = [
+            {'content_id': int(item_id), 'similarity': float(score)}
+            for item_id, score in similar_items
+        ]
+        
+        return jsonify({
+            'similar_items': formatted_items,
+            'method': method
+        })
+        
+    except Exception as e:
+        logger.error(f"Error finding similar items: {e}")
+        return jsonify({'error': 'Failed to find similar items'}), 500
+
+@app.route('/explain', methods=['POST'])
+def explain_recommendation():
+    """Explain why an item was recommended"""
+    data = request.get_json()
+    user_id = data.get('user_id')
+    content_id = data.get('content_id')
+    
+    if not all([user_id, content_id]):
+        return jsonify({'error': 'user_id and content_id required'}), 400
+    
+    explanation = {
+        'user_id': user_id,
+        'content_id': content_id,
+        'reasons': []
+    }
+    
+    try:
+        # Check if user has similar taste
+        conn = get_db_connection()
+        
+        # Find similar users who liked this content
+        similar_users_query = """
+            SELECT u2.user_id, COUNT(*) as common_items
+            FROM ratings r1
+            JOIN ratings r2 ON r1.content_id = r2.content_id
+            JOIN ratings u2 ON r2.user_id = u2.user_id
+            WHERE r1.user_id = %s AND r2.user_id != %s
+                AND r1.rating >= 7 AND r2.rating >= 7
+                AND u2.content_id = %s AND u2.rating >= 7
+            GROUP BY u2.user_id
+            ORDER BY common_items DESC
+            LIMIT 5
+        """
+        
+        with conn.cursor() as cursor:
+            cursor.execute(similar_users_query, (user_id, user_id, content_id))
+            similar_users = cursor.fetchall()
+        
+        if similar_users:
+            explanation['reasons'].append({
+                'type': 'collaborative',
+                'description': f"{len(similar_users)} users with similar taste enjoyed this content"
             })
         
-        return stats
+        # Check genre match
+        user_genres_query = """
+            SELECT DISTINCT unnest(c.genres) as genre
+            FROM ratings r
+            JOIN content c ON r.content_id = c.id
+            WHERE r.user_id = %s AND r.rating >= 7
+        """
+        
+        content_genres_query = """
+            SELECT genres FROM content WHERE id = %s
+        """
+        
+        with conn.cursor() as cursor:
+            cursor.execute(user_genres_query, (user_id,))
+            user_genres = {row['genre'] for row in cursor.fetchall()}
+            
+            cursor.execute(content_genres_query, (content_id,))
+            content_data = cursor.fetchone()
+            content_genres = set(json.loads(content_data['genres']) if content_data else [])
+        
+        matching_genres = user_genres & content_genres
+        if matching_genres:
+            explanation['reasons'].append({
+                'type': 'content',
+                'description': f"Matches your preferred genres: {', '.join(matching_genres)}"
+            })
+        
+        # Check if trending
+        if content_id in recommender.trend_analyzer.trending_items[:20]:
+            explanation['reasons'].append({
+                'type': 'trending',
+                'description': "Currently trending and popular"
+            })
+        
+        conn.close()
+        
+        return jsonify(explanation)
         
     except Exception as e:
-        logger.error(f"Error getting stats: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error explaining recommendation: {e}")
+        return jsonify({'error': 'Failed to explain recommendation'}), 500
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8001)
+@app.route('/feedback', methods=['POST'])
+def record_feedback():
+    """Record user feedback on recommendations"""
+    data = request.get_json()
+    user_id = data.get('user_id')
+    content_id = data.get('content_id')
+    feedback_type = data.get('feedback_type')  # 'click', 'like', 'dislike', 'watch'
+    
+    if not all([user_id, content_id, feedback_type]):
+        return jsonify({'error': 'Missing required fields'}), 400
+    
+    try:
+        # Update bandit if exists
+        if user_id in recommender.bandits:
+            # Calculate reward based on feedback type
+            rewards = {
+                'click': 0.3,
+                'watch': 0.7,
+                'like': 1.0,
+                'dislike': -0.5
+            }
+            reward = rewards.get(feedback_type, 0)
+            
+            # Update bandit (simplified - would need to track which arm corresponds to which item)
+            recommender.bandits[user_id].update(0, reward)
+        
+        # Log feedback for future model updates
+        if redis_client:
+            feedback_key = f"feedback:{user_id}:{content_id}"
+            redis_client.setex(feedback_key, 86400, feedback_type)  # 24 hour TTL
+        
+        return jsonify({'status': 'success'})
+        
+    except Exception as e:
+        logger.error(f"Error recording feedback: {e}")
+        return jsonify({'error': 'Failed to record feedback'}), 500
+
+@app.route('/update_models', methods=['POST'])
+def update_models():
+    """Manually trigger model update"""
+    try:
+        recommender.update_models()
+        return jsonify({
+            'status': 'success',
+            'updated_at': recommender.last_update.isoformat() if recommender.last_update else None
+        })
+    except Exception as e:
+        logger.error(f"Error updating models: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/stats', methods=['GET'])
+def get_stats():
+    """Get model statistics"""
+    stats = {
+        'last_update': recommender.last_update.isoformat() if recommender.last_update else None,
+        'models': {
+            'collaborative': {
+                'svd': 'trained' if recommender.cf_models.get('svd') else 'not trained',
+                'svdpp': 'trained' if recommender.cf_models.get('svdpp') else 'not trained',
+                'nmf': 'trained' if recommender.cf_models.get('nmf') else 'not trained',
+                'knn': 'trained' if recommender.cf_models.get('knn') else 'not trained'
+            },
+            'implicit': {
+                'als': 'trained' if recommender.implicit_model.als_model else 'not trained',
+                'bpr': 'trained' if recommender.implicit_model.bpr_model else 'not trained',
+                'lmf': 'trained' if recommender.implicit_model.lmf_model else 'not trained'
+            },
+            'gradient_boosting': {
+                'lightgbm': 'trained' if recommender.gb_model.lgb_model else 'not trained',
+                'xgboost': 'trained' if recommender.gb_model.xgb_model else 'not trained'
+            },
+            'graph': {
+                'nodes': recommender.graph_model.graph.number_of_nodes() if recommender.graph_model.graph else 0,
+                'edges': recommender.graph_model.graph.number_of_edges() if recommender.graph_model.graph else 0
+            },
+            'neural': {
+                'ncf': 'trained' if recommender.ncf_model else 'not trained',
+                'session_rnn': 'trained' if recommender.session_model else 'not trained'
+            }
+        },
+        'trends': {
+            'trending_items': len(recommender.trend_analyzer.trending_items),
+            'genre_trends': recommender.trend_analyzer.get_genre_trends()[:5]
+        }
+    }
+    
+    return jsonify(stats)
+
+@app.route('/ab_test', methods=['POST'])
+def ab_test():
+    """A/B testing endpoint for comparing recommendation strategies"""
+    data = request.get_json()
+    user_id = data.get('user_id')
+    n_recommendations = data.get('n_recommendations', 20)
+    
+    if not user_id:
+        return jsonify({'error': 'user_id required'}), 400
+    
+    # Randomly assign user to test group
+    test_group = 'A' if hash(str(user_id)) % 2 == 0 else 'B'
+    
+    if test_group == 'A':
+        # Traditional collaborative filtering
+        recommendations = recommender._get_collaborative_recommendations(user_id, n_recommendations)
+    else:
+        # Advanced hybrid approach
+        recommendations = recommender.get_recommendations(user_id, n_recommendations)
+    
+    formatted_recs = [
+        {'content_id': int(item_id), 'score': float(score)}
+        for item_id, score in recommendations
+    ]
+    
+    return jsonify({
+        'recommendations': formatted_recs,
+        'test_group': test_group,
+        'strategy': 'collaborative' if test_group == 'A' else 'hybrid'
+    })
+
+# Background model update
+from threading import Thread
+import time
+
+def periodic_model_update():
+    """Periodically update recommendation models"""
+    while True:
+        time.sleep(app.config['MODEL_UPDATE_INTERVAL'])
+        try:
+            logger.info("Starting periodic model update")
+            recommender.update_models()
+            
+            # Clean up old bandits
+            if len(recommender.bandits) > 10000:
+                # Keep only recently active users
+                recommender.bandits = dict(
+                    list(recommender.bandits.items())[-5000:]
+                )
+                
+        except Exception as e:
+            logger.error(f"Error in periodic model update: {e}")
+
+# Start background thread
+update_thread = Thread(target=periodic_model_update, daemon=True)
+update_thread.start()
+
+# Initialize models on startup
+with app.app_context():
+    try:
+        recommender.update_models()
+    except Exception as e:
+        logger.error(f"Failed to initialize models: {e}")
+
+if __name__ == '__main__':
+    app.run(debug=True, port=5001)

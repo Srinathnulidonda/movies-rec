@@ -1,17 +1,47 @@
-fastapi
-uvicorn
-pydantic
-pandas
+# Flask
+Flask
+Flask-CORS
+
+# PyTorch (CPU version for Render)
+torch
+torchvision
+--find-links https://download.pytorch.org/whl/torch_stable.html
+
+# Scientific computing
 numpy
+pandas
 scipy
 scikit-learn
+
+# Recommendation systems
+surprise
 implicit
-lightfm
-joblib
+
+# Gradient boosting
+lightgbm
+xgboost
+
+# Graph analysis
+networkx
+
+# Vector similarity search
+faiss-cpu
+
+# Feature extraction
+gensim
+
+# Database
+psycopg2-binary
+
+# Redis
 redis
-aioredis
-python-multipart
-asyncio
-concurrent-futures
-python-json-logger
+
+# Data serialization
+joblib
+
+# Utilities
+python-dateutil
+python-dotenv
+
+# Web server for production
 gunicorn
