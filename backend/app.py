@@ -38,12 +38,12 @@ app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', secrets.token_he
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(days=7)
 
 # Database configuration
-DATABASE_URL = os.environ.get('DATABASE_URL', 'sqlite:///movie_recommendations.db')
+DATABASE_URL = os.environ.get('DATABASE_URL', 'postgresql://movies_rec_mqs4_user:IhZQfhvaLsJ4O0bXGznHfSZjr0rym5QJ@dpg-d1l0vdvdiees73f2olp0-a/movies_rec_mqs4')
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 # Redis configuration
-REDIS_URL = os.environ.get('REDIS_URL', 'redis://localhost:6379')
+REDIS_URL = os.environ.get('REDIS_URL', 'redis://red-d1l75ap5pdvs73bk295g:rE0xu32o3U2bNUQKz6mG7KIybWzle9xf@red-d1l75ap5pdvs73bk295g:6379')
 try:
     redis_client = redis.from_url(REDIS_URL, decode_responses=True)
     redis_client.ping()
