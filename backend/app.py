@@ -116,7 +116,7 @@ class Content(Base):
     poster_url = Column(String(500))
     backdrop_url = Column(String(500))
     trailer_urls = Column(Text)  # JSON array
-    metadata = Column(Text)  # JSON for additional data
+    content_metadata = Column(Text)  # JSON for additional data - CHANGED THIS LINE
     popularity_score = Column(Float, default=0.0)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
