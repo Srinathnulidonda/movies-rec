@@ -1385,23 +1385,23 @@ def get_public_admin_recommendations():
         return jsonify({'error': 'Failed to get admin recommendations'}), 500
 
 # Initialize database
-@app.before_first_request
 def create_tables():
     try:
-        db.create_all()
-        
-        # Create admin user if not exists
-        admin = User.query.filter_by(username='admin').first()
-        if not admin:
-            admin = User(
-                username='admin',
-                email='admin@example.com',
-                password_hash=generate_password_hash('admin123'),
-                is_admin=True
-            )
-            db.session.add(admin)
-            db.session.commit()
-            logger.info("Admin user created with username: admin, password: admin123")
+        with app.app_context():
+            db.create_all()
+            
+            # Create admin user if not exists
+            admin = User.query.filter_by(username='admin').first()
+            if not admin:
+                admin = User(
+                    username='admin',
+                    email='admin@example.com',
+                    password_hash=generate_password_hash('admin123'),
+                    is_admin=True
+                )
+                db.session.add(admin)
+                db.session.commit()
+                logger.info("Admin user created with username: admin, password: admin123")
     except Exception as e:
         logger.error(f"Database initialization error: {e}")
 
@@ -1413,6 +1413,9 @@ def health_check():
         'timestamp': datetime.utcnow().isoformat(),
         'version': '1.0.0'
     }), 200
+
+# Initialize database when app starts
+create_tables()
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
