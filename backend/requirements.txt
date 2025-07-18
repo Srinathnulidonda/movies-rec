@@ -1,23 +1,36 @@
-setuptools
-wheel
+# Flask and extensions
 Flask
-flask-cors
-flask-limiter
-Werkzeug
-PyJWT
+Flask-SQLAlchemy
+Flask-JWT-Extended
+Flask-CORS
+
+# Database
 SQLAlchemy
 psycopg2-binary
-redis
-cachetools
-requests
+
+# Authentication
+Werkzeug
+
+# Async support
 aiohttp
 asyncio
-numpy
+
+# Data processing
 pandas
-scipy
+numpy
+
+# Machine Learning
 scikit-learn
-APScheduler
-geoip2
-python-telegram-bot
+
+# Caching
+redis
+
+# HTTP requests
+requests
+
+# Environment and utilities
 python-dotenv
+
+# Production server
 gunicorn
+python-telegram-bot
