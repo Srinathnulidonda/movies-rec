@@ -2,10 +2,10 @@
 Flask
 Flask-CORS
 
-# PyTorch (CPU version for Render)
+# PyTorch (CPU version for Render) - for Python 3.9-3.11
+--find-links https://download.pytorch.org/whl/torch_stable.html
 torch
 torchvision
---find-links https://download.pytorch.org/whl/torch_stable.html
 
 # Scientific computing
 numpy
@@ -13,9 +13,9 @@ pandas
 scipy
 scikit-learn
 
-# Recommendation systems
-surprise
+# Matrix factorization alternatives to surprise
 implicit
+tensorly
 
 # Gradient boosting
 lightgbm
@@ -38,10 +38,15 @@ redis
 
 # Data serialization
 joblib
+pickle-mixin
 
 # Utilities
 python-dateutil
 python-dotenv
+
+# Additional ML utilities
+annoy  # Approximate nearest neighbors
+hdbscan  # Clustering
 
 # Web server for production
 gunicorn
