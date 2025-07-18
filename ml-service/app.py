@@ -17,8 +17,7 @@ import requests
 import asyncio
 import concurrent.futures
 from scipy.sparse import csr_matrix
-from surprise import Dataset, Reader, SVD, accuracy
-from surprise.model_selection import train_test_split
+from scipy.linalg import svd
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -56,7 +55,7 @@ os.makedirs(MODEL_DIR, exist_ok=True)
 # Set device for PyTorch
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-# Database Models (matching main backend)
+# Database Models (same as before)
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
@@ -99,7 +98,76 @@ class UserInteraction(db.Model):
     rating = db.Column(db.Float)
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
 
-# PyTorch Neural Network Model
+# Custom SVD Implementation
+class CustomSVD:
+    def __init__(self, n_factors=50, learning_rate=0.01, regularization=0.02, epochs=100):
+        self.n_factors = n_factors
+        self.learning_rate = learning_rate
+        self.regularization = regularization
+        self.epochs = epochs
+        self.user_factors = None
+        self.item_factors = None
+        self.user_bias = None
+        self.item_bias = None
+        self.global_bias = None
+        self.user_map = {}
+        self.item_map = {}
+    
+    def fit(self, user_item_matrix):
+        """Train the SVD model"""
+        # Convert to numpy array if needed
+        if hasattr(user_item_matrix, 'toarray'):
+            ratings_matrix = user_item_matrix.toarray()
+        else:
+            ratings_matrix = np.array(user_item_matrix)
+        
+        n_users, n_items = ratings_matrix.shape
+        
+        # Initialize factors
+        self.user_factors = np.random.normal(0, 0.1, (n_users, self.n_factors))
+        self.item_factors = np.random.normal(0, 0.1, (n_items, self.n_factors))
+        self.user_bias = np.zeros(n_users)
+        self.item_bias = np.zeros(n_items)
+        self.global_bias = np.mean(ratings_matrix[ratings_matrix > 0])
+        
+        # Get non-zero indices
+        user_indices, item_indices = np.nonzero(ratings_matrix)
+        
+        # Training loop
+        for epoch in range(self.epochs):
+            for idx in range(len(user_indices)):
+                user_id = user_indices[idx]
+                item_id = item_indices[idx]
+                rating = ratings_matrix[user_id, item_id]
+                
+                # Compute prediction
+                prediction = self.global_bias + self.user_bias[user_id] + self.item_bias[item_id]
+                prediction += np.dot(self.user_factors[user_id], self.item_factors[item_id])
+                
+                # Compute error
+                error = rating - prediction
+                
+                # Update biases
+                user_bias_old = self.user_bias[user_id]
+                self.user_bias[user_id] += self.learning_rate * (error - self.regularization * self.user_bias[user_id])
+                self.item_bias[item_id] += self.learning_rate * (error - self.regularization * self.item_bias[item_id])
+                
+                # Update factors
+                user_factors_old = self.user_factors[user_id].copy()
+                self.user_factors[user_id] += self.learning_rate * (error * self.item_factors[item_id] - self.regularization * self.user_factors[user_id])
+                self.item_factors[item_id] += self.learning_rate * (error * user_factors_old - self.regularization * self.item_factors[item_id])
+    
+    def predict(self, user_id, item_id):
+        """Predict rating for a user-item pair"""
+        if user_id >= len(self.user_factors) or item_id >= len(self.item_factors):
+            return self.global_bias
+        
+        prediction = self.global_bias + self.user_bias[user_id] + self.item_bias[item_id]
+        prediction += np.dot(self.user_factors[user_id], self.item_factors[item_id])
+        
+        return max(0, min(5, prediction))  # Clamp between 0 and 5
+
+# PyTorch Neural Network Model (same as before)
 class RecommendationNet(nn.Module):
     def __init__(self, user_features_dim, content_features_dim, hidden_dim=64):
         super(RecommendationNet, self).__init__()
@@ -317,32 +385,46 @@ class AdvancedRecommendationEngine:
             return None
     
     def train_svd_model(self):
-        """Train SVD model for collaborative filtering"""
+        """Train custom SVD model for collaborative filtering"""
         try:
             if not hasattr(self, 'user_item_matrix'):
                 return False
             
-            # Prepare data for Surprise
-            ratings_data = []
-            for user_id, items in self.user_item_matrix.items():
-                for item_id, rating in items.items():
-                    ratings_data.append([user_id, item_id, rating])
+            # Create user-item matrix
+            all_users = set()
+            all_items = set()
             
-            if not ratings_data:
+            for user_id, items in self.user_item_matrix.items():
+                all_users.add(user_id)
+                all_items.update(items.keys())
+            
+            if not all_users or not all_items:
                 return False
             
-            df = pd.DataFrame(ratings_data, columns=['user_id', 'item_id', 'rating'])
+            # Create mappings
+            user_to_idx = {user: idx for idx, user in enumerate(sorted(all_users))}
+            item_to_idx = {item: idx for idx, item in enumerate(sorted(all_items))}
             
-            # Create Surprise dataset
-            reader = Reader(rating_scale=(0, 5))
-            dataset = Dataset.load_from_df(df, reader)
+            # Create matrix
+            matrix = np.zeros((len(all_users), len(all_items)))
             
-            # Train SVD model
-            self.svd_model = SVD(n_factors=50, random_state=42)
-            trainset = dataset.build_full_trainset()
-            self.svd_model.fit(trainset)
+            for user_id, items in self.user_item_matrix.items():
+                user_idx = user_to_idx[user_id]
+                for item_id, rating in items.items():
+                    item_idx = item_to_idx[item_id]
+                    matrix[user_idx, item_idx] = rating
             
-            logger.info("SVD model trained successfully")
+            # Train custom SVD
+            self.svd_model = CustomSVD(n_factors=50, epochs=100)
+            self.svd_model.fit(matrix)
+            
+            # Store mappings
+            self.user_to_idx = user_to_idx
+            self.item_to_idx = item_to_idx
+            self.idx_to_user = {idx: user for user, idx in user_to_idx.items()}
+            self.idx_to_item = {idx: item for item, idx in item_to_idx.items()}
+            
+            logger.info("Custom SVD model trained successfully")
             return True
             
         except Exception as e:
@@ -607,6 +689,88 @@ class AdvancedRecommendationEngine:
             logger.error(f"Model training error: {e}")
             return False
     
+    def get_collaborative_recommendations(self, user_id, num_recommendations=20):
+        """Get collaborative filtering recommendations using custom SVD"""
+        try:
+            if not self.svd_model or not hasattr(self, 'user_to_idx'):
+                return []
+            
+            if user_id not in self.user_to_idx:
+                return []
+            
+            user_idx = self.user_to_idx[user_id]
+            
+            # Get user's interacted content
+            user_interacted = set(self.user_item_matrix.get(user_id, {}).keys())
+            
+            # Predict ratings for all items
+            predictions = []
+            for item_id, item_idx in self.item_to_idx.items():
+                if item_id not in user_interacted:
+                    predicted_rating = self.svd_model.predict(user_idx, item_idx)
+                    predictions.append((item_id, predicted_rating))
+            
+            # Sort by predicted rating
+            predictions.sort(key=lambda x: x[1], reverse=True)
+            return predictions[:num_recommendations]
+            
+        except Exception as e:
+            logger.error(f"Collaborative filtering error: {e}")
+            return []
+
+    # ... (rest of the methods remain the same)
+    
+    def get_content_based_recommendations(self, user_id, num_recommendations=20):
+        """Get content-based recommendations"""
+        try:
+            if self.content_similarity_matrix is None:
+                return []
+            
+            # Get user's interaction history
+            user_interactions = UserInteraction.query.filter_by(user_id=user_id).all()
+            if not user_interactions:
+                return []
+            
+            # Calculate user preference profile
+            content_scores = defaultdict(float)
+            
+            for interaction in user_interactions:
+                content_id = interaction.content_id
+                if content_id not in self.content_id_to_index:
+                    continue
+                
+                content_idx = self.content_id_to_index[content_id]
+                
+                # Weight by interaction type and rating
+                weight = {
+                    'view': 1.0,
+                    'like': 2.0,
+                    'favorite': 3.0,
+                    'watchlist': 2.5
+                }.get(interaction.interaction_type, 1.0)
+                
+                if interaction.rating:
+                    weight *= (interaction.rating / 5.0)
+                
+                # Add similar content scores
+                similar_scores = self.content_similarity_matrix[content_idx]
+                for similar_idx, similarity in enumerate(similar_scores):
+                    similar_content_id = self.index_to_content_id[similar_idx]
+                    content_scores[similar_content_id] += similarity * weight
+            
+            # Remove already interacted content
+            interacted_content = {interaction.content_id for interaction in user_interactions}
+            for content_id in interacted_content:
+                content_scores.pop(content_id, None)
+            
+            # Sort by score and return top recommendations
+            recommendations = sorted(content_scores.items(), key=lambda x: x[1], reverse=True)
+            return [(content_id, score) for content_id, score in recommendations[:num_recommendations]]
+            
+        except Exception as e:
+            logger.error(f"Content-based recommendation error: {e}")
+            return []
+    
     def get_lightgbm_recommendations(self, user_id, num_recommendations=20):
         """Get LightGBM-based recommendations"""
         try:
@@ -667,86 +831,6 @@ class AdvancedRecommendationEngine:
             
         except Exception as e:
             logger.error(f"XGBoost recommendation error: {e}")
-            return []
-    
-    def get_content_based_recommendations(self, user_id, num_recommendations=20):
-        """Get content-based recommendations"""
-        try:
-            if self.content_similarity_matrix is None:
-                return []
-            
-            # Get user's interaction history
-            user_interactions = UserInteraction.query.filter_by(user_id=user_id).all()
-            if not user_interactions:
-                return []
-            
-            # Calculate user preference profile
-            content_scores = defaultdict(float)
-            
-            for interaction in user_interactions:
-                content_id = interaction.content_id
-                if content_id not in self.content_id_to_index:
-                    continue
-                
-                content_idx = self.content_id_to_index[content_id]
-                
-                # Weight by interaction type and rating
-                weight = {
-                    'view': 1.0,
-                    'like': 2.0,
-                    'favorite': 3.0,
-                    'watchlist': 2.5
-                }.get(interaction.interaction_type, 1.0)
-                
-                if interaction.rating:
-                    weight *= (interaction.rating / 5.0)
-                
-                # Add similar content scores
-                similar_scores = self.content_similarity_matrix[content_idx]
-                for similar_idx, similarity in enumerate(similar_scores):
-                    similar_content_id = self.index_to_content_id[similar_idx]
-                    content_scores[similar_content_id] += similarity * weight
-            
-            # Remove already interacted content
-            interacted_content = {interaction.content_id for interaction in user_interactions}
-            for content_id in interacted_content:
-                content_scores.pop(content_id, None)
-            
-            # Sort by score and return top recommendations
-            recommendations = sorted(content_scores.items(), key=lambda x: x[1], reverse=True)
-            return [(content_id, score) for content_id, score in recommendations[:num_recommendations]]
-            
-        except Exception as e:
-            logger.error(f"Content-based recommendation error: {e}")
-            return []
-    
-    def get_collaborative_recommendations(self, user_id, num_recommendations=20):
-        """Get collaborative filtering recommendations using SVD"""
-        try:
-            if not self.svd_model or user_id not in self.user_item_matrix:
-                return []
-            
-            # Get all content IDs
-            all_content_ids = set()
-            for items in self.user_item_matrix.values():
-                all_content_ids.update(items.keys())
-            
-            # Get user's interacted content
-            user_interacted = set(self.user_item_matrix.get(user_id, {}).keys())
-            
-            # Predict ratings for uninteracted content
-            predictions = []
-            for content_id in all_content_ids:
-                if content_id not in user_interacted:
-                    predicted_rating = self.svd_model.predict(user_id, content_id).est
-                    predictions.append((content_id, predicted_rating))
-            
-            # Sort by predicted rating
-            predictions.sort(key=lambda x: x[1], reverse=True)
-            return predictions[:num_recommendations]
-            
-        except Exception as e:
-            logger.error(f"Collaborative filtering error: {e}")
             return []
     
     def get_neural_recommendations(self, user_id, num_recommendations=20):
@@ -928,6 +1012,10 @@ class AdvancedRecommendationEngine:
                 'user_item_matrix': getattr(self, 'user_item_matrix', {}),
                 'user_genre_preferences': getattr(self, 'user_genre_preferences', {}),
                 'user_language_preferences': getattr(self, 'user_language_preferences', {}),
+                'user_to_idx': getattr(self, 'user_to_idx', {}),
+                'item_to_idx': getattr(self, 'item_to_idx', {}),
+                'idx_to_user': getattr(self, 'idx_to_user', {}),
+                'idx_to_item': getattr(self, 'idx_to_item', {}),
                 'last_training': self.last_training.isoformat() if self.last_training else None
             }
             
@@ -938,7 +1026,7 @@ class AdvancedRecommendationEngine:
             if self.tfidf_vectorizer:
                 joblib.dump(self.tfidf_vectorizer, os.path.join(MODEL_DIR, 'tfidf_vectorizer.pkl'))
             
-            # Save SVD model
+            # Save custom SVD model
             if self.svd_model:
                 joblib.dump(self.svd_model, os.path.join(MODEL_DIR, 'svd_model.pkl'))
             
@@ -980,6 +1068,10 @@ class AdvancedRecommendationEngine:
             self.user_item_matrix = model_data.get('user_item_matrix', {})
             self.user_genre_preferences = model_data.get('user_genre_preferences', {})
             self.user_language_preferences = model_data.get('user_language_preferences', {})
+            self.user_to_idx = model_data.get('user_to_idx', {})
+            self.item_to_idx = model_data.get('item_to_idx', {})
+            self.idx_to_user = model_data.get('idx_to_user', {})
+            self.idx_to_item = model_data.get('idx_to_item', {})
             
             last_training_str = model_data.get('last_training')
             if last_training_str:
@@ -990,7 +1082,7 @@ class AdvancedRecommendationEngine:
             if os.path.exists(tfidf_path):
                 self.tfidf_vectorizer = joblib.load(tfidf_path)
             
-            # Load SVD model
+            # Load custom SVD model
             svd_path = os.path.join(MODEL_DIR, 'svd_model.pkl')
             if os.path.exists(svd_path):
                 self.svd_model = joblib.load(svd_path)
@@ -1027,7 +1119,7 @@ class AdvancedRecommendationEngine:
 # Initialize recommendation engine
 recommendation_engine = AdvancedRecommendationEngine()
 
-# API Routes
+# API Routes (same as before, just continue with the rest of the routes)
 @app.route('/api/recommendations', methods=['POST'])
 def get_personalized_recommendations():
     try:
