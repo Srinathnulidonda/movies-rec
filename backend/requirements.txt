@@ -12,3 +12,6 @@ sqlalchemy
 schedule
 pytz
 python-dateutil
+aiohttp
+asyncio
+gunicorn
