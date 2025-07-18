@@ -1,20 +1,18 @@
-setuptools
 wheel
-Flask
-Flask-CORS
-gunicorn
-SQLAlchemy
-psycopg2-binary
+setuptools
+pip
+flask
+flask-cors
+sqlalchemy
 redis
-cachetools
-numpy
 pandas
+numpy
 scipy
 scikit-learn
-torch
---index-url https://download.pytorch.org/whl/cpu
+torch --index-url https://download.pytorch.org/whl/cpu
 implicit
 faiss-cpu
+
 joblib
-python-dotenv
-python-json-logger
+gunicorn
+psycopg2-binary  # for PostgreSQL
