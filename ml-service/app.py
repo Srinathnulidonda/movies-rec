@@ -19,7 +19,7 @@ from urllib.parse import urlparse
 app = Flask(__name__)
 
 # Database connection
-DATABASE_URL = os.getenv('DATABASE_URL', 'postgresql://localhost/movie_recommendations')
+DATABASE_URL = os.getenv('DATABASE_URL', 'postgresql://movies_rec_mqs4_user:IhZQfhvaLsJ4O0bXGznHfSZjr0rym5QJ@dpg-d1l0vdvdiees73f2olp0-a/movies_rec_mqs4')
 if DATABASE_URL.startswith('postgres://'):
     DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://')
 
