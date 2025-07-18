@@ -1,18 +1,35 @@
+# Flask and extensions
 Flask
-Flask-SQLAlchemy
-Flask-JWT-Extended
 Flask-CORS
+Flask-JWT-Extended
+Flask-Bcrypt
+Flask-SQLAlchemy
+Flask-Migrate
 Flask-Caching
-Werkzeug
-requests
-pandas
-numpy
-scikit-learn
-redis
-python-telegram-bot
+
+# Database
 SQLAlchemy
-asyncio
-aiohttp
-APScheduler
-gunicorn
 psycopg2-binary
+alembic
+
+# Redis
+redis
+
+# HTTP requests
+requests
+urllib3
+
+# Background tasks
+APScheduler
+
+# Utilities
+python-dateutil
+python-dotenv
+cryptography
+
+# Data handling
+numpy
+pandas
+
+# Web server for production
+gunicorn
