@@ -1,17 +1,14 @@
-# Flask
-Flask
-
-# Machine Learning and Deep Learning
-tensorflow
-scikit-learn
-numpy
+flask
+flask-sqlalchemy
+flask-cors
 pandas
-
-# Model persistence
+numpy
+scikit-learn
+tensorflow
+requests
 joblib
-
-# Database
+scipy
+scikit-surprise
 psycopg2-binary
-
-# Production server
 gunicorn
+sqlalchemy
