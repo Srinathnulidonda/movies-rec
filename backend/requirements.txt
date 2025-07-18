@@ -1,36 +1,11 @@
-# Flask and extensions
-Flask
-Flask-SQLAlchemy
-Flask-JWT-Extended
-Flask-CORS
-
-# Database
-SQLAlchemy
-psycopg2-binary
-
-# Authentication
-Werkzeug
-
-# Async support
-aiohttp
-asyncio
-
-# Data processing
-pandas
-numpy
-
-# Machine Learning
-scikit-learn
-
-# Caching
-redis
-
-# HTTP requests
+flask
+flask-sqlalchemy
+flask-cors
+werkzeug
 requests
-
-# Environment and utilities
-python-dotenv
-
-# Production server
+telebot
+geopy
+pyjwt
+psycopg2-binary
 gunicorn
-python-telegram-bot
+sqlalchemy
