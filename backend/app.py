@@ -46,7 +46,7 @@ TELEGRAM_CHANNEL_ID = os.environ.get('TELEGRAM_CHANNEL_ID', '-1002566510721')
 ML_SERVICE_URL = os.environ.get('ML_SERVICE_URL', 'https://movies-rec-xmf5.onrender.com')
 
 # Initialize Telegram bot
-if TELEGRAM_BOT_TOKEN and TELEGRAM_BOT_TOKEN != 'your_telegram_bot_token':
+if TELEGRAM_BOT_TOKEN and TELEGRAM_BOT_TOKEN != '7689567537:AAGvDtu94OlLlTiWpfjSfpl_dd_Osi_2W7c':
     try:
         bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
     except:
