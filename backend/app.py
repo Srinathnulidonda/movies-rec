@@ -38,12 +38,12 @@ db = SQLAlchemy(app)
 CORS(app)
 
 # API Keys - Set these in your environment
-TMDB_API_KEY = os.environ.get('TMDB_API_KEY', 'your_tmdb_api_key')
-OMDB_API_KEY = os.environ.get('OMDB_API_KEY', 'your_omdb_api_key')
-YOUTUBE_API_KEY = os.environ.get('YOUTUBE_API_KEY', 'your_youtube_api_key')
-TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', 'your_telegram_bot_token')
-TELEGRAM_CHANNEL_ID = os.environ.get('TELEGRAM_CHANNEL_ID', 'your_channel_id')
-ML_SERVICE_URL = os.environ.get('ML_SERVICE_URL', 'http://localhost:5001')
+TMDB_API_KEY = os.environ.get('TMDB_API_KEY', '1cf86635f20bb2aff8e70940e7c3ddd5')
+OMDB_API_KEY = os.environ.get('OMDB_API_KEY', '52260795')
+YOUTUBE_API_KEY = os.environ.get('YOUTUBE_API_KEY', 'AIzaSyDU-JLASTdIdoLOmlpWuJYLTZDUspqw2T4')
+TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '7689567537:AAGvDtu94OlLlTiWpfjSfpl_dd_Osi_2W7c')
+TELEGRAM_CHANNEL_ID = os.environ.get('TELEGRAM_CHANNEL_ID', '1002566510721')
+ML_SERVICE_URL = os.environ.get('ML_SERVICE_URL', 'https://movies-rec-xmf5.onrender.com')
 
 # Initialize Telegram bot
 if TELEGRAM_BOT_TOKEN:
