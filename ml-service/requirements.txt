@@ -4,13 +4,12 @@ flask-cors
 pandas
 numpy
 scikit-learn
+scipy
+scikit-surprise
 torch
 lightgbm
 xgboost
-requests
 joblib
-scipy
-scikit-surprise
+requests
 psycopg2-binary
 gunicorn
-sqlalchemy

@@ -19,10 +19,12 @@ import concurrent.futures
 from scipy.sparse import csr_matrix
 from surprise import Dataset, Reader, SVD, accuracy
 from surprise.model_selection import train_test_split
-import tensorflow as tf
-from tensorflow.keras.models import Sequential, Model
-from tensorflow.keras.layers import Dense, Embedding, Dropout, Input, Concatenate
-from tensorflow.keras.optimizers import Adam
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import Dataset, DataLoader, TensorDataset
+import lightgbm as lgb
+import xgboost as xgb
 import joblib
 import threading
 import time
@@ -50,6 +52,9 @@ logger = logging.getLogger(__name__)
 # Model storage paths
 MODEL_DIR = 'models'
 os.makedirs(MODEL_DIR, exist_ok=True)
+
+# Set device for PyTorch
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # Database Models (matching main backend)
 class User(db.Model):
@@ -94,6 +99,47 @@ class UserInteraction(db.Model):
     rating = db.Column(db.Float)
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
 
+# PyTorch Neural Network Model
+class RecommendationNet(nn.Module):
+    def __init__(self, user_features_dim, content_features_dim, hidden_dim=64):
+        super(RecommendationNet, self).__init__()
+        
+        # User branch
+        self.user_layers = nn.Sequential(
+            nn.Linear(user_features_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(hidden_dim, 32),
+            nn.ReLU()
+        )
+        
+        # Content branch
+        self.content_layers = nn.Sequential(
+            nn.Linear(content_features_dim, 128),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(128, 64),
+            nn.ReLU()
+        )
+        
+        # Combined layers
+        self.combined_layers = nn.Sequential(
+            nn.Linear(32 + 64, 32),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(32, 1),
+            nn.Sigmoid()
+        )
+    
+    def forward(self, user_features, content_features):
+        user_out = self.user_layers(user_features)
+        content_out = self.content_layers(content_features)
+        
+        combined = torch.cat([user_out, content_out], dim=1)
+        output = self.combined_layers(combined)
+        
+        return output
+
 # Advanced Recommendation Engine
 class AdvancedRecommendationEngine:
     def __init__(self):
@@ -103,6 +149,8 @@ class AdvancedRecommendationEngine:
         self.content_similarity_matrix = None
         self.svd_model = None
         self.neural_model = None
+        self.lgb_model = None
+        self.xgb_model = None
         self.genre_encoder = None
         self.language_encoder = None
         self.models_loaded = False
@@ -302,7 +350,7 @@ class AdvancedRecommendationEngine:
             return False
     
     def train_neural_model(self):
-        """Train neural network for deep learning recommendations"""
+        """Train PyTorch neural network for deep learning recommendations"""
         try:
             if not hasattr(self, 'user_item_matrix') or self.content_features is None:
                 return False
@@ -315,63 +363,182 @@ class AdvancedRecommendationEngine:
             for user_id, items in self.user_item_matrix.items():
                 for content_id, rating in items.items():
                     if content_id in self.content_id_to_index:
-                        # User features (simplified)
+                        # User features
                         user_features = self._get_user_features(user_id)
                         content_idx = self.content_id_to_index[content_id]
                         content_features = self.content_features[content_idx]
                         
                         X_user.append(user_features)
                         X_content.append(content_features)
-                        y.append(rating)
+                        y.append(rating / 5.0)  # Normalize to 0-1
             
             if not X_user:
                 return False
             
-            X_user = np.array(X_user)
-            X_content = np.array(X_content)
-            y = np.array(y)
+            X_user = np.array(X_user, dtype=np.float32)
+            X_content = np.array(X_content, dtype=np.float32)
+            y = np.array(y, dtype=np.float32)
             
-            # Build neural network
-            user_input = Input(shape=(X_user.shape[1],), name='user_input')
-            content_input = Input(shape=(X_content.shape[1],), name='content_input')
-            
-            # User branch
-            user_dense = Dense(64, activation='relu')(user_input)
-            user_dense = Dropout(0.3)(user_dense)
-            user_dense = Dense(32, activation='relu')(user_dense)
-            
-            # Content branch
-            content_dense = Dense(128, activation='relu')(content_input)
-            content_dense = Dropout(0.3)(content_dense)
-            content_dense = Dense(64, activation='relu')(content_dense)
-            
-            # Combine branches
-            combined = Concatenate()([user_dense, content_dense])
-            combined = Dense(32, activation='relu')(combined)
-            combined = Dropout(0.3)(combined)
-            output = Dense(1, activation='sigmoid')(combined)
-            
-            self.neural_model = Model(inputs=[user_input, content_input], outputs=output)
-            self.neural_model.compile(optimizer=Adam(learning_rate=0.001), loss='mse', metrics=['mae'])
-            
-            # Train model
-            self.neural_model.fit(
-                [X_user, X_content], y,
-                epochs=50,
-                batch_size=32,
-                validation_split=0.2,
-                verbose=0
+            # Create PyTorch datasets
+            dataset = TensorDataset(
+                torch.tensor(X_user), 
+                torch.tensor(X_content), 
+                torch.tensor(y).unsqueeze(1)
             )
             
-            logger.info("Neural network model trained successfully")
+            # Split data
+            train_size = int(0.8 * len(dataset))
+            val_size = len(dataset) - train_size
+            train_dataset, val_dataset = torch.utils.data.random_split(dataset, [train_size, val_size])
+            
+            train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
+            val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False)
+            
+            # Initialize model
+            self.neural_model = RecommendationNet(
+                user_features_dim=X_user.shape[1],
+                content_features_dim=X_content.shape[1]
+            ).to(device)
+            
+            # Training setup
+            criterion = nn.MSELoss()
+            optimizer = optim.Adam(self.neural_model.parameters(), lr=0.001)
+            
+            # Training loop
+            self.neural_model.train()
+            for epoch in range(50):
+                train_loss = 0.0
+                for user_batch, content_batch, target_batch in train_loader:
+                    user_batch = user_batch.to(device)
+                    content_batch = content_batch.to(device)
+                    target_batch = target_batch.to(device)
+                    
+                    optimizer.zero_grad()
+                    outputs = self.neural_model(user_batch, content_batch)
+                    loss = criterion(outputs, target_batch)
+                    loss.backward()
+                    optimizer.step()
+                    
+                    train_loss += loss.item()
+                
+                if epoch % 10 == 0:
+                    logger.info(f"Epoch {epoch}, Loss: {train_loss/len(train_loader):.4f}")
+            
+            logger.info("PyTorch neural network model trained successfully")
             return True
             
         except Exception as e:
             logger.error(f"Neural network training error: {e}")
             return False
     
+    def train_lightgbm_model(self):
+        """Train LightGBM model for recommendations"""
+        try:
+            if not hasattr(self, 'user_item_matrix') or self.content_features is None:
+                return False
+            
+            # Prepare training data
+            X = []
+            y = []
+            
+            for user_id, items in self.user_item_matrix.items():
+                user_features = self._get_user_features(user_id)
+                
+                for content_id, rating in items.items():
+                    if content_id in self.content_id_to_index:
+                        content_idx = self.content_id_to_index[content_id]
+                        content_features = self.content_features[content_idx]
+                        
+                        # Combine user and content features
+                        combined_features = np.concatenate([user_features, content_features])
+                        X.append(combined_features)
+                        y.append(rating)
+            
+            if not X:
+                return False
+            
+            X = np.array(X)
+            y = np.array(y)
+            
+            # Train LightGBM model
+            train_data = lgb.Dataset(X, label=y)
+            
+            params = {
+                'objective': 'regression',
+                'metric': 'rmse',
+                'boosting_type': 'gbdt',
+                'num_leaves': 31,
+                'learning_rate': 0.05,
+                'feature_fraction': 0.9,
+                'bagging_fraction': 0.8,
+                'bagging_freq': 5,
+                'verbose': -1
+            }
+            
+            self.lgb_model = lgb.train(
+                params,
+                train_data,
+                num_boost_round=100,
+                valid_sets=[train_data],
+                callbacks=[lgb.early_stopping(10), lgb.log_evaluation(0)]
+            )
+            
+            logger.info("LightGBM model trained successfully")
+            return True
+            
+        except Exception as e:
+            logger.error(f"LightGBM training error: {e}")
+            return False
+    
+    def train_xgboost_model(self):
+        """Train XGBoost model for recommendations"""
+        try:
+            if not hasattr(self, 'user_item_matrix') or self.content_features is None:
+                return False
+            
+            # Prepare training data
+            X = []
+            y = []
+            
+            for user_id, items in self.user_item_matrix.items():
+                user_features = self._get_user_features(user_id)
+                
+                for content_id, rating in items.items():
+                    if content_id in self.content_id_to_index:
+                        content_idx = self.content_id_to_index[content_id]
+                        content_features = self.content_features[content_idx]
+                        
+                        # Combine user and content features
+                        combined_features = np.concatenate([user_features, content_features])
+                        X.append(combined_features)
+                        y.append(rating)
+            
+            if not X:
+                return False
+            
+            X = np.array(X)
+            y = np.array(y)
+            
+            # Train XGBoost model
+            self.xgb_model = xgb.XGBRegressor(
+                n_estimators=100,
+                learning_rate=0.1,
+                max_depth=6,
+                random_state=42,
+                verbosity=0
+            )
+            
+            self.xgb_model.fit(X, y)
+            
+            logger.info("XGBoost model trained successfully")
+            return True
+            
+        except Exception as e:
+            logger.error(f"XGBoost training error: {e}")
+            return False
+    
     def _get_user_features(self, user_id):
-        """Get user features for neural network"""
+        """Get user features for models"""
         user = User.query.get(user_id)
         if not user:
             return np.zeros(10)  # Default features
@@ -423,8 +590,10 @@ class AdvancedRecommendationEngine:
             # Train models
             svd_success = self.train_svd_model()
             neural_success = self.train_neural_model()
+            lgb_success = self.train_lightgbm_model()
+            xgb_success = self.train_xgboost_model()
             
-            if svd_success or neural_success:
+            if any([svd_success, neural_success, lgb_success, xgb_success]):
                 self.models_loaded = True
                 self.last_training = datetime.utcnow()
                 self.save_models()
@@ -438,83 +607,67 @@ class AdvancedRecommendationEngine:
             logger.error(f"Model training error: {e}")
             return False
     
-    def save_models(self):
-        """Save trained models to disk"""
+    def get_lightgbm_recommendations(self, user_id, num_recommendations=20):
+        """Get LightGBM-based recommendations"""
         try:
-            model_data = {
-                'content_features': self.content_features,
-                'content_similarity_matrix': self.content_similarity_matrix,
-                'content_id_to_index': getattr(self, 'content_id_to_index', {}),
-                'index_to_content_id': getattr(self, 'index_to_content_id', {}),
-                'user_item_matrix': getattr(self, 'user_item_matrix', {}),
-                'user_genre_preferences': getattr(self, 'user_genre_preferences', {}),
-                'user_language_preferences': getattr(self, 'user_language_preferences', {}),
-                'last_training': self.last_training.isoformat() if self.last_training else None
-            }
+            if not self.lgb_model or self.content_features is None:
+                return []
             
-            # Save core data
-            joblib.dump(model_data, os.path.join(MODEL_DIR, 'model_data.pkl'))
+            # Get user features
+            user_features = self._get_user_features(user_id)
             
-            # Save TF-IDF vectorizer
-            if self.tfidf_vectorizer:
-                joblib.dump(self.tfidf_vectorizer, os.path.join(MODEL_DIR, 'tfidf_vectorizer.pkl'))
+            # Get user's interacted content
+            user_interactions = UserInteraction.query.filter_by(user_id=user_id).all()
+            interacted_content = {interaction.content_id for interaction in user_interactions}
             
-            # Save SVD model
-            if self.svd_model:
-                joblib.dump(self.svd_model, os.path.join(MODEL_DIR, 'svd_model.pkl'))
+            # Predict for all content
+            predictions = []
+            for content_id, content_idx in self.content_id_to_index.items():
+                if content_id not in interacted_content:
+                    content_features = self.content_features[content_idx]
+                    combined_features = np.concatenate([user_features, content_features]).reshape(1, -1)
+                    
+                    predicted_score = self.lgb_model.predict(combined_features)[0]
+                    predictions.append((content_id, float(predicted_score)))
             
-            # Save neural network model
-            if self.neural_model:
-                self.neural_model.save(os.path.join(MODEL_DIR, 'neural_model.h5'))
-            
-            logger.info("Models saved successfully")
+            # Sort by predicted score
+            predictions.sort(key=lambda x: x[1], reverse=True)
+            return predictions[:num_recommendations]
             
         except Exception as e:
-            logger.error(f"Model saving error: {e}")
+            logger.error(f"LightGBM recommendation error: {e}")
+            return []
     
-    def load_models(self):
-        """Load trained models from disk"""
+    def get_xgboost_recommendations(self, user_id, num_recommendations=20):
+        """Get XGBoost-based recommendations"""
         try:
-            model_data_path = os.path.join(MODEL_DIR, 'model_data.pkl')
-            if not os.path.exists(model_data_path):
-                return False
+            if not self.xgb_model or self.content_features is None:
+                return []
             
-            # Load core data
-            model_data = joblib.load(model_data_path)
-            self.content_features = model_data.get('content_features')
-            self.content_similarity_matrix = model_data.get('content_similarity_matrix')
-            self.content_id_to_index = model_data.get('content_id_to_index', {})
-            self.index_to_content_id = model_data.get('index_to_content_id', {})
-            self.user_item_matrix = model_data.get('user_item_matrix', {})
-            self.user_genre_preferences = model_data.get('user_genre_preferences', {})
-            self.user_language_preferences = model_data.get('user_language_preferences', {})
+            # Get user features
+            user_features = self._get_user_features(user_id)
             
-            last_training_str = model_data.get('last_training')
-            if last_training_str:
-                self.last_training = datetime.fromisoformat(last_training_str)
+            # Get user's interacted content
+            user_interactions = UserInteraction.query.filter_by(user_id=user_id).all()
+            interacted_content = {interaction.content_id for interaction in user_interactions}
             
-            # Load TF-IDF vectorizer
-            tfidf_path = os.path.join(MODEL_DIR, 'tfidf_vectorizer.pkl')
-            if os.path.exists(tfidf_path):
-                self.tfidf_vectorizer = joblib.load(tfidf_path)
+            # Predict for all content
+            predictions = []
+            for content_id, content_idx in self.content_id_to_index.items():
+                if content_id not in interacted_content:
+                    content_features = self.content_features[content_idx]
+                    combined_features = np.concatenate([user_features, content_features]).reshape(1, -1)
+                    
+                    predicted_score = self.xgb_model.predict(combined_features)[0]
+                    predictions.append((content_id, float(predicted_score)))
             
-            # Load SVD model
-            svd_path = os.path.join(MODEL_DIR, 'svd_model.pkl')
-            if os.path.exists(svd_path):
-                self.svd_model = joblib.load(svd_path)
-            
-            # Load neural network model
-            neural_path = os.path.join(MODEL_DIR, 'neural_model.h5')
-            if os.path.exists(neural_path):
-                self.neural_model = tf.keras.models.load_model(neural_path)
-            
-            self.models_loaded = True
-            logger.info("Models loaded successfully")
-            return True
+            # Sort by predicted score
+            predictions.sort(key=lambda x: x[1], reverse=True)
+            return predictions[:num_recommendations]
             
         except Exception as e:
-            logger.error(f"Model loading error: {e}")
-            return False
+            logger.error(f"XGBoost recommendation error: {e}")
+            return []
     
     def get_content_based_recommendations(self, user_id, num_recommendations=20):
         """Get content-based recommendations"""
@@ -597,7 +750,7 @@ class AdvancedRecommendationEngine:
             return []
     
     def get_neural_recommendations(self, user_id, num_recommendations=20):
-        """Get neural network-based recommendations"""
+        """Get PyTorch neural network-based recommendations"""
         try:
             if not self.neural_model or self.content_features is None:
                 return []
@@ -610,17 +763,21 @@ class AdvancedRecommendationEngine:
             interacted_content = {interaction.content_id for interaction in user_interactions}
             
             # Predict for all content
+            self.neural_model.eval()
             predictions = []
-            for content_id, content_idx in self.content_id_to_index.items():
-                if content_id not in interacted_content:
-                    content_features = self.content_features[content_idx]
-                    
-                    # Predict using neural network
-                    user_input = np.array([user_features])
-                    content_input = np.array([content_features])
-                    
-                    predicted_score = self.neural_model.predict([user_input, content_input])[0][0]
-                    predictions.append((content_id, float(predicted_score)))
+            
+            with torch.no_grad():
+                for content_id, content_idx in self.content_id_to_index.items():
+                    if content_id not in interacted_content:
+                        content_features = self.content_features[content_idx]
+                        
+                        # Prepare inputs
+                        user_input = torch.tensor(user_features, dtype=torch.float32).unsqueeze(0).to(device)
+                        content_input = torch.tensor(content_features, dtype=torch.float32).unsqueeze(0).to(device)
+                        
+                        # Predict
+                        predicted_score = self.neural_model(user_input, content_input).item()
+                        predictions.append((content_id, predicted_score))
             
             # Sort by predicted score
             predictions.sort(key=lambda x: x[1], reverse=True)
@@ -637,22 +794,34 @@ class AdvancedRecommendationEngine:
             content_based = self.get_content_based_recommendations(user_id, num_recommendations * 2)
             collaborative = self.get_collaborative_recommendations(user_id, num_recommendations * 2)
             neural = self.get_neural_recommendations(user_id, num_recommendations * 2)
+            lightgbm = self.get_lightgbm_recommendations(user_id, num_recommendations * 2)
+            xgboost = self.get_xgboost_recommendations(user_id, num_recommendations * 2)
             
             # Combine scores with weights
             combined_scores = defaultdict(float)
-            weights = {'content': 0.3, 'collaborative': 0.4, 'neural': 0.3}
+            weights = {
+                'content': 0.15,
+                'collaborative': 0.25,
+                'neural': 0.2,
+                'lightgbm': 0.2,
+                'xgboost': 0.2
+            }
             
-            # Add content-based scores
+            # Add scores from each algorithm
             for content_id, score in content_based:
                 combined_scores[content_id] += score * weights['content']
             
-            # Add collaborative filtering scores
             for content_id, score in collaborative:
                 combined_scores[content_id] += score * weights['collaborative']
             
-            # Add neural network scores
             for content_id, score in neural:
                 combined_scores[content_id] += score * weights['neural']
+            
+            for content_id, score in lightgbm:
+                combined_scores[content_id] += score * weights['lightgbm']
+            
+            for content_id, score in xgboost:
+                combined_scores[content_id] += score * weights['xgboost']
             
             # Sort and return top recommendations
             recommendations = sorted(combined_scores.items(), key=lambda x: x[1], reverse=True)
@@ -748,6 +917,113 @@ class AdvancedRecommendationEngine:
             logger.error(f"Diversity adjustment error: {e}")
             return recommendations
 
+    def save_models(self):
+        """Save trained models to disk"""
+        try:
+            model_data = {
+                'content_features': self.content_features,
+                'content_similarity_matrix': self.content_similarity_matrix,
+                'content_id_to_index': getattr(self, 'content_id_to_index', {}),
+                'index_to_content_id': getattr(self, 'index_to_content_id', {}),
+                'user_item_matrix': getattr(self, 'user_item_matrix', {}),
+                'user_genre_preferences': getattr(self, 'user_genre_preferences', {}),
+                'user_language_preferences': getattr(self, 'user_language_preferences', {}),
+                'last_training': self.last_training.isoformat() if self.last_training else None
+            }
+            
+            # Save core data
+            joblib.dump(model_data, os.path.join(MODEL_DIR, 'model_data.pkl'))
+            
+            # Save TF-IDF vectorizer
+            if self.tfidf_vectorizer:
+                joblib.dump(self.tfidf_vectorizer, os.path.join(MODEL_DIR, 'tfidf_vectorizer.pkl'))
+            
+            # Save SVD model
+            if self.svd_model:
+                joblib.dump(self.svd_model, os.path.join(MODEL_DIR, 'svd_model.pkl'))
+            
+            # Save PyTorch neural network model
+            if self.neural_model:
+                torch.save(self.neural_model.state_dict(), os.path.join(MODEL_DIR, 'neural_model.pth'))
+                # Save model architecture info
+                joblib.dump({
+                    'user_features_dim': self.neural_model.user_layers[0].in_features,
+                    'content_features_dim': self.neural_model.content_layers[0].in_features
+                }, os.path.join(MODEL_DIR, 'neural_model_config.pkl'))
+            
+            # Save LightGBM model
+            if self.lgb_model:
+                self.lgb_model.save_model(os.path.join(MODEL_DIR, 'lightgbm_model.txt'))
+            
+            # Save XGBoost model
+            if self.xgb_model:
+                joblib.dump(self.xgb_model, os.path.join(MODEL_DIR, 'xgboost_model.pkl'))
+            
+            logger.info("Models saved successfully")
+            
+        except Exception as e:
+            logger.error(f"Model saving error: {e}")
+    
+    def load_models(self):
+        """Load trained models from disk"""
+        try:
+            model_data_path = os.path.join(MODEL_DIR, 'model_data.pkl')
+            if not os.path.exists(model_data_path):
+                return False
+            
+            # Load core data
+            model_data = joblib.load(model_data_path)
+            self.content_features = model_data.get('content_features')
+            self.content_similarity_matrix = model_data.get('content_similarity_matrix')
+            self.content_id_to_index = model_data.get('content_id_to_index', {})
+            self.index_to_content_id = model_data.get('index_to_content_id', {})
+            self.user_item_matrix = model_data.get('user_item_matrix', {})
+            self.user_genre_preferences = model_data.get('user_genre_preferences', {})
+            self.user_language_preferences = model_data.get('user_language_preferences', {})
+            
+            last_training_str = model_data.get('last_training')
+            if last_training_str:
+                self.last_training = datetime.fromisoformat(last_training_str)
+            
+            # Load TF-IDF vectorizer
+            tfidf_path = os.path.join(MODEL_DIR, 'tfidf_vectorizer.pkl')
+            if os.path.exists(tfidf_path):
+                self.tfidf_vectorizer = joblib.load(tfidf_path)
+            
+            # Load SVD model
+            svd_path = os.path.join(MODEL_DIR, 'svd_model.pkl')
+            if os.path.exists(svd_path):
+                self.svd_model = joblib.load(svd_path)
+            
+            # Load PyTorch neural network model
+            neural_path = os.path.join(MODEL_DIR, 'neural_model.pth')
+            neural_config_path = os.path.join(MODEL_DIR, 'neural_model_config.pkl')
+            if os.path.exists(neural_path) and os.path.exists(neural_config_path):
+                config = joblib.load(neural_config_path)
+                self.neural_model = RecommendationNet(
+                    config['user_features_dim'],
+                    config['content_features_dim']
+                ).to(device)
+                self.neural_model.load_state_dict(torch.load(neural_path, map_location=device))
+            
+            # Load LightGBM model
+            lgb_path = os.path.join(MODEL_DIR, 'lightgbm_model.txt')
+            if os.path.exists(lgb_path):
+                self.lgb_model = lgb.Booster(model_file=lgb_path)
+            
+            # Load XGBoost model
+            xgb_path = os.path.join(MODEL_DIR, 'xgboost_model.pkl')
+            if os.path.exists(xgb_path):
+                self.xgb_model = joblib.load(xgb_path)
+            
+            self.models_loaded = True
+            logger.info("Models loaded successfully")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Model loading error: {e}")
+            return False
+
 # Initialize recommendation engine
 recommendation_engine = AdvancedRecommendationEngine()
 
@@ -783,6 +1059,62 @@ def get_personalized_recommendations():
     except Exception as e:
         logger.error(f"Personalized recommendation error: {e}")
         return jsonify({'error': 'Failed to generate recommendations'}), 500
+
+@app.route('/api/recommendations/lightgbm', methods=['POST'])
+def get_lightgbm_recommendations():
+    try:
+        data = request.get_json()
+        user_id = data.get('user_id')
+        
+        if not user_id:
+            return jsonify({'error': 'User ID required'}), 400
+        
+        if not recommendation_engine.models_loaded:
+            recommendation_engine.train_all_models()
+        
+        recommendations = recommendation_engine.get_lightgbm_recommendations(user_id, 20)
+        
+        result = []
+        for content_id, score in recommendations:
+            result.append({
+                'content_id': content_id,
+                'score': score,
+                'reason': 'LightGBM recommendation'
+            })
+        
+        return jsonify({'recommendations': result}), 200
+        
+    except Exception as e:
+        logger.error(f"LightGBM recommendation error: {e}")
+        return jsonify({'error': 'Failed to generate LightGBM recommendations'}), 500
+
+@app.route('/api/recommendations/xgboost', methods=['POST'])
+def get_xgboost_recommendations():
+    try:
+        data = request.get_json()
+        user_id = data.get('user_id')
+        
+        if not user_id:
+            return jsonify({'error': 'User ID required'}), 400
+        
+        if not recommendation_engine.models_loaded:
+            recommendation_engine.train_all_models()
+        
+        recommendations = recommendation_engine.get_xgboost_recommendations(user_id, 20)
+        
+        result = []
+        for content_id, score in recommendations:
+            result.append({
+                'content_id': content_id,
+                'score': score,
+                'reason': 'XGBoost recommendation'
+            })
+        
+        return jsonify({'recommendations': result}), 200
+        
+    except Exception as e:
+        logger.error(f"XGBoost recommendation error: {e}")
+        return jsonify({'error': 'Failed to generate XGBoost recommendations'}), 500
 
 @app.route('/api/recommendations/content-based', methods=['POST'])
 def get_content_based_recommendations():
@@ -859,7 +1191,7 @@ def get_neural_recommendations():
             result.append({
                 'content_id': content_id,
                 'score': score,
-                'reason': 'AI-powered recommendation'
+                'reason': 'PyTorch neural network recommendation'
             })
         
         return jsonify({'recommendations': result}), 200
@@ -891,9 +1223,10 @@ def get_model_status():
         return jsonify({
             'models_loaded': recommendation_engine.models_loaded,
             'last_training': recommendation_engine.last_training.isoformat() if recommendation_engine.last_training else None,
-            'available_algorithms': ['content_based', 'collaborative', 'neural', 'hybrid'],
+            'available_algorithms': ['content_based', 'collaborative', 'neural', 'lightgbm', 'xgboost', 'hybrid'],
             'content_features_shape': recommendation_engine.content_features.shape if recommendation_engine.content_features is not None else None,
-            'user_count': len(recommendation_engine.user_item_matrix) if hasattr(recommendation_engine, 'user_item_matrix') else 0
+            'user_count': len(recommendation_engine.user_item_matrix) if hasattr(recommendation_engine, 'user_item_matrix') else 0,
+            'device': str(device)
         }), 200
         
     except Exception as e:
@@ -940,7 +1273,8 @@ def health_check():
         'status': 'healthy',
         'service': 'ml-recommendation-service',
         'models_loaded': recommendation_engine.models_loaded,
-        'timestamp': datetime.utcnow().isoformat()
+        'timestamp': datetime.utcnow().isoformat(),
+        'device': str(device)
     }), 200
 
 if __name__ == '__main__':
