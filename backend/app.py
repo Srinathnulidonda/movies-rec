@@ -50,7 +50,7 @@ JUSTWATCH_API_KEY = os.environ.get('JUSTWATCH_API_KEY', 'your_justwatch_api_key'
 WATCHMODE_API_KEY = os.environ.get('WATCHMODE_API_KEY', 'WtcKDji9i20pjOl5Lg0AiyG2bddfUs3nSZRZJIsY')
 
 # Initialize Telegram bot
-if TELEGRAM_BOT_TOKEN and TELEGRAM_BOT_TOKEN != '7974343726:AAFUCW444L6jbj1tVLRyf8V7Isz2Ua1SxSk':
+if TELEGRAM_BOT_TOKEN and TELEGRAM_BOT_TOKEN != 'your_telegram_bot_token':
     try:
         bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
     except:
@@ -123,134 +123,6 @@ class AnonymousInteraction(db.Model):
     interaction_type = db.Column(db.String(20), nullable=False)
     ip_address = db.Column(db.String(45))
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
-
-class TelegramService:
-    @staticmethod
-    def send_admin_recommendation(content, admin_name, description):
-        try:
-            if not bot or not TELEGRAM_CHANNEL_ID:
-                logger.warning("Telegram bot or channel ID not configured")
-                return False
-            
-            # Format genre list
-            genres_list = []
-            if content.genres:
-                try:
-                    genres_list = json.loads(content.genres)
-                except:
-                    genres_list = []
-            
-            # Create poster URL
-            poster_url = None
-            if content.poster_path:
-                if content.poster_path.startswith('http'):
-                    poster_url = content.poster_path
-                else:
-                    poster_url = f"https://image.tmdb.org/t/p/w500{content.poster_path}"
-            
-            # Parse OTT availability
-            ott_info = ""
-            watch_links = ""
-            hashtags = "#AdminChoice #MovieRecommendation #CineScope"
-            
-            if content.ott_platforms:
-                try:
-                    ott_data = json.loads(content.ott_platforms)
-                    platforms = ott_data.get('platforms', [])
-                    
-                    if platforms:
-                        free_platforms = [p for p in platforms if p.get('is_free')]
-                        paid_platforms = [p for p in platforms if not p.get('is_free')]
-                        youtube_platforms = [p for p in platforms if 'youtube' in p.get('platform_id', '')]
-                        
-                        ott_info = "\n\n━━━━━━━━━━━━━━━━━\n📺 **WHERE TO WATCH**\n\n"
-                        
-                        # YouTube availability
-                        youtube_free = [p for p in youtube_platforms if p.get('platform_id') == 'youtube']
-                        if youtube_free:
-                            ott_info += "🎥 **FREE on YouTube!**\n"
-                            for yt in youtube_free[:1]:  # Show only the best YouTube link
-                                ott_info += f"▶️ Watch Now: {yt['watch_url']}\n"
-                            ott_info += "\n"
-                            hashtags += " #FreeOnYouTube"
-                        
-                        # Other free platforms
-                        other_free = [p for p in free_platforms if 'youtube' not in p.get('platform_id', '')]
-                        if other_free:
-                            ott_info += "🆓 **FREE Platforms:**\n"
-                            for platform in other_free[:3]:
-                                ott_info += f"• {platform['platform_name']} - {platform['watch_url']}\n"
-                            ott_info += "\n"
-                        
-                        # Paid platforms
-                        if paid_platforms:
-                            ott_info += "💰 **Subscription/Paid:**\n"
-                            for platform in paid_platforms[:5]:
-                                platform_name = platform['platform_name']
-                                if platform.get('availability_type') == 'rent':
-                                    platform_name += " (Rent)"
-                                elif platform.get('availability_type') == 'buy':
-                                    platform_name += " (Buy)"
-                                ott_info += f"• {platform_name} - {platform['watch_url']}\n"
-                                
-                                # Add platform hashtags
-                                if 'netflix' in platform.get('platform_id', '').lower():
-                                    hashtags += " #Netflix"
-                                elif 'prime' in platform.get('platform_id', '').lower():
-                                    hashtags += " #PrimeVideo"
-                                elif 'hotstar' in platform.get('platform_id', '').lower():
-                                    hashtags += " #Hotstar"
-                        
-                        ott_info += "\n━━━━━━━━━━━━━━━━━"
-                
-                except Exception as e:
-                    logger.error(f"Error parsing OTT data: {e}")
-            
-            # Create message
-            message = f"""🎬 **Admin's Choice** by {admin_name}
-
-**{content.title}**
-⭐ Rating: {content.rating or 'N/A'}/10
-📅 Release: {content.release_date or 'N/A'}
-🎭 Genres: {', '.join(genres_list[:3]) if genres_list else 'N/A'}
-🎬 Type: {content.content_type.upper()}
-
-📝 **Admin's Note:** {description}
-
-📖 **Synopsis:** {(content.overview[:200] + '...') if content.overview else 'No synopsis available'}{ott_info}
-
-{hashtags}"""
-            
-            # Send message with photo if available
-            if poster_url:
-                try:
-                    bot.send_photo(
-                        chat_id=TELEGRAM_CHANNEL_ID,
-                        photo=poster_url,
-                        caption=message,
-                        parse_mode='Markdown',
-                        disable_web_page_preview=False
-                    )
-                except Exception as photo_error:
-                    logger.error(f"Failed to send photo, sending text only: {photo_error}")
-                    bot.send_message(
-                        TELEGRAM_CHANNEL_ID, 
-                        message, 
-                        parse_mode='Markdown',
-                        disable_web_page_preview=False
-                    )
-            else:
-                bot.send_message(
-                    TELEGRAM_CHANNEL_ID, 
-                    message, 
-                    parse_mode='Markdown',
-                    disable_web_page_preview=False
-                )
-            
-            return True
-        except Exception as e:
-            logger.error(f"Telegram send error: {e}")
-            return False
 
 # Enhanced OTT Platform Information
 OTT_PLATFORMS = {
