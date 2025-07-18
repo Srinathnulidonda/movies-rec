@@ -15,7 +15,6 @@ import hashlib
 import time
 from sqlalchemy import func, and_, or_, desc, text
 import telebot
-import schedule
 import threading
 from geopy.geocoders import Nominatim
 import jwt
