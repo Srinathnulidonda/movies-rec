@@ -51,17 +51,6 @@ MULTI-LANGUAGE & REGIONAL CONTENT:
 - Language-specific trending and popular content
 - Regional festival and cultural event-based recommendations
 
-ADMIN CONTENT CURATION SYSTEM:
-- Admin dashboard to browse multiple databases (TMDB, Jikan, regional APIs)
-- Admin interface to search across all supported languages and regions
-- Admin can select specific content from any database
-- Admin can create custom public recommendations with selected content
-- Admin can write personalized descriptions and reasons for recommendations
-- Admin can set priority levels and expiration dates for recommendations
-- Admin can tag recommendations with categories and languages
-- System automatically fetches full metadata when admin selects content
-- Admin recommendations appear in public feed and get shared via Telegram
-
 RECOMMENDATION ALGORITHMS:
 - Implement hybrid recommendation combining multiple approaches
 - Collaborative filtering based on user similarity
@@ -71,12 +60,6 @@ RECOMMENDATION ALGORITHMS:
 - Language preference tracking and suggestions
 - Fallback strategies for new users and service failures
 
-REAL-TIME FEATURES:
-- Background learning processes that update user preferences
-- Session tracking and viewing behavior analysis
-- Real-time ML model updates based on user interactions
-- Personalization and diversity scoring
-- Anonymous user behavior tracking for homepage recommendations
 
 EXTERNAL INTEGRATIONS:
 - TMDB API for international movies and TV shows
@@ -85,6 +68,17 @@ EXTERNAL INTEGRATIONS:
 - Custom ML service for advanced recommendations
 - Telegram bot for notifications and featured content
 - IP-based location detection for regional content
+
+ADVANCED FEATURES:
+- ML-powered search suggestions with regional content
+- Multi-language trending content discovery
+- Personalization scoring with regional preferences
+- Diversity metrics for recommendations
+- Enhanced content metadata with regional information
+- Real-time preference learning
+- Admin content curation workflow
+- Public recommendation feed with multi-language content
+- Regional festival and cultural event-based content highlighting
 
 DATABASE DESIGN:
 - User management with preferences and regional settings
@@ -113,16 +107,7 @@ TECHNICAL REQUIREMENTS:
 - Regional content API integration
 - Performance optimization for external API calls
 
-ADVANCED FEATURES:
-- ML-powered search suggestions with regional content
-- Multi-language trending content discovery
-- Personalization scoring with regional preferences
-- Diversity metrics for recommendations
-- Enhanced content metadata with regional information
-- Real-time preference learning
-- Admin content curation workflow
-- Public recommendation feed with multi-language content
-- Regional festival and cultural event-based content highlighting
+
 
 API ENDPOINTS STRUCTURE:
 - GET /api/homepage-recommendations (for non-logged users)

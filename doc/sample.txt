@@ -24,7 +24,7 @@ frontend/
 │   ├── main.css              # Custom CSS styles
 │   └── components.css        # Component-specific styles
 ├── js/
-│   ├── main.js               # Main application logic
+│   ├── main.js               # Main application logic #api service
 │   ├── components/
 │   │   ├── header.js         # Header component
 │   │   ├── movieCard.js      # Movie card component
@@ -33,7 +33,7 @@ frontend/
 │   │   └── bottomNav.js      # Bottom navigation
 │   ├── services/
 │   │   ├── api.js            # API service
-│   │   ├── auth.js           # Authentication service
+│   │   ├── auth.js           # Authentication service #api service
 │   │   └── storage.js        # Local storage helper
 │   └── pages/
 │       ├── home.js           # Home page logic

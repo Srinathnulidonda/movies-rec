@@ -4,7 +4,8 @@ Create a comprehensive movie, anime and TV show recommendation system backend wi
 
 DEPLOYMENT & DATABASE:
 - Deploy backend on Render for reliable hosting
-- Use PostgreSQL as the free database (Render PostgreSQL)
+- Use PostgreSQL as the free database (Render PostgreSQL) 
+-sqlite for the local testing
 - Configure environment variables for production deployment
 - Set up database connection pooling and optimization
 
@@ -53,7 +54,7 @@ ADMIN CONTENT CURATION SYSTEM:
 - Custom descriptions and tagging system
 - Priority levels and expiration management
 - Telegram integration for community notifications
-
+- Telegram post recommendation
 RECOMMENDATION ALGORITHMS:
 - Collaborative filtering based on user similarity
 - Content-based filtering using genre and metadata
@@ -80,6 +81,15 @@ DATABASE SCHEMA:
 - Content similarity matrices
 - Regional content categorization
 
+REGIONAL CONTENT SUPPORT:
+- Telugu movie database integration
+- Hindi movie database integration
+- Tamil movie database integration
+- Kannada movie database integration
+- Regional trending and popular content
+- Language-specific genre categorization
+- Multi-language metadata support
+
 API ENDPOINTS:
 - /api/recommendations/homepage (non-logged users)
 - /api/recommendations/personalized (logged-in users)
@@ -89,14 +99,7 @@ API ENDPOINTS:
 - /api/admin/curate (admin content selection)
 - /api/user/interactions (watchlist, favorites, ratings)
 
-REGIONAL CONTENT SUPPORT:
-- Telugu movie database integration
-- Hindi movie database integration
-- Tamil movie database integration
-- Kannada movie database integration
-- Regional trending and popular content
-- Language-specific genre categorization
-- Multi-language metadata support
+
 
 TECHNICAL REQUIREMENTS:
 - Flask backend with PostgreSQL database

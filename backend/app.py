@@ -1,1128 +1,1668 @@
 import os
-import sys
+import secrets
+import hashlib
+import sqlite3
+import psycopg2
+import requests
+import redis
+import json
 from datetime import datetime, timedelta
 from functools import wraps
-import requests
-from flask import Flask, request, jsonify, g
+from flask import Flask, request, jsonify, session
 from flask_cors import CORS
-from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
-from flask_bcrypt import Bcrypt
-from flask_sqlalchemy import SQLAlchemy
-from flask_migrate import Migrate
-from flask_caching import Cache
-from sqlalchemy import func, and_, or_, desc, text
-from sqlalchemy.orm import relationship
-from sqlalchemy.dialects.postgresql import JSON
-import redis
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from werkzeug.security import generate_password_hash, check_password_hash
+import jwt
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Text, Boolean, ForeignKey
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, relationship
+from sqlalchemy.pool import QueuePool
+import numpy as np
+from scipy.sparse import csr_matrix
+from sklearn.metrics.pairwise import cosine_similarity
+import pandas as pd
 from apscheduler.schedulers.background import BackgroundScheduler
-import logging
-from typing import List, Dict, Any, Optional
-import hashlib
-import json
-from dataclasses import dataclass
-from enum import Enum
+import geoip2.database
+from telegram import Bot
+from cachetools import TTLCache
+import asyncio
+import aiohttp
 
-# Initialize Flask app
 app = Flask(__name__)
-
-# Configuration
-class Config:
-    # Database configuration
-    if os.environ.get('DATABASE_URL'):
-        SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL')
-        if SQLALCHEMY_DATABASE_URI.startswith("postgres://"):
-            SQLALCHEMY_DATABASE_URI = SQLALCHEMY_DATABASE_URI.replace("postgres://", "postgresql://", 1)
-    else:
-        SQLALCHEMY_DATABASE_URI = 'sqlite:///recommendation_system.db'
-    
-    SQLALCHEMY_TRACK_MODIFICATIONS = False
-    SQLALCHEMY_ENGINE_OPTIONS = {
-        'pool_size': 10,
-        'pool_recycle': 3600,
-        'pool_pre_ping': True
-    }
-    
-    # JWT configuration
-    JWT_SECRET_KEY = os.environ.get('JWT_SECRET_KEY', 'your-secret-key-change-in-production')
-    JWT_ACCESS_TOKEN_EXPIRES = timedelta(days=7)
-    
-    # API Keys
-    TMDB_API_KEY = os.environ.get('TMDB_API_KEY', '1cf86635f20bb2aff8e70940e7c3ddd5')
-    OMDB_API_KEY = os.environ.get('OMDB_API_KEY', '52260795')
-    
-    # Cache configuration
-    CACHE_TYPE = 'redis' if os.environ.get('REDIS_URL') else 'simple'
-    CACHE_REDIS_URL = os.environ.get('REDIS_URL', 'redis://localhost:6379')
-    CACHE_DEFAULT_TIMEOUT = 300
-    
-    # ML Service URL
-    ML_SERVICE_URL = os.environ.get('ML_SERVICE_URL', 'http://localhost:5001')
-    
-    # Telegram configuration
-    TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
-    TELEGRAM_CHANNEL_ID = os.environ.get('TELEGRAM_CHANNEL_ID', '')
-
-app.config.from_object(Config)
-
-# Initialize extensions
-db = SQLAlchemy(app)
-migrate = Migrate(app, db)
-bcrypt = Bcrypt(app)
-jwt = JWTManager(app)
-cache = Cache(app)
 CORS(app)
 
-# Setup logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Configuration
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', secrets.token_hex(32))
+app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', secrets.token_hex(32))
+app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(days=7)
+
+# Database configuration
+DATABASE_URL = os.environ.get('DATABASE_URL', 'sqlite:///movie_recommendations.db')
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+# Redis configuration
+REDIS_URL = os.environ.get('REDIS_URL', 'redis://localhost:6379')
+try:
+    redis_client = redis.from_url(REDIS_URL, decode_responses=True)
+    redis_client.ping()
+except:
+    print("Redis connection failed, using in-memory cache")
+    redis_client = None
+
+# Rate limiting
+limiter = Limiter(
+    app=app,
+    key_func=get_remote_address,
+    default_limits=["200 per day", "50 per hour"]
+)
+
+# API Keys
+TMDB_API_KEY = os.environ.get('TMDB_API_KEY')
+OMDB_API_KEY = os.environ.get('OMDB_API_KEY')
+YOUTUBE_API_KEY = os.environ.get('YOUTUBE_API_KEY')
+TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
+TELEGRAM_CHANNEL_ID = os.environ.get('TELEGRAM_CHANNEL_ID')
+
+# ML Service URL
+ML_SERVICE_URL = os.environ.get('ML_SERVICE_URL', 'https://movies-rec-xmf5.onrender.com')
+
+# Database setup
+Base = declarative_base()
+engine = create_engine(DATABASE_URL, poolclass=QueuePool, pool_size=20, max_overflow=0)
+Session = sessionmaker(bind=engine)
+
+# Cache setup
+content_cache = TTLCache(maxsize=10000, ttl=3600)  # 1 hour cache
+recommendation_cache = TTLCache(maxsize=5000, ttl=1800)  # 30 min cache
 
 # Database Models
-class ContentType(Enum):
-    MOVIE = "movie"
-    TV_SHOW = "tv_show"
-    ANIME = "anime"
-
-class User(db.Model):
+class User(Base):
     __tablename__ = 'users'
+    id = Column(Integer, primary_key=True)
+    username = Column(String(80), unique=True, nullable=False)
+    email = Column(String(120), unique=True, nullable=False)
+    password_hash = Column(String(255), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    is_admin = Column(Boolean, default=False)
+    preferred_languages = Column(Text, default='["en"]')
+    preferred_genres = Column(Text, default='[]')
+    region = Column(String(50))
     
-    id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(80), unique=True, nullable=False)
-    email = db.Column(db.String(120), unique=True, nullable=False)
-    password_hash = db.Column(db.String(128))
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
-    # User preferences
-    preferred_genres = db.Column(JSON, default=list)
-    preferred_languages = db.Column(JSON, default=list)
-    
-    # Relationships
-    watch_history = relationship('WatchHistory', back_populates='user', lazy='dynamic')
-    favorites = relationship('Favorite', back_populates='user', lazy='dynamic')
-    ratings = relationship('Rating', back_populates='user', lazy='dynamic')
-    wishlist = relationship('Wishlist', back_populates='user', lazy='dynamic')
-    reviews = relationship('Review', back_populates='user', lazy='dynamic')
+    watchlist = relationship('Watchlist', back_populates='user')
+    favorites = relationship('Favorite', back_populates='user')
+    ratings = relationship('Rating', back_populates='user')
+    search_history = relationship('SearchHistory', back_populates='user')
 
-class Content(db.Model):
+class Content(Base):
     __tablename__ = 'content'
-    
-    id = db.Column(db.Integer, primary_key=True)
-    external_id = db.Column(db.String(100), index=True)
-    source = db.Column(db.String(50))  # tmdb, omdb, jikan, regional
-    content_type = db.Column(db.String(20))
-    title = db.Column(db.String(200), nullable=False)
-    original_title = db.Column(db.String(200))
-    description = db.Column(db.Text)
-    release_date = db.Column(db.Date)
-    runtime = db.Column(db.Integer)
-    poster_path = db.Column(db.String(500))
-    backdrop_path = db.Column(db.String(500))
-    trailer_url = db.Column(db.String(500))
-    
-    # Metadata
-    genres = db.Column(JSON, default=list)
-    cast = db.Column(JSON, default=list)
-    crew = db.Column(JSON, default=list)
-    languages = db.Column(JSON, default=list)
-    countries = db.Column(JSON, default=list)
-    
-    # Ratings
-    tmdb_rating = db.Column(db.Float)
-    imdb_rating = db.Column(db.Float)
-    user_rating = db.Column(db.Float)
-    critic_score = db.Column(db.Float)
-    
-    # Regional content flags
-    is_telugu = db.Column(db.Boolean, default=False)
-    is_hindi = db.Column(db.Boolean, default=False)
-    is_tamil = db.Column(db.Boolean, default=False)
-    is_kannada = db.Column(db.Boolean, default=False)
-    
-    # Analytics
-    view_count = db.Column(db.Integer, default=0)
-    popularity_score = db.Column(db.Float, default=0.0)
-    
-    # Timestamps
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
-    # Relationships
-    watch_history = relationship('WatchHistory', back_populates='content', lazy='dynamic')
-    favorites = relationship('Favorite', back_populates='content', lazy='dynamic')
-    ratings = relationship('Rating', back_populates='content', lazy='dynamic')
-    wishlist = relationship('Wishlist', back_populates='content', lazy='dynamic')
-    reviews = relationship('Review', back_populates='content', lazy='dynamic')
+    id = Column(Integer, primary_key=True)
+    tmdb_id = Column(String(50))
+    imdb_id = Column(String(50))
+    mal_id = Column(String(50))  # MyAnimeList ID
+    title = Column(String(255), nullable=False)
+    original_title = Column(String(255))
+    content_type = Column(String(50))  # movie, tv, anime
+    language = Column(String(10))
+    region = Column(String(50))
+    release_date = Column(DateTime)
+    runtime = Column(Integer)
+    synopsis = Column(Text)
+    plot = Column(Text)
+    genres = Column(Text)  # JSON array
+    cast_crew = Column(Text)  # JSON
+    ratings = Column(Text)  # JSON with multiple rating sources
+    poster_url = Column(String(500))
+    backdrop_url = Column(String(500))
+    trailer_urls = Column(Text)  # JSON array
+    metadata = Column(Text)  # JSON for additional data
+    popularity_score = Column(Float, default=0.0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-class WatchHistory(db.Model):
-    __tablename__ = 'watch_history'
+class Watchlist(Base):
+    __tablename__ = 'watchlist'
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey('users.id'))
+    content_id = Column(Integer, ForeignKey('content.id'))
+    added_at = Column(DateTime, default=datetime.utcnow)
     
-    id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
-    content_id = db.Column(db.Integer, db.ForeignKey('content.id'), nullable=False)
-    watched_at = db.Column(db.DateTime, default=datetime.utcnow)
-    watch_duration = db.Column(db.Integer)  # in minutes
-    completed = db.Column(db.Boolean, default=False)
-    
-    user = relationship('User', back_populates='watch_history')
-    content = relationship('Content', back_populates='watch_history')
-
-class Favorite(db.Model):
-    __tablename__ = 'favorites'
-    
-    id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
-    content_id = db.Column(db.Integer, db.ForeignKey('content.id'), nullable=False)
-    added_at = db.Column(db.DateTime, default=datetime.utcnow)
-    
-    user = relationship('User', back_populates='favorites')
-    content = relationship('Content', back_populates='favorites')
-
-class Rating(db.Model):
-    __tablename__ = 'ratings'
-    
-    id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
-    content_id = db.Column(db.Integer, db.ForeignKey('content.id'), nullable=False)
-    rating = db.Column(db.Float, nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    
-    user = relationship('User', back_populates='ratings')
-    content = relationship('Content', back_populates='ratings')
-
-class Wishlist(db.Model):
-    __tablename__ = 'wishlist'
-    
-    id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
-    content_id = db.Column(db.Integer, db.ForeignKey('content.id'), nullable=False)
-    added_at = db.Column(db.DateTime, default=datetime.utcnow)
-    priority = db.Column(db.Integer, default=0)
-    
-    user = relationship('User', back_populates='wishlist')
-    content = relationship('Content', back_populates='wishlist')
-
-class Review(db.Model):
-    __tablename__ = 'reviews'
-    
-    id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
-    content_id = db.Column(db.Integer, db.ForeignKey('content.id'), nullable=False)
-    review_text = db.Column(db.Text, nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
-    user = relationship('User', back_populates='reviews')
-    content = relationship('Content', back_populates='reviews')
-
-class CuratedRecommendation(db.Model):
-    __tablename__ = 'curated_recommendations'
-    
-    id = db.Column(db.Integer, primary_key=True)
-    content_id = db.Column(db.Integer, db.ForeignKey('content.id'), nullable=False)
-    title = db.Column(db.String(200), nullable=False)
-    description = db.Column(db.Text)
-    category = db.Column(db.String(50))  # critics_choice, editors_pick, etc
-    priority = db.Column(db.Integer, default=0)
-    active = db.Column(db.Boolean, default=True)
-    expires_at = db.Column(db.DateTime)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    
+    user = relationship('User', back_populates='watchlist')
     content = relationship('Content')
 
-# API Integration Classes
-class TMDBClient:
-    def __init__(self, api_key):
-        self.api_key = api_key
-        self.base_url = "https://api.themoviedb.org/3"
+class Favorite(Base):
+    __tablename__ = 'favorites'
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey('users.id'))
+    content_id = Column(Integer, ForeignKey('content.id'))
+    added_at = Column(DateTime, default=datetime.utcnow)
     
-    def search(self, query, content_type='movie'):
-        endpoint = f"{self.base_url}/search/{content_type}"
-        params = {'api_key': self.api_key, 'query': query}
-        response = requests.get(endpoint, params=params)
-        return response.json() if response.status_code == 200 else None
-    
-    def get_details(self, content_id, content_type='movie'):
-        endpoint = f"{self.base_url}/{content_type}/{content_id}"
-        params = {'api_key': self.api_key, 'append_to_response': 'credits,videos'}
-        response = requests.get(endpoint, params=params)
-        return response.json() if response.status_code == 200 else None
-    
-    def get_trending(self, content_type='movie', time_window='week'):
-        endpoint = f"{self.base_url}/trending/{content_type}/{time_window}"
-        params = {'api_key': self.api_key}
-        response = requests.get(endpoint, params=params)
-        return response.json() if response.status_code == 200 else None
+    user = relationship('User', back_populates='favorites')
+    content = relationship('Content')
 
-class OMDBClient:
-    def __init__(self, api_key):
-        self.api_key = api_key
-        self.base_url = "http://www.omdbapi.com/"
+class Rating(Base):
+    __tablename__ = 'ratings'
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey('users.id'))
+    content_id = Column(Integer, ForeignKey('content.id'))
+    rating = Column(Float, nullable=False)
+    review = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow)
     
-    def search(self, title):
-        params = {'apikey': self.api_key, 't': title}
-        response = requests.get(self.base_url, params=params)
-        return response.json() if response.status_code == 200 else None
+    user = relationship('User', back_populates='ratings')
+    content = relationship('Content')
 
-class JikanClient:
-    def __init__(self):
-        self.base_url = "https://api.jikan.moe/v4"
+class SearchHistory(Base):
+    __tablename__ = 'search_history'
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=True)
+    session_id = Column(String(100))
+    query = Column(String(255))
+    results_count = Column(Integer)
+    clicked_content_ids = Column(Text)  # JSON array
+    timestamp = Column(DateTime, default=datetime.utcnow)
     
-    def search(self, query):
-        endpoint = f"{self.base_url}/anime"
-        params = {'q': query}
-        response = requests.get(endpoint, params=params)
-        return response.json() if response.status_code == 200 else None
-    
-    def get_details(self, anime_id):
-        endpoint = f"{self.base_url}/anime/{anime_id}/full"
-        response = requests.get(endpoint)
-        return response.json() if response.status_code == 200 else None
+    user = relationship('User', back_populates='search_history')
 
-# Helper Functions
-def create_content_from_tmdb(tmdb_data, content_type='movie'):
-    """Create or update content from TMDB data"""
-    external_id = f"tmdb_{tmdb_data['id']}"
+class AdminRecommendation(Base):
+    __tablename__ = 'admin_recommendations'
+    id = Column(Integer, primary_key=True)
+    content_id = Column(Integer, ForeignKey('content.id'))
+    title = Column(String(255))
+    description = Column(Text)
+    priority = Column(Integer, default=1)
+    tags = Column(Text)  # JSON array
+    expires_at = Column(DateTime)
+    created_by = Column(Integer, ForeignKey('users.id'))
+    created_at = Column(DateTime, default=datetime.utcnow)
     
-    content = Content.query.filter_by(external_id=external_id).first()
-    if not content:
-        content = Content(external_id=external_id)
-    
-    content.source = 'tmdb'
-    content.content_type = content_type
-    content.title = tmdb_data.get('title') or tmdb_data.get('name')
-    content.original_title = tmdb_data.get('original_title') or tmdb_data.get('original_name')
-    content.description = tmdb_data.get('overview')
-    content.release_date = datetime.strptime(tmdb_data.get('release_date', '1900-01-01'), '%Y-%m-%d').date()
-    content.poster_path = f"https://image.tmdb.org/t/p/w500{tmdb_data.get('poster_path')}" if tmdb_data.get('poster_path') else None
-    content.backdrop_path = f"https://image.tmdb.org/t/p/original{tmdb_data.get('backdrop_path')}" if tmdb_data.get('backdrop_path') else None
-    content.tmdb_rating = tmdb_data.get('vote_average')
-    
-    # Extract genres
-    if 'genres' in tmdb_data:
-        content.genres = [genre['name'] for genre in tmdb_data['genres']]
-    
-    # Extract cast and crew if available
-    if 'credits' in tmdb_data:
-        content.cast = [
-            {'name': person['name'], 'character': person['character']} 
-            for person in tmdb_data['credits'].get('cast', [])[:10]
-        ]
-        content.crew = [
-            {'name': person['name'], 'job': person['job']} 
-            for person in tmdb_data['credits'].get('crew', [])
-            if person['job'] in ['Director', 'Producer', 'Writer']
-        ]
-    
-    # Extract trailer
-    if 'videos' in tmdb_data:
-        for video in tmdb_data['videos'].get('results', []):
-            if video['type'] == 'Trailer' and video['site'] == 'YouTube':
-                content.trailer_url = f"https://www.youtube.com/watch?v={video['key']}"
-                break
-    
-    db.session.add(content)
-    db.session.commit()
-    
-    return content
+    content = relationship('Content')
+    admin = relationship('User')
 
-# Recommendation Engine
-class RecommendationEngine:
-    def __init__(self):
-        self.tmdb_client = TMDBClient(app.config['TMDB_API_KEY'])
-        self.omdb_client = OMDBClient(app.config['OMDB_API_KEY'])
-        self.jikan_client = JikanClient()
-    
-    @cache.memoize(timeout=3600)
-    def get_homepage_recommendations(self):
-        """Generate recommendations for non-logged users"""
-        recommendations = {
-            'trending': self._get_trending_content(),
-            'popular_by_genre': self._get_popular_by_genre(),
-            'whats_hot': self._get_whats_hot(),
-            'regional_spotlight': self._get_regional_spotlight(),
-            'critics_choice': self._get_critics_choice(),
-            'user_favorites': self._get_user_favorites()
-        }
-        return recommendations
-    
-    def get_personalized_recommendations(self, user_id):
-        """Generate personalized recommendations for logged-in users"""
-        user = User.query.get(user_id)
-        if not user:
-            return None
+# Create tables
+Base.metadata.create_all(engine)
+
+# Admin initialization
+def initialize_admin():
+    """Create default admin user if not exists"""
+    db_session = Session()
+    try:
+        # Check if admin exists
+        admin_email = os.environ.get('ADMIN_EMAIL', 'admin@movierecommender.com')
+        admin_username = os.environ.get('ADMIN_USERNAME', 'admin')
+        admin_password = os.environ.get('ADMIN_PASSWORD', 'AdminPass123!')
         
-        recommendations = {
-            'based_on_history': self._get_history_based_recommendations(user),
-            'based_on_favorites': self._get_favorites_based_recommendations(user),
-            'based_on_wishlist': self._get_wishlist_based_recommendations(user),
-            'genre_recommendations': self._get_genre_recommendations(user),
-            'collaborative_filtering': self._get_collaborative_recommendations(user),
-            'hybrid_recommendations': self._get_hybrid_recommendations(user)
-        }
+        existing_admin = db_session.query(User).filter(
+            (User.email == admin_email) | (User.username == admin_username)
+        ).first()
         
-        return recommendations
-    
-    def _get_trending_content(self):
-        """Get trending content from various sources"""
-        trending = []
-        
-        # Get trending from TMDB
-        tmdb_trending = self.tmdb_client.get_trending()
-        if tmdb_trending:
-            for item in tmdb_trending.get('results', [])[:10]:
-                content = create_content_from_tmdb(item)
-                trending.append(self._serialize_content(content))
-        
-        # Get trending from database based on view count
-        db_trending = Content.query.order_by(
-            desc(Content.view_count)
-        ).limit(10).all()
-        
-        for content in db_trending:
-            trending.append(self._serialize_content(content))
-        
-        return trending[:20]  # Return top 20
-    
-    def _get_popular_by_genre(self):
-        """Get popular content organized by genre"""
-        genres = ['Action', 'Comedy', 'Drama', 'Horror', 'Sci-Fi', 'Romance']
-        popular_by_genre = {}
-        
-        for genre in genres:
-            content_list = Content.query.filter(
-                Content.genres.contains([genre])
-            ).order_by(desc(Content.popularity_score)).limit(10).all()
+        if not existing_admin:
+            # Create admin user
+            admin_user = User(
+                username=admin_username,
+                email=admin_email,
+                password_hash=generate_password_hash(admin_password),
+                is_admin=True,
+                region='global',
+                created_at=datetime.utcnow()
+            )
+            db_session.add(admin_user)
+            db_session.commit()
+            print(f"Admin user created: {admin_username}")
+        else:
+            print(f"Admin user already exists: {existing_admin.username}")
             
-            popular_by_genre[genre] = [
-                self._serialize_content(content) for content in content_list
-            ]
-        
-        return popular_by_genre
-    
-    def _get_whats_hot(self):
-        """Get currently hot content based on recent views"""
-        # Calculate content viewed in last 7 days
-        seven_days_ago = datetime.utcnow() - timedelta(days=7)
-        
-        hot_content = db.session.query(
-            Content,
-            func.count(WatchHistory.id).label('recent_views')
-        ).join(
-            WatchHistory, Content.id == WatchHistory.content_id
-        ).filter(
-            WatchHistory.watched_at >= seven_days_ago
-        ).group_by(Content.id).order_by(
-            desc('recent_views')
-        ).limit(15).all()
-        
-        return [self._serialize_content(item[0]) for item in hot_content]
-    
-    def _get_regional_spotlight(self):
-        """Get popular regional content"""
-        regional = {
-            'telugu': Content.query.filter_by(is_telugu=True).order_by(
-                desc(Content.popularity_score)
-            ).limit(10).all(),
-            'hindi': Content.query.filter_by(is_hindi=True).order_by(
-                desc(Content.popularity_score)
-            ).limit(10).all(),
-            'tamil': Content.query.filter_by(is_tamil=True).order_by(
-                desc(Content.popularity_score)
-            ).limit(10).all(),
-            'kannada': Content.query.filter_by(is_kannada=True).order_by(
-                desc(Content.popularity_score)
-            ).limit(10).all()
-        }
-        
-        return {
-            lang: [self._serialize_content(content) for content in content_list]
-            for lang, content_list in regional.items()
-        }
-    
-    def _get_critics_choice(self):
-        """Get curated critic recommendations"""
-        curated = CuratedRecommendation.query.filter_by(
-            category='critics_choice',
-            active=True
-        ).filter(
-            or_(
-                CuratedRecommendation.expires_at == None,
-                CuratedRecommendation.expires_at > datetime.utcnow()
-            )
-        ).order_by(desc(CuratedRecommendation.priority)).limit(10).all()
-        
-        return [
-            self._serialize_content(rec.content) for rec in curated
-        ]
-    
-    def _get_user_favorites(self):
-        """Get most favorited content"""
-        favorites = db.session.query(
-            Content,
-            func.count(Favorite.id).label('favorite_count')
-        ).join(
-            Favorite, Content.id == Favorite.content_id
-        ).group_by(Content.id).order_by(
-            desc('favorite_count')
-        ).limit(15).all()
-        
-        return [self._serialize_content(item[0]) for item in favorites]
-    
-    def _get_history_based_recommendations(self, user):
-        """Get recommendations based on watch history"""
-        # Get user's recent watch history
-        recent_history = user.watch_history.order_by(
-            desc(WatchHistory.watched_at)
-        ).limit(20).all()
-        
-        if not recent_history:
-            return []
-        
-        # Extract genres from watched content
-        watched_genres = []
-        for history in recent_history:
-            watched_genres.extend(history.content.genres or [])
-        
-        # Get most common genres
-        from collections import Counter
-        genre_counts = Counter(watched_genres)
-        top_genres = [genre for genre, _ in genre_counts.most_common(3)]
-        
-        # Find similar content
-        recommendations = Content.query.filter(
-            and_(
-                Content.id.notin_([h.content_id for h in recent_history]),
-                or_(*[Content.genres.contains([genre]) for genre in top_genres])
-            )
-        ).order_by(desc(Content.popularity_score)).limit(10).all()
-        
-        return [self._serialize_content(content) for content in recommendations]
-    
-    def _get_favorites_based_recommendations(self, user):
-        """Get recommendations based on user favorites"""
-        favorites = user.favorites.all()
-        if not favorites:
-            return []
-        
-        # Similar logic to history-based but with favorites
-        favorite_genres = []
-        for fav in favorites:
-            favorite_genres.extend(fav.content.genres or [])
-        
-        from collections import Counter
-        genre_counts = Counter(favorite_genres)
-        top_genres = [genre for genre, _ in genre_counts.most_common(3)]
-        
-        recommendations = Content.query.filter(
-            and_(
-                Content.id.notin_([f.content_id for f in favorites]),
-                or_(*[Content.genres.contains([genre]) for genre in top_genres])
-            )
-        ).order_by(desc(Content.popularity_score)).limit(10).all()
-        
-        return [self._serialize_content(content) for content in recommendations]
-    
-    def _get_wishlist_based_recommendations(self, user):
-        """Get recommendations based on wishlist"""
-        wishlist = user.wishlist.all()
-        if not wishlist:
-            return []
-        
-        # Get genres from wishlist
-        wishlist_genres = []
-        for item in wishlist:
-            wishlist_genres.extend(item.content.genres or [])
-        
-        from collections import Counter
-        genre_counts = Counter(wishlist_genres)
-        top_genres = [genre for genre, _ in genre_counts.most_common(2)]
-        
-        recommendations = Content.query.filter(
-            and_(
-                Content.id.notin_([w.content_id for w in wishlist]),
-                or_(*[Content.genres.contains([genre]) for genre in top_genres])
-            )
-        ).order_by(desc(Content.popularity_score)).limit(8).all()
-        
-        return [self._serialize_content(content) for content in recommendations]
-    
-    def _get_genre_recommendations(self, user):
-        """Get recommendations based on user's preferred genres"""
-        if not user.preferred_genres:
-            return []
-        
-        recommendations = Content.query.filter(
-            or_(*[Content.genres.contains([genre]) for genre in user.preferred_genres])
-        ).order_by(desc(Content.popularity_score)).limit(10).all()
-        
-        return [self._serialize_content(content) for content in recommendations]
-    
-    def _get_collaborative_recommendations(self, user):
-        """Get recommendations using collaborative filtering"""
-        # Find similar users based on ratings
-        user_ratings = {r.content_id: r.rating for r in user.ratings.all()}
-        
-        if not user_ratings:
-            return []
-        
-        # Find users who rated similar content
-        similar_users = []
-        other_users = User.query.filter(User.id != user.id).all()
-        
-        for other_user in other_users:
-            other_ratings = {r.content_id: r.rating for r in other_user.ratings.all()}
+    except Exception as e:
+        print(f"Error creating admin user: {e}")
+        db_session.rollback()
+    finally:
+        db_session.close()
+
+# Call admin initialization after creating tables
+initialize_admin()
+
+# Helper functions
+def get_user_location(ip_address):
+    """Get user's location from IP address"""
+    try:
+        if os.path.exists('GeoLite2-City.mmdb'):
+            reader = geoip2.database.Reader('GeoLite2-City.mmdb')
+            response = reader.city(ip_address)
+            country = response.country.iso_code
             
-            # Calculate similarity (simple approach)
-            common_items = set(user_ratings.keys()) & set(other_ratings.keys())
-            if len(common_items) > 3:
-                similarity = sum(
-                    abs(user_ratings[item] - other_ratings[item]) 
-                    for item in common_items
-                ) / len(common_items)
-                similar_users.append((other_user, similarity))
-        
-        # Sort by similarity
-        similar_users.sort(key=lambda x: x[1])
-        
-        # Get recommendations from similar users
-        recommendations = []
-        for similar_user, _ in similar_users[:5]:
-            similar_user_favorites = similar_user.favorites.filter(
-                Favorite.content_id.notin_(user_ratings.keys())
-            ).limit(2).all()
+            # Map countries to regions
+            region_mapping = {
+                'IN': 'india',
+                'US': 'usa',
+                'GB': 'uk',
+                'JP': 'japan',
+                'KR': 'korea'
+            }
             
-            for fav in similar_user_favorites:
-                recommendations.append(self._serialize_content(fav.content))
+            return region_mapping.get(country, 'global')
+    except:
+        pass
+    return 'global'
+
+def token_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = request.headers.get('Authorization')
         
-        return recommendations[:10]
-    
-    def _get_hybrid_recommendations(self, user):
-        """Combine multiple recommendation approaches"""
+        if not token:
+            return jsonify({'message': 'Token is missing'}), 401
+        
         try:
-            # Call ML service for advanced recommendations
-            ml_response = requests.post(
-                f"{app.config['ML_SERVICE_URL']}/recommend",
-                json={'user_id': user.id}
-            )
-            
-            if ml_response.status_code == 200:
-                ml_recommendations = ml_response.json().get('recommendations', [])
-                
-                # Get content objects for ML recommendations
-                content_ids = [rec['content_id'] for rec in ml_recommendations]
-                contents = Content.query.filter(Content.id.in_(content_ids)).all()
-                
-                return [self._serialize_content(content) for content in contents]
+            token = token.split(' ')[1]  # Bearer token
+            data = jwt.decode(token, app.config['JWT_SECRET_KEY'], algorithms=['HS256'])
+            current_user_id = data['user_id']
         except:
-            logger.error("ML service unavailable, falling back to basic recommendations")
+            return jsonify({'message': 'Token is invalid'}), 401
         
-        # Fallback to combining other recommendation methods
-        history_recs = self._get_history_based_recommendations(user)[:3]
-        favorite_recs = self._get_favorites_based_recommendations(user)[:3]
-        genre_recs = self._get_genre_recommendations(user)[:4]
-        
-        return history_recs + favorite_recs + genre_recs
+        return f(current_user_id, *args, **kwargs)
     
-    def _serialize_content(self, content):
-        """Serialize content object to dictionary"""
-        return {
-            'id': content.id,
-            'external_id': content.external_id,
-            'title': content.title,
-            'original_title': content.original_title,
-            'description': content.description,
-            'content_type': content.content_type,
-            'poster_path': content.poster_path,
-            'backdrop_path': content.backdrop_path,
-            'genres': content.genres,
-            'tmdb_rating': content.tmdb_rating,
-            'imdb_rating': content.imdb_rating,
-            'user_rating': content.user_rating,
-            'release_date': content.release_date.isoformat() if content.release_date else None
-        }
+    return decorated
 
-# Authentication decorator for admin routes
 def admin_required(f):
     @wraps(f)
-    @jwt_required()
-    def decorated_function(*args, **kwargs):
-        current_user_id = get_jwt_identity()
-        user = User.query.get(current_user_id)
-        if not user or user.username != 'admin':  # Simple admin check
-            return jsonify({'message': 'Admin access required'}), 403
-        return f(*args, **kwargs)
-    return decorated_function
+    def decorated(current_user_id, *args, **kwargs):
+        db_session = Session()
+        try:
+            user = db_session.query(User).filter_by(id=current_user_id).first()
+            
+            if not user or not user.is_admin:
+                return jsonify({'message': 'Admin access required'}), 403
+            
+            return f(current_user_id, *args, **kwargs)
+        finally:
+            db_session.close()
+    
+    return decorated
 
-# Initialize recommendation engine
-recommendation_engine = RecommendationEngine()
+# Cache helpers
+def cache_get(key):
+    if redis_client:
+        return redis_client.get(key)
+    return None
 
-# API Routes
-@app.route('/api/health', methods=['GET'])
-def health_check():
-    """Health check endpoint"""
-    return jsonify({'status': 'healthy', 'timestamp': datetime.utcnow().isoformat()})
+def cache_set(key, value, ttl=3600):
+    if redis_client:
+        redis_client.setex(key, ttl, value)
 
-@app.route('/api/auth/register', methods=['POST'])
-def register():
-    """User registration"""
-    data = request.get_json()
-    
-    # Validate input
-    if not all(k in data for k in ('username', 'email', 'password')):
-        return jsonify({'message': 'Missing required fields'}), 400
-    
-    # Check if user exists
-    if User.query.filter_by(username=data['username']).first():
-        return jsonify({'message': 'Username already exists'}), 409
-    
-    if User.query.filter_by(email=data['email']).first():
-        return jsonify({'message': 'Email already exists'}), 409
-    
-    # Create new user
-    user = User(
-        username=data['username'],
-        email=data['email'],
-        password_hash=bcrypt.generate_password_hash(data['password']).decode('utf-8'),
-        preferred_genres=data.get('preferred_genres', []),
-        preferred_languages=data.get('preferred_languages', [])
-    )
-    
-    db.session.add(user)
-    db.session.commit()
-    
-    # Generate access token
-    access_token = create_access_token(identity=user.id)
-    
-    return jsonify({
-        'message': 'User created successfully',
-        'access_token': access_token,
-        'user': {
-            'id': user.id,
-            'username': user.username,
-            'email': user.email
+def cache_delete(key):
+    if redis_client:
+        redis_client.delete(key)
+
+# External API Integration Functions
+async def fetch_tmdb_content(query=None, content_type='movie', page=1, region=None, language=None):
+    """Fetch content from TMDB API"""
+    if not TMDB_API_KEY:
+        return {'results': []}
+        
+    async with aiohttp.ClientSession() as session:
+        base_url = f"https://api.themoviedb.org/3"
+        params = {
+            'api_key': TMDB_API_KEY,
+            'page': page
         }
-    }), 201
+        
+        if region:
+            params['region'] = region
+        if language:
+            params['language'] = language
+            
+        if query:
+            url = f"{base_url}/search/{content_type}"
+            params['query'] = query
+        else:
+            url = f"{base_url}/{content_type}/popular"
+            
+        try:
+            async with session.get(url, params=params) as response:
+                return await response.json()
+        except:
+            return {'results': []}
+
+async def fetch_omdb_details(imdb_id):
+    """Fetch additional details from OMDb API"""
+    if not OMDB_API_KEY:
+        return {}
+        
+    async with aiohttp.ClientSession() as session:
+        url = f"http://www.omdbapi.com/"
+        params = {
+            'apikey': OMDB_API_KEY,
+            'i': imdb_id,
+            'plot': 'full'
+        }
+        
+        try:
+            async with session.get(url, params=params) as response:
+                return await response.json()
+        except:
+            return {}
+
+async def fetch_anime_content(query=None, page=1):
+    """Fetch anime content from Jikan API"""
+    async with aiohttp.ClientSession() as session:
+        base_url = "https://api.jikan.moe/v4"
+        
+        if query:
+            url = f"{base_url}/anime"
+            params = {'q': query, 'page': page}
+        else:
+            url = f"{base_url}/top/anime"
+            params = {'page': page}
+            
+        try:
+            async with session.get(url, params=params) as response:
+                return await response.json()
+        except:
+            return {'data': []}
+
+async def fetch_youtube_trailers(content_title, content_type):
+    """Fetch trailer URLs from YouTube"""
+    if not YOUTUBE_API_KEY:
+        return []
+        
+    async with aiohttp.ClientSession() as session:
+        url = "https://www.googleapis.com/youtube/v3/search"
+        params = {
+            'part': 'snippet',
+            'q': f"{content_title} {content_type} trailer",
+            'key': YOUTUBE_API_KEY,
+            'maxResults': 3,
+            'type': 'video'
+        }
+        
+        try:
+            async with session.get(url, params=params) as response:
+                data = await response.json()
+                
+            trailers = []
+            if 'items' in data:
+                for item in data['items']:
+                    trailers.append({
+                        'title': item['snippet']['title'],
+                        'url': f"https://www.youtube.com/watch?v={item['id']['videoId']}",
+                        'thumbnail': item['snippet']['thumbnails']['high']['url']
+                    })
+                    
+            return trailers
+        except:
+            return []
+
+def merge_content_data(tmdb_data, omdb_data=None, anime_data=None):
+    """Merge data from multiple sources"""
+    merged = {}
+    
+    if anime_data:
+        merged.update({
+            'content_type': 'anime',
+            'mal_id': str(anime_data.get('mal_id')),
+            'title': anime_data.get('title'),
+            'synopsis': anime_data.get('synopsis'),
+            'genres': [g['name'] for g in anime_data.get('genres', [])],
+            'poster_url': anime_data.get('images', {}).get('jpg', {}).get('large_image_url'),
+            'popularity_score': anime_data.get('score', 0)
+        })
+    else:
+        merged.update({
+            'title': tmdb_data.get('title') or tmdb_data.get('name'),
+            'original_title': tmdb_data.get('original_title') or tmdb_data.get('original_name'),
+            'content_type': 'movie' if 'title' in tmdb_data else 'tv',
+            'language': tmdb_data.get('original_language'),
+            'release_date': tmdb_data.get('release_date') or tmdb_data.get('first_air_date'),
+            'synopsis': tmdb_data.get('overview'),
+            'genres': [g['name'] for g in tmdb_data.get('genres', [])] if 'genres' in tmdb_data else [],
+            'poster_url': f"https://image.tmdb.org/t/p/w500{tmdb_data.get('poster_path')}" if tmdb_data.get('poster_path') else None,
+            'backdrop_url': f"https://image.tmdb.org/t/p/original{tmdb_data.get('backdrop_path')}" if tmdb_data.get('backdrop_path') else None,
+            'tmdb_id': str(tmdb_data.get('id')),
+            'popularity_score': tmdb_data.get('popularity', 0)
+        })
+    
+    if omdb_data and omdb_data.get('Response') == 'True':
+        merged.update({
+            'imdb_id': omdb_data.get('imdbID'),
+            'plot': omdb_data.get('Plot'),
+            'runtime': int(omdb_data.get('Runtime', '0').split()[0]) if omdb_data.get('Runtime') and 'min' in omdb_data.get('Runtime') else None,
+            'ratings': {
+                'imdb': omdb_data.get('imdbRating'),
+                'metascore': omdb_data.get('Metascore'),
+                'ratings': omdb_data.get('Ratings', [])
+            },
+            'cast_crew': {
+                'director': omdb_data.get('Director'),
+                'writer': omdb_data.get('Writer'),
+                'actors': omdb_data.get('Actors')
+            }
+        })
+        
+    return merged
+
+# Authentication Routes
+@app.route('/api/auth/register', methods=['POST'])
+@limiter.limit("5 per hour")
+def register():
+    db_session = Session()
+    try:
+        data = request.get_json()
+        username = data.get('username')
+        email = data.get('email')
+        password = data.get('password')
+        
+        if not username or not email or not password:
+            return jsonify({'message': 'Missing required fields'}), 400
+            
+        # Check if user exists
+        existing_user = db_session.query(User).filter(
+            (User.username == username) | (User.email == email)
+        ).first()
+        
+        if existing_user:
+            return jsonify({'message': 'User already exists'}), 409
+            
+        # Get user region from IP
+        user_ip = request.remote_addr
+        region = get_user_location(user_ip)
+        
+        # Create new user
+        new_user = User(
+            username=username,
+            email=email,
+            password_hash=generate_password_hash(password),
+            region=region
+        )
+        
+        db_session.add(new_user)
+        db_session.commit()
+        
+        # Generate token
+        token = jwt.encode({
+            'user_id': new_user.id,
+            'exp': datetime.utcnow() + app.config['JWT_ACCESS_TOKEN_EXPIRES']
+        }, app.config['JWT_SECRET_KEY'])
+        
+        return jsonify({
+            'token': token,
+            'user': {
+                'id': new_user.id,
+                'username': new_user.username,
+                'email': new_user.email,
+                'region': new_user.region
+            }
+        }), 201
+        
+    except Exception as e:
+        db_session.rollback()
+        return jsonify({'message': str(e)}), 500
+    finally:
+        db_session.close()
 
 @app.route('/api/auth/login', methods=['POST'])
 def login():
-    """User login"""
-    data = request.get_json()
-    
-    if not all(k in data for k in ('username', 'password')):
-        return jsonify({'message': 'Missing username or password'}), 400
-    
-    user = User.query.filter_by(username=data['username']).first()
-    
-    if not user or not bcrypt.check_password_hash(user.password_hash, data['password']):
-        return jsonify({'message': 'Invalid credentials'}), 401
-    
-    access_token = create_access_token(identity=user.id)
-    
-    return jsonify({
-        'access_token': access_token,
-        'user': {
-            'id': user.id,
-            'username': user.username,
-            'email': user.email
-        }
-    }), 200
+    db_session = Session()
+    try:
+        data = request.get_json()
+        username = data.get('username')
+        password = data.get('password')
+        
+        if not username or not password:
+            return jsonify({'message': 'Missing credentials'}), 400
+            
+        # Find user
+        user = db_session.query(User).filter(
+            (User.username == username) | (User.email == username)
+        ).first()
+        
+        if not user or not check_password_hash(user.password_hash, password):
+            return jsonify({'message': 'Invalid credentials'}), 401
+            
+        # Generate token
+        token = jwt.encode({
+            'user_id': user.id,
+            'exp': datetime.utcnow() + app.config['JWT_ACCESS_TOKEN_EXPIRES']
+        }, app.config['JWT_SECRET_KEY'])
+        
+        return jsonify({
+            'token': token,
+            'user': {
+                'id': user.id,
+                'username': user.username,
+                'email': user.email,
+                'is_admin': user.is_admin,
+                'region': user.region
+            }
+        }), 200
+        
+    except Exception as e:
+        return jsonify({'message': str(e)}), 500
+    finally:
+        db_session.close()
 
+# Content Discovery Routes
+@app.route('/api/content/search', methods=['GET'])
+def search_content():
+    db_session = Session()
+    try:
+        query = request.args.get('q')
+        content_type = request.args.get('type', 'all')
+        page = int(request.args.get('page', 1))
+        language = request.args.get('language')
+        region = request.args.get('region')
+        
+        # Get or create session ID for anonymous users
+        session_id = request.headers.get('Session-ID') or session.get('session_id')
+        if not session_id:
+            session_id = secrets.token_urlsafe(16)
+            session['session_id'] = session_id
+            
+        # Check cache
+        cache_key = f"search:{query}:{content_type}:{page}:{language}:{region}"
+        cached_results = cache_get(cache_key)
+        if cached_results:
+            results = json.loads(cached_results)
+        else:
+            results = []
+            
+            # Search across multiple sources
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            if content_type in ['all', 'movie', 'tv']:
+                # TMDB search
+                if content_type == 'all':
+                    movie_data = loop.run_until_complete(
+                        fetch_tmdb_content(query, 'movie', page, region, language)
+                    )
+                    tv_data = loop.run_until_complete(
+                        fetch_tmdb_content(query, 'tv', page, region, language)
+                    )
+                    tmdb_results = movie_data.get('results', []) + tv_data.get('results', [])
+                else:
+                    tmdb_data = loop.run_until_complete(
+                        fetch_tmdb_content(query, content_type, page, region, language)
+                    )
+                    tmdb_results = tmdb_data.get('results', [])
+                    
+                for item in tmdb_results:
+                    content_data = merge_content_data(item)
+                    results.append(content_data)
+                    
+            if content_type in ['all', 'anime']:
+                # Anime search
+                anime_data = loop.run_until_complete(fetch_anime_content(query, page))
+                
+                for item in anime_data.get('data', []):
+                    content_data = merge_content_data({}, anime_data=item)
+                    results.append(content_data)
+                    
+            # Cache results
+            cache_set(cache_key, json.dumps(results), 3600)
+            
+        # Store search history
+        search_history = SearchHistory(
+            session_id=session_id,
+            query=query,
+            results_count=len(results)
+        )
+        
+        # Get user ID if authenticated
+        auth_header = request.headers.get('Authorization')
+        if auth_header:
+            try:
+                token = auth_header.split(' ')[1]
+                data = jwt.decode(token, app.config['JWT_SECRET_KEY'], algorithms=['HS256'])
+                search_history.user_id = data['user_id']
+            except:
+                pass
+                
+        db_session.add(search_history)
+        db_session.commit()
+        
+        return jsonify({
+            'results': results,
+            'page': page,
+            'total_results': len(results),
+            'session_id': session_id
+        }), 200
+        
+    except Exception as e:
+        return jsonify({'message': str(e)}), 500
+    finally:
+        db_session.close()
+
+@app.route('/api/content/<int:content_id>', methods=['GET'])
+def get_content_details(content_id):
+    db_session = Session()
+    try:
+        # Check if content exists in database
+        content = db_session.query(Content).filter_by(id=content_id).first()
+        
+        if not content:
+            return jsonify({'message': 'Content not found'}), 404
+            
+        # Fetch additional details if needed
+        if content.imdb_id and not content.plot:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            omdb_data = loop.run_until_complete(fetch_omdb_details(content.imdb_id))
+            
+            if omdb_data.get('Response') == 'True':
+                content.plot = omdb_data.get('Plot')
+                content.cast_crew = json.dumps({
+                    'director': omdb_data.get('Director'),
+                    'writer': omdb_data.get('Writer'),
+                    'actors': omdb_data.get('Actors')
+                })
+                db_session.commit()
+                
+        # Fetch trailers if not available
+        if not content.trailer_urls:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            trailers = loop.run_until_complete(
+                fetch_youtube_trailers(content.title, content.content_type)
+            )
+            content.trailer_urls = json.dumps(trailers)
+            db_session.commit()
+            
+        # Get similar content recommendations
+        similar_content = []
+        try:
+            response = requests.post(f"{ML_SERVICE_URL}/recommend/similar", 
+                                   json={'content_id': content_id})
+            if response.status_code == 200:
+                similar_ids = response.json().get('recommendations', [])
+                similar_content = db_session.query(Content).filter(
+                    Content.id.in_(similar_ids[:10])
+                ).all()
+        except:
+            pass
+            
+        # Get user rating if authenticated
+        user_rating = None
+        auth_header = request.headers.get('Authorization')
+        if auth_header:
+            try:
+                token = auth_header.split(' ')[1]
+                data = jwt.decode(token, app.config['JWT_SECRET_KEY'], algorithms=['HS256'])
+                rating = db_session.query(Rating).filter_by(
+                    user_id=data['user_id'],
+                    content_id=content_id
+                ).first()
+                if rating:
+                    user_rating = rating.rating
+            except:
+                pass
+                
+        return jsonify({
+            'id': content.id,
+            'title': content.title,
+            'original_title': content.original_title,
+            'content_type': content.content_type,
+            'language': content.language,
+            'region': content.region,
+            'release_date': content.release_date.isoformat() if content.release_date else None,
+            'runtime': content.runtime,
+            'synopsis': content.synopsis,
+            'plot': content.plot,
+            'genres': json.loads(content.genres) if content.genres else [],
+            'cast_crew': json.loads(content.cast_crew) if content.cast_crew else {},
+            'ratings': json.loads(content.ratings) if content.ratings else {},
+            'poster_url': content.poster_url,
+            'backdrop_url': content.backdrop_url,
+            'trailers': json.loads(content.trailer_urls) if content.trailer_urls else [],
+            'user_rating': user_rating,
+            'similar_content': [
+                {
+                    'id': c.id,
+                    'title': c.title,
+                    'poster_url': c.poster_url,
+                    'content_type': c.content_type
+                } for c in similar_content
+            ]
+        }), 200
+        
+    except Exception as e:
+        return jsonify({'message': str(e)}), 500
+    finally:
+        db_session.close()
+
+# Recommendation Routes
 @app.route('/api/recommendations/homepage', methods=['GET'])
-@cache.cached(timeout=3600)
-def homepage_recommendations():
-    """Get homepage recommendations for non-logged users"""
-    recommendations = recommendation_engine.get_homepage_recommendations()
-    return jsonify(recommendations), 200
+def get_homepage_recommendations():
+    db_session = Session()
+    try:
+        # Get session ID or user region
+        session_id = request.headers.get('Session-ID') or session.get('session_id')
+        user_ip = request.remote_addr
+        region = get_user_location(user_ip)
+        
+        recommendations = {
+            'trending': [],
+            'popular': [],
+            'regional': [],
+            'anime': [],
+            'by_genre': {},
+            'recently_added': []
+        }
+        
+        # Check cache
+        cache_key = f"homepage:{region}:{session_id}"
+        cached = cache_get(cache_key)
+        if cached:
+            return jsonify(json.loads(cached)), 200
+            
+        # Get trending content
+        trending = db_session.query(Content).order_by(
+            Content.popularity_score.desc()
+        ).limit(20).all()
+        
+        recommendations['trending'] = [
+            {
+                'id': c.id,
+                'title': c.title,
+                'poster_url': c.poster_url,
+                'content_type': c.content_type,
+                'rating': json.loads(c.ratings).get('imdb') if c.ratings else None
+            } for c in trending
+        ]
+        
+        # Get popular by genre
+        genres = ['Action', 'Comedy', 'Drama', 'Horror', 'Romance', 'Sci-Fi']
+        for genre in genres:
+            genre_content = db_session.query(Content).filter(
+                Content.genres.like(f'%{genre}%')
+            ).order_by(Content.popularity_score.desc()).limit(10).all()
+            
+            recommendations['by_genre'][genre] = [
+                {
+                    'id': c.id,
+                    'title': c.title,
+                    'poster_url': c.poster_url,
+                    'content_type': c.content_type
+                } for c in genre_content
+            ]
+            
+        # Get regional content
+        if region == 'india':
+            regional_languages = ['hi', 'te', 'ta', 'kn']
+            regional_content = db_session.query(Content).filter(
+                Content.language.in_(regional_languages)
+            ).order_by(Content.popularity_score.desc()).limit(20).all()
+            
+            recommendations['regional'] = [
+                {
+                    'id': c.id,
+                    'title': c.title,
+                    'poster_url': c.poster_url,
+                    'content_type': c.content_type,
+                    'language': c.language
+                } for c in regional_content
+            ]
+            
+        # Get anime recommendations
+        anime_content = db_session.query(Content).filter(
+            Content.content_type == 'anime'
+        ).order_by(Content.popularity_score.desc()).limit(20).all()
+        
+        recommendations['anime'] = [
+            {
+                'id': c.id,
+                'title': c.title,
+                'poster_url': c.poster_url,
+                'mal_id': c.mal_id
+            } for c in anime_content
+        ]
+        
+        # Get recently added
+        recent = db_session.query(Content).order_by(
+            Content.created_at.desc()
+        ).limit(20).all()
+        
+        recommendations['recently_added'] = [
+            {
+                'id': c.id,
+                'title': c.title,
+                'poster_url': c.poster_url,
+                'content_type': c.content_type,
+                'added': c.created_at.isoformat()
+            } for c in recent
+        ]
+        
+        # If user has search history, get personalized recommendations
+        if session_id:
+            search_history = db_session.query(SearchHistory).filter_by(
+                session_id=session_id
+            ).order_by(SearchHistory.timestamp.desc()).limit(10).all()
+            
+            if search_history:
+                # Extract genres from search queries
+                search_genres = []
+                for search in search_history:
+                    # Simple genre extraction logic
+                    query_lower = search.query.lower()
+                    for genre in genres:
+                        if genre.lower() in query_lower:
+                            search_genres.append(genre)
+                            
+                # Get recommendations based on search history
+                if search_genres:
+                    personalized = db_session.query(Content).filter(
+                        Content.genres.like(f'%{search_genres[0]}%')
+                    ).order_by(Content.popularity_score.desc()).limit(10).all()
+                    
+                    recommendations['personalized'] = [
+                        {
+                            'id': c.id,
+                            'title': c.title,
+                            'poster_url': c.poster_url,
+                            'content_type': c.content_type
+                        } for c in personalized
+                    ]
+                    
+        # Cache recommendations
+        cache_set(cache_key, json.dumps(recommendations), 1800)
+        
+        return jsonify(recommendations), 200
+        
+    except Exception as e:
+        return jsonify({'message': str(e)}), 500
+    finally:
+        db_session.close()
 
 @app.route('/api/recommendations/personalized', methods=['GET'])
-@jwt_required()
-def personalized_recommendations():
-    """Get personalized recommendations for logged-in users"""
-    user_id = get_jwt_identity()
-    recommendations = recommendation_engine.get_personalized_recommendations(user_id)
-    
-    if recommendations is None:
-        return jsonify({'message': 'User not found'}), 404
-    
-    return jsonify(recommendations), 200
-
-@app.route('/api/content/<int:content_id>/details', methods=['GET'])
-def content_details(content_id):
-    """Get complete content details"""
-    content = Content.query.get_or_404(content_id)
-    
-    # Increment view count
-    content.view_count += 1
-    db.session.commit()
-    
-    # Get additional data
-    ratings = db.session.query(func.avg(Rating.rating)).filter_by(content_id=content_id).scalar()
-    total_favorites = Favorite.query.filter_by(content_id=content_id).count()
-    
-    # Get reviews
-    reviews = Review.query.filter_by(content_id=content_id).order_by(
-        desc(Review.created_at)
-    ).limit(10).all()
-    
-    # Get similar content
-    similar_content = Content.query.filter(
-        and_(
-            Content.id != content_id,
-            or_(*[Content.genres.contains([genre]) for genre in content.genres])
-        )
-    ).order_by(desc(Content.popularity_score)).limit(6).all()
-    
-    return jsonify({
-        'content': recommendation_engine._serialize_content(content),
-        'additional_info': {
-            'runtime': content.runtime,
-            'languages': content.languages,
-            'countries': content.countries,
-            'cast': content.cast,
-            'crew': content.crew,
-            'trailer_url': content.trailer_url,
-            'critic_score': content.critic_score
-        },
-        'stats': {
-            'user_rating': ratings or 0,
-            'total_favorites': total_favorites,
-            'view_count': content.view_count
-        },
-        'reviews': [
-            {
-                'id': review.id,
-                'user': review.user.username,
-                'text': review.review_text,
-                'created_at': review.created_at.isoformat()
-            } for review in reviews
-        ],
-        'similar_content': [
-            recommendation_engine._serialize_content(c) for c in similar_content
-        ]
-    }), 200
-
-@app.route('/api/search', methods=['GET'])
-def search():
-    """Multi-source content search"""
-    query = request.args.get('q', '')
-    content_type = request.args.get('type', 'all')
-    source = request.args.get('source', 'all')
-    
-    if not query:
-        return jsonify({'message': 'Search query required'}), 400
-    
-    results = []
-    
-    # Search in database first
-    db_results = Content.query.filter(
-        Content.title.ilike(f'%{query}%')
-    )
-    
-    if content_type != 'all':
-        db_results = db_results.filter_by(content_type=content_type)
-    
-    results.extend([
-        recommendation_engine._serialize_content(content) 
-        for content in db_results.limit(20).all()
-    ])
-    
-    # Search external sources if requested
-    if source in ['all', 'tmdb'] and app.config['TMDB_API_KEY']:
-        tmdb_results = recommendation_engine.tmdb_client.search(query, content_type)
-        if tmdb_results:
-            for item in tmdb_results.get('results', [])[:10]:
-                content = create_content_from_tmdb(item, content_type)
-                results.append(recommendation_engine._serialize_content(content))
-    
-    if source in ['all', 'jikan'] and content_type in ['all', 'anime']:
-        jikan_results = recommendation_engine.jikan_client.search(query)
-        if jikan_results and 'data' in jikan_results:
-            for anime in jikan_results['data'][:5]:
-                # Create anime content
-                external_id = f"jikan_{anime['mal_id']}"
-                content = Content.query.filter_by(external_id=external_id).first()
-                if not content:
-                    content = Content(
-                        external_id=external_id,
-                        source='jikan',
-                        content_type='anime',
-                        title=anime['title'],
-                        description=anime.get('synopsis'),
-                        poster_path=anime['images']['jpg']['image_url'] if 'images' in anime else None,
-                        genres=[g['name'] for g in anime.get('genres', [])]
-                    )
-                    db.session.add(content)
-                    db.session.commit()
-                
-                results.append(recommendation_engine._serialize_content(content))
-    
-    return jsonify({
-        'results': results,
-        'total': len(results)
-    }), 200
-
-@app.route('/api/trending', methods=['GET'])
-@cache.cached(timeout=1800)
-def trending():
-    """Get trending content globally and regionally"""
-    region = request.args.get('region', 'global')
-    
-    trending_data = {
-        'global': recommendation_engine._get_trending_content(),
-        'regional': {}
-    }
-    
-    if region in ['all', 'india']:
-        trending_data['regional'] = recommendation_engine._get_regional_spotlight()
-    
-    return jsonify(trending_data), 200
-
-@app.route('/api/user/interactions', methods=['POST'])
-@jwt_required()
-def user_interactions():
-    """Handle user interactions (watchlist, favorites, ratings)"""
-    user_id = get_jwt_identity()
-    data = request.get_json()
-    
-    action = data.get('action')
-    content_id = data.get('content_id')
-    
-    if not all([action, content_id]):
-        return jsonify({'message': 'Missing required fields'}), 400
-    
-    # Verify content exists
-    content = Content.query.get(content_id)
-    if not content:
-        return jsonify({'message': 'Content not found'}), 404
-    
-    if action == 'add_favorite':
-        existing = Favorite.query.filter_by(user_id=user_id, content_id=content_id).first()
-        if not existing:
-            favorite = Favorite(user_id=user_id, content_id=content_id)
-            db.session.add(favorite)
-            db.session.commit()
-        return jsonify({'message': 'Added to favorites'}), 200
-    
-    elif action == 'remove_favorite':
-        favorite = Favorite.query.filter_by(user_id=user_id, content_id=content_id).first()
-        if favorite:
-            db.session.delete(favorite)
-            db.session.commit()
-        return jsonify({'message': 'Removed from favorites'}), 200
-    
-    elif action == 'add_wishlist':
-        existing = Wishlist.query.filter_by(user_id=user_id, content_id=content_id).first()
-        if not existing:
-            wishlist = Wishlist(
-                user_id=user_id, 
-                content_id=content_id,
-                priority=data.get('priority', 0)
-            )
-            db.session.add(wishlist)
-            db.session.commit()
-        return jsonify({'message': 'Added to wishlist'}), 200
-    
-    elif action == 'remove_wishlist':
-        wishlist = Wishlist.query.filter_by(user_id=user_id, content_id=content_id).first()
-        if wishlist:
-            db.session.delete(wishlist)
-            db.session.commit()
-        return jsonify({'message': 'Removed from wishlist'}), 200
-    
-    elif action == 'rate':
-        rating_value = data.get('rating')
-        if not rating_value or not (0 <= rating_value <= 10):
-            return jsonify({'message': 'Invalid rating value'}), 400
+@token_required
+def get_personalized_recommendations(current_user_id):
+    db_session = Session()
+    try:
+        # Check cache
+        cache_key = f"personalized:{current_user_id}"
+        cached = cache_get(cache_key)
+        if cached:
+            return jsonify(json.loads(cached)), 200
+            
+        recommendations = {
+            'for_you': [],
+            'based_on_favorites': [],
+            'based_on_watchlist': [],
+            'based_on_ratings': [],
+            'genre_deep_dive': {},
+            'mood_based': {},
+            'cross_genre': [],
+            'weekend_picks': [],
+            'binge_worthy': []
+        }
         
-        rating = Rating.query.filter_by(user_id=user_id, content_id=content_id).first()
-        if rating:
-            rating.rating = rating_value
-        else:
-            rating = Rating(user_id=user_id, content_id=content_id, rating=rating_value)
-            db.session.add(rating)
+        # Get user data
+        user = db_session.query(User).filter_by(id=current_user_id).first()
+        favorites = db_session.query(Favorite).filter_by(user_id=current_user_id).all()
+        watchlist = db_session.query(Watchlist).filter_by(user_id=current_user_id).all()
+        ratings = db_session.query(Rating).filter_by(user_id=current_user_id).all()
         
-        # Update content user rating
-        avg_rating = db.session.query(func.avg(Rating.rating)).filter_by(content_id=content_id).scalar()
-        content.user_rating = avg_rating
-        
-        db.session.commit()
-        return jsonify({'message': 'Rating updated'}), 200
-    
-    elif action == 'add_history':
-        history = WatchHistory(
-            user_id=user_id,
-            content_id=content_id,
-            watch_duration=data.get('duration', 0),
-            completed=data.get('completed', False)
-        )
-        db.session.add(history)
-        db.session.commit()
-        return jsonify({'message': 'Added to watch history'}), 200
-    
-    else:
-        return jsonify({'message': 'Invalid action'}), 400
-
-@app.route('/api/admin/curate', methods=['POST'])
-@admin_required
-def admin_curate():
-    """Admin content curation endpoint"""
-    data = request.get_json()
-    
-    content_id = data.get('content_id')
-    if not content_id:
-        return jsonify({'message': 'Content ID required'}), 400
-    
-    # Verify content exists
-    content = Content.query.get(content_id)
-    if not content:
-        return jsonify({'message': 'Content not found'}), 404
-    
-    # Create curated recommendation
-    curated = CuratedRecommendation(
-        content_id=content_id,
-        title=data.get('title', content.title),
-        description=data.get('description'),
-        category=data.get('category', 'editors_pick'),
-        priority=data.get('priority', 0),
-        expires_at=datetime.fromisoformat(data['expires_at']) if data.get('expires_at') else None
-    )
-    
-    db.session.add(curated)
-    db.session.commit()
-    
-    # Send Telegram notification if configured
-    if app.config['TELEGRAM_BOT_TOKEN'] and app.config['TELEGRAM_CHANNEL_ID']:
-        telegram_message = f"🎬 New Recommendation!\n\n{curated.title}\n\n{curated.description or content.description}"
-        
+        # Get ML recommendations
         try:
-            telegram_url = f"https://api.telegram.org/bot{app.config['TELEGRAM_BOT_TOKEN']}/sendMessage"
-            requests.post(telegram_url, data={
-                'chat_id': app.config['TELEGRAM_CHANNEL_ID'],
-                'text': telegram_message,
-                'parse_mode': 'HTML'
+            response = requests.post(f"{ML_SERVICE_URL}/recommend/user", 
+                                   json={'user_id': current_user_id})
+            if response.status_code == 200:
+                ml_recommendations = response.json().get('recommendations', [])
+                
+                for_you_content = db_session.query(Content).filter(
+                    Content.id.in_(ml_recommendations[:20])
+                ).all()
+                
+                recommendations['for_you'] = [
+                    {
+                        'id': c.id,
+                        'title': c.title,
+                        'poster_url': c.poster_url,
+                        'content_type': c.content_type,
+                        'match_score': 0.95  # Placeholder
+                    } for c in for_you_content
+                ]
+        except:
+            pass
+            
+        # Based on favorites
+        if favorites:
+            favorite_ids = [f.content_id for f in favorites]
+            
+            # Get similar content for each favorite
+            similar_ids = []
+            for fav_id in favorite_ids[:5]:  # Top 5 favorites
+                try:
+                    response = requests.post(f"{ML_SERVICE_URL}/recommend/similar", 
+                                           json={'content_id': fav_id})
+                    if response.status_code == 200:
+                        similar_ids.extend(response.json().get('recommendations', [])[:5])
+                except:
+                    pass
+                    
+            if similar_ids:
+                similar_content = db_session.query(Content).filter(
+                    Content.id.in_(similar_ids)
+                ).all()
+                
+                recommendations['based_on_favorites'] = [
+                    {
+                        'id': c.id,
+                        'title': c.title,
+                        'poster_url': c.poster_url,
+                        'content_type': c.content_type
+                    } for c in similar_content[:10]
+                ]
+                
+        # Genre deep dive
+        preferred_genres = json.loads(user.preferred_genres) if user.preferred_genres else []
+        if not preferred_genres and favorites:
+            # Extract genres from favorites
+            genre_counts = {}
+            for fav in favorites:
+                content = fav.content
+                if content.genres:
+                    genres = json.loads(content.genres)
+                    for genre in genres:
+                        genre_counts[genre] = genre_counts.get(genre, 0) + 1
+                        
+            preferred_genres = sorted(genre_counts.keys(), 
+                                    key=lambda x: genre_counts[x], 
+                                    reverse=True)[:3]
+            
+        for genre in preferred_genres:
+            genre_content = db_session.query(Content).filter(
+                Content.genres.like(f'%{genre}%')
+            ).order_by(Content.popularity_score.desc()).limit(10).all()
+            
+            recommendations['genre_deep_dive'][genre] = [
+                {
+                    'id': c.id,
+                    'title': c.title,
+                    'poster_url': c.poster_url,
+                    'content_type': c.content_type
+                } for c in genre_content
+            ]
+            
+        # Mood-based recommendations
+        moods = {
+            'action': ['Action', 'Adventure', 'Thriller'],
+            'comedy': ['Comedy', 'Animation'],
+            'drama': ['Drama', 'Romance'],
+            'horror': ['Horror', 'Mystery', 'Thriller']
+        }
+        
+        from sqlalchemy import or_
+        
+        for mood, genres in moods.items():
+            mood_content = db_session.query(Content).filter(
+                or_(*[Content.genres.like(f'%{g}%') for g in genres])
+            ).order_by(Content.popularity_score.desc()).limit(10).all()
+            
+            recommendations['mood_based'][mood] = [
+                {
+                    'id': c.id,
+                    'title': c.title,
+                    'poster_url': c.poster_url,
+                    'content_type': c.content_type
+                } for c in mood_content[:5]
+            ]
+            
+        # Weekend picks (movies with good ratings)
+        weekend_picks = db_session.query(Content).filter(
+            Content.content_type == 'movie',
+            Content.runtime.between(90, 150)
+        ).order_by(Content.popularity_score.desc()).limit(10).all()
+        
+        recommendations['weekend_picks'] = [
+            {
+                'id': c.id,
+                'title': c.title,
+                'poster_url': c.poster_url,
+                'runtime': c.runtime
+            } for c in weekend_picks
+        ]
+        
+        # Binge-worthy series
+        binge_worthy = db_session.query(Content).filter(
+            Content.content_type.in_(['tv', 'anime'])
+        ).order_by(Content.popularity_score.desc()).limit(10).all()
+        
+        recommendations['binge_worthy'] = [
+            {
+                'id': c.id,
+                'title': c.title,
+                'poster_url': c.poster_url,
+                'content_type': c.content_type
+            } for c in binge_worthy
+        ]
+        
+        # Cache recommendations
+        cache_set(cache_key, json.dumps(recommendations), 1800)
+        
+        return jsonify(recommendations), 200
+        
+    except Exception as e:
+        return jsonify({'message': str(e)}), 500
+    finally:
+        db_session.close()
+
+# User Interaction Routes
+@app.route('/api/user/watchlist', methods=['GET', 'POST', 'DELETE'])
+@token_required
+def manage_watchlist(current_user_id):
+    db_session = Session()
+    try:
+        if request.method == 'GET':
+            watchlist = db_session.query(Watchlist).filter_by(
+                user_id=current_user_id
+            ).order_by(Watchlist.added_at.desc()).all()
+            
+            return jsonify({
+                'watchlist': [
+                    {
+                        'id': w.content.id,
+                        'title': w.content.title,
+                        'poster_url': w.content.poster_url,
+                        'content_type': w.content.content_type,
+                        'added_at': w.added_at.isoformat()
+                    } for w in watchlist
+                ]
+            }), 200
+            
+        elif request.method == 'POST':
+            data = request.get_json()
+            content_id = data.get('content_id')
+            
+            # Check if already in watchlist
+            existing = db_session.query(Watchlist).filter_by(
+                user_id=current_user_id,
+                content_id=content_id
+            ).first()
+            
+            if existing:
+                return jsonify({'message': 'Already in watchlist'}), 400
+                
+            # Add to watchlist
+            watchlist_item = Watchlist(
+                user_id=current_user_id,
+                content_id=content_id
+            )
+            db_session.add(watchlist_item)
+            db_session.commit()
+            
+            # Clear user's recommendation cache
+            cache_delete(f"personalized:{current_user_id}")
+            
+            return jsonify({'message': 'Added to watchlist'}), 201
+            
+        elif request.method == 'DELETE':
+            content_id = request.args.get('content_id')
+            
+            watchlist_item = db_session.query(Watchlist).filter_by(
+                user_id=current_user_id,
+                content_id=content_id
+            ).first()
+            
+            if watchlist_item:
+                db_session.delete(watchlist_item)
+                db_session.commit()
+                
+                # Clear user's recommendation cache
+                cache_delete(f"personalized:{current_user_id}")
+                
+                return jsonify({'message': 'Removed from watchlist'}), 200
+            else:
+                return jsonify({'message': 'Not in watchlist'}), 404
+                
+    except Exception as e:
+        db_session.rollback()
+        return jsonify({'message': str(e)}), 500
+    finally:
+        db_session.close()
+
+@app.route('/api/user/favorites', methods=['GET', 'POST', 'DELETE'])
+@token_required
+def manage_favorites(current_user_id):
+    db_session = Session()
+    try:
+        if request.method == 'GET':
+            favorites = db_session.query(Favorite).filter_by(
+                user_id=current_user_id
+            ).order_by(Favorite.added_at.desc()).all()
+            
+            return jsonify({
+                'favorites': [
+                    {
+                        'id': f.content.id,
+                        'title': f.content.title,
+                        'poster_url': f.content.poster_url,
+                        'content_type': f.content.content_type,
+                        'added_at': f.added_at.isoformat()
+                    } for f in favorites
+                ]
+            }), 200
+            
+        elif request.method == 'POST':
+            data = request.get_json()
+            content_id = data.get('content_id')
+            
+            # Check if already favorited
+            existing = db_session.query(Favorite).filter_by(
+                user_id=current_user_id,
+                content_id=content_id
+            ).first()
+            
+            if existing:
+                return jsonify({'message': 'Already in favorites'}), 400
+                
+            # Add to favorites
+            favorite = Favorite(
+                user_id=current_user_id,
+                content_id=content_id
+            )
+            db_session.add(favorite)
+            db_session.commit()
+            
+            # Update user preferences based on favorite
+            content = db_session.query(Content).filter_by(id=content_id).first()
+            if content and content.genres:
+                user = db_session.query(User).filter_by(id=current_user_id).first()
+                current_genres = json.loads(user.preferred_genres) if user.preferred_genres else []
+                new_genres = json.loads(content.genres)
+                
+                # Update preferred genres
+                for genre in new_genres:
+                    if genre not in current_genres:
+                        current_genres.append(genre)
+                        
+                user.preferred_genres = json.dumps(current_genres[:10])  # Keep top 10
+                db_session.commit()
+                
+            # Clear user's recommendation cache
+            cache_delete(f"personalized:{current_user_id}")
+            
+            return jsonify({'message': 'Added to favorites'}), 201
+            
+        elif request.method == 'DELETE':
+            content_id = request.args.get('content_id')
+            
+            favorite = db_session.query(Favorite).filter_by(
+                user_id=current_user_id,
+                content_id=content_id
+            ).first()
+            
+            if favorite:
+                db_session.delete(favorite)
+                db_session.commit()
+                
+                # Clear user's recommendation cache
+                cache_delete(f"personalized:{current_user_id}")
+                
+                return jsonify({'message': 'Removed from favorites'}), 200
+            else:
+                return jsonify({'message': 'Not in favorites'}), 404
+                
+    except Exception as e:
+        db_session.rollback()
+        return jsonify({'message': str(e)}), 500
+    finally:
+        db_session.close()
+
+@app.route('/api/user/rate', methods=['POST'])
+@token_required
+def rate_content(current_user_id):
+    db_session = Session()
+    try:
+        data = request.get_json()
+        content_id = data.get('content_id')
+        rating_value = data.get('rating')
+        review = data.get('review', '')
+        
+        if not content_id or rating_value is None:
+            return jsonify({'message': 'Missing required fields'}), 400
+            
+        if not 0 <= rating_value <= 10:
+            return jsonify({'message': 'Rating must be between 0 and 10'}), 400
+            
+        # Check if already rated
+        existing_rating = db_session.query(Rating).filter_by(
+            user_id=current_user_id,
+            content_id=content_id
+        ).first()
+        
+        if existing_rating:
+            # Update existing rating
+            existing_rating.rating = rating_value
+            existing_rating.review = review
+        else:
+            # Create new rating
+            rating = Rating(
+                user_id=current_user_id,
+                content_id=content_id,
+                rating=rating_value,
+                review=review
+            )
+            db_session.add(rating)
+            
+        db_session.commit()
+        
+        # Update content's average rating
+        all_ratings = db_session.query(Rating).filter_by(content_id=content_id).all()
+        avg_rating = sum(r.rating for r in all_ratings) / len(all_ratings)
+        
+        content = db_session.query(Content).filter_by(id=content_id).first()
+        if content:
+            ratings_data = json.loads(content.ratings) if content.ratings else {}
+            ratings_data['user_average'] = round(avg_rating, 1)
+            ratings_data['user_count'] = len(all_ratings)
+            content.ratings = json.dumps(ratings_data)
+            db_session.commit()
+            
+        # Clear user's recommendation cache
+        cache_delete(f"personalized:{current_user_id}")
+        
+        # Send rating data to ML service for real-time learning
+        try:
+            requests.post(f"{ML_SERVICE_URL}/learn/rating", json={
+                'user_id': current_user_id,
+                'content_id': content_id,
+                'rating': rating_value
             })
-        except Exception as e:
-            logger.error(f"Failed to send Telegram notification: {e}")
-    
-    return jsonify({
-        'message': 'Content curated successfully',
-        'curated_id': curated.id
-    }), 201
+        except:
+            pass
+            
+        return jsonify({'message': 'Rating saved'}), 200
+        
+    except Exception as e:
+        db_session.rollback()
+        return jsonify({'message': str(e)}), 500
+    finally:
+        db_session.close()
 
-@app.route('/api/admin/content/search', methods=['GET'])
+# Admin Routes
+@app.route('/api/admin/search-content', methods=['GET'])
+@token_required
 @admin_required
-def admin_content_search():
-    """Admin search across multiple content sources"""
-    query = request.args.get('q', '')
-    if not query:
-        return jsonify({'message': 'Search query required'}), 400
-    
-    results = {
-        'tmdb': [],
-        'omdb': [],
-        'jikan': [],
-        'database': []
-    }
-    
-    # Search TMDB
-    if app.config['TMDB_API_KEY']:
-        tmdb_movies = recommendation_engine.tmdb_client.search(query, 'movie')
-        tmdb_tv = recommendation_engine.tmdb_client.search(query, 'tv')
+def admin_search_content(current_user_id):
+    """Admin endpoint to search content across all sources"""
+    try:
+        query = request.args.get('q')
+        source = request.args.get('source', 'all')  # tmdb, omdb, anime, all
         
-        if tmdb_movies:
-            results['tmdb'].extend(tmdb_movies.get('results', [])[:5])
-        if tmdb_tv:
-            results['tmdb'].extend(tmdb_tv.get('results', [])[:5])
-    
-    # Search OMDB
-    if app.config['OMDB_API_KEY']:
-        omdb_result = recommendation_engine.omdb_client.search(query)
-        if omdb_result and omdb_result.get('Response') == 'True':
-            results['omdb'].append(omdb_result)
-    
-    # Search Jikan
-    jikan_results = recommendation_engine.jikan_client.search(query)
-    if jikan_results and 'data' in jikan_results:
-        results['jikan'] = jikan_results['data'][:5]
-    
-    # Search database
-    db_results = Content.query.filter(
-        Content.title.ilike(f'%{query}%')
-    ).limit(10).all()
-    
-    results['database'] = [
-        recommendation_engine._serialize_content(content) for content in db_results
-    ]
-    
-    return jsonify(results), 200
+        results = []
+        
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        if source in ['all', 'tmdb']:
+            # Search TMDB
+            movie_data = loop.run_until_complete(fetch_tmdb_content(query, 'movie'))
+            tv_data = loop.run_until_complete(fetch_tmdb_content(query, 'tv'))
+            
+            for item in movie_data.get('results', []) + tv_data.get('results', []):
+                results.append({
+                    'source': 'tmdb',
+                    'data': merge_content_data(item)
+                })
+                
+        if source in ['all', 'anime']:
+            # Search anime
+            anime_data = loop.run_until_complete(fetch_anime_content(query))
+            
+            for item in anime_data.get('data', []):
+                results.append({
+                    'source': 'jikan',
+                    'data': merge_content_data({}, anime_data=item)
+                })
+                
+        return jsonify({'results': results}), 200
+        
+    except Exception as e:
+        return jsonify({'message': str(e)}), 500
 
-# Background tasks
-def update_popularity_scores():
-    """Update content popularity scores based on various metrics"""
-    with app.app_context():
-        contents = Content.query.all()
+@app.route('/api/admin/add-content', methods=['POST'])
+@token_required
+@admin_required
+def admin_add_content(current_user_id):
+    """Admin endpoint to add content to database"""
+    db_session = Session()
+    try:
+        data = request.get_json()
+        content_data = data.get('content_data')
         
-        for content in contents:
-            # Calculate popularity score
-            view_weight = 1.0
-            favorite_weight = 3.0
-            rating_weight = 2.0
-            recent_view_weight = 5.0
+        # Check if content already exists
+        existing = None
+        if content_data.get('tmdb_id'):
+            existing = db_session.query(Content).filter_by(
+                tmdb_id=content_data['tmdb_id']
+            ).first()
+        elif content_data.get('imdb_id'):
+            existing = db_session.query(Content).filter_by(
+                imdb_id=content_data['imdb_id']
+            ).first()
             
-            # Base metrics
-            view_score = content.view_count * view_weight
-            favorite_count = Favorite.query.filter_by(content_id=content.id).count()
-            favorite_score = favorite_count * favorite_weight
+        if existing:
+            return jsonify({'message': 'Content already exists', 'content_id': existing.id}), 200
             
-            # Rating score
-            avg_rating = db.session.query(func.avg(Rating.rating)).filter_by(content_id=content.id).scalar()
-            rating_score = (avg_rating or 0) * rating_weight * 10
+        # Create new content
+        new_content = Content(
+            tmdb_id=content_data.get('tmdb_id'),
+            imdb_id=content_data.get('imdb_id'),
+            mal_id=content_data.get('mal_id'),
+            title=content_data['title'],
+            original_title=content_data.get('original_title'),
+            content_type=content_data['content_type'],
+            language=content_data.get('language'),
+            region=content_data.get('region'),
+            release_date=datetime.fromisoformat(content_data['release_date']) if content_data.get('release_date') else None,
+            runtime=content_data.get('runtime'),
+            synopsis=content_data.get('synopsis'),
+            plot=content_data.get('plot'),
+            genres=json.dumps(content_data.get('genres', [])),
+            cast_crew=json.dumps(content_data.get('cast_crew', {})),
+            ratings=json.dumps(content_data.get('ratings', {})),
+            poster_url=content_data.get('poster_url'),
+            backdrop_url=content_data.get('backdrop_url'),
+            popularity_score=content_data.get('popularity_score', 0)
+        )
+        
+        db_session.add(new_content)
+        db_session.commit()
+        
+        # Fetch trailers
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        trailers = loop.run_until_complete(
+            fetch_youtube_trailers(new_content.title, new_content.content_type)
+        )
+        new_content.trailer_urls = json.dumps(trailers)
+        db_session.commit()
+        
+        return jsonify({
+            'message': 'Content added successfully',
+            'content_id': new_content.id
+        }), 201
+        
+    except Exception as e:
+        db_session.rollback()
+        return jsonify({'message': str(e)}), 500
+    finally:
+        db_session.close()
+
+@app.route('/api/admin/recommendations', methods=['GET', 'POST'])
+@token_required
+@admin_required
+def manage_admin_recommendations(current_user_id):
+    """Admin endpoint to manage public recommendations"""
+    db_session = Session()
+    try:
+        if request.method == 'GET':
+            from sqlalchemy import or_
             
-            # Recent views (last 7 days)
-            seven_days_ago = datetime.utcnow() - timedelta(days=7)
-            recent_views = WatchHistory.query.filter(
-                and_(
-                    WatchHistory.content_id == content.id,
-                    WatchHistory.watched_at >= seven_days_ago
+            recommendations = db_session.query(AdminRecommendation).filter(
+                or_(
+                    AdminRecommendation.expires_at > datetime.utcnow(),
+                    AdminRecommendation.expires_at.is_(None)
                 )
-            ).count()
-            recent_view_score = recent_views * recent_view_weight
+            ).order_by(AdminRecommendation.priority.desc()).all()
             
-            # Calculate total popularity score
-            content.popularity_score = view_score + favorite_score + rating_score + recent_view_score
-        
-        db.session.commit()
-        logger.info("Updated popularity scores for all content")
+            return jsonify({
+                'recommendations': [
+                    {
+                        'id': r.id,
+                        'content': {
+                            'id': r.content.id,
+                            'title': r.content.title,
+                            'poster_url': r.content.poster_url,
+                            'content_type': r.content.content_type
+                        },
+                        'title': r.title,
+                        'description': r.description,
+                        'priority': r.priority,
+                        'tags': json.loads(r.tags) if r.tags else [],
+                        'expires_at': r.expires_at.isoformat() if r.expires_at else None,
+                        'created_at': r.created_at.isoformat()
+                    } for r in recommendations
+                ]
+            }), 200
+            
+        elif request.method == 'POST':
+            data = request.get_json()
+            
+            recommendation = AdminRecommendation(
+                content_id=data['content_id'],
+                title=data['title'],
+                description=data['description'],
+                priority=data.get('priority', 1),
+                tags=json.dumps(data.get('tags', [])),
+                expires_at=datetime.fromisoformat(data['expires_at']) if data.get('expires_at') else None,
+                created_by=current_user_id
+            )
+            
+            db_session.add(recommendation)
+            db_session.commit()
+            
+            # Send to Telegram if configured
+            if TELEGRAM_BOT_TOKEN and TELEGRAM_CHANNEL_ID:
+                content = db_session.query(Content).filter_by(id=data['content_id']).first()
+                
+                bot = Bot(token=TELEGRAM_BOT_TOKEN)
+                message = f"🎬 *{recommendation.title}*\n\n"
+                message += f"{recommendation.description}\n\n"
+                message += f"Title: {content.title}\n"
+                message += f"Type: {content.content_type.title()}\n"
+                if content.genres:
+                    genres = json.loads(content.genres)
+                    message += f"Genres: {', '.join(genres[:3])}\n"
+                
+                try:
+                    bot.send_message(
+                        chat_id=TELEGRAM_CHANNEL_ID,
+                        text=message,
+                        parse_mode='Markdown'
+                    )
+                except:
+                    pass
+                    
+            return jsonify({
+                'message': 'Recommendation created',
+                'id': recommendation.id
+            }), 201
+            
+    except Exception as e:
+        db_session.rollback()
+        return jsonify({'message': str(e)}), 500
+    finally:
+        db_session.close()
 
-# Initialize scheduler
+@app.route('/api/admin/create-admin', methods=['POST'])
+@token_required
+@admin_required
+def create_admin_user(current_user_id):
+    """Create a new admin user"""
+    db_session = Session()
+    try:
+        data = request.get_json()
+        username = data.get('username')
+        email = data.get('email')
+        password = data.get('password')
+        
+        if not username or not email or not password:
+            return jsonify({'message': 'Missing required fields'}), 400
+            
+        # Check if user exists
+        existing_user = db_session.query(User).filter(
+            (User.username == username) | (User.email == email)
+        ).first()
+        
+        if existing_user:
+            return jsonify({'message': 'User already exists'}), 409
+            
+        # Create new admin user
+        new_admin = User(
+            username=username,
+            email=email,
+            password_hash=generate_password_hash(password),
+            is_admin=True,
+            region='global',
+            created_at=datetime.utcnow()
+        )
+        
+        db_session.add(new_admin)
+        db_session.commit()
+        
+        return jsonify({
+            'message': 'Admin user created successfully',
+            'user': {
+                'id': new_admin.id,
+                'username': new_admin.username,
+                'email': new_admin.email
+            }
+        }), 201
+        
+    except Exception as e:
+        db_session.rollback()
+        return jsonify({'message': str(e)}), 500
+    finally:
+        db_session.close()
+
+@app.route('/api/admin/promote-user/<int:user_id>', methods=['PUT'])
+@token_required
+@admin_required
+def promote_to_admin(current_user_id, user_id):
+    """Promote an existing user to admin"""
+    db_session = Session()
+    try:
+        user = db_session.query(User).filter_by(id=user_id).first()
+        
+        if not user:
+            return jsonify({'message': 'User not found'}), 404
+            
+        if user.is_admin:
+            return jsonify({'message': 'User is already an admin'}), 400
+            
+        user.is_admin = True
+        db_session.commit()
+        
+        return jsonify({
+            'message': 'User promoted to admin successfully',
+            'user': {
+                'id': user.id,
+                'username': user.username,
+                'email': user.email,
+                'is_admin': user.is_admin
+            }
+        }), 200
+        
+    except Exception as e:
+        db_session.rollback()
+        return jsonify({'message': str(e)}), 500
+    finally:
+        db_session.close()
+
+# Public Recommendations Route
+@app.route('/api/public/recommendations', methods=['GET'])
+def get_public_recommendations():
+    """Get admin-curated public recommendations"""
+    db_session = Session()
+    try:
+        from sqlalchemy import or_
+        
+        recommendations = db_session.query(AdminRecommendation).filter(
+            or_(
+                AdminRecommendation.expires_at > datetime.utcnow(),
+                AdminRecommendation.expires_at.is_(None)
+            )
+        ).order_by(AdminRecommendation.priority.desc()).limit(20).all()
+        
+        return jsonify({
+            'recommendations': [
+                {
+                    'id': r.id,
+                    'content': {
+                        'id': r.content.id,
+                        'title': r.content.title,
+                        'poster_url': r.content.poster_url,
+                        'content_type': r.content.content_type,
+                        'synopsis': r.content.synopsis,
+                        'genres': json.loads(r.content.genres) if r.content.genres else []
+                    },
+                    'title': r.title,
+                    'description': r.description,
+                    'tags': json.loads(r.tags) if r.tags else []
+                } for r in recommendations
+            ]
+        }), 200
+        
+    except Exception as e:
+        return jsonify({'message': str(e)}), 500
+    finally:
+        db_session.close()
+
+# Background Tasks
 scheduler = BackgroundScheduler()
-scheduler.add_job(func=update_popularity_scores, trigger="interval", hours=6)
+
+def update_trending_content():
+    """Background task to update trending content"""
+    db_session = Session()
+    try:
+        # Fetch trending from TMDB
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        trending_movies = loop.run_until_complete(
+            fetch_tmdb_content(content_type='movie')
+        )
+        trending_tv = loop.run_until_complete(
+            fetch_tmdb_content(content_type='tv')
+        )
+        
+        # Update database
+        for item in trending_movies.get('results', []) + trending_tv.get('results', []):
+            tmdb_id = str(item['id'])
+            existing = db_session.query(Content).filter_by(tmdb_id=tmdb_id).first()
+            
+            if existing:
+                existing.popularity_score = item.get('popularity', 0)
+            else:
+                # Add new trending content
+                content_data = merge_content_data(item)
+                new_content = Content(
+                    tmdb_id=tmdb_id,
+                    title=content_data['title'],
+                    original_title=content_data.get('original_title'),
+                    content_type=content_data['content_type'],
+                    language=content_data.get('language'),
+                    synopsis=content_data.get('synopsis'),
+                    genres=json.dumps(content_data.get('genres', [])),
+                    poster_url=content_data.get('poster_url'),
+                    backdrop_url=content_data.get('backdrop_url'),
+                    popularity_score=content_data.get('popularity_score', 0)
+                )
+                db_session.add(new_content)
+                
+        db_session.commit()
+        
+        # Clear trending cache
+        if redis_client:
+            for key in redis_client.scan_iter("homepage:*"):
+                redis_client.delete(key)
+        
+    except Exception as e:
+        print(f"Error updating trending content: {e}")
+    finally:
+        db_session.close()
+
+# Schedule background tasks
+scheduler.add_job(update_trending_content, 'interval', hours=6)
 scheduler.start()
 
-# Error handlers
-@app.errorhandler(404)
-def not_found(error):
-    return jsonify({'message': 'Resource not found'}), 404
-
-@app.errorhandler(500)
-def internal_error(error):
-    db.session.rollback()
-    return jsonify({'message': 'Internal server error'}), 500
-
-# Create tables
-with app.app_context():
-    db.create_all()
-    
-    # Create admin user if not exists
-    admin = User.query.filter_by(username='admin').first()
-    if not admin:
-        admin = User(
-            username='admin',
-            email='admin@example.com',
-            password_hash=bcrypt.generate_password_hash('admin123').decode('utf-8')
-        )
-        db.session.add(admin)
-        db.session.commit()
+# Health check
+@app.route('/health', methods=['GET'])
+def health_check():
+    return jsonify({'status': 'healthy'}), 200
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=True)

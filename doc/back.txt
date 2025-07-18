@@ -1,0 +1,144 @@
+provide this in two files backend/app.py and ml-service/app.py
+
+Create a comprehensive movie, anime and TV show recommendation system backend with the following requirements:
+
+CORE FUNCTIONALITY:
+- User authentication and session management
+- Multi-source content discovery (movies, TV shows, anime) with regional language support
+- Advanced recommendation algorithms (collaborative filtering, content-based, hybrid, ML-powered)
+- Real-time learning and preference adaptation
+- Watchlist, favorites,search history, and rating system
+- Admin panel for content management
+
+TMDB API for international movies, TV shows, and basic Indian content
+OMDb API for additional movie metadata and ratings
+youtube api
+Regional movie databases/APIs for Telugu, Hindi, Tamil, Kannada content
+Jikan API for anime content
+Custom web scraping for regional content if needed
+Content deduplication and metadata merging
+
+HOMEPAGE RECOMMENDATIONS (Non-logged users):
+- Custom recommendations based on anonymous user's search history (stored in browser/session)
+- Popular content recommendations by genre
+- Trending movies/shows/anime
+- Regional content suggestions based on user's IP location
+- Genre-based recommendations from popular content
+- Recently added content showcase
+- Cache recommendations for better performance
+
+PERSONALIZED RECOMMENDATIONS (Logged-in users):
+- Watch history analysis and similar content suggestions
+- Favorites-based recommendations using content similarity
+- Wishlist completion suggestions
+- Favorite genres deep-dive recommendations
+- Cross-genre discovery based on user patterns
+- Time-based recommendations (weekend movies, binge-worthy series)
+- Mood-based suggestions (action, comedy, drama, etc.)
+
+DETAILED CONTENT INFORMATION:
+- Complete movie/show details with synopsis, plot, storyline
+- Multiple trailers and teasers integration
+- Full cast and crew information with roles
+- User ratings and professional critic scores
+- High-quality posters and backdrop images
+- Release information and runtime details
+- Genre tags and content warnings
+- Similar content recommendations
+- User reviews and community ratings
+- Complete movie/show information fetching
+- Synopsis and plot details
+- Trailers, teasers, and video content
+- Full cast and crew information with roles
+- User ratings and professional critic scores
+- High-quality posters and backdrop images
+- Release information and runtime details
+- Genre tags and content warnings
+- Similar content recommendations
+- User reviews and comments system
+
+ADMIN CONTENT CURATION SYSTEM:
+
+- Admin dashboard to browse multiple content databases
+- Search across OMDb/TMDB, regional databases, and anime sources
+- Content selection and public recommendation creation
+- Custom descriptions and tagging system
+- Priority levels and expiration management
+- Telegram integration for community notifications
+- Telegram post recommendation RECOMMENDATION ALGORITHMS:
+- Collaborative filtering based on user similarity
+- Content-based filtering using genre and metadata
+- Matrix factorization for advanced recommendations
+- Deep learning integration via ML service
+- Trending and popularity-based suggestions
+- Regional content boosting for Indian users
+- Fallback strategies for new users
+
+MULTI-LANGUAGE & REGIONAL CONTENT:
+- TMDB API for international movies and TV shows
+- Jikan API for anime content
+- Regional APIs for Indian cinema:
+  * Telugu movies (Tollywood)
+  * Hindi movies (Bollywood) 
+  * Tamil movies (Kollywood)
+  * Kannada movies (Sandalwood)
+  * English movies (Hollywood)
+- Regional streaming platform integration where available
+- Language-specific trending and popular content
+- Regional festival and cultural event-based recommendations
+
+RECOMMENDATION ALGORITHMS:
+- Implement hybrid recommendation combining multiple approaches
+- Collaborative filtering based on user similarity
+- User-Based Collaborative Filtering
+- Item-Based Collaborative Filtering
+- Genre and Metadata Analysis
+- Advanced Feature Extraction
+- Multi-Algorithm Fusion
+- SVD-Based Recommendations
+- Neural Network Recommendation
+- Multi-Language and Regional Preferences
+- Preference Adaptation
+- Recommendation Diversification
+- New User and Cold Start Problem
+- Caching and Batch Processing
+- IP-based location detection for regional content
+- Content-based filtering using genre, language, and metadata analysis
+- ML service integration for deep learning recommendations
+- Regional preference learning (local vs international content)
+- Language preference tracking and suggestions
+- Fallback strategies for new users and service failures
+
+
+EXTERNAL INTEGRATIONS:
+- TMDB API for international movies and TV shows
+- Jikan API for anime content
+- Regional movie databases for Indian languages
+- Custom ML service for advanced recommendations
+- Telegram bot for notifications and featured content
+- IP-based location detection for regional content
+
+ADVANCED FEATURES:
+- ML-powered search suggestions with regional content
+- Multi-language trending content discovery
+- Personalization scoring with regional preferences
+- Diversity metrics for recommendations
+- Enhanced content metadata with regional information
+- Real-time preference learning
+- Admin content curation workflow
+- Public recommendation feed with multi-language content
+- Regional festival and cultural event-based content highlighting
+
+Telugu movie database integration
+Hindi movie database integration
+Tamil movie database integration
+Kannada movie database integration
+Regional trending and popular content
+Language-specific genre categorization
+Multi-language metadata support
+
+
+Deploy backend on Render for reliable hosting
+Use PostgreSQL as the free database (Render PostgreSQL) -sqlite for the local testing
+Configure environment variables for production deployment
+Set up database connection pooling and optimization
