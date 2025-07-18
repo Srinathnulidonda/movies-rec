@@ -1,18 +1,17 @@
-wheel
-setuptools
-pip
-flask
-flask-cors
-sqlalchemy
-redis
-pandas
-numpy
-scipy
-scikit-learn
-torch --index-url https://download.pytorch.org/whl/cpu
-implicit
-faiss-cpu
+# Flask
+Flask
 
+# Machine Learning and Deep Learning
+tensorflow
+scikit-learn
+numpy
+pandas
+
+# Model persistence
 joblib
+
+# Database
+psycopg2-binary
+
+# Production server
 gunicorn
-psycopg2-binary  # for PostgreSQL
