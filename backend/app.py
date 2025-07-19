@@ -47,7 +47,7 @@ TELEGRAM_CHANNEL_ID = os.environ.get('TELEGRAM_CHANNEL_ID', '-1002850793757')
 ML_SERVICE_URL = os.environ.get('ML_SERVICE_URL', 'https://movies-rec-xmf5.onrender.com')
 
 # Streaming Availability API Keys
-WATCHMODE_API_KEY = os.environ.get('WATCHMODE_API_KEY', 'WtcKDji9i20pjOl5Lg0AiyG2bddfUs3nSZRZJIsY')
+WATCHMODE_API_KEY = os.environ.get('WATCHMODE_API_KEY', 'your_watchmode_api_key')
 RAPIDAPI_KEY = "c50f156591mshac38b14b2f02d6fp1da925jsn4b816e4dae37"
 RAPIDAPI_HOST = "streaming-availability.p.rapidapi.com"
 
@@ -133,7 +133,8 @@ ENHANCED_OTT_PLATFORMS = {
         'category': 'paid',
         'url': 'https://netflix.com',
         'search_url': 'https://www.netflix.com/search?q=',
-        'description': 'Global streaming platform with original content'
+        'description': 'Global streaming platform with original content',
+        'emoji': '🔴'
     },
     'amazon_prime': {
         'name': 'Amazon Prime Video',
@@ -141,7 +142,8 @@ ENHANCED_OTT_PLATFORMS = {
         'category': 'paid',
         'url': 'https://primevideo.com',
         'search_url': 'https://www.primevideo.com/search/ref=atv_sr_sug_0?phrase=',
-        'description': 'Prime membership includes video streaming'
+        'description': 'Prime membership includes video streaming',
+        'emoji': '📦'
     },
     'disney_plus': {
         'name': 'Disney+ Hotstar',
@@ -149,7 +151,8 @@ ENHANCED_OTT_PLATFORMS = {
         'category': 'paid',
         'url': 'https://hotstar.com',
         'search_url': 'https://www.hotstar.com/in/search?q=',
-        'description': 'Disney content and Indian entertainment'
+        'description': 'Disney content and Indian entertainment',
+        'emoji': '⭐'
     },
     'youtube': {
         'name': 'YouTube',
@@ -157,7 +160,8 @@ ENHANCED_OTT_PLATFORMS = {
         'category': 'free',
         'url': 'https://youtube.com',
         'search_url': 'https://www.youtube.com/results?search_query=',
-        'description': 'Free with ads, some premium content'
+        'description': 'Free with ads, some premium content',
+        'emoji': '📺'
     },
     'jiocinema': {
         'name': 'JioCinema',
@@ -165,7 +169,8 @@ ENHANCED_OTT_PLATFORMS = {
         'category': 'free',
         'url': 'https://jiocinema.com',
         'search_url': 'https://www.jiocinema.com/search?q=',
-        'description': 'Free for Jio users, premium content available'
+        'description': 'Free for Jio users, premium content available',
+        'emoji': '🎬'
     },
     'mx_player': {
         'name': 'MX Player',
@@ -173,7 +178,8 @@ ENHANCED_OTT_PLATFORMS = {
         'category': 'free',
         'url': 'https://mxplayer.com',
         'search_url': 'https://www.mxplayer.in/search?q=',
-        'description': 'Free movies and shows with ads'
+        'description': 'Free movies and shows with ads',
+        'emoji': '🎭'
     },
     'zee5': {
         'name': 'ZEE5',
@@ -181,7 +187,8 @@ ENHANCED_OTT_PLATFORMS = {
         'category': 'freemium',
         'url': 'https://zee5.com',
         'search_url': 'https://www.zee5.com/search?q=',
-        'description': 'Free and premium content'
+        'description': 'Free and premium content',
+        'emoji': '💎'
     },
     'sonyliv': {
         'name': 'SonyLIV',
@@ -189,7 +196,8 @@ ENHANCED_OTT_PLATFORMS = {
         'category': 'freemium',
         'url': 'https://sonyliv.com',
         'search_url': 'https://www.sonyliv.com/search?q=',
-        'description': 'Free and premium content'
+        'description': 'Free and premium content',
+        'emoji': '📱'
     },
     'crunchyroll': {
         'name': 'Crunchyroll',
@@ -197,7 +205,8 @@ ENHANCED_OTT_PLATFORMS = {
         'category': 'freemium',
         'url': 'https://crunchyroll.com',
         'search_url': 'https://www.crunchyroll.com/search?q=',
-        'description': 'Anime content with free and premium tiers'
+        'description': 'Anime content with free and premium tiers',
+        'emoji': '🎌'
     },
     'airtel_xstream': {
         'name': 'Airtel Xstream',
@@ -205,7 +214,8 @@ ENHANCED_OTT_PLATFORMS = {
         'category': 'free',
         'url': 'https://airtelxstream.in',
         'search_url': 'https://www.airtelxstream.in/search?q=',
-        'description': 'Free for Airtel users'
+        'description': 'Free for Airtel users',
+        'emoji': '📡'
     },
     'aha': {
         'name': 'Aha',
@@ -213,7 +223,8 @@ ENHANCED_OTT_PLATFORMS = {
         'category': 'paid',
         'url': 'https://aha.video',
         'search_url': 'https://www.aha.video/search?q=',
-        'description': 'Telugu content platform'
+        'description': 'Telugu content platform',
+        'emoji': '🎪'
     },
     'sun_nxt': {
         'name': 'Sun NXT',
@@ -221,7 +232,8 @@ ENHANCED_OTT_PLATFORMS = {
         'category': 'paid',
         'url': 'https://sunnxt.com',
         'search_url': 'https://www.sunnxt.com/search?q=',
-        'description': 'South Indian content'
+        'description': 'South Indian content',
+        'emoji': '☀️'
     }
 }
 
@@ -407,56 +419,65 @@ class StreamingAvailabilityService:
     
     # Platform mapping for Indian OTT services
     PLATFORM_MAPPING = {
-        'netflix': {'name': 'Netflix', 'is_free': False, 'category': 'paid'},
-        'prime': {'name': 'Amazon Prime Video', 'is_free': False, 'category': 'paid'},
-        'hotstar': {'name': 'Disney+ Hotstar', 'is_free': False, 'category': 'paid'},
-        'zee5': {'name': 'ZEE5', 'is_free': True, 'category': 'freemium'},
-        'zee5_premium': {'name': 'ZEE5 Premium', 'is_free': False, 'category': 'paid'},
-        'sonyliv': {'name': 'SonyLIV', 'is_free': True, 'category': 'freemium'},
-        'sonyliv_premium': {'name': 'SonyLIV Premium', 'is_free': False, 'category': 'paid'},
-        'youtube': {'name': 'YouTube', 'is_free': True, 'category': 'free'},
-        'mxplayer': {'name': 'MX Player', 'is_free': True, 'category': 'free'},
-        'jiocinema': {'name': 'JioCinema', 'is_free': True, 'category': 'free'},
-        'crunchyroll': {'name': 'Crunchyroll', 'is_free': True, 'category': 'freemium'},
-        'airtel': {'name': 'Airtel Xstream', 'is_free': True, 'category': 'free'},
-        'aha': {'name': 'Aha', 'is_free': False, 'category': 'paid'},
-        'sunnxt': {'name': 'Sun NXT', 'is_free': False, 'category': 'paid'}
+        'netflix': {'name': 'Netflix', 'is_free': False, 'category': 'paid', 'emoji': '🔴'},
+        'prime': {'name': 'Amazon Prime Video', 'is_free': False, 'category': 'paid', 'emoji': '📦'},
+        'hotstar': {'name': 'Disney+ Hotstar', 'is_free': False, 'category': 'paid', 'emoji': '⭐'},
+        'zee5': {'name': 'ZEE5', 'is_free': True, 'category': 'freemium', 'emoji': '💎'},
+        'zee5_premium': {'name': 'ZEE5 Premium', 'is_free': False, 'category': 'paid', 'emoji': '💎'},
+        'sonyliv': {'name': 'SonyLIV', 'is_free': True, 'category': 'freemium', 'emoji': '📱'},
+        'sonyliv_premium': {'name': 'SonyLIV Premium', 'is_free': False, 'category': 'paid', 'emoji': '📱'},
+        'youtube': {'name': 'YouTube', 'is_free': True, 'category': 'free', 'emoji': '📺'},
+        'mxplayer': {'name': 'MX Player', 'is_free': True, 'category': 'free', 'emoji': '🎭'},
+        'jiocinema': {'name': 'JioCinema', 'is_free': True, 'category': 'free', 'emoji': '🎬'},
+        'crunchyroll': {'name': 'Crunchyroll', 'is_free': True, 'category': 'freemium', 'emoji': '🎌'},
+        'airtel': {'name': 'Airtel Xstream', 'is_free': True, 'category': 'free', 'emoji': '📡'},
+        'aha': {'name': 'Aha', 'is_free': False, 'category': 'paid', 'emoji': '🎪'},
+        'sunnxt': {'name': 'Sun NXT', 'is_free': False, 'category': 'paid', 'emoji': '☀️'}
     }
     
     @staticmethod
-    def search_streaming_availability(title, imdb_id=None, tmdb_id=None):
-        """Search for streaming availability using title or IDs"""
+    def search_streaming_availability(title, imdb_id=None, tmdb_id=None, timeout=3):
+        """Search for streaming availability with shorter timeout"""
         try:
             headers = {
                 'x-rapidapi-key': RAPIDAPI_KEY,
                 'x-rapidapi-host': RAPIDAPI_HOST
             }
             
-            # Try searching by IMDB ID first
+            # Try searching by IMDB ID first with very short timeout
             if imdb_id:
-                url = f"{StreamingAvailabilityService.BASE_URL}/shows/{imdb_id}"
-                response = requests.get(url, headers=headers, timeout=10)
-                
-                if response.status_code == 200:
-                    return StreamingAvailabilityService._process_streaming_data(response.json())
+                try:
+                    url = f"{StreamingAvailabilityService.BASE_URL}/shows/{imdb_id}"
+                    response = requests.get(url, headers=headers, timeout=timeout)
+                    
+                    if response.status_code == 200:
+                        return StreamingAvailabilityService._process_streaming_data(response.json())
+                except requests.exceptions.Timeout:
+                    logger.warning(f"Timeout fetching streaming data for IMDB ID: {imdb_id}")
+                except Exception as e:
+                    logger.warning(f"Error fetching streaming data for IMDB ID {imdb_id}: {e}")
             
-            # If IMDB search fails, try title search
+            # If IMDB search fails, try title search with short timeout
             if title:
-                url = f"{StreamingAvailabilityService.BASE_URL}/shows/search/title"
-                params = {
-                    'title': title,
-                    'country': 'in',  # India
-                    'show_type': 'movie',
-                    'output_language': 'en'
-                }
-                
-                response = requests.get(url, headers=headers, params=params, timeout=10)
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    if data and len(data) > 0:
-                        # Get the first matching result
-                        return StreamingAvailabilityService._process_streaming_data(data[0])
+                try:
+                    url = f"{StreamingAvailabilityService.BASE_URL}/shows/search/title"
+                    params = {
+                        'title': title,
+                        'country': 'in',
+                        'show_type': 'movie',
+                        'output_language': 'en'
+                    }
+                    
+                    response = requests.get(url, headers=headers, params=params, timeout=timeout)
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        if data and len(data) > 0:
+                            return StreamingAvailabilityService._process_streaming_data(data[0])
+                except requests.exceptions.Timeout:
+                    logger.warning(f"Timeout fetching streaming data for title: {title}")
+                except Exception as e:
+                    logger.warning(f"Error fetching streaming data for title {title}: {e}")
             
             return StreamingAvailabilityService._get_fallback_streaming_data(title)
             
@@ -484,6 +505,8 @@ class StreamingAvailabilityService:
                         service = platform_data.get('service', {})
                         service_id = service.get('id', '').lower()
                         
+                        platform_mapping = StreamingAvailabilityService.PLATFORM_MAPPING.get(service_id, {})
+                        
                         platform_info = {
                             'platform': service.get('name', 'Unknown'),
                             'platform_id': service_id,
@@ -492,12 +515,11 @@ class StreamingAvailabilityService:
                             'link': platform_data.get('link', ''),
                             'price': platform_data.get('price', {}),
                             'available_since': platform_data.get('availableSince'),
-                            'leaving_soon': platform_data.get('leavingSoon', False)
+                            'leaving_soon': platform_data.get('leavingSoon', False),
+                            'emoji': platform_mapping.get('emoji', '🎬')
                         }
                         
                         # Categorize as free or paid
-                        platform_mapping = StreamingAvailabilityService.PLATFORM_MAPPING.get(service_id, {})
-                        
                         if platform_data.get('type') == 'free' or platform_mapping.get('is_free', False):
                             streaming_info['free_options'].append(platform_info)
                         else:
@@ -519,28 +541,32 @@ class StreamingAvailabilityService:
                     'platform_id': 'youtube',
                     'type': 'free',
                     'link': f"https://www.youtube.com/results?search_query={title.replace(' ', '+') if title else 'movie'}+full+movie",
-                    'note': 'May have ads or be user-uploaded'
+                    'note': 'May have ads or be user-uploaded',
+                    'emoji': '📺'
                 },
                 {
                     'platform': 'MX Player',
                     'platform_id': 'mxplayer',
                     'type': 'free',
                     'link': 'https://www.mxplayer.in/',
-                    'note': 'Check availability on platform'
+                    'note': 'Check availability on platform',
+                    'emoji': '🎭'
                 },
                 {
                     'platform': 'JioCinema',
                     'platform_id': 'jiocinema',
                     'type': 'free',
                     'link': 'https://www.jiocinema.com/',
-                    'note': 'Free for Jio users'
+                    'note': 'Free for Jio users',
+                    'emoji': '🎬'
                 },
                 {
                     'platform': 'Airtel Xstream',
                     'platform_id': 'airtel',
                     'type': 'free',
                     'link': 'https://www.airtelxstream.in/',
-                    'note': 'Free for Airtel users'
+                    'note': 'Free for Airtel users',
+                    'emoji': '📡'
                 }
             ],
             'paid_options': [
@@ -549,35 +575,40 @@ class StreamingAvailabilityService:
                     'platform_id': 'netflix',
                     'type': 'subscription',
                     'link': 'https://www.netflix.com/',
-                    'note': 'Subscription required'
+                    'note': 'Subscription required',
+                    'emoji': '🔴'
                 },
                 {
                     'platform': 'Amazon Prime Video',
                     'platform_id': 'prime',
                     'type': 'subscription',
                     'link': 'https://www.primevideo.com/',
-                    'note': 'Prime membership required'
+                    'note': 'Prime membership required',
+                    'emoji': '📦'
                 },
                 {
                     'platform': 'Disney+ Hotstar',
                     'platform_id': 'hotstar',
                     'type': 'subscription',
                     'link': 'https://www.hotstar.com/',
-                    'note': 'Subscription required'
+                    'note': 'Subscription required',
+                    'emoji': '⭐'
                 },
                 {
                     'platform': 'ZEE5 Premium',
                     'platform_id': 'zee5_premium',
                     'type': 'subscription',
                     'link': 'https://www.zee5.com/',
-                    'note': 'Premium subscription required'
+                    'note': 'Premium subscription required',
+                    'emoji': '💎'
                 },
                 {
                     'platform': 'SonyLIV Premium',
                     'platform_id': 'sonyliv_premium',
                     'type': 'subscription',
                     'link': 'https://www.sonyliv.com/',
-                    'note': 'Premium subscription required'
+                    'note': 'Premium subscription required',
+                    'emoji': '📱'
                 }
             ],
             'available_countries': ['in'],
@@ -673,7 +704,7 @@ class YouTubeService:
 # Content Management Service
 class ContentService:
     @staticmethod
-    def save_content_from_tmdb(tmdb_data, content_type):
+    def save_content_from_tmdb(tmdb_data, content_type, fetch_streaming=False):
         try:
             # Check if content already exists
             existing = Content.query.filter_by(tmdb_id=tmdb_data['id']).first()
@@ -685,7 +716,6 @@ class ContentService:
             if 'genres' in tmdb_data:
                 genres = [genre['name'] for genre in tmdb_data['genres']]
             elif 'genre_ids' in tmdb_data:
-                # Map genre IDs to names (you'll need a genre mapping)
                 genres = ContentService.map_genre_ids(tmdb_data['genre_ids'])
             
             # Extract languages
@@ -702,12 +732,21 @@ class ContentService:
             elif 'imdb_id' in tmdb_data:
                 imdb_id = tmdb_data['imdb_id']
             
-            # Get OTT platforms with streaming availability
-            ott_platforms = ContentService.get_ott_availability(
-                tmdb_data, 
-                title=tmdb_data.get('title') or tmdb_data.get('name'),
-                imdb_id=imdb_id
-            )
+            # Get OTT platforms - only if specifically requested
+            ott_platforms = {}
+            if fetch_streaming:
+                try:
+                    ott_platforms = ContentService.get_ott_availability(
+                        tmdb_data, 
+                        title=tmdb_data.get('title') or tmdb_data.get('name'),
+                        imdb_id=imdb_id
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to fetch streaming data during content save: {e}")
+                    ott_platforms = ContentService._get_fallback_platforms()
+            else:
+                # Use minimal fallback data
+                ott_platforms = ContentService._get_minimal_platforms()
             
             # Create content object
             content = Content(
@@ -737,6 +776,18 @@ class ContentService:
             logger.error(f"Error saving content: {e}")
             db.session.rollback()
             return None
+    
+    @staticmethod
+    def _get_minimal_platforms():
+        """Minimal platform data for faster content saving"""
+        return {
+            'platforms': [],
+            'last_updated': datetime.utcnow().isoformat(),
+            'total_free': 0,
+            'total_paid': 0,
+            'available_countries': ['in'],
+            'note': 'Streaming data not fetched during initial save'
+        }
     
     @staticmethod
     def map_genre_ids(genre_ids):
@@ -774,7 +825,8 @@ class ContentService:
                     'quality': option.get('quality', 'hd'),
                     'category': 'free',
                     'note': option.get('note', ''),
-                    'leaving_soon': option.get('leaving_soon', False)
+                    'leaving_soon': option.get('leaving_soon', False),
+                    'emoji': option.get('emoji', '🎬')
                 })
             
             # Add paid options
@@ -788,7 +840,8 @@ class ContentService:
                     'quality': option.get('quality', 'hd'),
                     'category': 'paid',
                     'price': option.get('price', {}),
-                    'leaving_soon': option.get('leaving_soon', False)
+                    'leaving_soon': option.get('leaving_soon', False),
+                    'emoji': option.get('emoji', '💎')
                 })
             
             # Add metadata
@@ -823,7 +876,8 @@ class ContentService:
                 'url': platform_info.get('url', ''),
                 'is_free': platform_info.get('is_free', False),
                 'category': platform_info.get('category', 'unknown'),
-                'note': 'Check platform for availability'
+                'note': 'Check platform for availability',
+                'emoji': platform_info.get('emoji', '🎬')
             })
         
         return {
@@ -848,7 +902,8 @@ class RecommendationEngine:
             recommendations = []
             for item in trending_data.get('results', [])[:limit]:
                 content_type_detected = 'movie' if 'title' in item else 'tv'
-                content = ContentService.save_content_from_tmdb(item, content_type_detected)
+                # Don't fetch streaming data during bulk content creation
+                content = ContentService.save_content_from_tmdb(item, content_type_detected, fetch_streaming=False)
                 if content:
                     recommendations.append(content)
             
@@ -870,7 +925,8 @@ class RecommendationEngine:
             if popular_movies:
                 for item in popular_movies.get('results', []):
                     if genre.lower() in [g.lower() for g in ContentService.map_genre_ids(item.get('genre_ids', []))]:
-                        content = ContentService.save_content_from_tmdb(item, 'movie')
+                        # Don't fetch streaming data during bulk content creation
+                        content = ContentService.save_content_from_tmdb(item, 'movie', fetch_streaming=False)
                         if content:
                             recommendations.append(content)
             
@@ -878,7 +934,8 @@ class RecommendationEngine:
             if popular_tv:
                 for item in popular_tv.get('results', []):
                     if genre.lower() in [g.lower() for g in ContentService.map_genre_ids(item.get('genre_ids', []))]:
-                        content = ContentService.save_content_from_tmdb(item, 'tv')
+                        # Don't fetch streaming data during bulk content creation
+                        content = ContentService.save_content_from_tmdb(item, 'tv', fetch_streaming=False)
                         if content:
                             recommendations.append(content)
             
@@ -890,7 +947,6 @@ class RecommendationEngine:
     @staticmethod
     def get_regional_recommendations(language, limit=20):
         try:
-            # Search for content in specific language
             search_queries = {
                 'hindi': ['bollywood', 'hindi movie', 'hindi film'],
                 'telugu': ['tollywood', 'telugu movie', 'telugu film'],
@@ -906,7 +962,8 @@ class RecommendationEngine:
                 if search_results:
                     for item in search_results.get('results', []):
                         content_type_detected = 'movie' if 'title' in item else 'tv'
-                        content = ContentService.save_content_from_tmdb(item, content_type_detected)
+                        # Don't fetch streaming data during bulk content creation
+                        content = ContentService.save_content_from_tmdb(item, content_type_detected, fetch_streaming=False)
                         if content:
                             recommendations.append(content)
                         
@@ -1007,7 +1064,7 @@ class AnonymousRecommendationEngine:
             logger.error(f"Error getting anonymous recommendations: {e}")
             return []
 
-# Telegram Service
+# Enhanced Telegram Service with Beautiful Post Design
 class TelegramService:
     @staticmethod
     def send_admin_recommendation(content, admin_name, description):
@@ -1024,7 +1081,7 @@ class TelegramService:
                 except:
                     genres_list = []
             
-            # Get streaming availability
+            # Get streaming availability with enhanced error handling
             streaming_info = None
             free_platforms_text = ""
             paid_platforms_text = ""
@@ -1034,18 +1091,17 @@ class TelegramService:
                 streaming_info = StreamingAvailabilityService.search_streaming_availability(
                     content.title,
                     imdb_id=content.imdb_id,
-                    tmdb_id=content.tmdb_id
+                    tmdb_id=content.tmdb_id,
+                    timeout=8
                 )
                 
-                # Format free options
+                # Format free options with emojis
                 free_options = streaming_info.get('free_options', [])
-                paid_options = streaming_info.get('paid_options', [])
-                
-                # Process free platforms
                 if free_options:
                     for option in free_options[:4]:  # Limit to 4
                         platform_name = option.get('platform', 'Unknown')
                         link = option.get('link', '')
+                        emoji = option.get('emoji', '🎬')
                         quality = option.get('quality', '').upper()
                         
                         if not link:
@@ -1058,14 +1114,16 @@ class TelegramService:
                             }
                             link = platform_search_urls.get(platform_name, f"https://www.google.com/search?q={content.title.replace(' ', '+')}+{platform_name.replace(' ', '+')}")
                         
-                        quality_badge = f" `{quality}`" if quality and quality != 'UNKNOWN' else ""
-                        free_platforms_text += f"🎬 [{platform_name}]({link}){quality_badge}\n"
+                        quality_badge = f" • `{quality}`" if quality and quality != 'UNKNOWN' else ""
+                        free_platforms_text += f"{emoji} [{platform_name}]({link}){quality_badge}\n"
                 
-                # Process paid platforms
+                # Format paid options with emojis
+                paid_options = streaming_info.get('paid_options', [])
                 if paid_options:
                     for option in paid_options[:4]:  # Limit to 4
                         platform_name = option.get('platform', 'Unknown')
                         link = option.get('link', '')
+                        emoji = option.get('emoji', '💎')
                         quality = option.get('quality', '').upper()
                         price = option.get('price', {})
                         
@@ -1080,168 +1138,251 @@ class TelegramService:
                             }
                             link = platform_search_urls.get(platform_name, f"https://www.google.com/search?q={content.title.replace(' ', '+')}+{platform_name.replace(' ', '+')}")
                         
-                        quality_badge = f" `{quality}`" if quality and quality != 'UNKNOWN' else ""
+                        quality_badge = f" • `{quality}`" if quality and quality != 'UNKNOWN' else ""
                         price_text = ""
                         if price and isinstance(price, dict):
                             amount = price.get('amount', '')
                             currency = price.get('currency', '')
                             if amount and currency:
-                                price_text = f" `{currency} {amount}`"
+                                price_text = f" • `{currency} {amount}`"
                         
-                        paid_platforms_text += f"💎 [{platform_name}]({link}){quality_badge}{price_text}\n"
+                        paid_platforms_text += f"{emoji} [{platform_name}]({link}){quality_badge}{price_text}\n"
                 
             except Exception as e:
                 logger.error(f"Error getting streaming info for Telegram: {e}")
-                # Fallback to popular platforms
-                free_platforms_text = f"🎬 [YouTube](https://www.youtube.com/results?search_query={content.title.replace(' ', '+')}+full+movie)\n"
-                free_platforms_text += f"🎬 [MX Player](https://www.mxplayer.in/)\n"
-                paid_platforms_text = f"💎 [Netflix](https://www.netflix.com/search?q={content.title.replace(' ', '%20')})\n"
-                paid_platforms_text += f"💎 [Prime Video](https://www.primevideo.com/search/ref=atv_sr_sug_0?phrase={content.title.replace(' ', '%20')})\n"
+                # Enhanced fallback with emojis
+                free_platforms_text = f"📺 [YouTube](https://www.youtube.com/results?search_query={content.title.replace(' ', '+')}+full+movie) • `FREE`\n"
+                free_platforms_text += f"🎭 [MX Player](https://www.mxplayer.in/) • `FREE`\n"
+                free_platforms_text += f"🎬 [JioCinema](https://www.jiocinema.com/) • `FREE`\n"
+                paid_platforms_text = f"🔴 [Netflix](https://www.netflix.com/search?q={content.title.replace(' ', '%20')}) • `SUBSCRIPTION`\n"
+                paid_platforms_text += f"📦 [Prime Video](https://www.primevideo.com/search/ref=atv_sr_sug_0?phrase={content.title.replace(' ', '%20')}) • `SUBSCRIPTION`\n"
+                paid_platforms_text += f"⭐ [Disney+ Hotstar](https://www.hotstar.com/in/search?q={content.title.replace(' ', '%20')}) • `SUBSCRIPTION`\n"
             
-            # Create poster URL
+            # Create enhanced poster URL with multiple fallbacks
             poster_url = None
+            poster_urls = []
+            
             if content.poster_path:
                 if content.poster_path.startswith('http'):
-                    poster_url = content.poster_path
+                    poster_urls.append(content.poster_path)
                 else:
-                    poster_url = f"https://image.tmdb.org/t/p/w500{content.poster_path}"
+                    # TMDB poster URLs with different sizes
+                    poster_urls.extend([
+                        f"https://image.tmdb.org/t/p/w500{content.poster_path}",
+                        f"https://image.tmdb.org/t/p/w342{content.poster_path}",
+                        f"https://image.tmdb.org/t/p/w185{content.poster_path}"
+                    ])
             
-            # Rating stars
+            # Try backdrop as fallback
+            if content.backdrop_path:
+                if content.backdrop_path.startswith('http'):
+                    poster_urls.append(content.backdrop_path)
+                else:
+                    poster_urls.append(f"https://image.tmdb.org/t/p/w780{content.backdrop_path}")
+            
+            # Test poster URLs and pick the first working one
+            for url in poster_urls:
+                try:
+                    response = requests.head(url, timeout=3)
+                    if response.status_code == 200:
+                        poster_url = url
+                        break
+                except:
+                    continue
+            
+            # Rating stars with better visual appeal
             rating_stars = ""
+            rating_text = ""
             if content.rating:
                 rating_value = float(content.rating)
                 full_stars = int(rating_value // 2)
                 half_star = 1 if (rating_value % 2) >= 1 else 0
                 empty_stars = 5 - full_stars - half_star
                 rating_stars = "⭐" * full_stars + "💫" * half_star + "☆" * empty_stars
+                rating_text = f"{rating_stars} `{content.rating}/10`"
             
-            # Content type emoji
-            type_emoji = {
+            # Content type emoji with enhanced mapping
+            type_emoji_map = {
                 'movie': '🎬',
                 'tv': '📺', 
-                'anime': '🎌'
-            }.get(content.content_type, '🎬')
+                'anime': '🎌',
+                'documentary': '🎞️',
+                'series': '📺'
+            }
+            type_emoji = type_emoji_map.get(content.content_type, '🎬')
             
-            # Build the enhanced message
-            message_parts = []
-            
-            # Header with admin choice
-            message_parts.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            message_parts.append(f"🏆 **ADMIN'S CHOICE** by *{admin_name}*")
-            message_parts.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            
-            # Movie title and basic info
-            message_parts.append(f"\n{type_emoji} **{content.title}**")
-            if content.original_title and content.original_title != content.title:
-                message_parts.append(f"📝 *{content.original_title}*")
-            
-            # Rating section
-            if rating_stars:
-                message_parts.append(f"\n{rating_stars} `{content.rating}/10`")
-            
-            # Movie details in a box format
-            details_box = "┌─────────────────────────────────────┐\n"
-            details_box += f"│ 📅 **Release:** {content.release_date or 'N/A'}\n"
-            details_box += f"│ 🎭 **Genres:** {', '.join(genres_list[:2]) if genres_list else 'N/A'}\n"
-            details_box += f"│ 🎬 **Type:** {content.content_type.upper()}\n"
+            # Runtime formatting
+            runtime_text = ""
             if content.runtime:
                 hours = content.runtime // 60
                 minutes = content.runtime % 60
-                runtime_text = f"{hours}h {minutes}m" if hours > 0 else f"{minutes}m"
-                details_box += f"│ ⏱️ **Runtime:** {runtime_text}\n"
-            details_box += "└─────────────────────────────────────┘"
+                if hours > 0:
+                    runtime_text = f" • ⏱️ `{hours}h {minutes}m`"
+                else:
+                    runtime_text = f" • ⏱️ `{minutes}m`"
+            
+            # Build the spectacular message with improved design
+            message_parts = []
+            
+            # Elegant header with crown and sparkles
+            message_parts.append("✨ ═══════════════════════════════════════ ✨")
+            message_parts.append(f"👑 **ADMIN'S CHOICE** 👑")
+            message_parts.append(f"*Recommended by {admin_name}*")
+            message_parts.append("✨ ═══════════════════════════════════════ ✨")
+            
+            # Movie title with enhanced styling
+            message_parts.append(f"\n{type_emoji} **{content.title}**")
+            if content.original_title and content.original_title != content.title:
+                message_parts.append(f"🌐 *{content.original_title}*")
+            
+            # Rating with visual appeal
+            if rating_text:
+                message_parts.append(f"\n{rating_text}")
+            
+            # Movie details in elegant box format
+            details_box = "┌─ 📋 **MOVIE DETAILS** ─────────────────────┐\n"
+            details_box += f"│ 📅 **Release:** `{content.release_date or 'N/A'}`\n"
+            details_box += f"│ 🎭 **Genres:** `{', '.join(genres_list[:3]) if genres_list else 'N/A'}`\n"
+            details_box += f"│ 🎬 **Type:** `{content.content_type.upper()}`{runtime_text}\n"
+            if content.vote_count:
+                details_box += f"│ 👥 **Votes:** `{content.vote_count:,}`\n"
+            details_box += "└─────────────────────────────────────────────┘"
             message_parts.append(f"\n{details_box}")
             
-            # Admin's note with special formatting
-            message_parts.append(f"\n💬 **Admin Says:**")
+            # Admin's note with special formatting and emoji
+            message_parts.append(f"\n💭 **ADMIN'S THOUGHTS:**")
             message_parts.append(f"*\"{description}\"*")
             
-            # Synopsis
+            # Synopsis with elegant formatting
             if content.overview:
-                synopsis = content.overview[:200] + "..." if len(content.overview) > 200 else content.overview
-                message_parts.append(f"\n📖 **Synopsis:**\n{synopsis}")
+                synopsis = content.overview[:250] + "..." if len(content.overview) > 250 else content.overview
+                message_parts.append(f"\n📖 **SYNOPSIS:**")
+                message_parts.append(f"_{synopsis}_")
             
-            # Where to watch section
-            message_parts.append(f"\n{'─' * 40}")
-            message_parts.append("🎯 **WHERE TO WATCH**")
-            message_parts.append(f"{'─' * 40}")
+            # Where to watch section with enhanced design
+            message_parts.append(f"\n🎯 ═══════ **WHERE TO WATCH** ═══════ 🎯")
             
             if free_platforms_text:
                 message_parts.append(f"\n🆓 **FREE STREAMING:**")
                 message_parts.append(free_platforms_text.rstrip())
             
             if paid_platforms_text:
-                message_parts.append(f"\n💰 **SUBSCRIPTION REQUIRED:**")
+                message_parts.append(f"\n💰 **PREMIUM PLATFORMS:**")
                 message_parts.append(paid_platforms_text.rstrip())
             
             if not free_platforms_text and not paid_platforms_text:
                 message_parts.append(f"\n🔍 **Search on your favorite platform**")
+                message_parts.append(f"🌐 [Google Search](https://www.google.com/search?q={content.title.replace(' ', '+')}+watch+online)")
             
-            # Footer with hashtags and call to action
-            message_parts.append(f"\n{'─' * 40}")
-            message_parts.append("🎬 **Enjoy Watching!** 🍿")
-            message_parts.append(f"{'─' * 40}")
+            # Enhanced footer with call to action
+            message_parts.append(f"\n🍿 ═══════════════════════════════════════ 🍿")
+            message_parts.append("🎬 **Ready for Movie Night?** 🎭")
+            message_parts.append("✨ *Click the links above to start watching!* ✨")
+            message_parts.append(f"🍿 ═══════════════════════════════════════ 🍿")
             
-            # Hashtags
-            hashtags = ["#AdminChoice", "#MovieRecommendation", "#CineScope", "#WatchNow"]
+            # Hashtags with enhanced variety
+            hashtags = ["#AdminChoice", "#MovieRecommendation", "#CineScope", "#WatchNow", "#MovieNight"]
             if genres_list:
-                hashtags.extend([f"#{genre.replace(' ', '')}" for genre in genres_list[:2]])
+                hashtags.extend([f"#{genre.replace(' ', '').replace('-', '')}" for genre in genres_list[:2]])
             if content.content_type:
                 hashtags.append(f"#{content.content_type.title()}")
+            if content.release_date:
+                year = content.release_date.year
+                if year >= 2020:
+                    hashtags.append("#NewRelease")
+                elif year >= 2010:
+                    hashtags.append("#Modern")
+                else:
+                    hashtags.append("#Classic")
             
             message_parts.append(f"\n{' '.join(hashtags)}")
             
             # Join all parts
             message = '\n'.join(message_parts)
             
-            # Send message with photo if available
+            # Send message with enhanced error handling
+            message_sent = False
+            
+            # Try with poster first
             if poster_url:
-                try:
-                    bot.send_photo(
-                        chat_id=TELEGRAM_CHANNEL_ID,
-                        photo=poster_url,
-                        caption=message,
-                        parse_mode='Markdown',
-                        disable_web_page_preview=False
-                    )
-                except Exception as photo_error:
-                    logger.error(f"Failed to send photo, trying without markdown: {photo_error}")
+                for attempt in range(3):  # Multiple attempts with different poster sizes
                     try:
-                        # Fallback without markdown if there are formatting issues
-                        simple_message = f"""🏆 ADMIN'S CHOICE by {admin_name}
+                        bot.send_photo(
+                            chat_id=TELEGRAM_CHANNEL_ID,
+                            photo=poster_url,
+                            caption=message,
+                            parse_mode='Markdown',
+                            disable_web_page_preview=False
+                        )
+                        message_sent = True
+                        logger.info(f"Successfully sent Telegram recommendation with poster for: {content.title}")
+                        break
+                    except Exception as photo_error:
+                        logger.warning(f"Attempt {attempt + 1} failed to send photo: {photo_error}")
+                        if attempt < 2 and len(poster_urls) > attempt + 1:
+                            poster_url = poster_urls[attempt + 1]  # Try next poster URL
+                        continue
+            
+            # Fallback to text message if photo fails
+            if not message_sent:
+                try:
+                    # Create simplified message for text-only
+                    simple_message = f"""👑 ADMIN'S CHOICE by {admin_name}
 
-🎬 {content.title}
-⭐ Rating: {content.rating or 'N/A'}/10
+{type_emoji} {content.title}
+{rating_text if rating_text else '⭐ Rating: N/A'}
+
 📅 Release: {content.release_date or 'N/A'}
 🎭 Genres: {', '.join(genres_list[:3]) if genres_list else 'N/A'}
 
-💬 Admin Says: {description}
+💭 Admin Says: {description}
 
-📖 Synopsis: {(content.overview[:150] + '...') if content.overview else 'No synopsis available'}
+📖 Synopsis: {(content.overview[:200] + '...') if content.overview else 'No synopsis available'}
 
 🎯 WHERE TO WATCH:
 {free_platforms_text if free_platforms_text else ''}
 {paid_platforms_text if paid_platforms_text else ''}
 
+🎬 Ready for Movie Night? 🍿
+
+{' '.join(hashtags)}"""
+                    
+                    bot.send_message(
+                        TELEGRAM_CHANNEL_ID, 
+                        simple_message, 
+                        parse_mode='Markdown',
+                        disable_web_page_preview=False
+                    )
+                    message_sent = True
+                    logger.info(f"Successfully sent Telegram recommendation (text) for: {content.title}")
+                    
+                except Exception as text_error:
+                    logger.error(f"Failed to send text message: {text_error}")
+                    # Final fallback - plain text
+                    try:
+                        plain_message = f"""ADMIN'S CHOICE by {admin_name}
+
+Movie: {content.title}
+Rating: {content.rating or 'N/A'}/10
+Release: {content.release_date or 'N/A'}
+Genres: {', '.join(genres_list[:3]) if genres_list else 'N/A'}
+
+Admin Says: {description}
+
+Synopsis: {(content.overview[:150] + '...') if content.overview else 'No synopsis available'}
+
+WHERE TO WATCH:
+Check Netflix, Prime Video, YouTube, and other platforms
+
 {' '.join(hashtags)}"""
                         
-                        bot.send_photo(
-                            chat_id=TELEGRAM_CHANNEL_ID,
-                            photo=poster_url,
-                            caption=simple_message,
-                            disable_web_page_preview=False
-                        )
-                    except:
-                        bot.send_message(TELEGRAM_CHANNEL_ID, simple_message, disable_web_page_preview=False)
-            else:
-                bot.send_message(
-                    TELEGRAM_CHANNEL_ID, 
-                    message, 
-                    parse_mode='Markdown',
-                    disable_web_page_preview=False
-                )
+                        bot.send_message(TELEGRAM_CHANNEL_ID, plain_message)
+                        message_sent = True
+                        logger.info(f"Successfully sent plain Telegram recommendation for: {content.title}")
+                    except Exception as final_error:
+                        logger.error(f"Final fallback failed: {final_error}")
             
-            return True
+            return message_sent
             
         except Exception as e:
             logger.error(f"Telegram send error: {e}")
@@ -1368,7 +1509,7 @@ def search_content():
         if tmdb_results:
             for item in tmdb_results.get('results', []):
                 content_type_detected = 'movie' if 'title' in item else 'tv'
-                content = ContentService.save_content_from_tmdb(item, content_type_detected)
+                content = ContentService.save_content_from_tmdb(item, content_type_detected, fetch_streaming=False)
                 if content:
                     # Record anonymous interaction
                     interaction = AnonymousInteraction(
@@ -1440,12 +1581,31 @@ def get_content_details(content_id):
         if content.tmdb_id:
             additional_details = TMDBService.get_content_details(content.tmdb_id, content.content_type)
         
-        # Get real-time streaming availability
-        streaming_availability = StreamingAvailabilityService.search_streaming_availability(
-            content.title,
-            imdb_id=content.imdb_id,
-            tmdb_id=content.tmdb_id
-        )
+        # Get real-time streaming availability (with timeout protection)
+        streaming_availability = {'free_options': [], 'paid_options': [], 'last_updated': None}
+        try:
+            streaming_availability = StreamingAvailabilityService.search_streaming_availability(
+                content.title,
+                imdb_id=content.imdb_id,
+                tmdb_id=content.tmdb_id,
+                timeout=5  # Longer timeout for individual requests
+            )
+        except Exception as e:
+            logger.warning(f"Failed to fetch real-time streaming data for content {content_id}: {e}")
+            # Use stored data or fallback
+            try:
+                stored_platforms = json.loads(content.ott_platforms or '{}')
+                if stored_platforms and 'platforms' in stored_platforms:
+                    # Convert stored data to streaming format
+                    free_options = [p for p in stored_platforms['platforms'] if p.get('is_free', False)]
+                    paid_options = [p for p in stored_platforms['platforms'] if not p.get('is_free', False)]
+                    streaming_availability = {
+                        'free_options': free_options,
+                        'paid_options': paid_options,
+                        'last_updated': stored_platforms.get('last_updated')
+                    }
+            except:
+                pass
         
         # Generate platform deep links
         all_platforms = streaming_availability.get('free_options', []) + streaming_availability.get('paid_options', [])
@@ -1454,20 +1614,23 @@ def get_content_details(content_id):
         # Get YouTube trailers
         trailers = []
         if YOUTUBE_API_KEY:
-            youtube_results = YouTubeService.search_trailers(content.title)
-            if youtube_results:
-                for video in youtube_results.get('items', []):
-                    trailers.append({
-                        'title': video['snippet']['title'],
-                        'url': f"https://www.youtube.com/watch?v={video['id']['videoId']}",
-                        'thumbnail': video['snippet']['thumbnails']['medium']['url']
-                    })
+            try:
+                youtube_results = YouTubeService.search_trailers(content.title)
+                if youtube_results:
+                    for video in youtube_results.get('items', []):
+                        trailers.append({
+                            'title': video['snippet']['title'],
+                            'url': f"https://www.youtube.com/watch?v={video['id']['videoId']}",
+                            'thumbnail': video['snippet']['thumbnails']['medium']['url']
+                        })
+            except Exception as e:
+                logger.warning(f"Failed to fetch YouTube trailers: {e}")
         
         # Get similar content
         similar_content = []
         if additional_details and 'similar' in additional_details:
             for item in additional_details['similar']['results'][:5]:
-                similar = ContentService.save_content_from_tmdb(item, content.content_type)
+                similar = ContentService.save_content_from_tmdb(item, content.content_type, fetch_streaming=False)
                 if similar:
                     similar_content.append({
                         'id': similar.id,
@@ -2032,7 +2195,7 @@ def create_admin_recommendation(current_user):
         db.session.add(admin_rec)
         db.session.commit()
         
-        # Send to Telegram channel
+        # Send to Telegram channel with enhanced design
         telegram_success = TelegramService.send_admin_recommendation(content, current_user.username, data['description'])
         
         return jsonify({
@@ -2174,6 +2337,64 @@ def get_public_admin_recommendations():
         logger.error(f"Public admin recommendations error: {e}")
         return jsonify({'error': 'Failed to get admin recommendations'}), 500
 
+# Background task to update streaming data
+import threading
+import time
+
+def update_streaming_data_background():
+    """Background task to update streaming data for popular content"""
+    while True:
+        try:
+            with app.app_context():
+                # Get popular content without streaming data
+                contents = Content.query.filter(
+                    or_(
+                        Content.ott_platforms == '{}',
+                        Content.ott_platforms == None,
+                        Content.ott_platforms.like('%"note": "Streaming data not fetched during initial save"%')
+                    )
+                ).limit(10).all()
+                
+                for content in contents:
+                    try:
+                        # Update streaming data with timeout
+                        streaming_data = StreamingAvailabilityService.search_streaming_availability(
+                            content.title,
+                            imdb_id=content.imdb_id,
+                            tmdb_id=content.tmdb_id,
+                            timeout=5
+                        )
+                        
+                        platforms_data = {
+                            'platforms': streaming_data.get('free_options', []) + streaming_data.get('paid_options', []),
+                            'last_updated': streaming_data.get('last_updated'),
+                            'total_free': len(streaming_data.get('free_options', [])),
+                            'total_paid': len(streaming_data.get('paid_options', [])),
+                            'available_countries': streaming_data.get('available_countries', ['in'])
+                        }
+                        
+                        content.ott_platforms = json.dumps(platforms_data)
+                        db.session.commit()
+                        
+                        logger.info(f"Updated streaming data for: {content.title}")
+                        time.sleep(2)  # Rate limiting
+                        
+                    except Exception as e:
+                        logger.warning(f"Failed to update streaming data for {content.title}: {e}")
+                        continue
+                
+            # Sleep for 1 hour before next batch
+            time.sleep(3600)
+            
+        except Exception as e:
+            logger.error(f"Background streaming update error: {e}")
+            time.sleep(300)  # Wait 5 minutes before retry
+
+# Start background thread if enabled
+if os.environ.get('ENABLE_BACKGROUND_STREAMING_UPDATE', 'false').lower() == 'true':
+    streaming_thread = threading.Thread(target=update_streaming_data_background, daemon=True)
+    streaming_thread.start()
+
 # Health check endpoint
 @app.route('/api/health', methods=['GET'])
 def health_check():
@@ -2181,7 +2402,8 @@ def health_check():
         'status': 'healthy',
         'timestamp': datetime.utcnow().isoformat(),
         'version': '1.0.0',
-        'streaming_api_enabled': bool(RAPIDAPI_KEY)
+        'streaming_api_enabled': bool(RAPIDAPI_KEY),
+        'telegram_enabled': bool(bot)
     }), 200
 
 # Initialize database
