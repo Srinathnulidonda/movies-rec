@@ -1,159 +1,36 @@
-movie-recommendation-frontend/
-├── index.html                          # Main entry point
-├── manifest.json                       # PWA manifest
-├── sw.js                              # Service worker for PWA
-├── robots.txt                         # SEO robots file
-├── favicon.ico                        # App favicon
-├── README.md                          # Project documentation
-│
-├── css/
-│   ├── style.css                      # Main stylesheet
-│   ├── components.css                 # UI components styles
-│   ├── responsive.css                 # Responsive design styles
-│   ├── themes.css                     # Dark/light theme styles
-│   └── admin.css                      # Admin-specific styles
-│
-├── js/
-│   ├── app.js                         # Main application logic
-│   ├── auth.js                        # Authentication handling
-│   ├── api.js                         # API communication layer
-│   ├── components.js                  # Reusable UI components
-│   ├── utils.js                       # Utility functions
-│   ├── storage.js                     # Local storage management
-│   ├── search.js                      # Search functionality
-│   ├── recommendations.js             # Recommendation logic
-│   ├── carousel.js                    # Carousel component
-│   ├── modal.js                       # Modal components
-│   ├── theme.js                       # Theme switching logic
-│   └── admin.js                       # Admin panel functionality
-│
-├── pages/
-│   ├── auth/
-│   │   ├── login.html                 # Login page
-│   │   ├── register.html              # Registration page
-│   │   └── reset-password.html        # Password reset page
-│   │
-│   ├── user/
-│   │   ├── dashboard.html             # User dashboard
-│   │   ├── profile.html               # User profile
-│   │   ├── watchlist.html             # User watchlist
-│   │   ├── favorites.html             # User favorites
-│   │   └── history.html               # Viewing history
-│   │
-│   ├── content/
-│   │   ├── search.html                # Search results
-│   │   ├── content-details.html       # Movie/show details
-│   │   ├── browse-movies.html         # Movie catalog
-│   │   ├── browse-tv.html             # TV show catalog
-│   │   ├── browse-anime.html          # Anime catalog
-│   │   ├── regional.html              # Regional content
-│   │   ├── genre.html                 # Genre-based content
-│   │   ├── watch-options.html         # Streaming options
-│   │   └── theaters.html              # Theater showtimes
-│   │
-│   ├── admin/
-│   │   ├── dashboard.html             # Admin dashboard
-│   │   ├── content.html               # Content management
-│   │   ├── users.html                 # User management
-│   │   ├── analytics.html             # Analytics panel
-│   │   └── settings.html              # System settings
-│   │
-│   └── error/
-│       ├── 404.html                   # Page not found
-│       └── 500.html                   # Server error
-│
-├── assets/
-│   ├── images/
-│   │   ├── logos/
-│   │   │   ├── app-logo.svg           # Main app logo
-│   │   │   ├── app-icon-192.png       # PWA icon 192x192
-│   │   │   └── app-icon-512.png       # PWA icon 512x512
-│   │   │
-│   │   ├── placeholders/
-│   │   │   ├── movie-poster.svg       # Movie poster placeholder
-│   │   │   ├── profile-avatar.svg     # User avatar placeholder
-│   │   │   └── backdrop-placeholder.svg # Backdrop placeholder
-│   │   │
-│   │   ├── icons/
-│   │   │   ├── play-button.svg        # Play button icon
-│   │   │   ├── heart.svg              # Favorite icon
-│   │   │   ├── bookmark.svg           # Watchlist icon
-│   │   │   ├── star.svg               # Rating icon
-│   │   │   ├── search.svg             # Search icon
-│   │   │   ├── menu.svg               # Menu icon
-│   │   │   ├── close.svg              # Close icon
-│   │   │   ├── arrow-left.svg         # Left arrow
-│   │   │   ├── arrow-right.svg        # Right arrow
-│   │   │   ├── filter.svg             # Filter icon
-│   │   │   └── settings.svg           # Settings icon
-│   │   │
-│   │   ├── platforms/
-│   │   │   ├── netflix.svg            # Netflix logo
-│   │   │   ├── amazon-prime.svg       # Amazon Prime logo
-│   │   │   ├── disney-plus.svg        # Disney+ logo
-│   │   │   ├── hulu.svg               # Hulu logo
-│   │   │   ├── youtube.svg            # YouTube logo
-│   │   │   ├── tubi.svg               # Tubi logo
-│   │   │   └── theaters.svg           # Theater icon
-│   │   │
-│   │   └── backgrounds/
-│   │       ├── hero-bg.jpg            # Hero section background
-│   │       ├── auth-bg.jpg            # Authentication pages bg
-│   │       └── admin-bg.jpg           # Admin panel background
-│   │
-│   ├── fonts/
-│   │   ├── inter/                     # Inter font family
-│   │   │   ├── Inter-Regular.woff2
-│   │   │   ├── Inter-Medium.woff2
-│   │   │   ├── Inter-SemiBold.woff2
-│   │   │   └── Inter-Bold.woff2
-│   │   │
-│   │   └── poppins/                   # Poppins font family
-│   │       ├── Poppins-Regular.woff2
-│   │       ├── Poppins-Medium.woff2
-│   │       ├── Poppins-SemiBold.woff2
-│   │       └── Poppins-Bold.woff2
-│   │
-│   └── data/
-│       ├── genres.json                # Genre mapping data
-│       ├── languages.json             # Language options
-│       ├── regions.json               # Regional content data
-│       └── platforms.json             # Streaming platforms data
-│
-├── components/
-│   ├── header.html                    # Header component
-│   ├── footer.html                    # Footer component
-│   ├── sidebar.html                   # Sidebar navigation
-│   ├── carousel.html                  # Carousel component
-│   ├── content-card.html              # Content card component
-│   ├── modal.html                     # Modal component
-│   ├── loading.html                   # Loading states
-│   ├── search-bar.html                # Search component
-│   ├── filter-panel.html              # Filter component
-│   ├── user-menu.html                 # User menu dropdown
-│   ├── breadcrumb.html                # Breadcrumb navigation
-│   ├── pagination.html                # Pagination component
-│   ├── toast.html                     # Notification toast
-│   ├── rating-stars.html              # Rating component
-│   ├── streaming-badges.html          # Platform badges
-│   └── admin-sidebar.html             # Admin sidebar
-│
-├── lib/
-│   ├── tailwind.min.css               # Tailwind CSS
-│   ├── bootstrap-grid.min.css         # Bootstrap grid system
-│   ├── animate.min.css                # Animation library
-│   └── aos.min.js                     # Animate on scroll
-│
-├── config/
-│   ├── api.js                         # API configuration
-│   ├── constants.js                   # App constants
-│   ├── routes.js                      # Client-side routing
-│   └── env.js                         # Environment variables
-│
-└── utils/
-    ├── validation.js                  # Form validation
-    ├── formatters.js                  # Data formatting
-    ├── helpers.js                     # Helper functions
-    ├── debounce.js                    # Performance utilities
-    ├── intersection-observer.js       # Lazy loading
-    └── error-handler.js               # Error handling
+1)  this in the details page
+    Find where [movie name, anime, tv show] is available to watch online - check streaming platforms, free options, and provide watch links in the  details page More Detailed Version: Search for current streaming availability of [movie name, anime, tv show]. Include:
+
+    Which OTT platforms have it 
+    Direct watch links Free options 
+    Real-time availability status 
+    If a movie, anime, and tv show is available in multiple languages (e.g., Hindi, Telugu, Tamil), display separate buttons or links for each version. 
+    Each link should be labeled clearly with the language name (e.g., 'Watch in Hindi') and should directly start playing the movie in that language.
+
+    don't use the justwatch and 
+    use this both use 
+    - WATCHMODE_API_KEY and 
+    - 'x-rapidapi-key': "c50f156591mshac38b14b2f02d6fp1da925jsn4b816e4dae37", 
+    - 'x-rapidapi-host': "streaming-availability.p.rapidapi.com"
+
+    Free Options: MX Player, JioHotstar, SonyLIV, Zee5, YouTube, Crunchyroll, Airtel Xstream
+
+    Paid Options: Netflix, Prime Video, Disney+ Hotstar, Zee5 Premium, SonyLIV Premium, Aha, Sun NXT
+
+2) If a movie, anime, and tv show is available in multiple languages (e.g., Hindi, Telugu, Tamil), display separate buttons or links for each version. Each link should be labeled clearly with the language name (e.g., 'Watch in Hindi') and should directly start playing the movie in that language.
+
+3)  can't load the anime details when i click on it
+
+4)  in the Regional movies telugu, hindi, tamil, malayalam, kannada movies and english all langauges best movies, all-time 
+    hits movies, trending movies, new release movies, genre wise movies etc should be shown first prefrences telugu
+
+    this should be accurate and most accurate
+
+    Here’s a concise list of common movie genres:
+
+    Action, Adventure, Animation, Biography, Comedy, Crime, Documentary, Drama, Fantasy, Horror, Musical, Mystery, Romance, Sci-Fi, Thriller, Western
+
+this all should be accurate and most accurate
+
+5) provide only the telegramservice class with the professional desing there the watch links should be there separate buttons or links for each version. Each link should be labeled clearly with the language name (e.g., 'Watch in Hindi') and should directly start playing the movie in that language.
+
