@@ -1309,101 +1309,102 @@ class TelegramService:
     def send_admin_recommendation(content, admin_name, description):
         try:
             if not bot or not TELEGRAM_CHANNEL_ID:
-                logger.warning("Telegram bot or channel ID not configured")
                 return False
             
-            # Format genre list
-            genres_list = []
-            if content.genres:
-                try:
-                    genres_list = json.loads(content.genres)
-                except:
-                    genres_list = []
-            
-            # Get real-time streaming availability with language support
+            # Get streaming platforms and group by language
             streaming_platforms = []
             if content.tmdb_id:
-                streaming_platforms = StreamingAvailabilityService.get_comprehensive_streaming_info(
-                    content.tmdb_id, content.title
-                )
-            
-            # If no streaming data from API, use stored data
+                streaming_platforms = StreamingAvailabilityService.get_comprehensive_streaming_info(content.tmdb_id, content.title)
             if not streaming_platforms:
-                try:
-                    streaming_platforms = json.loads(content.ott_platforms or '[]')
-                except:
-                    streaming_platforms = []
+                streaming_platforms = json.loads(content.ott_platforms or '[]')
             
-            # Create language-specific watch buttons
-            watch_buttons = LanguageService.create_watch_buttons(streaming_platforms)
-            
-            # Group platforms by language for telegram display
             language_groups = LanguageService.group_platforms_by_language(streaming_platforms)
             
-            # Build streaming availability text with language support
-            streaming_text = ""
-            for language, platforms in language_groups.items():
-                if platforms:
-                    streaming_text += f"\n🎭 **{language}:**\n"
-                    
-                    free_platforms = []
-                    paid_platforms = []
-                    
-                    for platform in platforms[:3]:  # Limit to 3 platforms per language
-                        platform_name = platform.get('platform_name', platform.get('platform', '').title())
-                        if platform.get('is_free'):
-                            free_platforms.append(platform_name)
-                        else:
-                            paid_platforms.append(platform_name)
-                    
-                    if free_platforms:
-                        streaming_text += f"🆓 Free: {', '.join(free_platforms)}\n"
-                    if paid_platforms:
-                        streaming_text += f"💰 Paid: {', '.join(paid_platforms)}\n"
+            # Create watch sections and inline keyboard
+            watch_sections = []
+            keyboard = None
             
-            # Create poster URL
-            poster_url = None
-            if content.poster_path:
-                if content.poster_path.startswith('http'):
-                    poster_url = content.poster_path
-                else:
-                    poster_url = f"https://image.tmdb.org/t/p/w500{content.poster_path}"
+            if language_groups:
+                from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+                keyboard = InlineKeyboardMarkup()
+                
+                flag_map = {'Hindi': '🇮🇳', 'Telugu': '🎭', 'Tamil': '🎪', 'Malayalam': '🌺', 'Kannada': '🎨', 'English': '🇺🇸', 'Japanese': '🇯🇵'}
+                priority_langs = ['Hindi', 'Telugu', 'Tamil', 'Malayalam', 'Kannada', 'English']
+                
+                for lang in priority_langs + [l for l in language_groups if l not in priority_langs]:
+                    if lang in language_groups and len(keyboard.keyboard) < 8:
+                        platforms = language_groups[lang][:3]
+                        flag = flag_map.get(lang, '🎬')
+                        
+                        # Add to message text
+                        free_links = [f"[{p['platform_name']}]({p['url']})" for p in platforms if p.get('url') and p.get('is_free')]
+                        paid_links = [f"[{p['platform_name']}]({p['url']})" for p in platforms if p.get('url') and not p.get('is_free')]
+                        
+                        section = f"\n{flag} **{lang}:**"
+                        if free_links: section += f"\n🆓 {' • '.join(free_links)}"
+                        if paid_links: section += f"\n💰 {' • '.join(paid_links)}"
+                        watch_sections.append(section)
+                        
+                        # Add inline button
+                        if platforms and platforms[0].get('url'):
+                            keyboard.add(InlineKeyboardButton(f"{flag} Watch in {lang}", url=platforms[0]['url']))
             
             # Create message
-            message = f"""🎬 **Admin's Choice** by {admin_name}
-
-**{content.title}**
-⭐ Rating: {content.rating or 'N/A'}/10
-📅 Release: {content.release_date or 'N/A'}
-🎭 Genres: {', '.join(genres_list[:3]) if genres_list else 'N/A'}
-🎬 Type: {content.content_type.upper()}
-
-📝 **Admin's Note:** {description}
-
-🎥 **Available On:**{streaming_text}
-
-📖 **Synopsis:** {(content.overview[:200] + '...') if content.overview else 'No synopsis available'}
-
-#AdminChoice #MovieRecommendation #CineScope"""
+            genres = json.loads(content.genres or '[]')[:3]
+            rating_stars = "⭐" * min(int((content.rating or 0) / 2), 5) if content.rating else "⭐"
+            type_emoji = {'movie': '🎬', 'tv': '📺', 'anime': '🏮'}.get(content.content_type, '🎬')
             
-            # Send message with photo if available
-            if poster_url:
-                try:
-                    bot.send_photo(
-                        chat_id=TELEGRAM_CHANNEL_ID,
-                        photo=poster_url,
-                        caption=message,
-                        parse_mode='Markdown'
-                    )
-                except Exception as photo_error:
-                    logger.error(f"Failed to send photo, sending text only: {photo_error}")
-                    bot.send_message(TELEGRAM_CHANNEL_ID, message, parse_mode='Markdown')
-            else:
-                bot.send_message(TELEGRAM_CHANNEL_ID, message, parse_mode='Markdown')
+            message = f"""🎬 **ADMIN'S CHOICE** by {admin_name}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+{type_emoji} **{content.title}**
+{rating_stars} **{content.rating or 'N/A'}/10** • 📅 {content.release_date or 'N/A'}
+🎭 {', '.join(genres) if genres else 'N/A'} • 🎥 {content.content_type.upper()}
+
+💭 **Admin's Note:** _{description}_
+
+🎯 **WATCH NOW:**{''.join(watch_sections) if watch_sections else "\n📱 *Coming soon on streaming platforms*"}
+
+📖 {(content.overview[:200] + '...') if content.overview else '_No synopsis available_'}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#AdminChoice #CineScope #{content.content_type.title()}"""
+            
+            # Send message
+            poster_url = f"https://image.tmdb.org/t/p/w500{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path
+            
+            try:
+                if poster_url:
+                    bot.send_photo(TELEGRAM_CHANNEL_ID, poster_url, caption=message, parse_mode='Markdown', reply_markup=keyboard)
+                else:
+                    bot.send_message(TELEGRAM_CHANNEL_ID, message, parse_mode='Markdown', reply_markup=keyboard)
+            except:
+                bot.send_message(TELEGRAM_CHANNEL_ID, message.replace('*', '').replace('_', ''), reply_markup=keyboard)
             
             return True
+            
         except Exception as e:
-            logger.error(f"Telegram send error: {e}")
+            logger.error(f"Telegram error: {e}")
+            return False
+    
+    @staticmethod
+    def send_bulk_recommendations(content_list, admin_name, category="Featured"):
+        try:
+            if not bot or not content_list: return False
+            
+            message = f"🔥 **{category.upper()}** by {admin_name}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            
+            for i, item in enumerate(content_list[:5], 1):
+                content = item.get('content')
+                if content:
+                    emoji = {'movie': '🎬', 'tv': '📺', 'anime': '🏮'}.get(content.content_type, '🎬')
+                    stars = "⭐" * min(int((content.rating or 0) / 2), 5)
+                    message += f"{i}. {emoji} **{content.title}**\n{stars} {content.rating or 'N/A'}/10\n\n"
+            
+            message += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n#{category} #CineScope"
+            bot.send_message(TELEGRAM_CHANNEL_ID, message, parse_mode='Markdown')
+            return True
+        except:
             return False
 
 # API Routes
