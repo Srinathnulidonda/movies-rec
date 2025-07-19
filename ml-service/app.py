@@ -171,7 +171,34 @@ class AdvancedRecommendationEngine:
         self.cache = {}
         self.cache_timestamps = {}
         
+        # Initialization flag
+        self._initialized = False
+        
         logger.info("Advanced Recommendation Engine initialized")
+    
+    def initialize_models(self):
+        """Initialize models - called once when app starts"""
+        if self._initialized:
+            return True
+        
+        try:
+            logger.info("Initializing Advanced Recommendation Service...")
+            
+            # Try to load existing models
+            if not self._load_models():
+                logger.info("No existing models found. Training new models...")
+                success = self.fit()
+                if not success:
+                    logger.warning("Model training failed - will train when data becomes available")
+            
+            self._initialized = True
+            logger.info("Advanced Recommendation Service initialized successfully")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error initializing models: {e}")
+            self._initialized = True  # Mark as initialized to prevent repeated failures
+            return False
     
     def fetch_data_from_database(self):
         """Fetch and process data from database"""
@@ -2023,6 +2050,20 @@ class AdvancedRecommendationEngine:
 # Initialize the recommendation engine
 recommendation_engine = AdvancedRecommendationEngine()
 
+# Initialize models flag for one-time initialization
+models_initialized = False
+
+def ensure_models_initialized():
+    """Ensure models are initialized exactly once"""
+    global models_initialized
+    if not models_initialized:
+        try:
+            recommendation_engine.initialize_models()
+            models_initialized = True
+        except Exception as e:
+            logger.error(f"Failed to initialize models: {e}")
+            models_initialized = True  # Prevent infinite retry
+
 # API Routes
 @app.route('/api/health', methods=['GET'])
 def health_check():
@@ -2066,6 +2107,7 @@ def health_check():
 def train_models():
     """Train all recommendation models"""
     try:
+        ensure_models_initialized()
         logger.info("Starting comprehensive model training...")
         success = recommendation_engine.fit()
         
@@ -2100,6 +2142,7 @@ def train_models():
 def get_recommendations():
     """Get personalized recommendations using hybrid approach"""
     try:
+        ensure_models_initialized()
         data = request.get_json()
         
         if not data:
@@ -2165,6 +2208,7 @@ def get_recommendations():
 def get_similar_content():
     """Get similar content using content-based filtering"""
     try:
+        ensure_models_initialized()
         data = request.get_json()
         
         if not data or 'content_id' not in data:
@@ -2205,6 +2249,7 @@ def get_similar_content():
 def get_regional_recommendations():
     """Get recommendations optimized for specific regional language"""
     try:
+        ensure_models_initialized()
         data = request.get_json()
         
         if not data:
@@ -2275,6 +2320,7 @@ def get_regional_recommendations():
 def get_user_analytics():
     """Get comprehensive user analytics and preferences"""
     try:
+        ensure_models_initialized()
         data = request.get_json()
         
         if not data or 'user_id' not in data:
@@ -2343,6 +2389,7 @@ def get_user_analytics():
 def refresh_data():
     """Refresh data and retrain models"""
     try:
+        ensure_models_initialized()
         logger.info("Refreshing data and retraining models...")
         
         # Clear cache
@@ -2379,6 +2426,7 @@ def refresh_data():
 def get_model_status():
     """Get detailed model training status"""
     try:
+        ensure_models_initialized()
         return jsonify({
             'is_fitted': recommendation_engine.is_fitted,
             'models_trained': recommendation_engine.models_trained,
@@ -2393,7 +2441,7 @@ def get_model_status():
                 'cached_items': len(recommendation_engine.cache),
                 'cache_hits': 'Not tracked'  # Could be implemented
             },
-            'last_training': 'Available in model metadata'
+            'initialization_status': models_initialized
         })
     except Exception as e:
         logger.error(f"Error in model status endpoint: {e}")
@@ -2401,23 +2449,6 @@ def get_model_status():
             'status': 'error',
             'message': f'Model status retrieval failed: {str(e)}'
         }), 500
-
-# Initialize models on startup
-@app.before_first_request
-def initialize_models():
-    """Initialize models when the app starts"""
-    try:
-        logger.info("Initializing Advanced Recommendation Service...")
-        
-        # Try to load existing models
-        if not recommendation_engine._load_models():
-            logger.info("No existing models found. Training new models...")
-            recommendation_engine.fit()
-        
-        logger.info("Advanced Recommendation Service initialized successfully")
-        
-    except Exception as e:
-        logger.error(f"Error initializing models: {e}")
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5001))
@@ -2427,5 +2458,14 @@ if __name__ == '__main__':
     logger.info("🎯 Multi-Algorithm Hybrid Approach with Telugu Priority")
     logger.info("🔧 Algorithms: Content-based, Collaborative, SVD, Neural Networks, Ensembles")
     logger.info("🚫 No default recommendations - Data-driven only")
+    
+    # Initialize models on startup
+    try:
+        recommendation_engine.initialize_models()
+        models_initialized = True
+        logger.info("✅ Models initialized successfully on startup")
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize models on startup: {e}")
+        models_initialized = True  # Prevent infinite retry
     
     app.run(host='0.0.0.0', port=port, debug=debug)
