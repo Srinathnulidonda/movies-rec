@@ -12,3 +12,4 @@ nltk
 lightgbm
 xgboost
 gunicorn
+catboost
