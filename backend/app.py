@@ -1309,102 +1309,417 @@ class TelegramService:
     def send_admin_recommendation(content, admin_name, description):
         try:
             if not bot or not TELEGRAM_CHANNEL_ID:
+                logger.warning("Telegram bot or channel ID not configured")
                 return False
             
-            # Get streaming platforms and group by language
+            # Format genre list
+            genres_list = []
+            if content.genres:
+                try:
+                    genres_list = json.loads(content.genres)
+                except:
+                    genres_list = []
+            
+            # Get real-time streaming availability with language support
             streaming_platforms = []
             if content.tmdb_id:
-                streaming_platforms = StreamingAvailabilityService.get_comprehensive_streaming_info(content.tmdb_id, content.title)
-            if not streaming_platforms:
-                streaming_platforms = json.loads(content.ott_platforms or '[]')
+                streaming_platforms = StreamingAvailabilityService.get_comprehensive_streaming_info(
+                    content.tmdb_id, content.title
+                )
             
+            # If no streaming data from API, use stored data
+            if not streaming_platforms:
+                try:
+                    streaming_platforms = json.loads(content.ott_platforms or '[]')
+                except:
+                    streaming_platforms = []
+            
+            # Group platforms by language for professional display
             language_groups = LanguageService.group_platforms_by_language(streaming_platforms)
             
-            # Create watch sections and inline keyboard
-            watch_sections = []
-            keyboard = None
+            # Create language-specific watch sections
+            watch_sections = TelegramService._create_watch_sections(language_groups)
             
-            if language_groups:
-                from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-                keyboard = InlineKeyboardMarkup()
-                
-                flag_map = {'Hindi': '🇮🇳', 'Telugu': '🎭', 'Tamil': '🎪', 'Malayalam': '🌺', 'Kannada': '🎨', 'English': '🇺🇸', 'Japanese': '🇯🇵'}
-                priority_langs = ['Hindi', 'Telugu', 'Tamil', 'Malayalam', 'Kannada', 'English']
-                
-                for lang in priority_langs + [l for l in language_groups if l not in priority_langs]:
-                    if lang in language_groups and len(keyboard.keyboard) < 8:
-                        platforms = language_groups[lang][:3]
-                        flag = flag_map.get(lang, '🎬')
-                        
-                        # Add to message text
-                        free_links = [f"[{p['platform_name']}]({p['url']})" for p in platforms if p.get('url') and p.get('is_free')]
-                        paid_links = [f"[{p['platform_name']}]({p['url']})" for p in platforms if p.get('url') and not p.get('is_free')]
-                        
-                        section = f"\n{flag} **{lang}:**"
-                        if free_links: section += f"\n🆓 {' • '.join(free_links)}"
-                        if paid_links: section += f"\n💰 {' • '.join(paid_links)}"
-                        watch_sections.append(section)
-                        
-                        # Add inline button
-                        if platforms and platforms[0].get('url'):
-                            keyboard.add(InlineKeyboardButton(f"{flag} Watch in {lang}", url=platforms[0]['url']))
+            # Create poster URL
+            poster_url = TelegramService._get_poster_url(content)
             
-            # Create message
-            genres = json.loads(content.genres or '[]')[:3]
-            rating_stars = "⭐" * min(int((content.rating or 0) / 2), 5) if content.rating else "⭐"
-            type_emoji = {'movie': '🎬', 'tv': '📺', 'anime': '🏮'}.get(content.content_type, '🎬')
+            # Create professional message
+            message = TelegramService._create_professional_message(
+                content, admin_name, description, genres_list, watch_sections
+            )
             
-            message = f"""🎬 **ADMIN'S CHOICE** by {admin_name}
+            # Create inline keyboard with watch buttons
+            keyboard = TelegramService._create_inline_keyboard(language_groups)
+            
+            # Send message with photo and inline keyboard
+            success = TelegramService._send_message_with_media(
+                poster_url, message, keyboard
+            )
+            
+            return success
+            
+        except Exception as e:
+            logger.error(f"Telegram send error: {e}")
+            return False
+    
+    @staticmethod
+    def _create_watch_sections(language_groups):
+        """Create professional watch sections for each language"""
+        watch_sections = []
+        
+        # Priority order for languages
+        priority_languages = ['Hindi', 'Telugu', 'Tamil', 'Malayalam', 'Kannada', 'English']
+        
+        # Process priority languages first
+        for priority_lang in priority_languages:
+            if priority_lang in language_groups:
+                section = TelegramService._format_language_section(
+                    priority_lang, language_groups[priority_lang]
+                )
+                if section:
+                    watch_sections.append(section)
+        
+        # Process remaining languages
+        for lang, platforms in language_groups.items():
+            if lang not in priority_languages:
+                section = TelegramService._format_language_section(lang, platforms)
+                if section:
+                    watch_sections.append(section)
+        
+        return watch_sections
+    
+    @staticmethod
+    def _format_language_section(language, platforms):
+        """Format a single language section with platforms"""
+        if not platforms:
+            return None
+        
+        # Get language flag emoji
+        flag_emoji = TelegramService._get_language_flag(language)
+        
+        # Separate free and paid platforms
+        free_platforms = []
+        paid_platforms = []
+        
+        for platform in platforms[:4]:  # Limit to 4 platforms per language
+            platform_name = platform.get('platform_name', platform.get('platform', '').title())
+            platform_url = platform.get('url', '')
+            
+            # Create clickable link
+            if platform_url:
+                platform_link = f"[{platform_name}]({platform_url})"
+            else:
+                platform_link = platform_name
+            
+            if platform.get('is_free'):
+                free_platforms.append(platform_link)
+            else:
+                paid_platforms.append(platform_link)
+        
+        # Build section text
+        section_text = f"\n{flag_emoji} **{language}:**"
+        
+        if free_platforms:
+            section_text += f"\n🆓 **Free:** {' • '.join(free_platforms)}"
+        
+        if paid_platforms:
+            section_text += f"\n💰 **Premium:** {' • '.join(paid_platforms)}"
+        
+        return section_text
+    
+    @staticmethod
+    def _get_language_flag(language):
+        """Get appropriate flag emoji for language"""
+        flag_mapping = {
+            'Hindi': '🇮🇳',
+            'Telugu': '🎭',
+            'Tamil': '🎪',
+            'Malayalam': '🌺',
+            'Kannada': '🎨',
+            'Bengali': '🐅',
+            'Gujarati': '🦚',
+            'Marathi': '⚡',
+            'Punjabi': '🌾',
+            'English': '🇺🇸',
+            'Japanese': '🇯🇵',
+            'Korean': '🇰🇷',
+            'Spanish': '🇪🇸',
+            'French': '🇫🇷',
+            'German': '🇩🇪',
+            'Italian': '🇮🇹'
+        }
+        return flag_mapping.get(language, '🎬')
+    
+    @staticmethod
+    def _get_poster_url(content):
+        """Get poster URL for the content"""
+        if content.poster_path:
+            if content.poster_path.startswith('http'):
+                return content.poster_path
+            else:
+                return f"https://image.tmdb.org/t/p/w500{content.poster_path}"
+        return None
+    
+    @staticmethod
+    def _create_professional_message(content, admin_name, description, genres_list, watch_sections):
+        """Create a professional telegram message"""
+        
+        # Get content type emoji
+        type_emoji = TelegramService._get_content_type_emoji(content.content_type)
+        
+        # Get rating stars
+        rating_stars = TelegramService._get_rating_stars(content.rating)
+        
+        # Create main message
+        message = f"""🎬 **ADMIN'S CHOICE** by {admin_name}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 {type_emoji} **{content.title}**
-{rating_stars} **{content.rating or 'N/A'}/10** • 📅 {content.release_date or 'N/A'}
-🎭 {', '.join(genres) if genres else 'N/A'} • 🎥 {content.content_type.upper()}
+{f"📝 *{content.original_title}*" if content.original_title and content.original_title != content.title else ""}
 
-💭 **Admin's Note:** _{description}_
+{rating_stars} **{content.rating or 'N/A'}/10** 
+📅 **Release:** {content.release_date or 'N/A'}
+🎭 **Genres:** {', '.join(genres_list[:3]) if genres_list else 'N/A'}
+🎥 **Type:** {content.content_type.upper()}
 
-🎯 **WATCH NOW:**{''.join(watch_sections) if watch_sections else "\n📱 *Coming soon on streaming platforms*"}
+💭 **Admin's Note:**
+_{description}_
 
-📖 {(content.overview[:200] + '...') if content.overview else '_No synopsis available_'}
+🎯 **WATCH NOW:**{''.join(watch_sections) if watch_sections else "\n📱 *Streaming information will be updated soon*"}
+
+📖 **Synopsis:**
+{(content.overview[:250] + '...') if content.overview else '_No synopsis available_'}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-#AdminChoice #CineScope #{content.content_type.title()}"""
+#AdminChoice #MovieRecommendation #CineScope
+#{''.join(content.content_type.title().split())} #StreamNow"""
+        
+        return message
+    
+    @staticmethod
+    def _get_content_type_emoji(content_type):
+        """Get emoji for content type"""
+        emoji_mapping = {
+            'movie': '🎬',
+            'tv': '📺',
+            'anime': '🏮',
+            'documentary': '📹',
+            'series': '📺'
+        }
+        return emoji_mapping.get(content_type.lower(), '🎬')
+    
+    @staticmethod
+    def _get_rating_stars(rating):
+        """Convert rating to star representation"""
+        if not rating:
+            return "⭐"
+        
+        if rating >= 9.0:
+            return "⭐⭐⭐⭐⭐"
+        elif rating >= 8.0:
+            return "⭐⭐⭐⭐"
+        elif rating >= 7.0:
+            return "⭐⭐⭐"
+        elif rating >= 6.0:
+            return "⭐⭐"
+        else:
+            return "⭐"
+    
+    @staticmethod
+    def _create_inline_keyboard(language_groups):
+        """Create inline keyboard with watch buttons for each language"""
+        try:
+            from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
             
-            # Send message
-            poster_url = f"https://image.tmdb.org/t/p/w500{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path
+            if not language_groups:
+                return None
             
-            try:
-                if poster_url:
-                    bot.send_photo(TELEGRAM_CHANNEL_ID, poster_url, caption=message, parse_mode='Markdown', reply_markup=keyboard)
+            keyboard = InlineKeyboardMarkup()
+            
+            # Priority languages first
+            priority_languages = ['Hindi', 'Telugu', 'Tamil', 'Malayalam', 'Kannada', 'English']
+            
+            button_count = 0
+            max_buttons = 10  # Telegram limit for inline buttons
+            
+            # Add priority language buttons
+            for lang in priority_languages:
+                if lang in language_groups and button_count < max_buttons:
+                    platforms = language_groups[lang]
+                    if platforms:
+                        # Get the first available platform for this language
+                        platform = platforms[0]
+                        if platform.get('url'):
+                            flag_emoji = TelegramService._get_language_flag(lang)
+                            button_text = f"{flag_emoji} Watch in {lang}"
+                            keyboard.add(InlineKeyboardButton(
+                                text=button_text,
+                                url=platform['url']
+                            ))
+                            button_count += 1
+            
+            # Add remaining languages if space available
+            for lang, platforms in language_groups.items():
+                if lang not in priority_languages and button_count < max_buttons:
+                    if platforms and platforms[0].get('url'):
+                        flag_emoji = TelegramService._get_language_flag(lang)
+                        button_text = f"{flag_emoji} Watch in {lang}"
+                        keyboard.add(InlineKeyboardButton(
+                            text=button_text,
+                            url=platforms[0]['url']
+                        ))
+                        button_count += 1
+            
+            # Add a general "More Options" button if there are more platforms
+            if button_count >= max_buttons or len(language_groups) > button_count:
+                keyboard.add(InlineKeyboardButton(
+                    text="🔗 More Streaming Options",
+                    url="https://your-website.com/content/" + str(content.id) if hasattr(content, 'id') else "https://your-website.com"
+                ))
+            
+            return keyboard if button_count > 0 else None
+            
+        except ImportError:
+            logger.warning("InlineKeyboardMarkup not available, sending without buttons")
+            return None
+        except Exception as e:
+            logger.error(f"Error creating inline keyboard: {e}")
+            return None
+    
+    @staticmethod
+    def _send_message_with_media(poster_url, message, keyboard=None):
+        """Send message with photo and optional inline keyboard"""
+        try:
+            if poster_url:
+                # Try sending with photo and keyboard
+                try:
+                    if keyboard:
+                        bot.send_photo(
+                            chat_id=TELEGRAM_CHANNEL_ID,
+                            photo=poster_url,
+                            caption=message,
+                            parse_mode='Markdown',
+                            reply_markup=keyboard
+                        )
+                    else:
+                        bot.send_photo(
+                            chat_id=TELEGRAM_CHANNEL_ID,
+                            photo=poster_url,
+                            caption=message,
+                            parse_mode='Markdown'
+                        )
+                except Exception as photo_error:
+                    logger.error(f"Failed to send photo, trying text with keyboard: {photo_error}")
+                    # Fallback to text message with keyboard
+                    if keyboard:
+                        bot.send_message(
+                            TELEGRAM_CHANNEL_ID, 
+                            message, 
+                            parse_mode='Markdown',
+                            reply_markup=keyboard
+                        )
+                    else:
+                        bot.send_message(TELEGRAM_CHANNEL_ID, message, parse_mode='Markdown')
+            else:
+                # Send text message with keyboard
+                if keyboard:
+                    bot.send_message(
+                        TELEGRAM_CHANNEL_ID, 
+                        message, 
+                        parse_mode='Markdown',
+                        reply_markup=keyboard
+                    )
                 else:
-                    bot.send_message(TELEGRAM_CHANNEL_ID, message, parse_mode='Markdown', reply_markup=keyboard)
-            except:
-                bot.send_message(TELEGRAM_CHANNEL_ID, message.replace('*', '').replace('_', ''), reply_markup=keyboard)
+                    bot.send_message(TELEGRAM_CHANNEL_ID, message, parse_mode='Markdown')
             
             return True
             
         except Exception as e:
-            logger.error(f"Telegram error: {e}")
-            return False
+            logger.error(f"Failed to send message: {e}")
+            # Last resort - send plain text without formatting
+            try:
+                plain_message = message.replace('*', '').replace('_', '').replace('[', '').replace(']', '').replace('(', '').replace(')', '')
+                bot.send_message(TELEGRAM_CHANNEL_ID, plain_message)
+                return True
+            except:
+                logger.error("Failed to send even plain text message")
+                return False
     
     @staticmethod
     def send_bulk_recommendations(content_list, admin_name, category="Featured"):
+        """Send multiple recommendations in a single message"""
         try:
-            if not bot or not content_list: return False
+            if not bot or not TELEGRAM_CHANNEL_ID or not content_list:
+                return False
             
-            message = f"🔥 **{category.upper()}** by {admin_name}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            message = f"""🔥 **{category.upper()} RECOMMENDATIONS** by {admin_name}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+"""
             
-            for i, item in enumerate(content_list[:5], 1):
-                content = item.get('content')
+            for i, content_info in enumerate(content_list[:5], 1):  # Limit to 5 items
+                content = content_info.get('content')
+                description = content_info.get('description', '')
+                
                 if content:
-                    emoji = {'movie': '🎬', 'tv': '📺', 'anime': '🏮'}.get(content.content_type, '🎬')
-                    stars = "⭐" * min(int((content.rating or 0) / 2), 5)
-                    message += f"{i}. {emoji} **{content.title}**\n{stars} {content.rating or 'N/A'}/10\n\n"
+                    genres = []
+                    if content.genres:
+                        try:
+                            genres = json.loads(content.genres)[:2]  # Limit to 2 genres
+                        except:
+                            pass
+                    
+                    rating_stars = TelegramService._get_rating_stars(content.rating)
+                    type_emoji = TelegramService._get_content_type_emoji(content.content_type)
+                    
+                    message += f"""{i}. {type_emoji} **{content.title}**
+{rating_stars} {content.rating or 'N/A'}/10 • {', '.join(genres) if genres else 'N/A'}
+💭 _{description[:100] + '...' if len(description) > 100 else description}_
+
+"""
             
-            message += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n#{category} #CineScope"
+            message += f"""━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#{category}Picks #CineScope #BulkRecommendations"""
+            
             bot.send_message(TELEGRAM_CHANNEL_ID, message, parse_mode='Markdown')
             return True
-        except:
+            
+        except Exception as e:
+            logger.error(f"Bulk recommendations error: {e}")
+            return False
+    
+    @staticmethod
+    def send_trending_update(trending_content, time_period="Weekly"):
+        """Send trending content update"""
+        try:
+            if not bot or not TELEGRAM_CHANNEL_ID or not trending_content:
+                return False
+            
+            message = f"""📈 **{time_period.upper()} TRENDING NOW**
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🔥 **Most Watched This Week:**
+
+"""
+            
+            for i, content in enumerate(trending_content[:5], 1):
+                type_emoji = TelegramService._get_content_type_emoji(content.content_type)
+                rating_stars = TelegramService._get_rating_stars(content.rating)
+                
+                message += f"""{i}. {type_emoji} **{content.title}**
+{rating_stars} {content.rating or 'N/A'}/10
+📅 {content.release_date or 'N/A'}
+
+"""
+            
+            message += """━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#TrendingNow #CineScope #WeeklyChart"""
+            
+            bot.send_message(TELEGRAM_CHANNEL_ID, message, parse_mode='Markdown')
+            return True
+            
+        except Exception as e:
+            logger.error(f"Trending update error: {e}")
             return False
 
 # API Routes
