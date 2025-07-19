@@ -47,7 +47,7 @@ TELEGRAM_CHANNEL_ID = os.environ.get('TELEGRAM_CHANNEL_ID', '-1002850793757')
 ML_SERVICE_URL = os.environ.get('ML_SERVICE_URL', 'https://movies-rec-xmf5.onrender.com')
 
 # Streaming Availability API Keys
-WATCHMODE_API_KEY = os.environ.get('WATCHMODE_API_KEY', 'your_watchmode_api_key')
+WATCHMODE_API_KEY = os.environ.get('WATCHMODE_API_KEY', 'WtcKDji9i20pjOl5Lg0AiyG2bddfUs3nSZRZJIsY')
 RAPIDAPI_KEY = "c50f156591mshac38b14b2f02d6fp1da925jsn4b816e4dae37"
 RAPIDAPI_HOST = "streaming-availability.p.rapidapi.com"
 
@@ -678,6 +678,18 @@ class JikanService:
         except Exception as e:
             logger.error(f"Jikan top anime error: {e}")
         return None
+    
+    @staticmethod
+    def get_anime_details(anime_id):
+        url = f"{JikanService.BASE_URL}/anime/{anime_id}"
+        
+        try:
+            response = requests.get(url, timeout=10)
+            if response.status_code == 200:
+                return response.json()
+        except Exception as e:
+            logger.error(f"Jikan anime details error: {e}")
+        return None
 
 class YouTubeService:
     BASE_URL = 'https://www.googleapis.com/youtube/v3'
@@ -776,6 +788,110 @@ class ContentService:
             logger.error(f"Error saving content: {e}")
             db.session.rollback()
             return None
+    
+    @staticmethod
+    def save_anime_from_jikan(anime_data):
+        """Save anime content from Jikan API to database"""
+        try:
+            # Check if anime already exists (using MAL ID as tmdb_id)
+            existing = Content.query.filter_by(tmdb_id=anime_data['mal_id'], content_type='anime').first()
+            if existing:
+                return existing
+            
+            # Extract genres
+            genres = [genre['name'] for genre in anime_data.get('genres', [])]
+            
+            # Extract other anime data
+            aired_data = anime_data.get('aired', {})
+            release_date = None
+            if aired_data.get('from'):
+                try:
+                    # Parse date from Jikan format
+                    date_str = aired_data['from'][:10]  # Get YYYY-MM-DD part
+                    release_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+                except:
+                    release_date = None
+            
+            # Get poster URL
+            poster_path = None
+            images = anime_data.get('images', {})
+            if images.get('jpg', {}).get('large_image_url'):
+                poster_path = images['jpg']['large_image_url']
+            elif images.get('jpg', {}).get('image_url'):
+                poster_path = images['jpg']['image_url']
+            
+            # Parse duration to minutes
+            runtime = None
+            duration_str = anime_data.get('duration', '')
+            if duration_str:
+                # Extract minutes from duration string like "24 min per ep"
+                import re
+                minutes = re.findall(r'(\d+)\s*min', duration_str)
+                if minutes:
+                    runtime = int(minutes[0])
+            
+            # Create content object for anime
+            content = Content(
+                tmdb_id=anime_data['mal_id'],  # Use MAL ID as identifier
+                title=anime_data.get('title'),
+                original_title=anime_data.get('title_japanese'),
+                content_type='anime',
+                genres=json.dumps(genres),
+                languages=json.dumps(['japanese']),
+                release_date=release_date,
+                runtime=runtime,
+                rating=anime_data.get('score'),
+                vote_count=anime_data.get('scored_by'),
+                popularity=anime_data.get('popularity'),
+                overview=anime_data.get('synopsis'),
+                poster_path=poster_path,
+                ott_platforms=json.dumps(ContentService._get_anime_platforms())
+            )
+            
+            db.session.add(content)
+            db.session.commit()
+            return content
+            
+        except Exception as e:
+            logger.error(f"Error saving anime content: {e}")
+            db.session.rollback()
+            return None
+    
+    @staticmethod
+    def _get_anime_platforms():
+        """Get anime streaming platforms"""
+        return {
+            'platforms': [
+                {
+                    'platform': 'crunchyroll',
+                    'name': 'Crunchyroll',
+                    'url': 'https://crunchyroll.com',
+                    'is_free': True,
+                    'category': 'freemium',
+                    'emoji': '🎌'
+                },
+                {
+                    'platform': 'youtube',
+                    'name': 'YouTube',
+                    'url': 'https://youtube.com',
+                    'is_free': True,
+                    'category': 'free',
+                    'emoji': '📺'
+                },
+                {
+                    'platform': 'funimation',
+                    'name': 'Funimation',
+                    'url': 'https://funimation.com',
+                    'is_free': False,
+                    'category': 'paid',
+                    'emoji': '🎭'
+                }
+            ],
+            'last_updated': datetime.utcnow().isoformat(),
+            'total_free': 2,
+            'total_paid': 1,
+            'available_countries': ['global']
+        }
     
     @staticmethod
     def _get_minimal_platforms():
@@ -987,19 +1103,10 @@ class RecommendationEngine:
             
             recommendations = []
             for anime in top_anime.get('data', [])[:limit]:
-                # Convert anime data to our content format
-                content = Content(
-                    title=anime.get('title'),
-                    original_title=anime.get('title_japanese'),
-                    content_type='anime',
-                    genres=json.dumps([genre['name'] for genre in anime.get('genres', [])]),
-                    languages=json.dumps(['japanese']),
-                    rating=anime.get('score'),
-                    overview=anime.get('synopsis'),
-                    poster_path=anime.get('images', {}).get('jpg', {}).get('image_url'),
-                    ott_platforms=json.dumps([])  # You would check anime streaming platforms
-                )
-                recommendations.append(content)
+                # Save anime to database instead of creating temporary objects
+                content = ContentService.save_anime_from_jikan(anime)
+                if content:
+                    recommendations.append(content)
             
             return recommendations
         except Exception as e:
@@ -1528,25 +1635,38 @@ def search_content():
                         'genres': json.loads(content.genres or '[]'),
                         'rating': content.rating,
                         'release_date': content.release_date.isoformat() if content.release_date else None,
-                        'poster_path': f"https://image.tmdb.org/t/p/w500{content.poster_path}" if content.poster_path else None,
+                        'poster_path': f"https://image.tmdb.org/t/p/w500{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
                         'overview': content.overview,
                         'ott_platforms': json.loads(content.ott_platforms or '[]')
                     })
         
-        # Add anime results
+        # Process and save anime results
         if anime_results:
             for anime in anime_results.get('data', []):
-                results.append({
-                    'id': f"anime_{anime['mal_id']}",
-                    'title': anime.get('title'),
-                    'content_type': 'anime',
-                    'genres': [genre['name'] for genre in anime.get('genres', [])],
-                    'rating': anime.get('score'),
-                    'release_date': anime.get('aired', {}).get('from'),
-                    'poster_path': anime.get('images', {}).get('jpg', {}).get('image_url'),
-                    'overview': anime.get('synopsis'),
-                    'ott_platforms': []
-                })
+                # Save anime to database
+                content = ContentService.save_anime_from_jikan(anime)
+                if content:
+                    # Record anonymous interaction
+                    interaction = AnonymousInteraction(
+                        session_id=session_id,
+                        content_id=content.id,
+                        interaction_type='search',
+                        ip_address=request.remote_addr
+                    )
+                    db.session.add(interaction)
+                    
+                    results.append({
+                        'id': content.id,  # Use database ID instead of anime_mal_id
+                        'tmdb_id': content.tmdb_id,  # This will be the MAL ID
+                        'title': content.title,
+                        'content_type': content.content_type,
+                        'genres': json.loads(content.genres or '[]'),
+                        'rating': content.rating,
+                        'release_date': content.release_date.isoformat() if content.release_date else None,
+                        'poster_path': content.poster_path,
+                        'overview': content.overview,
+                        'ott_platforms': json.loads(content.ott_platforms or '[]')
+                    })
         
         db.session.commit()
         
@@ -1576,27 +1696,121 @@ def get_content_details(content_id):
         )
         db.session.add(interaction)
         
-        # Get additional details from TMDB if available
+        # Get additional details based on content type
         additional_details = None
-        if content.tmdb_id:
-            additional_details = TMDBService.get_content_details(content.tmdb_id, content.content_type)
+        trailers = []
+        similar_content = []
+        
+        if content.content_type == 'anime':
+            # Get anime details from Jikan API
+            try:
+                jikan_url = f"https://api.jikan.moe/v4/anime/{content.tmdb_id}"
+                response = requests.get(jikan_url, timeout=10)
+                if response.status_code == 200:
+                    anime_data = response.json().get('data', {})
+                    
+                    # Get anime trailers
+                    trailers_data = anime_data.get('trailer', {})
+                    if trailers_data.get('youtube_id'):
+                        trailers.append({
+                            'title': f"{content.title} Trailer",
+                            'url': f"https://www.youtube.com/watch?v={trailers_data['youtube_id']}",
+                            'thumbnail': trailers_data.get('images', {}).get('medium_image_url', '')
+                        })
+                    
+                    # Get similar anime
+                    similar_anime_url = f"https://api.jikan.moe/v4/anime/{content.tmdb_id}/recommendations"
+                    try:
+                        similar_response = requests.get(similar_anime_url, timeout=5)
+                        if similar_response.status_code == 200:
+                            similar_data = similar_response.json().get('data', [])
+                            for similar in similar_data[:5]:
+                                entry = similar.get('entry', {})
+                                # Save similar anime and get proper ID
+                                similar_anime_data = {
+                                    'mal_id': entry.get('mal_id'),
+                                    'title': entry.get('title', ''),
+                                    'images': entry.get('images', {}),
+                                    'genres': [],
+                                    'aired': {'from': None},
+                                    'synopsis': '',
+                                    'score': None
+                                }
+                                similar_content_obj = ContentService.save_anime_from_jikan(similar_anime_data)
+                                if similar_content_obj:
+                                    similar_content.append({
+                                        'id': similar_content_obj.id,
+                                        'title': similar_content_obj.title,
+                                        'poster_path': similar_content_obj.poster_path,
+                                        'rating': similar_content_obj.rating
+                                    })
+                    except:
+                        pass
+            except Exception as e:
+                logger.warning(f"Failed to fetch anime details: {e}")
+        
+        else:
+            # Get TMDB details for movies/TV shows
+            if content.tmdb_id:
+                additional_details = TMDBService.get_content_details(content.tmdb_id, content.content_type)
+                
+                # Get YouTube trailers
+                if YOUTUBE_API_KEY:
+                    try:
+                        youtube_results = YouTubeService.search_trailers(content.title)
+                        if youtube_results:
+                            for video in youtube_results.get('items', []):
+                                trailers.append({
+                                    'title': video['snippet']['title'],
+                                    'url': f"https://www.youtube.com/watch?v={video['id']['videoId']}",
+                                    'thumbnail': video['snippet']['thumbnails']['medium']['url']
+                                })
+                    except Exception as e:
+                        logger.warning(f"Failed to fetch YouTube trailers: {e}")
+                
+                # Get similar content
+                if additional_details and 'similar' in additional_details:
+                    for item in additional_details['similar']['results'][:5]:
+                        similar = ContentService.save_content_from_tmdb(item, content.content_type, fetch_streaming=False)
+                        if similar:
+                            similar_content.append({
+                                'id': similar.id,
+                                'title': similar.title,
+                                'poster_path': f"https://image.tmdb.org/t/p/w300{similar.poster_path}" if similar.poster_path and not similar.poster_path.startswith('http') else similar.poster_path,
+                                'rating': similar.rating
+                            })
         
         # Get real-time streaming availability (with timeout protection)
         streaming_availability = {'free_options': [], 'paid_options': [], 'last_updated': None}
-        try:
-            streaming_availability = StreamingAvailabilityService.search_streaming_availability(
-                content.title,
-                imdb_id=content.imdb_id,
-                tmdb_id=content.tmdb_id,
-                timeout=5  # Longer timeout for individual requests
-            )
-        except Exception as e:
-            logger.warning(f"Failed to fetch real-time streaming data for content {content_id}: {e}")
-            # Use stored data or fallback
+        
+        if content.content_type != 'anime':  # Skip streaming API for anime
+            try:
+                streaming_availability = StreamingAvailabilityService.search_streaming_availability(
+                    content.title,
+                    imdb_id=content.imdb_id,
+                    tmdb_id=content.tmdb_id,
+                    timeout=5
+                )
+            except Exception as e:
+                logger.warning(f"Failed to fetch real-time streaming data for content {content_id}: {e}")
+                # Use stored data or fallback
+                try:
+                    stored_platforms = json.loads(content.ott_platforms or '{}')
+                    if stored_platforms and 'platforms' in stored_platforms:
+                        free_options = [p for p in stored_platforms['platforms'] if p.get('is_free', False)]
+                        paid_options = [p for p in stored_platforms['platforms'] if not p.get('is_free', False)]
+                        streaming_availability = {
+                            'free_options': free_options,
+                            'paid_options': paid_options,
+                            'last_updated': stored_platforms.get('last_updated')
+                        }
+                except:
+                    pass
+        else:
+            # For anime, use stored platforms
             try:
                 stored_platforms = json.loads(content.ott_platforms or '{}')
                 if stored_platforms and 'platforms' in stored_platforms:
-                    # Convert stored data to streaming format
                     free_options = [p for p in stored_platforms['platforms'] if p.get('is_free', False)]
                     paid_options = [p for p in stored_platforms['platforms'] if not p.get('is_free', False)]
                     streaming_availability = {
@@ -1610,34 +1824,6 @@ def get_content_details(content_id):
         # Generate platform deep links
         all_platforms = streaming_availability.get('free_options', []) + streaming_availability.get('paid_options', [])
         deep_links = StreamingAvailabilityService.get_platform_deep_links(content.title, all_platforms)
-        
-        # Get YouTube trailers
-        trailers = []
-        if YOUTUBE_API_KEY:
-            try:
-                youtube_results = YouTubeService.search_trailers(content.title)
-                if youtube_results:
-                    for video in youtube_results.get('items', []):
-                        trailers.append({
-                            'title': video['snippet']['title'],
-                            'url': f"https://www.youtube.com/watch?v={video['id']['videoId']}",
-                            'thumbnail': video['snippet']['thumbnails']['medium']['url']
-                        })
-            except Exception as e:
-                logger.warning(f"Failed to fetch YouTube trailers: {e}")
-        
-        # Get similar content
-        similar_content = []
-        if additional_details and 'similar' in additional_details:
-            for item in additional_details['similar']['results'][:5]:
-                similar = ContentService.save_content_from_tmdb(item, content.content_type, fetch_streaming=False)
-                if similar:
-                    similar_content.append({
-                        'id': similar.id,
-                        'title': similar.title,
-                        'poster_path': f"https://image.tmdb.org/t/p/w300{similar.poster_path}" if similar.poster_path else None,
-                        'rating': similar.rating
-                    })
         
         db.session.commit()
         
@@ -1656,8 +1842,8 @@ def get_content_details(content_id):
             'rating': content.rating,
             'vote_count': content.vote_count,
             'overview': content.overview,
-            'poster_path': f"https://image.tmdb.org/t/p/w500{content.poster_path}" if content.poster_path else None,
-            'backdrop_path': f"https://image.tmdb.org/t/p/w1280{content.backdrop_path}" if content.backdrop_path else None,
+            'poster_path': content.poster_path,  # Keep original URL for anime
+            'backdrop_path': f"https://image.tmdb.org/t/p/w1280{content.backdrop_path}" if content.backdrop_path and not content.backdrop_path.startswith('http') else content.backdrop_path,
             'trailers': trailers,
             'similar_content': similar_content,
             'cast': additional_details.get('credits', {}).get('cast', [])[:10] if additional_details else [],
@@ -1686,6 +1872,38 @@ def get_content_details(content_id):
     except Exception as e:
         logger.error(f"Content details error: {e}")
         return jsonify({'error': 'Failed to get content details'}), 500
+
+# Fallback endpoint for anime details by MAL ID
+@app.route('/api/content/anime/<int:mal_id>', methods=['GET'])
+def get_anime_details_by_mal_id(mal_id):
+    """Fallback endpoint for anime details by MAL ID"""
+    try:
+        # Try to find existing anime content by MAL ID
+        content = Content.query.filter_by(tmdb_id=mal_id, content_type='anime').first()
+        
+        if not content:
+            # Fetch from Jikan API and save
+            try:
+                jikan_url = f"https://api.jikan.moe/v4/anime/{mal_id}"
+                response = requests.get(jikan_url, timeout=10)
+                if response.status_code == 200:
+                    anime_data = response.json().get('data', {})
+                    content = ContentService.save_anime_from_jikan(anime_data)
+                    if content:
+                        db.session.commit()
+            except Exception as e:
+                logger.error(f"Failed to fetch anime from Jikan: {e}")
+                return jsonify({'error': 'Anime not found'}), 404
+        
+        if content:
+            # Redirect to regular content details
+            return get_content_details(content.id)
+        else:
+            return jsonify({'error': 'Anime not found'}), 404
+            
+    except Exception as e:
+        logger.error(f"Anime details error: {e}")
+        return jsonify({'error': 'Failed to get anime details'}), 500
 
 # Streaming Availability Routes
 @app.route('/api/content/<int:content_id>/streaming', methods=['GET'])
@@ -1775,7 +1993,7 @@ def get_trending():
                 'content_type': content.content_type,
                 'genres': json.loads(content.genres or '[]'),
                 'rating': content.rating,
-                'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path else None,
+                'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
                 'overview': content.overview[:150] + '...' if content.overview else '',
                 'ott_platforms': json.loads(content.ott_platforms or '[]')
             })
@@ -1802,7 +2020,7 @@ def get_popular_by_genre(genre):
                 'content_type': content.content_type,
                 'genres': json.loads(content.genres or '[]'),
                 'rating': content.rating,
-                'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path else None,
+                'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
                 'overview': content.overview[:150] + '...' if content.overview else '',
                 'ott_platforms': json.loads(content.ott_platforms or '[]')
             })
@@ -1828,7 +2046,7 @@ def get_regional(language):
                 'content_type': content.content_type,
                 'genres': json.loads(content.genres or '[]'),
                 'rating': content.rating,
-                'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path else None,
+                'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
                 'overview': content.overview[:150] + '...' if content.overview else '',
                 'ott_platforms': json.loads(content.ott_platforms or '[]')
             })
@@ -1849,6 +2067,7 @@ def get_anime():
         result = []
         for content in recommendations:
             result.append({
+                'id': content.id,  # Use database ID
                 'title': content.title,
                 'original_title': content.original_title,
                 'content_type': content.content_type,
@@ -1883,7 +2102,7 @@ def get_anonymous_recommendations():
                 'content_type': content.content_type,
                 'genres': json.loads(content.genres or '[]'),
                 'rating': content.rating,
-                'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path else None,
+                'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
                 'overview': content.overview[:150] + '...' if content.overview else '',
                 'ott_platforms': json.loads(content.ott_platforms or '[]')
             })
@@ -1942,7 +2161,7 @@ def get_personalized_recommendations(current_user):
                             'content_type': content.content_type,
                             'genres': json.loads(content.genres or '[]'),
                             'rating': content.rating,
-                            'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path else None,
+                            'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
                             'overview': content.overview[:150] + '...' if content.overview else '',
                             'ott_platforms': json.loads(content.ott_platforms or '[]'),
                             'recommendation_score': rec.get('score', 0),
@@ -2008,7 +2227,7 @@ def get_watchlist(current_user):
                 'content_type': content.content_type,
                 'genres': json.loads(content.genres or '[]'),
                 'rating': content.rating,
-                'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path else None,
+                'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
                 'ott_platforms': json.loads(content.ott_platforms or '[]')
             })
         
@@ -2038,7 +2257,7 @@ def get_favorites(current_user):
                 'content_type': content.content_type,
                 'genres': json.loads(content.genres or '[]'),
                 'rating': content.rating,
-                'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path else None,
+                'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
                 'ott_platforms': json.loads(content.ott_platforms or '[]')
             })
         
@@ -2110,8 +2329,11 @@ def save_external_content(current_user):
         # Check if content already exists by external ID
         existing_content = None
         if data.get('id'):
-            # Check by TMDB ID or other external ID
-            existing_content = Content.query.filter_by(tmdb_id=data['id']).first()
+            # Check by TMDB ID or MAL ID for anime
+            if data.get('source') == 'anime':
+                existing_content = Content.query.filter_by(tmdb_id=data['id'], content_type='anime').first()
+            else:
+                existing_content = Content.query.filter_by(tmdb_id=data['id']).first()
         
         if existing_content:
             return jsonify({
@@ -2121,35 +2343,40 @@ def save_external_content(current_user):
         
         # Create new content from external data
         try:
-            # Handle release date
-            release_date = None
-            if data.get('release_date'):
-                try:
-                    release_date = datetime.strptime(data['release_date'], '%Y-%m-%d').date()
-                except:
-                    release_date = None
-            
-            # Create content object
-            content = Content(
-                tmdb_id=data.get('id'),
-                title=data.get('title'),
-                original_title=data.get('original_title'),
-                content_type=data.get('content_type', 'movie'),
-                genres=json.dumps(data.get('genres', [])),
-                languages=json.dumps(data.get('languages', ['en'])),
-                release_date=release_date,
-                runtime=data.get('runtime'),
-                rating=data.get('rating'),
-                vote_count=data.get('vote_count'),
-                popularity=data.get('popularity'),
-                overview=data.get('overview'),
-                poster_path=data.get('poster_path'),
-                backdrop_path=data.get('backdrop_path'),
-                ott_platforms=json.dumps(data.get('ott_platforms', []))
-            )
-            
-            db.session.add(content)
-            db.session.commit()
+            if data.get('source') == 'anime':
+                # Handle anime content
+                anime_data = {
+                    'mal_id': data.get('id'),
+                    'title': data.get('title'),
+                    'title_japanese': data.get('original_title'),
+                    'genres': [{'name': genre} for genre in (data.get('genres') or [])],
+                    'aired': {'from': data.get('release_date')},
+                    'synopsis': data.get('overview'),
+                    'score': data.get('rating'),
+                    'images': {'jpg': {'large_image_url': data.get('poster_path')}}
+                }
+                content = ContentService.save_anime_from_jikan(anime_data)
+            else:
+                # Handle regular TMDB content
+                content = Content(
+                    tmdb_id=data.get('id'),
+                    title=data.get('title'),
+                    original_title=data.get('original_title'),
+                    content_type=data.get('content_type', 'movie'),
+                    genres=json.dumps(data.get('genres', [])),
+                    languages=json.dumps(data.get('languages', ['en'])),
+                    release_date=datetime.strptime(data['release_date'], '%Y-%m-%d').date() if data.get('release_date') else None,
+                    runtime=data.get('runtime'),
+                    rating=data.get('rating'),
+                    vote_count=data.get('vote_count'),
+                    popularity=data.get('popularity'),
+                    overview=data.get('overview'),
+                    poster_path=data.get('poster_path'),
+                    backdrop_path=data.get('backdrop_path'),
+                    ott_platforms=json.dumps(data.get('ott_platforms', []))
+                )
+                db.session.add(content)
+                db.session.commit()
             
             return jsonify({
                 'message': 'Content saved successfully',
@@ -2235,7 +2462,7 @@ def get_admin_recommendations(current_user):
                     'title': content.title,
                     'content_type': content.content_type,
                     'rating': content.rating,
-                    'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path else None
+                    'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path
                 }
             })
         
@@ -2323,7 +2550,7 @@ def get_public_admin_recommendations():
                     'content_type': content.content_type,
                     'genres': json.loads(content.genres or '[]'),
                     'rating': content.rating,
-                    'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path else None,
+                    'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
                     'overview': content.overview[:150] + '...' if content.overview else '',
                     'ott_platforms': json.loads(content.ott_platforms or '[]'),
                     'admin_description': rec.description,
@@ -2403,7 +2630,14 @@ def health_check():
         'timestamp': datetime.utcnow().isoformat(),
         'version': '1.0.0',
         'streaming_api_enabled': bool(RAPIDAPI_KEY),
-        'telegram_enabled': bool(bot)
+        'telegram_enabled': bool(bot),
+        'features': [
+            'Enhanced streaming availability',
+            'Anime support with Jikan API',
+            'Advanced Telegram recommendations',
+            'Real-time poster validation',
+            'Comprehensive error handling'
+        ]
     }), 200
 
 # Initialize database
