@@ -12,4 +12,5 @@ nltk
 lightgbm
 xgboost
 gunicorn
+scikit-surprise
 catboost
