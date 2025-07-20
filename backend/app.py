@@ -153,7 +153,7 @@ class WatchModeService:
             # First search for the title
             search_url = f"{WatchModeService.BASE_URL}/search/"
             params = {
-                'apiKey': os.environ.get('WATCHMODE_API_KEY', ''),
+                'apiKey': os.environ.get('WATCHMODE_API_KEY', 'WtcKDji9i20pjOl5Lg0AiyG2bddfUs3nSZRZJIsY'),
                 'search_field': 'name',
                 'search_value': title,
                 'types': content_type
