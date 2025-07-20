@@ -45,10 +45,10 @@ TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '7974343726:AAFUCW444L
 TELEGRAM_CHANNEL_ID = os.environ.get('TELEGRAM_CHANNEL_ID', '-1002850793757')
 ML_SERVICE_URL = os.environ.get('ML_SERVICE_URL', 'https://movies-rec-xmf5.onrender.com')
 
-# ✅ NEW: Streaming API Keys
+# Streaming API Keys
 WATCHMODE_API_KEY = os.environ.get('WATCHMODE_API_KEY', 'WtcKDji9i20pjOl5Lg0AiyG2bddfUs3nSZRZJIsY')
 RAPIDAPI_KEY = os.environ.get('RAPIDAPI_KEY', 'c50f156591mshac38b14b2f02d6fp1da925jsn4b816e4dae37')
-RAPIDAPI_HOST = 'streaming-availability.p.rapidapi.com'
+RAPIDAPI_HOST = os.environ.get('RAPIDAPI_HOST', 'streaming-availability.p.rapidapi.com')
 
 # Initialize Telegram bot
 if TELEGRAM_BOT_TOKEN and TELEGRAM_BOT_TOKEN != 'your_telegram_bot_token':
@@ -96,7 +96,7 @@ class Content(db.Model):
     backdrop_path = db.Column(db.String(255))
     trailer_url = db.Column(db.String(255))
     ott_platforms = db.Column(db.Text)  # JSON string
-    streaming_links = db.Column(db.Text)  # ✅ NEW: JSON string for language-specific links
+    streaming_links = db.Column(db.Text)  # JSON string for streaming links with languages
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -125,44 +125,35 @@ class AnonymousInteraction(db.Model):
     ip_address = db.Column(db.String(45))
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
 
-# ✅ ENHANCED: OTT Platform Information with Indian platforms
+# Enhanced OTT Platform Information with Indian platforms
 OTT_PLATFORMS = {
-    # International Platforms
-    'netflix': {'name': 'Netflix', 'is_free': False, 'url': 'https://netflix.com', 'logo': '🔴'},
-    'amazon_prime': {'name': 'Amazon Prime Video', 'is_free': False, 'url': 'https://primevideo.com', 'logo': '🟦'},
-    'disney_plus': {'name': 'Disney+ Hotstar', 'is_free': False, 'url': 'https://hotstar.com', 'logo': '🌟'},
-    'youtube': {'name': 'YouTube', 'is_free': True, 'url': 'https://youtube.com', 'logo': '📺'},
-    
-    # Indian Free Platforms
-    'jiocinema': {'name': 'JioCinema', 'is_free': True, 'url': 'https://jiocinema.com', 'logo': '🎬'},
-    'mx_player': {'name': 'MX Player', 'is_free': True, 'url': 'https://mxplayer.in', 'logo': '🎭'},
-    'voot': {'name': 'Voot', 'is_free': True, 'url': 'https://voot.com', 'logo': '🎪'},
-    'sonyliv_free': {'name': 'SonyLIV Free', 'is_free': True, 'url': 'https://sonyliv.com', 'logo': '📱'},
-    'airtel_xstream': {'name': 'Airtel Xstream', 'is_free': True, 'url': 'https://airtelxstream.in', 'logo': '📡'},
-    'hungama': {'name': 'Hungama Play', 'is_free': True, 'url': 'https://hungama.com', 'logo': '🎵'},
-    
-    # Indian Paid Platforms
-    'zee5': {'name': 'ZEE5', 'is_free': False, 'url': 'https://zee5.com', 'logo': '⚡'},
-    'sonyliv': {'name': 'SonyLIV Premium', 'is_free': False, 'url': 'https://sonyliv.com', 'logo': '🏆'},
-    'alt_balaji': {'name': 'ALTBalaji', 'is_free': False, 'url': 'https://altbalaji.com', 'logo': '🎯'},
-    'aha': {'name': 'Aha', 'is_free': False, 'url': 'https://aha.video', 'logo': '🎊'},
-    'sun_nxt': {'name': 'Sun NXT', 'is_free': False, 'url': 'https://sunnxt.com', 'logo': '☀️'},
-    'hoichoi': {'name': 'Hoichoi', 'is_free': False, 'url': 'https://hoichoi.tv', 'logo': '🎨'},
-    'addatimes': {'name': 'Addatimes', 'is_free': False, 'url': 'https://addatimes.com', 'logo': '⏰'}
+    'netflix': {'name': 'Netflix', 'is_free': False, 'url': 'https://netflix.com', 'country': 'global'},
+    'amazon_prime': {'name': 'Amazon Prime Video', 'is_free': False, 'url': 'https://primevideo.com', 'country': 'global'},
+    'disney_plus': {'name': 'Disney+ Hotstar', 'is_free': False, 'url': 'https://hotstar.com', 'country': 'india'},
+    'youtube': {'name': 'YouTube', 'is_free': True, 'url': 'https://youtube.com', 'country': 'global'},
+    'jiocinema': {'name': 'JioCinema', 'is_free': True, 'url': 'https://jiocinema.com', 'country': 'india'},
+    'mx_player': {'name': 'MX Player', 'is_free': True, 'url': 'https://mxplayer.in', 'country': 'india'},
+    'zee5': {'name': 'ZEE5', 'is_free': False, 'url': 'https://zee5.com', 'country': 'india'},
+    'sonyliv': {'name': 'SonyLIV', 'is_free': False, 'url': 'https://sonyliv.com', 'country': 'india'},
+    'sonyliv_free': {'name': 'SonyLIV Free', 'is_free': True, 'url': 'https://sonyliv.com', 'country': 'india'},
+    'voot': {'name': 'Voot', 'is_free': True, 'url': 'https://voot.com', 'country': 'india'},
+    'alt_balaji': {'name': 'ALTBalaji', 'is_free': False, 'url': 'https://altbalaji.com', 'country': 'india'},
+    'aha': {'name': 'Aha', 'is_free': False, 'url': 'https://aha.video', 'country': 'india'},
+    'sun_nxt': {'name': 'Sun NXT', 'is_free': False, 'url': 'https://sunnxt.com', 'country': 'india'},
+    'airtel_xstream': {'name': 'Airtel Xstream', 'is_free': True, 'url': 'https://airtelxstream.in', 'country': 'india'},
+    'erosnow': {'name': 'Eros Now', 'is_free': False, 'url': 'https://erosnow.com', 'country': 'india'},
+    'hungama': {'name': 'Hungama Play', 'is_free': False, 'url': 'https://hungama.com', 'country': 'india'},
+    'shemaroo': {'name': 'ShemarooMe', 'is_free': True, 'url': 'https://shemaroome.com', 'country': 'india'}
 }
 
-# ✅ ENHANCED: Regional Language Mapping
+# Regional Language Mapping
 REGIONAL_LANGUAGES = {
-    'hindi': {'codes': ['hi', 'hindi', 'bollywood'], 'name': 'Hindi', 'flag': '🇮🇳'},
-    'telugu': {'codes': ['te', 'telugu', 'tollywood'], 'name': 'Telugu', 'flag': '🎭'},
-    'tamil': {'codes': ['ta', 'tamil', 'kollywood'], 'name': 'Tamil', 'flag': '🎬'},
-    'kannada': {'codes': ['kn', 'kannada', 'sandalwood'], 'name': 'Kannada', 'flag': '🎪'},
-    'malayalam': {'codes': ['ml', 'malayalam', 'mollywood'], 'name': 'Malayalam', 'flag': '🌴'},
-    'english': {'codes': ['en', 'english', 'hollywood'], 'name': 'English', 'flag': '🇺🇸'},
-    'bengali': {'codes': ['bn', 'bengali', 'tollygunge'], 'name': 'Bengali', 'flag': '🐟'},
-    'marathi': {'codes': ['mr', 'marathi'], 'name': 'Marathi', 'flag': '🦁'},
-    'gujarati': {'codes': ['gu', 'gujarati'], 'name': 'Gujarati', 'flag': '🪔'},
-    'punjabi': {'codes': ['pa', 'punjabi'], 'name': 'Punjabi', 'flag': '👳'}
+    'hindi': ['hi', 'hindi', 'bollywood'],
+    'telugu': ['te', 'telugu', 'tollywood'],
+    'tamil': ['ta', 'tamil', 'kollywood'],
+    'kannada': ['kn', 'kannada', 'sandalwood'],
+    'malayalam': ['ml', 'malayalam', 'mollywood'],
+    'english': ['en', 'english', 'hollywood']
 }
 
 # Helper Functions
@@ -227,41 +218,39 @@ def get_user_location(ip_address):
         pass
     return None
 
-# ✅ NEW: Streaming Services
+# Streaming Availability Services
 class WatchModeService:
     BASE_URL = 'https://api.watchmode.com/v1'
     
     @staticmethod
     def search_title(title, content_type='movie'):
-        """Search for a title and get streaming info"""
+        """Search for title on WatchMode"""
+        url = f"{WatchModeService.BASE_URL}/search/"
+        params = {
+            'apiKey': WATCHMODE_API_KEY,
+            'search_field': 'name',
+            'search_value': title,
+            'types': content_type
+        }
+        
         try:
-            url = f"{WatchModeService.BASE_URL}/search/"
-            params = {
-                'apiKey': WATCHMODE_API_KEY,
-                'search_field': 'name',
-                'search_value': title,
-                'types': content_type if content_type != 'tv' else 'tv_series'
-            }
-            
             response = requests.get(url, params=params, timeout=10)
             if response.status_code == 200:
-                data = response.json()
-                if data.get('title_results'):
-                    return data['title_results'][0]  # Return first match
+                return response.json()
         except Exception as e:
             logger.error(f"WatchMode search error: {e}")
         return None
     
     @staticmethod
-    def get_streaming_sources(watchmode_id):
+    def get_streaming_sources(title_id):
         """Get streaming sources for a title"""
+        url = f"{WatchModeService.BASE_URL}/title/{title_id}/sources/"
+        params = {
+            'apiKey': WATCHMODE_API_KEY,
+            'regions': 'IN'  # India region
+        }
+        
         try:
-            url = f"{WatchModeService.BASE_URL}/title/{watchmode_id}/sources/"
-            params = {
-                'apiKey': WATCHMODE_API_KEY,
-                'regions': 'IN,US'  # India and US
-            }
-            
             response = requests.get(url, params=params, timeout=10)
             if response.status_code == 200:
                 return response.json()
@@ -269,279 +258,196 @@ class WatchModeService:
             logger.error(f"WatchMode sources error: {e}")
         return None
 
-class StreamingAvailabilityService:
+class RapidAPIStreamingService:
     BASE_URL = 'https://streaming-availability.p.rapidapi.com'
     
     @staticmethod
-    def search_content(title, content_type='movie'):
-        """Search for content on streaming platforms"""
+    def search_title(title, country='in'):
+        """Search for title on RapidAPI Streaming Availability"""
+        url = f"{RapidAPIStreamingService.BASE_URL}/search/title"
+        headers = {
+            'X-RapidAPI-Key': RAPIDAPI_KEY,
+            'X-RapidAPI-Host': RAPIDAPI_HOST
+        }
+        params = {
+            'title': title,
+            'country': country,
+            'show_type': 'all',
+            'output_language': 'en'
+        }
+        
         try:
-            url = f"{StreamingAvailabilityService.BASE_URL}/search/title"
-            headers = {
-                'X-RapidAPI-Key': RAPIDAPI_KEY,
-                'X-RapidAPI-Host': RAPIDAPI_HOST
-            }
-            params = {
-                'title': title,
-                'country': 'in',  # India
-                'show_type': content_type if content_type != 'tv' else 'series',
-                'output_language': 'en'
-            }
-            
-            response = requests.get(url, headers=headers, params=params, timeout=10)
-            if response.status_code == 200:
-                data = response.json()
-                if data.get('result'):
-                    return data['result'][0]  # Return first match
-        except Exception as e:
-            logger.error(f"Streaming Availability search error: {e}")
-        return None
-    
-    @staticmethod
-    def get_streaming_info(imdb_id):
-        """Get streaming info by IMDB ID"""
-        try:
-            url = f"{StreamingAvailabilityService.BASE_URL}/get"
-            headers = {
-                'X-RapidAPI-Key': RAPIDAPI_KEY,
-                'X-RapidAPI-Host': RAPIDAPI_HOST
-            }
-            params = {
-                'imdb_id': imdb_id,
-                'country': 'in'  # India
-            }
-            
             response = requests.get(url, headers=headers, params=params, timeout=10)
             if response.status_code == 200:
                 return response.json()
         except Exception as e:
-            logger.error(f"Streaming Availability get error: {e}")
+            logger.error(f"RapidAPI streaming search error: {e}")
+        return None
+    
+    @staticmethod
+    def get_streaming_info(imdb_id, country='in'):
+        """Get streaming info by IMDB ID"""
+        url = f"{RapidAPIStreamingService.BASE_URL}/get"
+        headers = {
+            'X-RapidAPI-Key': RAPIDAPI_KEY,
+            'X-RapidAPI-Host': RAPIDAPI_HOST
+        }
+        params = {
+            'imdb_id': imdb_id,
+            'country': country
+        }
+        
+        try:
+            response = requests.get(url, headers=headers, params=params, timeout=10)
+            if response.status_code == 200:
+                return response.json()
+        except Exception as e:
+            logger.error(f"RapidAPI streaming info error: {e}")
         return None
 
-class EnhancedStreamingService:
-    """Enhanced streaming service that combines multiple APIs"""
-    
+# Enhanced Streaming Service
+class StreamingAvailabilityService:
     @staticmethod
-    def get_comprehensive_streaming_info(title, content_type='movie', imdb_id=None):
+    def get_comprehensive_streaming_info(title, imdb_id=None, content_type='movie'):
         """Get comprehensive streaming information from multiple sources"""
         streaming_info = {
-            'platforms': [],
-            'language_links': {},
             'free_platforms': [],
-            'paid_platforms': []
+            'paid_platforms': [],
+            'language_specific_links': {},
+            'direct_links': []
         }
         
         try:
-            # Try WatchMode API first
-            watchmode_result = WatchModeService.search_title(title, content_type)
-            if watchmode_result:
-                watchmode_sources = WatchModeService.get_streaming_sources(watchmode_result.get('id'))
-                if watchmode_sources:
-                    streaming_info = EnhancedStreamingService._process_watchmode_data(watchmode_sources, streaming_info)
+            # Try WatchMode first
+            watchmode_data = WatchModeService.search_title(title, content_type)
+            if watchmode_data and watchmode_data.get('title_results'):
+                title_id = watchmode_data['title_results'][0]['id']
+                sources = WatchModeService.get_streaming_sources(title_id)
+                
+                if sources:
+                    streaming_info = StreamingAvailabilityService._process_watchmode_sources(sources, streaming_info)
             
-            # Try Streaming Availability API
+            # Try RapidAPI as backup/additional source
+            rapidapi_data = RapidAPIStreamingService.search_title(title)
+            if rapidapi_data:
+                streaming_info = StreamingAvailabilityService._process_rapidapi_sources(rapidapi_data, streaming_info)
+            
+            # If we have IMDB ID, try RapidAPI with it
             if imdb_id:
-                sa_result = StreamingAvailabilityService.get_streaming_info(imdb_id)
-                if sa_result:
-                    streaming_info = EnhancedStreamingService._process_streaming_availability_data(sa_result, streaming_info)
-            
-            # Add fallback Indian platforms based on content analysis
-            streaming_info = EnhancedStreamingService._add_indian_platform_suggestions(title, content_type, streaming_info)
+                rapidapi_imdb_data = RapidAPIStreamingService.get_streaming_info(imdb_id)
+                if rapidapi_imdb_data:
+                    streaming_info = StreamingAvailabilityService._process_rapidapi_sources(rapidapi_imdb_data, streaming_info)
             
         except Exception as e:
-            logger.error(f"Enhanced streaming service error: {e}")
+            logger.error(f"Comprehensive streaming info error: {e}")
         
         return streaming_info
     
     @staticmethod
-    def _process_watchmode_data(sources_data, streaming_info):
-        """Process WatchMode API response"""
+    def _process_watchmode_sources(sources, streaming_info):
+        """Process WatchMode API sources"""
         try:
-            for source in sources_data:
+            for source in sources:
                 platform_name = source.get('name', '').lower()
-                platform_type = source.get('type')
-                web_url = source.get('web_url')
+                source_type = source.get('type', '')
+                web_url = source.get('web_url', '')
                 
-                # Map to our platform names
-                mapped_platform = EnhancedStreamingService._map_platform_name(platform_name)
-                if mapped_platform and web_url:
-                    platform_info = {
-                        'platform': mapped_platform,
-                        'name': OTT_PLATFORMS.get(mapped_platform, {}).get('name', platform_name),
+                platform_info = {
+                    'platform': platform_name,
+                    'name': source.get('name', ''),
+                    'url': web_url,
+                    'type': source_type,
+                    'price': source.get('price', ''),
+                    'quality': source.get('format', ''),
+                    'audio_languages': source.get('audios', []),
+                    'subtitle_languages': source.get('subtitles', [])
+                }
+                
+                # Categorize as free or paid
+                if source_type in ['free', 'ads'] or 'free' in platform_name:
+                    streaming_info['free_platforms'].append(platform_info)
+                else:
+                    streaming_info['paid_platforms'].append(platform_info)
+                
+                # Add language-specific links
+                for lang in source.get('audios', []):
+                    if lang.lower() in REGIONAL_LANGUAGES:
+                        if lang not in streaming_info['language_specific_links']:
+                            streaming_info['language_specific_links'][lang] = []
+                        streaming_info['language_specific_links'][lang].append(platform_info)
+                
+                # Add to direct links
+                if web_url:
+                    streaming_info['direct_links'].append({
+                        'platform': platform_name,
                         'url': web_url,
-                        'is_free': platform_type == 'free' or OTT_PLATFORMS.get(mapped_platform, {}).get('is_free', False),
-                        'logo': OTT_PLATFORMS.get(mapped_platform, {}).get('logo', '📺'),
-                        'type': platform_type
+                        'language': ', '.join(source.get('audios', [])),
+                        'type': source_type
+                    })
+        
+        except Exception as e:
+            logger.error(f"Error processing WatchMode sources: {e}")
+        
+        return streaming_info
+    
+    @staticmethod
+    def _process_rapidapi_sources(api_data, streaming_info):
+        """Process RapidAPI Streaming Availability sources"""
+        try:
+            if isinstance(api_data, dict) and 'streamingInfo' in api_data:
+                streaming_data = api_data['streamingInfo']
+            elif isinstance(api_data, list) and len(api_data) > 0:
+                streaming_data = api_data[0].get('streamingInfo', {})
+            else:
+                return streaming_info
+            
+            for country, services in streaming_data.items():
+                if country.lower() != 'in':  # Focus on India
+                    continue
+                    
+                for service_name, service_info in services.items():
+                    platform_info = {
+                        'platform': service_name.lower(),
+                        'name': service_name,
+                        'url': service_info.get('link', ''),
+                        'type': service_info.get('type', ''),
+                        'quality': service_info.get('quality', ''),
+                        'audio_languages': service_info.get('audios', []),
+                        'subtitle_languages': service_info.get('subtitles', [])
                     }
                     
-                    streaming_info['platforms'].append(platform_info)
+                    # Determine if free or paid based on service type and name
+                    is_free = (
+                        service_info.get('type') == 'free' or
+                        'free' in service_name.lower() or
+                        service_name.lower() in ['youtube', 'mx player', 'voot', 'jiocinema']
+                    )
                     
-                    if platform_info['is_free']:
+                    if is_free:
                         streaming_info['free_platforms'].append(platform_info)
                     else:
                         streaming_info['paid_platforms'].append(platform_info)
-        except Exception as e:
-            logger.error(f"Error processing WatchMode data: {e}")
-        
-        return streaming_info
-    
-    @staticmethod
-    def _process_streaming_availability_data(sa_data, streaming_info):
-        """Process Streaming Availability API response"""
-        try:
-            streaming_info_sa = sa_data.get('streamingInfo', {})
-            
-            for country, platforms in streaming_info_sa.items():
-                if country == 'in':  # Focus on India
-                    for platform_key, platform_data in platforms.items():
-                        mapped_platform = EnhancedStreamingService._map_platform_name(platform_key)
-                        if mapped_platform:
-                            for stream_data in platform_data:
-                                platform_info = {
-                                    'platform': mapped_platform,
-                                    'name': OTT_PLATFORMS.get(mapped_platform, {}).get('name', platform_key),
-                                    'url': stream_data.get('link', ''),
-                                    'is_free': stream_data.get('streamingType') == 'free',
-                                    'logo': OTT_PLATFORMS.get(mapped_platform, {}).get('logo', '📺'),
-                                    'quality': stream_data.get('quality', ''),
-                                    'audio_languages': stream_data.get('audios', [])
-                                }
-                                
-                                streaming_info['platforms'].append(platform_info)
-                                
-                                # Add language-specific links
-                                for audio in stream_data.get('audios', []):
-                                    lang_code = audio.get('language')
-                                    if lang_code:
-                                        lang_name = EnhancedStreamingService._get_language_name(lang_code)
-                                        if lang_name not in streaming_info['language_links']:
-                                            streaming_info['language_links'][lang_name] = []
-                                        
-                                        streaming_info['language_links'][lang_name].append({
-                                            'platform': platform_info['name'],
-                                            'url': platform_info['url'],
-                                            'logo': platform_info['logo'],
-                                            'is_free': platform_info['is_free']
-                                        })
-        except Exception as e:
-            logger.error(f"Error processing Streaming Availability data: {e}")
-        
-        return streaming_info
-    
-    @staticmethod
-    def _add_indian_platform_suggestions(title, content_type, streaming_info):
-        """Add likely Indian platform suggestions based on content analysis"""
-        try:
-            title_lower = title.lower()
-            
-            # Hindi content suggestions
-            if any(word in title_lower for word in ['bollywood', 'hindi', 'shah rukh', 'salman', 'aamir', 'akshay']):
-                suggested_platforms = ['jiocinema', 'zee5', 'sonyliv', 'voot', 'mx_player']
-                EnhancedStreamingService._add_suggested_platforms(suggested_platforms, streaming_info, 'hindi')
-            
-            # Telugu content suggestions
-            elif any(word in title_lower for word in ['tollywood', 'telugu', 'prabhas', 'allu arjun', 'mahesh babu']):
-                suggested_platforms = ['aha', 'zee5', 'sun_nxt', 'mx_player']
-                EnhancedStreamingService._add_suggested_platforms(suggested_platforms, streaming_info, 'telugu')
-            
-            # Tamil content suggestions
-            elif any(word in title_lower for word in ['kollywood', 'tamil', 'rajinikanth', 'kamal', 'vijay', 'ajith']):
-                suggested_platforms = ['sun_nxt', 'zee5', 'hotstar', 'mx_player']
-                EnhancedStreamingService._add_suggested_platforms(suggested_platforms, streaming_info, 'tamil')
-            
-            # Malayalam content suggestions
-            elif any(word in title_lower for word in ['malayalam', 'mollywood', 'mohanlal', 'mammootty']):
-                suggested_platforms = ['sun_nxt', 'zee5', 'mx_player']
-                EnhancedStreamingService._add_suggested_platforms(suggested_platforms, streaming_info, 'malayalam')
-            
-            # Kannada content suggestions
-            elif any(word in title_lower for word in ['kannada', 'sandalwood', 'yash', 'sudeep']):
-                suggested_platforms = ['zee5', 'sun_nxt', 'voot', 'mx_player']
-                EnhancedStreamingService._add_suggested_platforms(suggested_platforms, streaming_info, 'kannada')
-            
-            # General Indian content
-            else:
-                suggested_platforms = ['netflix', 'amazon_prime', 'disney_plus', 'jiocinema', 'mx_player']
-                EnhancedStreamingService._add_suggested_platforms(suggested_platforms, streaming_info, 'hindi')
-        
-        except Exception as e:
-            logger.error(f"Error adding Indian platform suggestions: {e}")
-        
-        return streaming_info
-    
-    @staticmethod
-    def _add_suggested_platforms(platforms, streaming_info, primary_language):
-        """Add suggested platforms to streaming info"""
-        for platform_key in platforms:
-            if platform_key in OTT_PLATFORMS:
-                platform_info = OTT_PLATFORMS[platform_key].copy()
-                platform_info['platform'] = platform_key
-                platform_info['suggested'] = True
-                
-                # Check if platform already exists
-                existing = next((p for p in streaming_info['platforms'] if p['platform'] == platform_key), None)
-                if not existing:
-                    streaming_info['platforms'].append(platform_info)
                     
-                    if platform_info['is_free']:
-                        streaming_info['free_platforms'].append(platform_info)
-                    else:
-                        streaming_info['paid_platforms'].append(platform_info)
-                
-                # Add to language links
-                if primary_language not in streaming_info['language_links']:
-                    streaming_info['language_links'][primary_language] = []
-                
-                streaming_info['language_links'][primary_language].append({
-                    'platform': platform_info['name'],
-                    'url': platform_info['url'],
-                    'logo': platform_info['logo'],
-                    'is_free': platform_info['is_free'],
-                    'suggested': True
-                })
-    
-    @staticmethod
-    def _map_platform_name(platform_name):
-        """Map external platform names to our internal platform keys"""
-        platform_mapping = {
-            'netflix': 'netflix',
-            'amazon prime video': 'amazon_prime',
-            'prime video': 'amazon_prime',
-            'disney plus': 'disney_plus',
-            'disney+ hotstar': 'disney_plus',
-            'hotstar': 'disney_plus',
-            'youtube': 'youtube',
-            'jiocinema': 'jiocinema',
-            'mx player': 'mx_player',
-            'zee5': 'zee5',
-            'sonyliv': 'sonyliv',
-            'voot': 'voot',
-            'alt balaji': 'alt_balaji',
-            'aha': 'aha',
-            'sun nxt': 'sun_nxt',
-            'hoichoi': 'hoichoi'
-        }
+                    # Add language-specific links
+                    for lang in service_info.get('audios', []):
+                        if lang.lower() in REGIONAL_LANGUAGES:
+                            if lang not in streaming_info['language_specific_links']:
+                                streaming_info['language_specific_links'][lang] = []
+                            streaming_info['language_specific_links'][lang].append(platform_info)
+                    
+                    # Add to direct links
+                    if service_info.get('link'):
+                        streaming_info['direct_links'].append({
+                            'platform': service_name,
+                            'url': service_info.get('link'),
+                            'language': ', '.join(service_info.get('audios', [])),
+                            'type': service_info.get('type', 'subscription')
+                        })
         
-        platform_lower = platform_name.lower().strip()
-        return platform_mapping.get(platform_lower)
-    
-    @staticmethod
-    def _get_language_name(lang_code):
-        """Get language name from language code"""
-        lang_mapping = {
-            'hi': 'hindi',
-            'te': 'telugu', 
-            'ta': 'tamil',
-            'ml': 'malayalam',
-            'kn': 'kannada',
-            'en': 'english',
-            'bn': 'bengali',
-            'mr': 'marathi',
-            'gu': 'gujarati',
-            'pa': 'punjabi'
-        }
+        except Exception as e:
+            logger.error(f"Error processing RapidAPI sources: {e}")
         
-        return lang_mapping.get(lang_code.lower(), lang_code)
+        return streaming_info
 
 # External API Services
 class TMDBService:
@@ -570,7 +476,7 @@ class TMDBService:
         url = f"{TMDBService.BASE_URL}/{content_type}/{content_id}"
         params = {
             'api_key': TMDB_API_KEY,
-            'append_to_response': 'credits,videos,similar,watch/providers,external_ids'  # ✅ Added external_ids
+            'append_to_response': 'credits,videos,similar,watch/providers,external_ids'
         }
         
         try:
@@ -692,7 +598,7 @@ class YouTubeService:
             logger.error(f"YouTube search error: {e}")
         return None
 
-# ✅ ENHANCED: Content Management Service
+# Enhanced Content Management Service
 class ContentService:
     @staticmethod
     def save_content_from_tmdb(tmdb_data, content_type):
@@ -700,6 +606,8 @@ class ContentService:
             # Check if content already exists
             existing = Content.query.filter_by(tmdb_id=tmdb_data['id']).first()
             if existing:
+                # Update streaming information if content exists
+                ContentService._update_streaming_info(existing, tmdb_data)
                 return existing
             
             # Extract genres
@@ -707,7 +615,6 @@ class ContentService:
             if 'genres' in tmdb_data:
                 genres = [genre['name'] for genre in tmdb_data['genres']]
             elif 'genre_ids' in tmdb_data:
-                # Map genre IDs to names (you'll need a genre mapping)
                 genres = ContentService.map_genre_ids(tmdb_data['genre_ids'])
             
             # Extract languages
@@ -717,14 +624,17 @@ class ContentService:
             elif 'original_language' in tmdb_data:
                 languages = [tmdb_data['original_language']]
             
-            # ✅ ENHANCED: Get comprehensive streaming availability
-            title = tmdb_data.get('title') or tmdb_data.get('name')
+            # Get IMDB ID if available
             imdb_id = None
             if 'external_ids' in tmdb_data:
                 imdb_id = tmdb_data['external_ids'].get('imdb_id')
+            elif 'imdb_id' in tmdb_data:
+                imdb_id = tmdb_data['imdb_id']
             
-            streaming_info = EnhancedStreamingService.get_comprehensive_streaming_info(
-                title, content_type, imdb_id
+            # Get comprehensive streaming information
+            title = tmdb_data.get('title') or tmdb_data.get('name')
+            streaming_info = StreamingAvailabilityService.get_comprehensive_streaming_info(
+                title, imdb_id, content_type
             )
             
             # Create content object
@@ -744,8 +654,8 @@ class ContentService:
                 overview=tmdb_data.get('overview'),
                 poster_path=tmdb_data.get('poster_path'),
                 backdrop_path=tmdb_data.get('backdrop_path'),
-                ott_platforms=json.dumps(streaming_info['platforms']),
-                streaming_links=json.dumps(streaming_info['language_links'])  # ✅ NEW
+                ott_platforms=json.dumps(ContentService._format_ott_platforms(streaming_info)),
+                streaming_links=json.dumps(streaming_info)
             )
             
             db.session.add(content)
@@ -756,6 +666,53 @@ class ContentService:
             logger.error(f"Error saving content: {e}")
             db.session.rollback()
             return None
+    
+    @staticmethod
+    def _update_streaming_info(content, tmdb_data):
+        """Update streaming information for existing content"""
+        try:
+            title = content.title
+            imdb_id = content.imdb_id
+            
+            streaming_info = StreamingAvailabilityService.get_comprehensive_streaming_info(
+                title, imdb_id, content.content_type
+            )
+            
+            content.streaming_links = json.dumps(streaming_info)
+            content.ott_platforms = json.dumps(ContentService._format_ott_platforms(streaming_info))
+            content.updated_at = datetime.utcnow()
+            
+            db.session.commit()
+        except Exception as e:
+            logger.error(f"Error updating streaming info: {e}")
+            db.session.rollback()
+    
+    @staticmethod
+    def _format_ott_platforms(streaming_info):
+        """Format streaming info for ott_platforms field"""
+        platforms = []
+        
+        # Add free platforms
+        for platform in streaming_info.get('free_platforms', []):
+            platforms.append({
+                'platform': platform['platform'],
+                'name': platform['name'],
+                'url': platform['url'],
+                'is_free': True,
+                'type': platform.get('type', 'free')
+            })
+        
+        # Add paid platforms
+        for platform in streaming_info.get('paid_platforms', []):
+            platforms.append({
+                'platform': platform['platform'],
+                'name': platform['name'],
+                'url': platform['url'],
+                'is_free': False,
+                'type': platform.get('type', 'subscription')
+            })
+        
+        return platforms
     
     @staticmethod
     def map_genre_ids(genre_ids):
@@ -771,13 +728,22 @@ class ContentService:
     
     @staticmethod
     def get_ott_availability(tmdb_data):
-        # This method is now enhanced and handled by EnhancedStreamingService
-        # Keep for backward compatibility
-        title = tmdb_data.get('title') or tmdb_data.get('name', '')
-        content_type = 'movie' if 'title' in tmdb_data else 'tv'
+        # This would integrate with actual OTT APIs or databases
+        # For now, return sample data
+        platforms = []
         
-        streaming_info = EnhancedStreamingService.get_comprehensive_streaming_info(title, content_type)
-        return streaming_info['platforms']
+        # You would implement actual OTT checking logic here
+        # For demo purposes, randomly assign some platforms
+        sample_platforms = ['netflix', 'amazon_prime', 'youtube', 'jiocinema']
+        
+        for platform in random.sample(sample_platforms, random.randint(1, 3)):
+            platforms.append({
+                'platform': platform,
+                'url': OTT_PLATFORMS[platform]['url'],
+                'is_free': OTT_PLATFORMS[platform]['is_free']
+            })
+        
+        return platforms
 
 # Recommendation Engine
 class RecommendationEngine:
@@ -885,7 +851,7 @@ class RecommendationEngine:
                     overview=anime.get('synopsis'),
                     poster_path=anime.get('images', {}).get('jpg', {}).get('image_url'),
                     ott_platforms=json.dumps([]),  # You would check anime streaming platforms
-                    streaming_links=json.dumps({})  # ✅ NEW
+                    streaming_links=json.dumps({})
                 )
                 recommendations.append(content)
             
@@ -952,7 +918,7 @@ class AnonymousRecommendationEngine:
             logger.error(f"Error getting anonymous recommendations: {e}")
             return []
 
-# ✅ ENHANCED: Telegram Service with Streaming Links
+# Enhanced Telegram Service
 class TelegramService:
     @staticmethod
     def send_admin_recommendation(content, admin_name, description):
@@ -969,9 +935,6 @@ class TelegramService:
                 except:
                     genres_list = []
             
-            # ✅ NEW: Get streaming links
-            streaming_links_text = TelegramService._format_streaming_links(content)
-            
             # Create poster URL
             poster_url = None
             if content.poster_path:
@@ -980,7 +943,39 @@ class TelegramService:
                 else:
                     poster_url = f"https://image.tmdb.org/t/p/w500{content.poster_path}"
             
-            # ✅ ENHANCED: Create message with streaming links
+            # Get streaming links
+            streaming_links = []
+            if content.streaming_links:
+                try:
+                    streaming_data = json.loads(content.streaming_links)
+                    
+                    # Add free platforms
+                    for platform in streaming_data.get('free_platforms', []):
+                        if platform.get('url'):
+                            streaming_links.append(f"🆓 {platform['name']}: {platform['url']}")
+                    
+                    # Add paid platforms
+                    for platform in streaming_data.get('paid_platforms', []):
+                        if platform.get('url'):
+                            streaming_links.append(f"💰 {platform['name']}: {platform['url']}")
+                    
+                    # Add language-specific links
+                    for lang, platforms in streaming_data.get('language_specific_links', {}).items():
+                        for platform in platforms:
+                            if platform.get('url'):
+                                streaming_links.append(f"🎭 {platform['name']} ({lang.upper()}): {platform['url']}")
+                
+                except Exception as e:
+                    logger.error(f"Error parsing streaming links: {e}")
+            
+            # Format streaming links for message
+            streaming_text = ""
+            if streaming_links:
+                streaming_text = "\n\n🎬 **Watch Now:**\n" + "\n".join(streaming_links[:8])  # Limit to 8 links
+                if len(streaming_links) > 8:
+                    streaming_text += f"\n... and {len(streaming_links) - 8} more platforms"
+            
+            # Create message
             message = f"""🎬 **Admin's Choice** by {admin_name}
 
 **{content.title}**
@@ -991,9 +986,7 @@ class TelegramService:
 
 📝 **Admin's Note:** {description}
 
-📖 **Synopsis:** {(content.overview[:200] + '...') if content.overview else 'No synopsis available'}
-
-{streaming_links_text}
+📖 **Synopsis:** {(content.overview[:200] + '...') if content.overview else 'No synopsis available'}{streaming_text}
 
 #AdminChoice #MovieRecommendation #CineScope"""
             
@@ -1016,76 +1009,6 @@ class TelegramService:
         except Exception as e:
             logger.error(f"Telegram send error: {e}")
             return False
-    
-    @staticmethod
-    def _format_streaming_links(content):
-        """Format streaming links for Telegram message"""
-        try:
-            streaming_text = "\n📺 **Available to Watch:**\n"
-            
-            # Get language-specific links
-            language_links = {}
-            if content.streaming_links:
-                try:
-                    language_links = json.loads(content.streaming_links)
-                except:
-                    language_links = {}
-            
-            # Get general platform links
-            platforms = []
-            if content.ott_platforms:
-                try:
-                    platforms = json.loads(content.ott_platforms)
-                except:
-                    platforms = []
-            
-            # Format language-specific links first
-            if language_links:
-                for language, links in language_links.items():
-                    lang_info = REGIONAL_LANGUAGES.get(language.lower(), {})
-                    lang_name = lang_info.get('name', language.title())
-                    flag = lang_info.get('flag', '🎭')
-                    
-                    # Show only first 2 platforms per language to avoid clutter
-                    for link in links[:2]:
-                        platform_name = link.get('platform', 'Unknown')
-                        platform_url = link.get('url', '#')
-                        logo = link.get('logo', '📺')
-                        is_free = link.get('is_free', False)
-                        free_text = " (Free)" if is_free else ""
-                        
-                        streaming_text += f"🔘 Watch in {lang_name} {flag} → [{platform_name}{free_text}]({platform_url})\n"
-            
-            # If no language-specific links, show general platform links
-            elif platforms:
-                streaming_text += "🔘 Available on:\n"
-                
-                # Separate free and paid platforms
-                free_platforms = [p for p in platforms if p.get('is_free', False)]
-                paid_platforms = [p for p in platforms if not p.get('is_free', False)]
-                
-                # Show free platforms first
-                for platform in free_platforms[:3]:
-                    name = platform.get('name', 'Unknown')
-                    url = platform.get('url', '#')
-                    logo = platform.get('logo', '📺')
-                    streaming_text += f"   {logo} [{name} (Free)]({url})\n"
-                
-                # Then paid platforms
-                for platform in paid_platforms[:2]:
-                    name = platform.get('name', 'Unknown')
-                    url = platform.get('url', '#')
-                    logo = platform.get('logo', '📺')
-                    streaming_text += f"   {logo} [{name}]({url})\n"
-            
-            else:
-                streaming_text += "🔍 Check your local streaming platforms\n"
-            
-            return streaming_text
-            
-        except Exception as e:
-            logger.error(f"Error formatting streaming links: {e}")
-            return "\n📺 **Streaming info unavailable**\n"
 
 # API Routes
 
@@ -1219,7 +1142,15 @@ def search_content():
                     )
                     db.session.add(interaction)
                     
-                    # ✅ ENHANCED: Include streaming info in search results
+                    # Parse streaming links
+                    streaming_links = []
+                    if content.streaming_links:
+                        try:
+                            streaming_data = json.loads(content.streaming_links)
+                            streaming_links = streaming_data.get('direct_links', [])
+                        except:
+                            pass
+                    
                     results.append({
                         'id': content.id,
                         'tmdb_id': content.tmdb_id,
@@ -1231,7 +1162,7 @@ def search_content():
                         'poster_path': f"https://image.tmdb.org/t/p/w500{content.poster_path}" if content.poster_path else None,
                         'overview': content.overview,
                         'ott_platforms': json.loads(content.ott_platforms or '[]'),
-                        'streaming_links': json.loads(content.streaming_links or '{}')  # ✅ NEW
+                        'streaming_links': streaming_links
                     })
         
         # Add anime results
@@ -1247,7 +1178,7 @@ def search_content():
                     'poster_path': anime.get('images', {}).get('jpg', {}).get('image_url'),
                     'overview': anime.get('synopsis'),
                     'ott_platforms': [],
-                    'streaming_links': {}  # ✅ NEW
+                    'streaming_links': []
                 })
         
         db.session.commit()
@@ -1263,7 +1194,6 @@ def search_content():
         logger.error(f"Search error: {e}")
         return jsonify({'error': 'Search failed'}), 500
 
-# ✅ ENHANCED: Content Details Route with Streaming Info
 @app.route('/api/content/<int:content_id>', methods=['GET'])
 def get_content_details(content_id):
     try:
@@ -1283,27 +1213,6 @@ def get_content_details(content_id):
         additional_details = None
         if content.tmdb_id:
             additional_details = TMDBService.get_content_details(content.tmdb_id, content.content_type)
-        
-        # ✅ NEW: Refresh streaming info if needed (cache for 24 hours)
-        should_refresh_streaming = (
-            datetime.utcnow() - content.updated_at > timedelta(hours=24) or
-            not content.streaming_links
-        )
-        
-        if should_refresh_streaming and content.title:
-            try:
-                # Get fresh streaming info
-                streaming_info = EnhancedStreamingService.get_comprehensive_streaming_info(
-                    content.title, content.content_type, content.imdb_id
-                )
-                
-                # Update content with fresh streaming data
-                content.ott_platforms = json.dumps(streaming_info['platforms'])
-                content.streaming_links = json.dumps(streaming_info['language_links'])
-                content.updated_at = datetime.utcnow()
-                db.session.commit()
-            except Exception as e:
-                logger.error(f"Error refreshing streaming info: {e}")
         
         # Get YouTube trailers
         trailers = []
@@ -1327,33 +1236,16 @@ def get_content_details(content_id):
                         'id': similar.id,
                         'title': similar.title,
                         'poster_path': f"https://image.tmdb.org/t/p/w300{similar.poster_path}" if similar.poster_path else None,
-                        'rating': similar.rating,
-                        'streaming_links': json.loads(similar.streaming_links or '{}')  # ✅ NEW
+                        'rating': similar.rating
                     })
         
-        # ✅ NEW: Format language-specific streaming links
-        formatted_streaming_links = []
-        streaming_links = json.loads(content.streaming_links or '{}')
-        
-        for language, links in streaming_links.items():
-            lang_info = REGIONAL_LANGUAGES.get(language.lower(), {})
-            formatted_links = []
-            
-            for link in links:
-                formatted_links.append({
-                    'platform': link.get('platform'),
-                    'url': link.get('url'),
-                    'logo': link.get('logo', '📺'),
-                    'is_free': link.get('is_free', False),
-                    'suggested': link.get('suggested', False)
-                })
-            
-            formatted_streaming_links.append({
-                'language': language,
-                'language_name': lang_info.get('name', language.title()),
-                'language_flag': lang_info.get('flag', '🎭'),
-                'links': formatted_links
-            })
+        # Parse streaming information
+        streaming_info = {}
+        if content.streaming_links:
+            try:
+                streaming_info = json.loads(content.streaming_links)
+            except:
+                streaming_info = {}
         
         db.session.commit()
         
@@ -1374,8 +1266,7 @@ def get_content_details(content_id):
             'poster_path': f"https://image.tmdb.org/t/p/w500{content.poster_path}" if content.poster_path else None,
             'backdrop_path': f"https://image.tmdb.org/t/p/w1280{content.backdrop_path}" if content.backdrop_path else None,
             'ott_platforms': json.loads(content.ott_platforms or '[]'),
-            'streaming_links': formatted_streaming_links,  # ✅ NEW: Language-specific links
-            'raw_streaming_links': json.loads(content.streaming_links or '{}'),  # ✅ NEW: Raw data for frontend
+            'streaming_info': streaming_info,
             'trailers': trailers,
             'similar_content': similar_content,
             'cast': additional_details.get('credits', {}).get('cast', [])[:10] if additional_details else [],
@@ -1397,6 +1288,15 @@ def get_trending():
         
         result = []
         for content in recommendations:
+            # Parse streaming links
+            streaming_links = []
+            if content.streaming_links:
+                try:
+                    streaming_data = json.loads(content.streaming_links)
+                    streaming_links = streaming_data.get('direct_links', [])
+                except:
+                    pass
+            
             result.append({
                 'id': content.id,
                 'title': content.title,
@@ -1406,7 +1306,7 @@ def get_trending():
                 'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path else None,
                 'overview': content.overview[:150] + '...' if content.overview else '',
                 'ott_platforms': json.loads(content.ott_platforms or '[]'),
-                'streaming_links': json.loads(content.streaming_links or '{}')  # ✅ NEW
+                'streaming_links': streaming_links
             })
         
         return jsonify({'recommendations': result}), 200
@@ -1425,6 +1325,15 @@ def get_popular_by_genre(genre):
         
         result = []
         for content in recommendations:
+            # Parse streaming links
+            streaming_links = []
+            if content.streaming_links:
+                try:
+                    streaming_data = json.loads(content.streaming_links)
+                    streaming_links = streaming_data.get('direct_links', [])
+                except:
+                    pass
+            
             result.append({
                 'id': content.id,
                 'title': content.title,
@@ -1434,7 +1343,7 @@ def get_popular_by_genre(genre):
                 'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path else None,
                 'overview': content.overview[:150] + '...' if content.overview else '',
                 'ott_platforms': json.loads(content.ott_platforms or '[]'),
-                'streaming_links': json.loads(content.streaming_links or '{}')  # ✅ NEW
+                'streaming_links': streaming_links
             })
         
         return jsonify({'recommendations': result}), 200
@@ -1452,6 +1361,15 @@ def get_regional(language):
         
         result = []
         for content in recommendations:
+            # Parse streaming links
+            streaming_links = []
+            if content.streaming_links:
+                try:
+                    streaming_data = json.loads(content.streaming_links)
+                    streaming_links = streaming_data.get('direct_links', [])
+                except:
+                    pass
+            
             result.append({
                 'id': content.id,
                 'title': content.title,
@@ -1461,7 +1379,7 @@ def get_regional(language):
                 'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path else None,
                 'overview': content.overview[:150] + '...' if content.overview else '',
                 'ott_platforms': json.loads(content.ott_platforms or '[]'),
-                'streaming_links': json.loads(content.streaming_links or '{}')  # ✅ NEW
+                'streaming_links': streaming_links
             })
         
         return jsonify({'recommendations': result}), 200
@@ -1488,7 +1406,7 @@ def get_anime():
                 'poster_path': content.poster_path,
                 'overview': content.overview[:150] + '...' if content.overview else '',
                 'ott_platforms': json.loads(content.ott_platforms or '[]'),
-                'streaming_links': json.loads(content.streaming_links or '{}')  # ✅ NEW
+                'streaming_links': []
             })
         
         return jsonify({'recommendations': result}), 200
@@ -1509,6 +1427,15 @@ def get_anonymous_recommendations():
         
         result = []
         for content in recommendations:
+            # Parse streaming links
+            streaming_links = []
+            if content.streaming_links:
+                try:
+                    streaming_data = json.loads(content.streaming_links)
+                    streaming_links = streaming_data.get('direct_links', [])
+                except:
+                    pass
+            
             result.append({
                 'id': content.id,
                 'title': content.title,
@@ -1518,7 +1445,7 @@ def get_anonymous_recommendations():
                 'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path else None,
                 'overview': content.overview[:150] + '...' if content.overview else '',
                 'ott_platforms': json.loads(content.ott_platforms or '[]'),
-                'streaming_links': json.loads(content.streaming_links or '{}')  # ✅ NEW
+                'streaming_links': streaming_links
             })
         
         return jsonify({'recommendations': result}), 200
@@ -1569,6 +1496,15 @@ def get_personalized_recommendations(current_user):
                 for rec in ml_recommendations:
                     content = content_dict.get(rec['content_id'])
                     if content:
+                        # Parse streaming links
+                        streaming_links = []
+                        if content.streaming_links:
+                            try:
+                                streaming_data = json.loads(content.streaming_links)
+                                streaming_links = streaming_data.get('direct_links', [])
+                            except:
+                                pass
+                        
                         result.append({
                             'id': content.id,
                             'title': content.title,
@@ -1578,7 +1514,7 @@ def get_personalized_recommendations(current_user):
                             'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path else None,
                             'overview': content.overview[:150] + '...' if content.overview else '',
                             'ott_platforms': json.loads(content.ott_platforms or '[]'),
-                            'streaming_links': json.loads(content.streaming_links or '{}'),  # ✅ NEW
+                            'streaming_links': streaming_links,
                             'recommendation_score': rec.get('score', 0),
                             'recommendation_reason': rec.get('reason', '')
                         })
@@ -1636,6 +1572,15 @@ def get_watchlist(current_user):
         
         result = []
         for content in contents:
+            # Parse streaming links
+            streaming_links = []
+            if content.streaming_links:
+                try:
+                    streaming_data = json.loads(content.streaming_links)
+                    streaming_links = streaming_data.get('direct_links', [])
+                except:
+                    pass
+            
             result.append({
                 'id': content.id,
                 'title': content.title,
@@ -1644,7 +1589,7 @@ def get_watchlist(current_user):
                 'rating': content.rating,
                 'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path else None,
                 'ott_platforms': json.loads(content.ott_platforms or '[]'),
-                'streaming_links': json.loads(content.streaming_links or '{}')  # ✅ NEW
+                'streaming_links': streaming_links
             })
         
         return jsonify({'watchlist': result}), 200
@@ -1667,6 +1612,15 @@ def get_favorites(current_user):
         
         result = []
         for content in contents:
+            # Parse streaming links
+            streaming_links = []
+            if content.streaming_links:
+                try:
+                    streaming_data = json.loads(content.streaming_links)
+                    streaming_links = streaming_data.get('direct_links', [])
+                except:
+                    pass
+            
             result.append({
                 'id': content.id,
                 'title': content.title,
@@ -1675,7 +1629,7 @@ def get_favorites(current_user):
                 'rating': content.rating,
                 'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path else None,
                 'ott_platforms': json.loads(content.ott_platforms or '[]'),
-                'streaming_links': json.loads(content.streaming_links or '{}')  # ✅ NEW
+                'streaming_links': streaming_links
             })
         
         return jsonify({'favorites': result}), 200
@@ -1765,18 +1719,17 @@ def save_external_content(current_user):
                 except:
                     release_date = None
             
-            # ✅ ENHANCED: Get streaming info for new content
-            title = data.get('title', '')
-            content_type = data.get('content_type', 'movie')
-            
-            streaming_info = EnhancedStreamingService.get_comprehensive_streaming_info(title, content_type)
+            # Get streaming information for the content
+            streaming_info = StreamingAvailabilityService.get_comprehensive_streaming_info(
+                data.get('title'), None, data.get('content_type', 'movie')
+            )
             
             # Create content object
             content = Content(
                 tmdb_id=data.get('id'),
-                title=title,
+                title=data.get('title'),
                 original_title=data.get('original_title'),
-                content_type=content_type,
+                content_type=data.get('content_type', 'movie'),
                 genres=json.dumps(data.get('genres', [])),
                 languages=json.dumps(data.get('languages', ['en'])),
                 release_date=release_date,
@@ -1787,8 +1740,8 @@ def save_external_content(current_user):
                 overview=data.get('overview'),
                 poster_path=data.get('poster_path'),
                 backdrop_path=data.get('backdrop_path'),
-                ott_platforms=json.dumps(streaming_info['platforms']),  # ✅ ENHANCED
-                streaming_links=json.dumps(streaming_info['language_links'])  # ✅ NEW
+                ott_platforms=json.dumps(ContentService._format_ott_platforms(streaming_info)),
+                streaming_links=json.dumps(streaming_info)
             )
             
             db.session.add(content)
@@ -1838,7 +1791,7 @@ def create_admin_recommendation(current_user):
         db.session.add(admin_rec)
         db.session.commit()
         
-        # ✅ ENHANCED: Send to Telegram channel with streaming links
+        # Send to Telegram channel
         telegram_success = TelegramService.send_admin_recommendation(content, current_user.username, data['description'])
         
         return jsonify({
@@ -1878,8 +1831,7 @@ def get_admin_recommendations(current_user):
                     'title': content.title,
                     'content_type': content.content_type,
                     'rating': content.rating,
-                    'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path else None,
-                    'streaming_links': json.loads(content.streaming_links or '{}')  # ✅ NEW
+                    'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path else None
                 }
             })
         
@@ -1924,21 +1876,6 @@ def get_analytics(current_user):
         
         popular_genres = sorted(genre_counts.items(), key=lambda x: x[1], reverse=True)[:10]
         
-        # ✅ NEW: Streaming platform analytics
-        platform_counts = defaultdict(int)
-        all_content = Content.query.all()
-        for content in all_content:
-            if content.ott_platforms:
-                try:
-                    platforms = json.loads(content.ott_platforms)
-                    for platform in platforms:
-                        platform_name = platform.get('name', 'Unknown')
-                        platform_counts[platform_name] += 1
-                except:
-                    pass
-        
-        popular_platforms = sorted(platform_counts.items(), key=lambda x: x[1], reverse=True)[:10]
-        
         return jsonify({
             'total_users': total_users,
             'total_content': total_content,
@@ -1951,10 +1888,6 @@ def get_analytics(current_user):
             'popular_genres': [
                 {'genre': genre, 'count': count}
                 for genre, count in popular_genres
-            ],
-            'popular_platforms': [  # ✅ NEW
-                {'platform': platform, 'count': count}
-                for platform, count in popular_platforms
             ]
         }), 200
         
@@ -1980,6 +1913,15 @@ def get_public_admin_recommendations():
             admin = User.query.get(rec.admin_id)
             
             if content:
+                # Parse streaming links
+                streaming_links = []
+                if content.streaming_links:
+                    try:
+                        streaming_data = json.loads(content.streaming_links)
+                        streaming_links = streaming_data.get('direct_links', [])
+                    except:
+                        pass
+                
                 result.append({
                     'id': content.id,
                     'title': content.title,
@@ -1989,7 +1931,7 @@ def get_public_admin_recommendations():
                     'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path else None,
                     'overview': content.overview[:150] + '...' if content.overview else '',
                     'ott_platforms': json.loads(content.ott_platforms or '[]'),
-                    'streaming_links': json.loads(content.streaming_links or '{}'),  # ✅ NEW
+                    'streaming_links': streaming_links,
                     'admin_description': rec.description,
                     'admin_name': admin.username if admin else 'Admin',
                     'recommended_at': rec.created_at.isoformat()
@@ -2001,76 +1943,14 @@ def get_public_admin_recommendations():
         logger.error(f"Public admin recommendations error: {e}")
         return jsonify({'error': 'Failed to get admin recommendations'}), 500
 
-# ✅ NEW: Streaming Platform Routes
-@app.route('/api/streaming/platforms', methods=['GET'])
-def get_streaming_platforms():
-    """Get list of all supported streaming platforms"""
-    try:
-        platforms = []
-        for key, info in OTT_PLATFORMS.items():
-            platforms.append({
-                'key': key,
-                'name': info['name'],
-                'is_free': info['is_free'],
-                'logo': info['logo'],
-                'url': info['url']
-            })
-        
-        return jsonify({'platforms': platforms}), 200
-    except Exception as e:
-        logger.error(f"Get platforms error: {e}")
-        return jsonify({'error': 'Failed to get platforms'}), 500
-
-@app.route('/api/streaming/refresh/<int:content_id>', methods=['POST'])
-def refresh_streaming_info(content_id):
-    """Manually refresh streaming info for a specific content"""
-    try:
-        content = Content.query.get_or_404(content_id)
-        
-        if not content.title:
-            return jsonify({'error': 'Content title required for streaming lookup'}), 400
-        
-        # Get fresh streaming info
-        streaming_info = EnhancedStreamingService.get_comprehensive_streaming_info(
-            content.title, content.content_type, content.imdb_id
-        )
-        
-        # Update content
-        content.ott_platforms = json.dumps(streaming_info['platforms'])
-        content.streaming_links = json.dumps(streaming_info['language_links'])
-        content.updated_at = datetime.utcnow()
-        db.session.commit()
-        
-        return jsonify({
-            'message': 'Streaming info refreshed successfully',
-            'platforms': streaming_info['platforms'],
-            'language_links': streaming_info['language_links']
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"Refresh streaming info error: {e}")
-        return jsonify({'error': 'Failed to refresh streaming info'}), 500
-
 # Health check endpoint
 @app.route('/api/health', methods=['GET'])
 def health_check():
     return jsonify({
         'status': 'healthy',
         'timestamp': datetime.utcnow().isoformat(),
-        'version': '1.0.0',
-        'features': {
-            'streaming_apis': {
-                'watchmode': bool(WATCHMODE_API_KEY),
-                'rapidapi': bool(RAPIDAPI_KEY)
-            }
-        }
+        'version': '1.0.0'
     }), 200
-
-# ✅ NEW: Details route for frontend compatibility
-@app.route('/details')
-def details_page():
-    """Route for details.html frontend page"""
-    return render_template('details.html')
 
 # Initialize database
 def create_tables():
