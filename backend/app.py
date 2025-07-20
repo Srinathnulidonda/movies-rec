@@ -624,7 +624,7 @@ class ContentService:
     
     @staticmethod
     def get_ott_availability(tmdb_data, imdb_id=None):
-        """Get real OTT availability using multiple APIs"""
+        """Get real OTT availability using multiple APIs with enhanced fallbacks"""
         platforms = []
         title = tmdb_data.get('title') or tmdb_data.get('name', '')
         
@@ -653,6 +653,10 @@ class ContentService:
                     for result in streaming_search['result'][:1]:  # Take first result
                         platforms.extend(ContentService.parse_streaming_availability(result))
             
+            # ENHANCED: Add fallback platforms with search links if no API results
+            if not platforms:
+                platforms = ContentService.get_fallback_ott_platforms(title, tmdb_data)
+            
             # Remove duplicates and sort by free vs paid
             unique_platforms = ContentService.deduplicate_platforms(platforms)
             
@@ -664,8 +668,110 @@ class ContentService:
             
         except Exception as e:
             logger.error(f"Error getting OTT availability: {e}")
-            return []
-    
+            # Return fallback platforms if API fails
+            return ContentService.get_fallback_ott_platforms(title, tmdb_data)   
+    @staticmethod
+    def get_fallback_ott_platforms(title, tmdb_data):
+        """Get fallback OTT platforms with search links when APIs fail"""
+        encoded_title = urllib.parse.quote(title.replace(' ', '+'))
+        platforms = []
+        
+        # Free platforms with search links
+        free_platforms = [
+            {
+                'name': 'YouTube',
+                'is_free': True,
+                'url': 'https://www.youtube.com',
+                'direct_url': f"https://www.youtube.com/results?search_query={encoded_title}+full+movie",
+                'search_url': f"https://www.youtube.com/results?search_query={encoded_title}",
+                'logo': 'https://www.youtube.com/img/desktop/yt_1200.png',
+                'type': 'free_search',
+                'audio_languages': ['hindi', 'english', 'tamil', 'telugu'],
+                'note': 'Search for full movies and clips'
+            },
+            {
+                'name': 'MX Player',
+                'is_free': True,
+                'url': 'https://www.mxplayer.in',
+                'direct_url': f"https://www.mxplayer.in/search?q={encoded_title}",
+                'search_url': f"https://www.mxplayer.in/search?q={encoded_title}",
+                'logo': 'https://www.mxplayer.in/assets/images/logo.png',
+                'type': 'free_search',
+                'audio_languages': ['hindi', 'english', 'tamil', 'telugu', 'kannada'],
+                'note': 'Free movies and shows'
+            },
+            {
+                'name': 'JioCinema',
+                'is_free': True,
+                'url': 'https://www.jiocinema.com',
+                'direct_url': f"https://www.jiocinema.com/search/{encoded_title}",
+                'search_url': f"https://www.jiocinema.com/search/{encoded_title}",
+                'logo': 'https://www.jiocinema.com/images/jiocinema_logo.png',
+                'type': 'free_search',
+                'audio_languages': ['hindi', 'english', 'tamil', 'telugu'],
+                'note': 'Free with ads'
+            }
+        ]
+        
+        # Paid platforms with search links
+        paid_platforms = [
+            {
+                'name': 'Netflix',
+                'is_free': False,
+                'url': 'https://www.netflix.com',
+                'direct_url': f"https://www.netflix.com/search?q={encoded_title}",
+                'search_url': f"https://www.netflix.com/search?q={encoded_title}",
+                'logo': 'https://assets.nflxext.com/us/ffe/siteui/common/icons/nficon2016.png',
+                'type': 'subscription',
+                'audio_languages': ['hindi', 'english', 'tamil', 'telugu'],
+                'note': 'Subscription required'
+            },
+            {
+                'name': 'Amazon Prime Video',
+                'is_free': False,
+                'url': 'https://www.primevideo.com',
+                'direct_url': f"https://www.primevideo.com/search/ref=atv_nb_sr?phrase={encoded_title}",
+                'search_url': f"https://www.primevideo.com/search/ref=atv_nb_sr?phrase={encoded_title}",
+                'logo': 'https://images-na.ssl-images-amazon.com/images/G/01/digital/video/web/Logo-min.png',
+                'type': 'subscription',
+                'audio_languages': ['hindi', 'english', 'tamil', 'telugu'],
+                'note': 'Prime membership required'
+            },
+            {
+                'name': 'Disney+ Hotstar',
+                'is_free': False,
+                'url': 'https://www.hotstar.com',
+                'direct_url': f"https://www.hotstar.com/in/search?q={encoded_title}",
+                'search_url': f"https://www.hotstar.com/in/search?q={encoded_title}",
+                'logo': 'https://secure-media.hotstarext.com/web/images/logo.svg',
+                'type': 'subscription',
+                'audio_languages': ['hindi', 'english', 'tamil', 'telugu'],
+                'note': 'Subscription required'
+            }
+        ]
+        
+        # Combine and return based on content type
+        all_platforms = free_platforms + paid_platforms
+        
+        # For anime, prioritize anime-specific platforms
+        if tmdb_data.get('genre_ids') and 16 in tmdb_data.get('genre_ids', []):  # Animation genre
+            anime_platforms = [
+                {
+                    'name': 'Crunchyroll',
+                    'is_free': False,
+                    'url': 'https://www.crunchyroll.com',
+                    'direct_url': f"https://www.crunchyroll.com/search?q={encoded_title}",
+                    'search_url': f"https://www.crunchyroll.com/search?q={encoded_title}",
+                    'logo': 'https://www.crunchyroll.com/img/header_logo.png',
+                    'type': 'subscription',
+                    'audio_languages': ['japanese'],
+                    'subtitle_languages': ['english', 'hindi'],
+                    'note': 'Anime streaming service'
+                }
+            ]
+            all_platforms = anime_platforms + all_platforms
+        
+        return all_platforms[:6]  # Return top 6 platforms
     @staticmethod
     def parse_watchmode_sources(sources_data):
         """Parse WatchMode API response to extract platform information"""
@@ -809,7 +915,111 @@ class ContentService:
         except Exception as e:
             logger.error(f"Error generating Telegram link: {e}")
             return None
-
+    @staticmethod
+    def save_anime_content(anime_data):
+        """Save anime content from Jikan API to database"""
+        try:
+            # Check if anime already exists by MAL ID (using tmdb_id field to store MAL ID)
+            existing = Content.query.filter_by(tmdb_id=anime_data['mal_id']).first()
+            if existing:
+                return existing
+            
+            # Extract genres
+            genres = [genre['name'] for genre in anime_data.get('genres', [])]
+            
+            # Parse release date
+            release_date = None
+            if anime_data.get('aired') and anime_data['aired'].get('from'):
+                try:
+                    release_date = datetime.fromisoformat(anime_data['aired']['from'].replace('Z', '+00:00')).date()
+                except:
+                    release_date = None
+            
+            # Get anime streaming platforms
+            ott_platforms = ContentService.get_anime_ott_platforms(anime_data)
+            
+            # Create content object
+            content = Content(
+                tmdb_id=anime_data['mal_id'],  # Store MAL ID in tmdb_id field
+                title=anime_data.get('title'),
+                original_title=anime_data.get('title_japanese'),
+                content_type='anime',
+                genres=json.dumps(genres),
+                languages=json.dumps(['japanese']),
+                release_date=release_date,
+                runtime=anime_data.get('duration'),  # Duration in minutes
+                rating=anime_data.get('score'),
+                vote_count=anime_data.get('scored_by'),
+                popularity=anime_data.get('popularity'),
+                overview=anime_data.get('synopsis'),
+                poster_path=anime_data.get('images', {}).get('jpg', {}).get('image_url'),
+                backdrop_path=anime_data.get('images', {}).get('jpg', {}).get('large_image_url'),
+                ott_platforms=json.dumps(ott_platforms)
+            )
+            
+            db.session.add(content)
+            db.session.commit()
+            return content
+            
+        except Exception as e:
+            logger.error(f"Error saving anime content: {e}")
+            db.session.rollback()
+            return None
+    
+    @staticmethod
+    def get_anime_ott_platforms(anime_data):
+        """Get OTT platforms for anime content"""
+        platforms = []
+        
+        # Common anime streaming platforms with direct links
+        anime_platforms = [
+            {
+                'name': 'YouTube',
+                'is_free': True,
+                'url': 'https://www.youtube.com',
+                'direct_url': f"https://www.youtube.com/results?search_query={anime_data.get('title', '').replace(' ', '+')}_anime",
+                'logo': 'https://www.youtube.com/img/desktop/yt_1200.png',
+                'type': 'free',
+                'audio_languages': ['japanese'],
+                'subtitle_languages': ['english', 'hindi']
+            },
+            {
+                'name': 'MX Player',
+                'is_free': True,
+                'url': 'https://www.mxplayer.in',
+                'direct_url': f"https://www.mxplayer.in/search?q={anime_data.get('title', '').replace(' ', '%20')}",
+                'logo': 'https://www.mxplayer.in/assets/images/logo.png',
+                'type': 'free',
+                'audio_languages': ['japanese', 'hindi'],
+                'subtitle_languages': ['english', 'hindi']
+            },
+            {
+                'name': 'Crunchyroll',
+                'is_free': False,
+                'url': 'https://www.crunchyroll.com',
+                'direct_url': f"https://www.crunchyroll.com/search?q={anime_data.get('title', '').replace(' ', '%20')}",
+                'logo': 'https://www.crunchyroll.com/img/header_logo.png',
+                'type': 'subscription',
+                'audio_languages': ['japanese'],
+                'subtitle_languages': ['english', 'spanish', 'portuguese']
+            }
+        ]
+        
+        # Add more platforms based on anime popularity or genre
+        if anime_data.get('score', 0) > 8.0:  # Popular anime
+            anime_platforms.append({
+                'name': 'Netflix',
+                'is_free': False,
+                'url': 'https://www.netflix.com',
+                'direct_url': f"https://www.netflix.com/search?q={anime_data.get('title', '').replace(' ', '%20')}",
+                'logo': 'https://assets.nflxext.com/us/ffe/siteui/common/icons/nficon2016.png',
+                'type': 'subscription',
+                'audio_languages': ['japanese', 'english'],
+                'subtitle_languages': ['english', 'hindi', 'spanish']
+            })
+        
+        return anime_platforms
+    
 # Recommendation Engine
 class RecommendationEngine:
     @staticmethod
@@ -1293,25 +1503,28 @@ def search_content():
                         }
                     })
         
-        # Add anime results (simplified OTT handling for anime)
+        # FIXED: Properly save anime results to database
         if anime_results:
             for anime in anime_results.get('data', []):
-                results.append({
-                    'id': f"anime_{anime['mal_id']}",
-                    'title': anime.get('title'),
-                    'content_type': 'anime',
-                    'genres': [genre['name'] for genre in anime.get('genres', [])],
-                    'rating': anime.get('score'),
-                    'release_date': anime.get('aired', {}).get('from'),
-                    'poster_path': anime.get('images', {}).get('jpg', {}).get('image_url'),
-                    'overview': anime.get('synopsis'),
-                    'ott_summary': {
-                        'has_free': True,  # Most anime available on free platforms
-                        'free_count': 1,
-                        'paid_count': 0,
-                        'top_platforms': ['YouTube', 'MX Player']
-                    }
-                })
+                # Save anime to database properly
+                content = ContentService.save_anime_content(anime)
+                if content:
+                    results.append({
+                        'id': content.id,  # Use database ID, not MAL ID
+                        'title': content.title,
+                        'content_type': 'anime',
+                        'genres': json.loads(content.genres or '[]'),
+                        'rating': content.rating,
+                        'release_date': content.release_date.isoformat() if content.release_date else None,
+                        'poster_path': content.poster_path,
+                        'overview': content.overview,
+                        'ott_summary': {
+                            'has_free': True,  # Most anime available on free platforms
+                            'free_count': 2,
+                            'paid_count': 1,
+                            'top_platforms': ['YouTube', 'MX Player', 'Crunchyroll']
+                        }
+                    })
         
         db.session.commit()
         
@@ -1348,7 +1561,7 @@ def get_content_details(content_id):
         
         # Get additional details from TMDB if available
         additional_details = None
-        if content.tmdb_id:
+        if content.tmdb_id and content.content_type != 'anime':
             additional_details = TMDBService.get_content_details(content.tmdb_id, content.content_type)
             
             # Update OTT platforms with latest data
@@ -1358,10 +1571,21 @@ def get_content_details(content_id):
                     content.ott_platforms = json.dumps(updated_ott)
                     content.updated_at = datetime.utcnow()
         
+        # For anime, get anime-specific details
+        elif content.content_type == 'anime':
+            # Try to get more anime details from Jikan if needed
+            try:
+                anime_details = requests.get(f"https://api.jikan.moe/v4/anime/{content.tmdb_id}", timeout=10)
+                if anime_details.status_code == 200:
+                    additional_details = anime_details.json().get('data', {})
+            except:
+                additional_details = {}
+        
         # Get YouTube trailers
         trailers = []
         if YOUTUBE_API_KEY:
-            youtube_results = YouTubeService.search_trailers(content.title)
+            search_query = f"{content.title} {'anime' if content.content_type == 'anime' else ''} trailer"
+            youtube_results = YouTubeService.search_trailers(search_query)
             if youtube_results:
                 for video in youtube_results.get('items', []):
                     trailers.append({
@@ -1373,16 +1597,17 @@ def get_content_details(content_id):
         
         # Get similar content
         similar_content = []
-        if additional_details and 'similar' in additional_details:
-            for item in additional_details['similar']['results'][:5]:
-                similar = ContentService.save_content_from_tmdb(item, content.content_type)
-                if similar:
-                    similar_content.append({
-                        'id': similar.id,
-                        'title': similar.title,
-                        'poster_path': f"https://image.tmdb.org/t/p/w300{similar.poster_path}" if similar.poster_path else None,
-                        'rating': similar.rating
-                    })
+        if additional_details and content.content_type != 'anime':
+            if 'similar' in additional_details:
+                for item in additional_details['similar']['results'][:5]:
+                    similar = ContentService.save_content_from_tmdb(item, content.content_type)
+                    if similar:
+                        similar_content.append({
+                            'id': similar.id,
+                            'title': similar.title,
+                            'poster_path': f"https://image.tmdb.org/t/p/w300{similar.poster_path}" if similar.poster_path else None,
+                            'rating': similar.rating
+                        })
         
         # Parse OTT platforms
         ott_platforms = []
@@ -1391,6 +1616,14 @@ def get_content_details(content_id):
                 ott_platforms = json.loads(content.ott_platforms)
             except:
                 ott_platforms = []
+        
+        # If no OTT platforms found, get fallback
+        if not ott_platforms:
+            tmdb_data = {'title': content.title, 'name': content.title}
+            ott_platforms = ContentService.get_fallback_ott_platforms(content.title, tmdb_data)
+            # Update content with fallback platforms
+            content.ott_platforms = json.dumps(ott_platforms)
+            content.updated_at = datetime.utcnow()
         
         # Group OTT platforms by type
         free_platforms = [p for p in ott_platforms if p.get('is_free')]
@@ -1416,10 +1649,16 @@ def get_content_details(content_id):
             'backdrop_path': f"https://image.tmdb.org/t/p/w1280{content.backdrop_path}" if content.backdrop_path else None,
             'trailers': trailers,
             'similar_content': similar_content,
-            'cast': additional_details.get('credits', {}).get('cast', [])[:10] if additional_details else [],
-            'crew': additional_details.get('credits', {}).get('crew', [])[:5] if additional_details else [],
+            'cast': additional_details.get('credits', {}).get('cast', [])[:10] if additional_details and content.content_type != 'anime' else [],
+            'crew': additional_details.get('credits', {}).get('crew', [])[:5] if additional_details and content.content_type != 'anime' else [],
             
-            # Enhanced OTT Information
+            # Enhanced OTT Information with direct links
+            'streaming_info': {
+                'available': len(ott_platforms) > 0,
+                'free_options': len(free_platforms),
+                'paid_options': len(paid_platforms),
+                'last_updated': content.updated_at.isoformat() if content.updated_at else None
+            },
             'ott_platforms': {
                 'free_platforms': free_platforms,
                 'paid_platforms': paid_platforms,
@@ -1429,7 +1668,7 @@ def get_content_details(content_id):
             # Direct sharing links
             'sharing': {
                 'telegram_channel': f"https://t.me/{TELEGRAM_CHANNEL_ID.replace('@', '').replace('-100', '')}",
-                'content_telegram_share': TelegramService.send_ott_availability(content.title, ott_platforms) if ott_platforms else None
+                'content_telegram_share': f"Watch {content.title} - Check our recommendations!"
             }
         }
         
@@ -1438,7 +1677,65 @@ def get_content_details(content_id):
     except Exception as e:
         logger.error(f"Content details error: {e}")
         return jsonify({'error': 'Failed to get content details'}), 500
-
+@app.route('/api/quick-search', methods=['GET'])
+def quick_search():
+    """Quick search with immediate OTT availability"""
+    try:
+        query = request.args.get('query', '')
+        if not query:
+            return jsonify({'error': 'Query required'}), 400
+        
+        # Search multiple sources quickly
+        results = []
+        
+        # Search TMDB
+        tmdb_results = TMDBService.search_content(query, 'multi', page=1)
+        if tmdb_results:
+            for item in tmdb_results.get('results', [])[:5]:  # Limit to 5 results
+                content_type = 'movie' if 'title' in item else 'tv'
+                title = item.get('title') or item.get('name', '')
+                
+                # Get quick OTT info
+                encoded_title = urllib.parse.quote(title.replace(' ', '+'))
+                quick_platforms = [
+                    {
+                        'name': 'YouTube',
+                        'direct_url': f"https://www.youtube.com/results?search_query={encoded_title}+full+movie",
+                        'is_free': True
+                    },
+                    {
+                        'name': 'Netflix',
+                        'direct_url': f"https://www.netflix.com/search?q={encoded_title}",
+                        'is_free': False
+                    },
+                    {
+                        'name': 'Prime Video',
+                        'direct_url': f"https://www.primevideo.com/search/ref=atv_nb_sr?phrase={encoded_title}",
+                        'is_free': False
+                    }
+                ]
+                
+                results.append({
+                    'title': title,
+                    'content_type': content_type,
+                    'poster_path': f"https://image.tmdb.org/t/p/w300{item['poster_path']}" if item.get('poster_path') else None,
+                    'rating': item.get('vote_average'),
+                    'release_date': item.get('release_date') or item.get('first_air_date'),
+                    'overview': item.get('overview', '')[:150] + '...',
+                    'quick_watch_links': quick_platforms,
+                    'tmdb_id': item['id']
+                })
+        
+        return jsonify({
+            'results': results,
+            'query': query,
+            'total_found': len(results)
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Quick search error: {e}")
+        return jsonify({'error': 'Search failed'}), 500
+    
 # New endpoint for getting OTT availability
 @app.route('/api/content/<int:content_id>/ott', methods=['GET'])
 def get_ott_availability_endpoint(content_id):
