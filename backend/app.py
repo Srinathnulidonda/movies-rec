@@ -47,7 +47,7 @@ TELEGRAM_CHANNEL_ID = os.environ.get('TELEGRAM_CHANNEL_ID', '-1002850793757')
 ML_SERVICE_URL = os.environ.get('ML_SERVICE_URL', 'https://movies-rec-xmf5.onrender.com')
 
 # New API Keys for Streaming Availability
-WATCHMODE_API_KEY = os.environ.get('WATCHMODE_API_KEY', 'your_watchmode_api_key')
+WATCHMODE_API_KEY = os.environ.get('WATCHMODE_API_KEY', 'WtcKDji9i20pjOl5Lg0AiyG2bddfUs3nSZRZJIsY')
 RAPIDAPI_KEY = "c50f156591mshac38b14b2f02d6fp1da925jsn4b816e4dae37"
 RAPIDAPI_HOST = "streaming-availability.p.rapidapi.com"
 
