@@ -919,6 +919,7 @@ class AnonymousRecommendationEngine:
             return []
 
 # Enhanced Telegram Service
+# Enhanced Telegram Service
 class TelegramService:
     @staticmethod
     def send_admin_recommendation(content, admin_name, description):
@@ -943,37 +944,8 @@ class TelegramService:
                 else:
                     poster_url = f"https://image.tmdb.org/t/p/w500{content.poster_path}"
             
-            # Get streaming links
-            streaming_links = []
-            if content.streaming_links:
-                try:
-                    streaming_data = json.loads(content.streaming_links)
-                    
-                    # Add free platforms
-                    for platform in streaming_data.get('free_platforms', []):
-                        if platform.get('url'):
-                            streaming_links.append(f"🆓 {platform['name']}: {platform['url']}")
-                    
-                    # Add paid platforms
-                    for platform in streaming_data.get('paid_platforms', []):
-                        if platform.get('url'):
-                            streaming_links.append(f"💰 {platform['name']}: {platform['url']}")
-                    
-                    # Add language-specific links
-                    for lang, platforms in streaming_data.get('language_specific_links', {}).items():
-                        for platform in platforms:
-                            if platform.get('url'):
-                                streaming_links.append(f"🎭 {platform['name']} ({lang.upper()}): {platform['url']}")
-                
-                except Exception as e:
-                    logger.error(f"Error parsing streaming links: {e}")
-            
-            # Format streaming links for message
-            streaming_text = ""
-            if streaming_links:
-                streaming_text = "\n\n🎬 **Watch Now:**\n" + "\n".join(streaming_links[:8])  # Limit to 8 links
-                if len(streaming_links) > 8:
-                    streaming_text += f"\n... and {len(streaming_links) - 8} more platforms"
+            # Get and format streaming links
+            streaming_text = TelegramService._format_streaming_links(content)
             
             # Create message
             message = f"""🎬 **Admin's Choice** by {admin_name}
@@ -1001,13 +973,251 @@ class TelegramService:
                     )
                 except Exception as photo_error:
                     logger.error(f"Failed to send photo, sending text only: {photo_error}")
-                    bot.send_message(TELEGRAM_CHANNEL_ID, message, parse_mode='Markdown')
+                    # Try without markdown if it fails
+                    try:
+                        bot.send_message(TELEGRAM_CHANNEL_ID, message, parse_mode='Markdown')
+                    except:
+                        # Send as plain text if markdown fails
+                        plain_message = TelegramService._convert_to_plain_text(message)
+                        bot.send_message(TELEGRAM_CHANNEL_ID, plain_message)
             else:
-                bot.send_message(TELEGRAM_CHANNEL_ID, message, parse_mode='Markdown')
+                try:
+                    bot.send_message(TELEGRAM_CHANNEL_ID, message, parse_mode='Markdown')
+                except:
+                    # Send as plain text if markdown fails
+                    plain_message = TelegramService._convert_to_plain_text(message)
+                    bot.send_message(TELEGRAM_CHANNEL_ID, plain_message)
             
             return True
         except Exception as e:
             logger.error(f"Telegram send error: {e}")
+            return False
+    
+    @staticmethod
+    def _format_streaming_links(content):
+        """Format streaming links for Telegram message"""
+        streaming_text = ""
+        
+        if not content.streaming_links:
+            return streaming_text
+        
+        try:
+            streaming_data = json.loads(content.streaming_links)
+            
+            # Collect all streaming links
+            free_links = []
+            paid_links = []
+            language_links = {}
+            
+            # Process free platforms
+            for platform in streaming_data.get('free_platforms', []):
+                if platform.get('url') and platform.get('name'):
+                    link_text = f"[{platform['name']}]({platform['url']})"
+                    free_links.append(link_text)
+            
+            # Process paid platforms
+            for platform in streaming_data.get('paid_platforms', []):
+                if platform.get('url') and platform.get('name'):
+                    link_text = f"[{platform['name']}]({platform['url']})"
+                    paid_links.append(link_text)
+            
+            # Process language-specific links
+            for lang, platforms in streaming_data.get('language_specific_links', {}).items():
+                lang_links = []
+                for platform in platforms:
+                    if platform.get('url') and platform.get('name'):
+                        link_text = f"[{platform['name']}]({platform['url']})"
+                        if link_text not in lang_links:
+                            lang_links.append(link_text)
+                
+                if lang_links:
+                    language_links[lang.upper()] = lang_links
+            
+            # Process direct links as fallback
+            direct_links = []
+            for link in streaming_data.get('direct_links', []):
+                if link.get('url') and link.get('platform'):
+                    platform_name = link['platform'].replace('_', ' ').title()
+                    language_info = f" ({link['language']})" if link.get('language') and link['language'] != 'N/A' else ""
+                    link_text = f"[{platform_name}{language_info}]({link['url']})"
+                    direct_links.append(link_text)
+            
+            # Build streaming text
+            if free_links or paid_links or language_links or direct_links:
+                streaming_text = "\n\n🎬 **WATCH NOW:**"
+                
+                # Add free platforms
+                if free_links:
+                    streaming_text += f"\n\n🆓 **FREE:**\n" + " • ".join(free_links[:4])
+                    if len(free_links) > 4:
+                        streaming_text += f" • +{len(free_links) - 4} more"
+                
+                # Add paid platforms
+                if paid_links:
+                    streaming_text += f"\n\n💰 **SUBSCRIPTION:**\n" + " • ".join(paid_links[:4])
+                    if len(paid_links) > 4:
+                        streaming_text += f" • +{len(paid_links) - 4} more"
+                
+                # Add language-specific links
+                if language_links:
+                    streaming_text += "\n\n🎭 **BY LANGUAGE:**"
+                    for lang, links in list(language_links.items())[:3]:  # Limit to 3 languages
+                        streaming_text += f"\n**{lang}:** " + " • ".join(links[:3])
+                        if len(links) > 3:
+                            streaming_text += f" • +{len(links) - 3} more"
+                
+                # Add direct links if no categorized links available
+                if not free_links and not paid_links and direct_links:
+                    streaming_text += f"\n\n📺 **PLATFORMS:**\n" + " • ".join(direct_links[:6])
+                    if len(direct_links) > 6:
+                        streaming_text += f" • +{len(direct_links) - 6} more"
+                
+                # Add note about links
+                streaming_text += "\n\n💡 *Click links to watch directly*"
+        
+        except Exception as e:
+            logger.error(f"Error formatting streaming links: {e}")
+        
+        return streaming_text
+    
+    @staticmethod
+    def _convert_to_plain_text(markdown_message):
+        """Convert markdown message to plain text as fallback"""
+        import re
+        
+        # Remove markdown formatting
+        plain_text = re.sub(r'\*\*(.*?)\*\*', r'\1', markdown_message)  # Bold
+        plain_text = re.sub(r'\*(.*?)\*', r'\1', plain_text)  # Italic
+        plain_text = re.sub(r'\[(.*?)\]\((.*?)\)', r'\1: \2', plain_text)  # Links
+        plain_text = re.sub(r'`(.*?)`', r'\1', plain_text)  # Code
+        
+        return plain_text
+    
+    @staticmethod
+    def send_trending_update(trending_content, limit=5):
+        """Send trending content update to Telegram channel"""
+        try:
+            if not bot or not TELEGRAM_CHANNEL_ID:
+                logger.warning("Telegram bot or channel ID not configured")
+                return False
+            
+            message = "🔥 **TRENDING NOW** 🔥\n\n"
+            
+            for i, content in enumerate(trending_content[:limit], 1):
+                genres = []
+                if content.genres:
+                    try:
+                        genres = json.loads(content.genres)[:2]  # Limit to 2 genres
+                    except:
+                        pass
+                
+                genre_text = f" | {', '.join(genres)}" if genres else ""
+                rating_text = f" ⭐ {content.rating}" if content.rating else ""
+                
+                message += f"{i}. **{content.title}**{genre_text}{rating_text}\n"
+                
+                # Add top streaming link if available
+                if content.streaming_links:
+                    try:
+                        streaming_data = json.loads(content.streaming_links)
+                        
+                        # Get first available link
+                        first_link = None
+                        if streaming_data.get('free_platforms'):
+                            platform = streaming_data['free_platforms'][0]
+                            first_link = f"🆓 [{platform['name']}]({platform['url']})"
+                        elif streaming_data.get('paid_platforms'):
+                            platform = streaming_data['paid_platforms'][0]
+                            first_link = f"💰 [{platform['name']}]({platform['url']})"
+                        elif streaming_data.get('direct_links'):
+                            link = streaming_data['direct_links'][0]
+                            platform_name = link['platform'].replace('_', ' ').title()
+                            first_link = f"📺 [{platform_name}]({link['url']})"
+                        
+                        if first_link:
+                            message += f"   {first_link}\n"
+                    except:
+                        pass
+                
+                message += "\n"
+            
+            message += "#Trending #Movies #TVShows #CineScope"
+            
+            try:
+                bot.send_message(TELEGRAM_CHANNEL_ID, message, parse_mode='Markdown')
+                return True
+            except:
+                # Fallback to plain text
+                plain_message = TelegramService._convert_to_plain_text(message)
+                bot.send_message(TELEGRAM_CHANNEL_ID, plain_message)
+                return True
+                
+        except Exception as e:
+            logger.error(f"Trending update send error: {e}")
+            return False
+    
+    @staticmethod
+    def send_new_content_alert(content):
+        """Send alert for new content addition"""
+        try:
+            if not bot or not TELEGRAM_CHANNEL_ID:
+                logger.warning("Telegram bot or channel ID not configured")
+                return False
+            
+            # Get streaming info
+            streaming_text = TelegramService._format_streaming_links(content)
+            
+            # Create poster URL
+            poster_url = None
+            if content.poster_path:
+                if content.poster_path.startswith('http'):
+                    poster_url = content.poster_path
+                else:
+                    poster_url = f"https://image.tmdb.org/t/p/w500{content.poster_path}"
+            
+            # Format genres
+            genres_list = []
+            if content.genres:
+                try:
+                    genres_list = json.loads(content.genres)
+                except:
+                    genres_list = []
+            
+            message = f"""🆕 **NEW ADDITION**
+
+**{content.title}**
+⭐ Rating: {content.rating or 'N/A'}/10
+🎭 Genres: {', '.join(genres_list[:3]) if genres_list else 'N/A'}
+🎬 Type: {content.content_type.upper()}
+
+📖 {(content.overview[:150] + '...') if content.overview else 'No synopsis available'}{streaming_text}
+
+#NewContent #CineScope"""
+            
+            if poster_url:
+                try:
+                    bot.send_photo(
+                        chat_id=TELEGRAM_CHANNEL_ID,
+                        photo=poster_url,
+                        caption=message,
+                        parse_mode='Markdown'
+                    )
+                except:
+                    try:
+                        bot.send_message(TELEGRAM_CHANNEL_ID, message, parse_mode='Markdown')
+                    except:
+                        plain_message = TelegramService._convert_to_plain_text(message)
+                        bot.send_message(TELEGRAM_CHANNEL_ID, plain_message)
+            else:
+                try:
+                    bot.send_message(TELEGRAM_CHANNEL_ID, message, parse_mode='Markdown')
+                except:
+                    plain_message = TelegramService._convert_to_plain_text(message)
+                    bot.send_message(TELEGRAM_CHANNEL_ID, plain_message)
+            
+            return True
+        except Exception as e:
+            logger.error(f"New content alert error: {e}")
             return False
 
 # API Routes
