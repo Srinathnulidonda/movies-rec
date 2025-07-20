@@ -23,10 +23,8 @@ app.secret_key = os.environ.get('SECRET_KEY', 'your-secret-key-change-in-product
 
 # Database configuration
 if os.environ.get('DATABASE_URL'):
-    # Production - PostgreSQL on Render
     app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL').replace('postgres://', 'postgresql://')
 else:
-    # Local development - SQLite
     app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///movie_recommendations.db'
 
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
@@ -35,7 +33,7 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 CORS(app)
 
-# API Keys - Set these in your environment
+# API Keys
 TMDB_API_KEY = os.environ.get('TMDB_API_KEY', '1cf86635f20bb2aff8e70940e7c3ddd5')
 OMDB_API_KEY = os.environ.get('OMDB_API_KEY', '52260795')
 YOUTUBE_API_KEY = os.environ.get('YOUTUBE_API_KEY', 'AIzaSyDU-JLASTdIdoLOmlpWuJYLTZDUspqw2T4')
@@ -49,13 +47,9 @@ RAPIDAPI_KEY = os.environ.get('RAPIDAPI_KEY', 'c50f156591mshac38b14b2f02d6fp1da9
 RAPIDAPI_HOST = 'streaming-availability.p.rapidapi.com'
 
 # Initialize Telegram bot
-if TELEGRAM_BOT_TOKEN and TELEGRAM_BOT_TOKEN != 'your_telegram_bot_token':
-    try:
-        bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
-    except:
-        bot = None
-        logging.warning("Failed to initialize Telegram bot")
-else:
+try:
+    bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN) if TELEGRAM_BOT_TOKEN else None
+except:
     bot = None
 
 # Configure logging
@@ -69,8 +63,8 @@ class User(db.Model):
     email = db.Column(db.String(120), unique=True, nullable=False)
     password_hash = db.Column(db.String(255), nullable=False)
     is_admin = db.Column(db.Boolean, default=False)
-    preferred_languages = db.Column(db.Text)  # JSON string
-    preferred_genres = db.Column(db.Text)  # JSON string
+    preferred_languages = db.Column(db.Text)
+    preferred_genres = db.Column(db.Text)
     location = db.Column(db.String(100))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     last_active = db.Column(db.DateTime, default=datetime.utcnow)
@@ -81,9 +75,9 @@ class Content(db.Model):
     imdb_id = db.Column(db.String(20))
     title = db.Column(db.String(255), nullable=False)
     original_title = db.Column(db.String(255))
-    content_type = db.Column(db.String(20), nullable=False)  # movie, tv, anime
-    genres = db.Column(db.Text)  # JSON string
-    languages = db.Column(db.Text)  # JSON string
+    content_type = db.Column(db.String(20), nullable=False)
+    genres = db.Column(db.Text)
+    languages = db.Column(db.Text)
     release_date = db.Column(db.Date)
     runtime = db.Column(db.Integer)
     rating = db.Column(db.Float)
@@ -93,7 +87,7 @@ class Content(db.Model):
     poster_path = db.Column(db.String(255))
     backdrop_path = db.Column(db.String(255))
     trailer_url = db.Column(db.String(255))
-    ott_platforms = db.Column(db.Text)  # JSON string with direct links
+    ott_platforms = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -101,7 +95,7 @@ class UserInteraction(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     content_id = db.Column(db.Integer, db.ForeignKey('content.id'), nullable=False)
-    interaction_type = db.Column(db.String(20), nullable=False)  # view, like, favorite, watchlist, search
+    interaction_type = db.Column(db.String(20), nullable=False)
     rating = db.Column(db.Float)
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
 
@@ -109,7 +103,7 @@ class AdminRecommendation(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     content_id = db.Column(db.Integer, db.ForeignKey('content.id'), nullable=False)
     admin_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    recommendation_type = db.Column(db.String(50))  # trending, popular, critics_choice, admin_choice
+    recommendation_type = db.Column(db.String(50))
     description = db.Column(db.Text)
     is_active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
@@ -121,6 +115,82 @@ class AnonymousInteraction(db.Model):
     interaction_type = db.Column(db.String(20), nullable=False)
     ip_address = db.Column(db.String(45))
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+
+# Known OTT Platforms with direct watch capabilities
+KNOWN_OTT_PLATFORMS = {
+    'netflix': {
+        'name': 'Netflix',
+        'base_url': 'https://www.netflix.com',
+        'watch_url': 'https://www.netflix.com/watch/{content_id}',
+        'search_url': 'https://www.netflix.com/search?q={query}',
+        'is_free': False,
+        'regions': ['IN', 'US', 'UK'],
+        'languages': ['hindi', 'english', 'tamil', 'telugu']
+    },
+    'prime': {
+        'name': 'Amazon Prime Video',
+        'base_url': 'https://www.primevideo.com',
+        'watch_url': 'https://www.primevideo.com/detail/{content_id}',
+        'search_url': 'https://www.primevideo.com/search/ref=atv_nb_sr?phrase={query}',
+        'is_free': False,
+        'regions': ['IN', 'US', 'UK'],
+        'languages': ['hindi', 'english', 'tamil', 'telugu', 'kannada', 'malayalam']
+    },
+    'hotstar': {
+        'name': 'Disney+ Hotstar',
+        'base_url': 'https://www.hotstar.com',
+        'watch_url': 'https://www.hotstar.com/{country}/movies/{slug}/{content_id}',
+        'search_url': 'https://www.hotstar.com/in/search?q={query}',
+        'is_free': False,
+        'regions': ['IN'],
+        'languages': ['hindi', 'english', 'tamil', 'telugu', 'kannada', 'malayalam', 'bengali']
+    },
+    'jiocinema': {
+        'name': 'JioCinema',
+        'base_url': 'https://www.jiocinema.com',
+        'watch_url': 'https://www.jiocinema.com/movies/{slug}/{content_id}',
+        'search_url': 'https://www.jiocinema.com/search/{query}',
+        'is_free': True,
+        'regions': ['IN'],
+        'languages': ['hindi', 'english', 'tamil', 'telugu', 'kannada', 'malayalam']
+    },
+    'zee5': {
+        'name': 'ZEE5',
+        'base_url': 'https://www.zee5.com',
+        'watch_url': 'https://www.zee5.com/movies/details/{slug}/{content_id}',
+        'search_url': 'https://www.zee5.com/search?q={query}',
+        'is_free': False,
+        'regions': ['IN'],
+        'languages': ['hindi', 'english', 'tamil', 'telugu', 'kannada', 'malayalam', 'bengali']
+    },
+    'sonyliv': {
+        'name': 'SonyLIV',
+        'base_url': 'https://www.sonyliv.com',
+        'watch_url': 'https://www.sonyliv.com/movies/{slug}/{content_id}',
+        'search_url': 'https://www.sonyliv.com/search?q={query}',
+        'is_free': False,
+        'regions': ['IN'],
+        'languages': ['hindi', 'english', 'tamil', 'telugu', 'kannada', 'malayalam']
+    },
+    'mxplayer': {
+        'name': 'MX Player',
+        'base_url': 'https://www.mxplayer.in',
+        'watch_url': 'https://www.mxplayer.in/movie/{slug}/{content_id}',
+        'search_url': 'https://www.mxplayer.in/search?q={query}',
+        'is_free': True,
+        'regions': ['IN'],
+        'languages': ['hindi', 'english', 'tamil', 'telugu', 'kannada', 'malayalam']
+    },
+    'youtube': {
+        'name': 'YouTube',
+        'base_url': 'https://www.youtube.com',
+        'watch_url': 'https://www.youtube.com/watch?v={content_id}',
+        'search_url': 'https://www.youtube.com/results?search_query={query}',
+        'is_free': True,
+        'regions': ['GLOBAL'],
+        'languages': ['hindi', 'english', 'tamil', 'telugu', 'kannada', 'malayalam']
+    }
+}
 
 # Helper Functions
 def require_auth(f):
@@ -166,24 +236,6 @@ def get_session_id():
         session['session_id'] = hashlib.md5(f"{request.remote_addr}{time.time()}".encode()).hexdigest()
     return session['session_id']
 
-def get_user_location(ip_address):
-    try:
-        # Simple IP-based location detection
-        response = requests.get(f'http://ip-api.com/json/{ip_address}', timeout=5)
-        if response.status_code == 200:
-            data = response.json()
-            if data['status'] == 'success':
-                return {
-                    'country': data.get('country'),
-                    'region': data.get('regionName'),
-                    'city': data.get('city'),
-                    'lat': data.get('lat'),
-                    'lon': data.get('lon')
-                }
-    except:
-        pass
-    return None
-
 # Enhanced OTT Availability Services
 class WatchModeService:
     BASE_URL = 'https://api.watchmode.com/v1'
@@ -192,6 +244,7 @@ class WatchModeService:
     def search_title(title, title_type='movie'):
         """Search for content on WatchMode"""
         try:
+            logger.info(f"WatchMode: Searching for '{title}'")
             url = f"{WatchModeService.BASE_URL}/search/"
             params = {
                 'apiKey': WATCHMODE_API_KEY,
@@ -201,8 +254,14 @@ class WatchModeService:
             }
             
             response = requests.get(url, params=params, timeout=10)
+            logger.info(f"WatchMode search response status: {response.status_code}")
+            
             if response.status_code == 200:
-                return response.json()
+                data = response.json()
+                logger.info(f"WatchMode found {len(data.get('title_results', []))} results")
+                return data
+            else:
+                logger.error(f"WatchMode API error: {response.status_code} - {response.text}")
         except Exception as e:
             logger.error(f"WatchMode search error: {e}")
         return None
@@ -211,15 +270,22 @@ class WatchModeService:
     def get_title_sources(watchmode_id):
         """Get streaming sources for a title"""
         try:
+            logger.info(f"WatchMode: Getting sources for ID {watchmode_id}")
             url = f"{WatchModeService.BASE_URL}/title/{watchmode_id}/sources/"
             params = {
                 'apiKey': WATCHMODE_API_KEY,
-                'regions': 'IN,US'  # India and US regions
+                'regions': 'IN,US'
             }
             
             response = requests.get(url, params=params, timeout=10)
+            logger.info(f"WatchMode sources response status: {response.status_code}")
+            
             if response.status_code == 200:
-                return response.json()
+                data = response.json()
+                logger.info(f"WatchMode found {len(data)} sources")
+                return data
+            else:
+                logger.error(f"WatchMode sources error: {response.status_code}")
         except Exception as e:
             logger.error(f"WatchMode sources error: {e}")
         return None
@@ -228,10 +294,11 @@ class StreamingAvailabilityService:
     BASE_URL = 'https://streaming-availability.p.rapidapi.com'
     
     @staticmethod
-    def search_title(title, country='in'):
-        """Search for content on Streaming Availability API"""
+    def search_by_title(title, country='in'):
+        """Search for content using the updated API endpoint"""
         try:
-            url = f"{StreamingAvailabilityService.BASE_URL}/v2/search/title"
+            logger.info(f"StreamingAvailability: Searching for '{title}' in {country}")
+            url = f"{StreamingAvailabilityService.BASE_URL}/shows/search/title"
             headers = {
                 'X-RapidAPI-Key': RAPIDAPI_KEY,
                 'X-RapidAPI-Host': RAPIDAPI_HOST
@@ -239,37 +306,21 @@ class StreamingAvailabilityService:
             params = {
                 'title': title,
                 'country': country,
-                'show_type': 'all',
+                'series_granularity': 'show',
                 'output_language': 'en'
             }
             
             response = requests.get(url, headers=headers, params=params, timeout=10)
-            if response.status_code == 200:
-                return response.json()
-        except Exception as e:
-            logger.error(f"Streaming Availability search error: {e}")
-        return None
-    
-    @staticmethod
-    def get_title_details(imdb_id, country='in'):
-        """Get detailed streaming info by IMDB ID"""
-        try:
-            url = f"{StreamingAvailabilityService.BASE_URL}/v2/get/basic"
-            headers = {
-                'X-RapidAPI-Key': RAPIDAPI_KEY,
-                'X-RapidAPI-Host': RAPIDAPI_HOST
-            }
-            params = {
-                'country': country,
-                'imdb_id': imdb_id,
-                'output_language': 'en'
-            }
+            logger.info(f"StreamingAvailability response status: {response.status_code}")
             
-            response = requests.get(url, headers=headers, params=params, timeout=10)
             if response.status_code == 200:
-                return response.json()
+                data = response.json()
+                logger.info(f"StreamingAvailability found results")
+                return data
+            else:
+                logger.error(f"StreamingAvailability error: {response.status_code} - {response.text}")
         except Exception as e:
-            logger.error(f"Streaming Availability details error: {e}")
+            logger.error(f"StreamingAvailability search error: {e}")
         return None
 
 # External API Services
@@ -283,7 +334,8 @@ class TMDBService:
             'api_key': TMDB_API_KEY,
             'query': query,
             'language': language,
-            'page': page
+            'page': page,
+            'include_adult': False
         }
         
         try:
@@ -308,6 +360,22 @@ class TMDBService:
                 return response.json()
         except Exception as e:
             logger.error(f"TMDB details error: {e}")
+        return None
+    
+    @staticmethod
+    def get_watch_providers(content_id, content_type='movie'):
+        """Get watch providers from TMDB"""
+        url = f"{TMDBService.BASE_URL}/{content_type}/{content_id}/watch/providers"
+        params = {
+            'api_key': TMDB_API_KEY
+        }
+        
+        try:
+            response = requests.get(url, params=params, timeout=10)
+            if response.status_code == 200:
+                return response.json()
+        except Exception as e:
+            logger.error(f"TMDB watch providers error: {e}")
         return None
     
     @staticmethod
@@ -344,25 +412,6 @@ class TMDBService:
             logger.error(f"TMDB popular error: {e}")
         return None
 
-class OMDbService:
-    BASE_URL = 'http://www.omdbapi.com/'
-    
-    @staticmethod
-    def get_content_by_imdb(imdb_id):
-        params = {
-            'apikey': OMDB_API_KEY,
-            'i': imdb_id,
-            'plot': 'full'
-        }
-        
-        try:
-            response = requests.get(OMDbService.BASE_URL, params=params, timeout=10)
-            if response.status_code == 200:
-                return response.json()
-        except Exception as e:
-            logger.error(f"OMDb error: {e}")
-        return None
-
 class JikanService:
     BASE_URL = 'https://api.jikan.moe/v4'
     
@@ -372,7 +421,8 @@ class JikanService:
         params = {
             'q': query,
             'page': page,
-            'limit': 20
+            'limit': 20,
+            'sfw': True
         }
         
         try:
@@ -388,7 +438,8 @@ class JikanService:
         url = f"{JikanService.BASE_URL}/top/anime"
         params = {
             'type': type,
-            'page': page
+            'page': page,
+            'sfw': True
         }
         
         try:
@@ -407,10 +458,11 @@ class YouTubeService:
         url = f"{YouTubeService.BASE_URL}/search"
         params = {
             'key': YOUTUBE_API_KEY,
-            'q': f"{query} trailer",
+            'q': f"{query} official trailer",
             'part': 'snippet',
             'type': 'video',
-            'maxResults': 5
+            'maxResults': 5,
+            'videoDefinition': 'high'
         }
         
         try:
@@ -454,6 +506,8 @@ class ContentService:
             imdb_id = None
             if 'external_ids' in tmdb_data:
                 imdb_id = tmdb_data['external_ids'].get('imdb_id')
+            elif 'imdb_id' in tmdb_data:
+                imdb_id = tmdb_data['imdb_id']
             
             # Get OTT platforms with direct links
             ott_platforms = ContentService.get_ott_availability(tmdb_data, imdb_id)
@@ -489,7 +543,6 @@ class ContentService:
     
     @staticmethod
     def map_genre_ids(genre_ids):
-        # TMDB Genre ID mapping
         genre_map = {
             28: 'Action', 12: 'Adventure', 16: 'Animation', 35: 'Comedy',
             80: 'Crime', 99: 'Documentary', 18: 'Drama', 10751: 'Family',
@@ -501,212 +554,333 @@ class ContentService:
     
     @staticmethod
     def get_ott_availability(tmdb_data, imdb_id=None):
-        """Get real OTT availability using multiple APIs with direct links only when available"""
+        """Get OTT availability with multiple fallback methods"""
         platforms = []
         title = tmdb_data.get('title') or tmdb_data.get('name', '')
+        content_type = 'movie' if tmdb_data.get('title') else 'tv'
+        
+        logger.info(f"Getting OTT availability for: {title}")
         
         try:
-            # Try WatchMode API first
-            watchmode_results = WatchModeService.search_title(title)
-            if watchmode_results and watchmode_results.get('title_results'):
-                first_result = watchmode_results['title_results'][0]
-                watchmode_id = first_result.get('id')
-                
-                if watchmode_id:
-                    sources = WatchModeService.get_title_sources(watchmode_id)
-                    if sources:
-                        platforms.extend(ContentService.parse_watchmode_sources(sources))
+            # Method 1: Try TMDB Watch Providers
+            if 'watch/providers' in tmdb_data and tmdb_data['watch/providers'].get('results'):
+                tmdb_platforms = ContentService.parse_tmdb_providers(tmdb_data['watch/providers']['results'])
+                if tmdb_platforms:
+                    platforms.extend(tmdb_platforms)
+                    logger.info(f"Found {len(tmdb_platforms)} platforms from TMDB")
             
-            # Try Streaming Availability API
-            if imdb_id:
-                streaming_data = StreamingAvailabilityService.get_title_details(imdb_id)
+            # Method 2: Try WatchMode API
+            if WATCHMODE_API_KEY and not platforms:
+                watchmode_results = WatchModeService.search_title(title, content_type)
+                if watchmode_results and watchmode_results.get('title_results'):
+                    first_result = watchmode_results['title_results'][0]
+                    watchmode_id = first_result.get('id')
+                    
+                    if watchmode_id:
+                        sources = WatchModeService.get_title_sources(watchmode_id)
+                        if sources:
+                            watchmode_platforms = ContentService.parse_watchmode_sources(sources)
+                            platforms.extend(watchmode_platforms)
+                            logger.info(f"Found {len(watchmode_platforms)} platforms from WatchMode")
+            
+            # Method 3: Try Streaming Availability API
+            if RAPIDAPI_KEY and not platforms:
+                streaming_data = StreamingAvailabilityService.search_by_title(title)
                 if streaming_data:
-                    platforms.extend(ContentService.parse_streaming_availability(streaming_data))
+                    streaming_platforms = ContentService.parse_streaming_availability(streaming_data)
+                    platforms.extend(streaming_platforms)
+                    logger.info(f"Found {len(streaming_platforms)} platforms from StreamingAvailability")
             
-            # If no results from APIs, try search by title
+            # Method 4: Use known platforms based on content metadata
             if not platforms:
-                streaming_search = StreamingAvailabilityService.search_title(title)
-                if streaming_search and streaming_search.get('result'):
-                    for result in streaming_search['result'][:1]:  # Take first result
-                        platforms.extend(ContentService.parse_streaming_availability(result))
+                logger.info("No API results, using intelligent platform matching")
+                platforms = ContentService.get_intelligent_platform_suggestions(tmdb_data)
             
-            # Remove duplicates and validate direct links
-            unique_platforms = ContentService.deduplicate_and_validate_platforms(platforms)
+            # Deduplicate and validate platforms
+            unique_platforms = ContentService.deduplicate_platforms(platforms)
             
+            logger.info(f"Total unique platforms found: {len(unique_platforms)}")
             return unique_platforms
             
         except Exception as e:
             logger.error(f"Error getting OTT availability: {e}")
-            # Return empty list if API fails (no fallback with non-working links)
-            return []   
+            # Return intelligent suggestions on error
+            return ContentService.get_intelligent_platform_suggestions(tmdb_data)
+    
+    @staticmethod
+    def parse_tmdb_providers(providers_data):
+        """Parse TMDB watch providers"""
+        platforms = []
+        
+        # Check for India first, then US
+        for region in ['IN', 'US']:
+            if region in providers_data:
+                region_data = providers_data[region]
+                
+                # Parse different types of availability
+                for availability_type in ['flatrate', 'rent', 'buy', 'free']:
+                    if availability_type in region_data:
+                        for provider in region_data[availability_type]:
+                            platform_key = ContentService.map_tmdb_provider_to_key(provider['provider_name'])
+                            if platform_key and platform_key in KNOWN_OTT_PLATFORMS:
+                                platform_info = KNOWN_OTT_PLATFORMS[platform_key].copy()
+                                platform_info.update({
+                                    'availability_type': availability_type,
+                                    'region': region,
+                                    'logo_path': f"https://image.tmdb.org/t/p/original{provider.get('logo_path')}" if provider.get('logo_path') else None,
+                                    'display_priority': provider.get('display_priority', 999)
+                                })
+                                platforms.append(platform_info)
+        
+        return platforms
+    
+    @staticmethod
+    def map_tmdb_provider_to_key(provider_name):
+        """Map TMDB provider names to our platform keys"""
+        provider_map = {
+            'Netflix': 'netflix',
+            'Amazon Prime Video': 'prime',
+            'Disney Plus': 'hotstar',
+            'Hotstar': 'hotstar',
+            'Zee5': 'zee5',
+            'SonyLIV': 'sonyliv',
+            'Jio Cinema': 'jiocinema',
+            'MX Player': 'mxplayer',
+            'YouTube': 'youtube'
+        }
+        
+        for key, value in provider_map.items():
+            if key.lower() in provider_name.lower():
+                return value
+        return None
     
     @staticmethod
     def parse_watchmode_sources(sources_data):
-        """Parse WatchMode API response to extract platform information with validated links"""
+        """Parse WatchMode API response"""
         platforms = []
         
-        # WatchMode source ID to platform mapping
-        watchmode_platform_map = {
-            203: {'key': 'netflix', 'name': 'Netflix'},
-            26: {'key': 'amazon_prime', 'name': 'Amazon Prime Video'},
-            372: {'key': 'disney_plus_hotstar', 'name': 'Disney+ Hotstar'},
-            457: {'key': 'zee5', 'name': 'ZEE5'},
-            237: {'key': 'youtube', 'name': 'YouTube'},
-            1899: {'key': 'mx_player', 'name': 'MX Player'},
-            1971: {'key': 'jiocinema', 'name': 'JioCinema'},
-            444: {'key': 'sonyliv', 'name': 'SonyLIV'},
-            584: {'key': 'voot', 'name': 'Voot'},
+        watchmode_source_map = {
+            203: 'netflix',
+            26: 'prime',
+            372: 'hotstar',
+            457: 'zee5',
+            444: 'sonyliv',
+            1899: 'mxplayer',
+            1971: 'jiocinema',
+            237: 'youtube'
         }
         
-        try:
-            for source in sources_data:
-                source_id = source.get('source_id')
-                platform_info = watchmode_platform_map.get(source_id)
-                
-                if platform_info and source.get('web_url'):
-                    platform_data = {
-                        'name': platform_info['name'],
-                        'key': platform_info['key'],
-                        'is_free': source.get('type') == 'free' or source.get('price') == 0,
-                        'direct_url': source['web_url'],
-                        'type': source.get('type', 'subscription'),
-                        'price': source.get('price'),
-                        'quality': source.get('format', 'HD'),
-                        'region': source.get('region', 'IN'),
-                        'verified': True  # WatchMode provides verified links
-                    }
+        for source in sources_data:
+            source_id = source.get('source_id')
+            if source_id in watchmode_source_map:
+                platform_key = watchmode_source_map[source_id]
+                if platform_key in KNOWN_OTT_PLATFORMS:
+                    platform_info = KNOWN_OTT_PLATFORMS[platform_key].copy()
                     
-                    # Add audio languages if available
-                    if source.get('audio_languages'):
-                        platform_data['audio_languages'] = source['audio_languages']
-                        # Add language-specific links if available
-                        if source.get('episodes_with_audio'):
-                            platform_data['audio_links'] = []
-                            for lang, link in source['episodes_with_audio'].items():
-                                platform_data['audio_links'].append({
-                                    'language': lang,
-                                    'direct_url': link
-                                })
+                    if source.get('web_url'):
+                        platform_info['direct_url'] = source['web_url']
+                        platform_info['verified'] = True
                     
-                    platforms.append(platform_data)
+                    platform_info['price'] = source.get('price', 0)
+                    platform_info['format'] = source.get('format', 'HD')
+                    platform_info['type'] = source.get('type', 'subscription')
                     
-        except Exception as e:
-            logger.error(f"Error parsing WatchMode sources: {e}")
+                    platforms.append(platform_info)
         
         return platforms
     
     @staticmethod
     def parse_streaming_availability(streaming_data):
-        """Parse Streaming Availability API response with validated direct links"""
+        """Parse Streaming Availability API response"""
         platforms = []
         
-        # Streaming service mapping
-        streaming_platform_map = {
-            'netflix': {'name': 'Netflix', 'is_free': False},
-            'prime': {'name': 'Amazon Prime Video', 'is_free': False},
-            'hotstar': {'name': 'Disney+ Hotstar', 'is_free': False},
-            'zee5': {'name': 'ZEE5', 'is_free': False},
-            'sonyliv': {'name': 'SonyLIV', 'is_free': False},
-            'jiocinema': {'name': 'JioCinema', 'is_free': True},
-            'mxplayer': {'name': 'MX Player', 'is_free': True},
-            'youtube': {'name': 'YouTube', 'is_free': True},
-            'voot': {'name': 'Voot', 'is_free': True},
-            'aha': {'name': 'Aha', 'is_free': False},
-            'sunnxt': {'name': 'Sun NXT', 'is_free': False}
+        service_map = {
+            'netflix': 'netflix',
+            'prime': 'prime',
+            'hotstar': 'hotstar',
+            'zee5': 'zee5',
+            'sonyliv': 'sonyliv',
+            'jiocinema': 'jiocinema',
+            'mxplayer': 'mxplayer',
+            'youtube': 'youtube'
         }
         
-        try:
-            streaming_info = streaming_data.get('streamingInfo', {})
-            
-            for service_key, service_data in streaming_info.items():
-                platform_info = streaming_platform_map.get(service_key.lower())
-                
-                if platform_info:
-                    # Extract service data (could be list for different regions)
-                    if isinstance(service_data, list) and service_data:
-                        service_info_list = service_data
-                    else:
-                        service_info_list = [service_data] if service_data else []
-                    
-                    for service_info in service_info_list:
-                        if service_info.get('link'):  # Only add if direct link is available
-                            platform_data = {
-                                'name': platform_info['name'],
-                                'key': service_key.lower(),
-                                'is_free': platform_info['is_free'],
-                                'direct_url': service_info['link'],
-                                'quality': service_info.get('quality', 'HD'),
-                                'region': service_info.get('region', 'IN'),
-                                'verified': True  # API provides verified links
-                            }
-                            
-                            # Add audio languages
-                            if service_info.get('audioLanguages'):
-                                platform_data['audio_languages'] = service_info['audioLanguages']
-                            
-                            # Add subtitle languages
-                            if service_info.get('subtitleLanguages'):
-                                platform_data['subtitle_languages'] = service_info['subtitleLanguages']
-                            
-                            # Handle multiple audio language links
-                            if service_info.get('audios'):
-                                platform_data['audio_links'] = []
-                                for audio in service_info['audios']:
-                                    if audio.get('link'):
-                                        platform_data['audio_links'].append({
-                                            'language': audio.get('language', 'original'),
-                                            'direct_url': audio['link']
-                                        })
-                            
-                            platforms.append(platform_data)
-                    
-        except Exception as e:
-            logger.error(f"Error parsing streaming availability: {e}")
+        # Handle different response formats
+        if isinstance(streaming_data, list):
+            # It's a list of results
+            for result in streaming_data[:1]:  # Take first result
+                if 'streamingInfo' in result:
+                    platforms.extend(ContentService.parse_streaming_info(result['streamingInfo'], service_map))
+        elif isinstance(streaming_data, dict) and 'streamingInfo' in streaming_data:
+            # Direct result
+            platforms.extend(ContentService.parse_streaming_info(streaming_data['streamingInfo'], service_map))
         
         return platforms
     
     @staticmethod
-    def deduplicate_and_validate_platforms(platforms):
-        """Remove duplicate platforms and ensure all links are valid"""
-        seen_platforms = {}
-        unique_platforms = []
+    def parse_streaming_info(streaming_info, service_map):
+        """Parse streaming info object"""
+        platforms = []
         
-        # Sort: free platforms first, then paid
-        platforms.sort(key=lambda x: (not x.get('is_free', False), x.get('name', '')))
+        for country, services in streaming_info.items():
+            if isinstance(services, dict):
+                for service_name, service_data in services.items():
+                    platform_key = service_map.get(service_name.lower())
+                    if platform_key and platform_key in KNOWN_OTT_PLATFORMS:
+                        platform_info = KNOWN_OTT_PLATFORMS[platform_key].copy()
+                        
+                        # Handle different data structures
+                        if isinstance(service_data, list) and service_data:
+                            service_info = service_data[0]
+                        else:
+                            service_info = service_data
+                        
+                        if isinstance(service_info, dict):
+                            if service_info.get('link'):
+                                platform_info['direct_url'] = service_info['link']
+                                platform_info['verified'] = True
+                            
+                            platform_info['quality'] = service_info.get('quality', 'HD')
+                            platform_info['audio_languages'] = service_info.get('audios', [])
+                            platform_info['subtitle_languages'] = service_info.get('subtitles', [])
+                            platform_info['leaving_date'] = service_info.get('leaving')
+                            platform_info['region'] = country.upper()
+                        
+                        platforms.append(platform_info)
+        
+        return platforms
+    
+    @staticmethod
+    def get_intelligent_platform_suggestions(tmdb_data):
+        """Intelligent platform suggestions based on content metadata"""
+        platforms = []
+        title = tmdb_data.get('title') or tmdb_data.get('name', '')
+        original_language = tmdb_data.get('original_language', 'en')
+        release_date = tmdb_data.get('release_date') or tmdb_data.get('first_air_date')
+        popularity = tmdb_data.get('popularity', 0)
+        vote_average = tmdb_data.get('vote_average', 0)
+        
+        # Parse release year
+        release_year = None
+        if release_date:
+            try:
+                release_year = int(release_date[:4])
+            except:
+                pass
+        
+        # Encode title for search URLs
+        encoded_title = urllib.parse.quote(title)
+        
+        # High-popularity content is likely on major platforms
+        if popularity > 50 or vote_average > 7:
+            # Netflix (usually has popular content)
+            platform = KNOWN_OTT_PLATFORMS['netflix'].copy()
+            platform['search_url'] = platform['search_url'].format(query=encoded_title)
+            platform['confidence'] = 'high' if popularity > 100 else 'medium'
+            platform['availability_note'] = 'Popular content - likely available'
+            platforms.append(platform)
+            
+            # Prime Video
+            platform = KNOWN_OTT_PLATFORMS['prime'].copy()
+            platform['search_url'] = platform['search_url'].format(query=encoded_title)
+            platform['confidence'] = 'high' if popularity > 100 else 'medium'
+            platform['availability_note'] = 'Check availability in your region'
+            platforms.append(platform)
+        
+        # Indian content
+        if original_language in ['hi', 'ta', 'te', 'kn', 'ml', 'bn', 'mr', 'gu', 'pa']:
+            # Hotstar (strong Indian content)
+            platform = KNOWN_OTT_PLATFORMS['hotstar'].copy()
+            platform['search_url'] = platform['search_url'].format(query=encoded_title)
+            platform['confidence'] = 'high'
+            platform['availability_note'] = 'Indian content - likely available'
+            platforms.append(platform)
+            
+            # Zee5
+            platform = KNOWN_OTT_PLATFORMS['zee5'].copy()
+            platform['search_url'] = platform['search_url'].format(query=encoded_title)
+            platform['confidence'] = 'medium'
+            platforms.append(platform)
+            
+            # JioCinema (free option)
+            platform = KNOWN_OTT_PLATFORMS['jiocinema'].copy()
+            platform['search_url'] = platform['search_url'].format(query=encoded_title)
+            platform['confidence'] = 'medium'
+            platform['availability_note'] = 'Free with ads'
+            platforms.append(platform)
+            
+            # MX Player (free option)
+            platform = KNOWN_OTT_PLATFORMS['mxplayer'].copy()
+            platform['search_url'] = platform['search_url'].format(query=encoded_title)
+            platform['confidence'] = 'medium'
+            platform['availability_note'] = 'Free with ads'
+            platforms.append(platform)
+        
+        # Recent releases
+        if release_year and release_year >= datetime.now().year - 2:
+            # Recent content often on premium platforms first
+            if 'prime' not in [p.get('base_url') for p in platforms]:
+                platform = KNOWN_OTT_PLATFORMS['prime'].copy()
+                platform['search_url'] = platform['search_url'].format(query=encoded_title)
+                platform['confidence'] = 'medium'
+                platform['availability_note'] = 'Recent release'
+                platforms.append(platform)
+        
+        # Older content might be free
+        if release_year and release_year < datetime.now().year - 5:
+            # YouTube (often has older content)
+            platform = KNOWN_OTT_PLATFORMS['youtube'].copy()
+            platform['search_url'] = platform['search_url'].format(query=encoded_title)
+            platform['confidence'] = 'low'
+            platform['availability_note'] = 'May be available for free or rent'
+            platforms.append(platform)
+        
+        # Always include YouTube as a fallback for trailers/clips
+        if not any(p.get('name') == 'YouTube' for p in platforms):
+            platform = KNOWN_OTT_PLATFORMS['youtube'].copy()
+            platform['search_url'] = platform['search_url'].format(query=encoded_title)
+            platform['confidence'] = 'low'
+            platform['availability_note'] = 'Check for trailers and clips'
+            platforms.append(platform)
+        
+        return platforms
+    
+    @staticmethod
+    def deduplicate_platforms(platforms):
+        """Remove duplicate platforms and prioritize verified links"""
+        seen = {}
+        unique = []
+        
+        # Sort by: verified first, then free platforms, then by priority
+        platforms.sort(key=lambda x: (
+            not x.get('verified', False),
+            not x.get('is_free', False),
+            x.get('display_priority', 999)
+        ))
         
         for platform in platforms:
-            platform_key = platform.get('key') or platform.get('name', '').lower().replace(' ', '_')
-            
-            # Only include platforms with verified direct URLs
-            if platform.get('direct_url') and platform.get('verified', False):
-                if platform_key not in seen_platforms:
-                    seen_platforms[platform_key] = platform
-                    unique_platforms.append(platform)
-                else:
-                    # If we already have this platform, check if this one has more features
-                    existing = seen_platforms[platform_key]
-                    # Prefer entries with audio_links over those without
-                    if platform.get('audio_links') and not existing.get('audio_links'):
-                        # Replace with the one that has audio links
-                        unique_platforms = [p for p in unique_platforms if p.get('key') != platform_key]
-                        unique_platforms.append(platform)
-                        seen_platforms[platform_key] = platform
+            key = platform.get('name', '').lower()
+            if key not in seen:
+                seen[key] = True
+                unique.append(platform)
+            elif platform.get('verified') and not seen.get(f"{key}_verified"):
+                # Replace with verified version
+                unique = [p for p in unique if p.get('name', '').lower() != key]
+                unique.append(platform)
+                seen[f"{key}_verified"] = True
         
-        return unique_platforms
+        return unique
     
     @staticmethod
     def save_anime_content(anime_data):
-        """Save anime content from Jikan API to database"""
+        """Save anime content from Jikan API"""
         try:
-            # Check if anime already exists by MAL ID (using tmdb_id field to store MAL ID)
             existing = Content.query.filter_by(tmdb_id=anime_data['mal_id']).first()
             if existing:
                 return existing
             
-            # Extract genres
             genres = [genre['name'] for genre in anime_data.get('genres', [])]
             
-            # Parse release date
             release_date = None
             if anime_data.get('aired') and anime_data['aired'].get('from'):
                 try:
@@ -714,19 +888,18 @@ class ContentService:
                 except:
                     release_date = None
             
-            # Get anime streaming platforms (currently no API support for anime direct links)
-            ott_platforms = []
+            # Anime platforms (most anime is not on mainstream platforms in India)
+            ott_platforms = ContentService.get_anime_platforms(anime_data)
             
-            # Create content object
             content = Content(
-                tmdb_id=anime_data['mal_id'],  # Store MAL ID in tmdb_id field
+                tmdb_id=anime_data['mal_id'],
                 title=anime_data.get('title'),
                 original_title=anime_data.get('title_japanese'),
                 content_type='anime',
                 genres=json.dumps(genres),
                 languages=json.dumps(['japanese']),
                 release_date=release_date,
-                runtime=anime_data.get('duration'),  # Duration in minutes
+                runtime=anime_data.get('duration'),
                 rating=anime_data.get('score'),
                 vote_count=anime_data.get('scored_by'),
                 popularity=anime_data.get('popularity'),
@@ -744,13 +917,42 @@ class ContentService:
             logger.error(f"Error saving anime content: {e}")
             db.session.rollback()
             return None
+    
+    @staticmethod
+    def get_anime_platforms(anime_data):
+        """Get platforms for anime content"""
+        platforms = []
+        title = anime_data.get('title', '')
+        encoded_title = urllib.parse.quote(title + ' anime')
+        
+        # YouTube (often has anime clips/episodes)
+        platform = KNOWN_OTT_PLATFORMS['youtube'].copy()
+        platform['search_url'] = platform['search_url'].format(query=encoded_title)
+        platform['confidence'] = 'medium'
+        platform['availability_note'] = 'Check for episodes and clips'
+        platforms.append(platform)
+        
+        # Netflix (has some popular anime)
+        platform = KNOWN_OTT_PLATFORMS['netflix'].copy()
+        platform['search_url'] = platform['search_url'].format(query=encoded_title)
+        platform['confidence'] = 'low'
+        platform['availability_note'] = 'Limited anime selection'
+        platforms.append(platform)
+        
+        # Prime Video (has some anime)
+        platform = KNOWN_OTT_PLATFORMS['prime'].copy()
+        platform['search_url'] = platform['search_url'].format(query=encoded_title)
+        platform['confidence'] = 'low'
+        platform['availability_note'] = 'Limited anime selection'
+        platforms.append(platform)
+        
+        return platforms
 
 # Recommendation Engine
 class RecommendationEngine:
     @staticmethod
     def get_trending_recommendations(limit=20, content_type='all'):
         try:
-            # Get trending from TMDB
             trending_data = TMDBService.get_trending(content_type=content_type)
             if not trending_data:
                 return []
@@ -770,13 +972,11 @@ class RecommendationEngine:
     @staticmethod
     def get_popular_by_genre(genre, limit=20, region=None):
         try:
-            # First get popular movies
             popular_movies = TMDBService.get_popular('movie', region=region)
             popular_tv = TMDBService.get_popular('tv', region=region)
             
             recommendations = []
             
-            # Process movies
             if popular_movies:
                 for item in popular_movies.get('results', []):
                     if genre.lower() in [g.lower() for g in ContentService.map_genre_ids(item.get('genre_ids', []))]:
@@ -784,7 +984,6 @@ class RecommendationEngine:
                         if content:
                             recommendations.append(content)
             
-            # Process TV shows
             if popular_tv:
                 for item in popular_tv.get('results', []):
                     if genre.lower() in [g.lower() for g in ContentService.map_genre_ids(item.get('genre_ids', []))]:
@@ -800,12 +999,14 @@ class RecommendationEngine:
     @staticmethod
     def get_regional_recommendations(language, limit=20):
         try:
-            # Search for content in specific language
             search_queries = {
                 'hindi': ['bollywood', 'hindi movie', 'hindi film'],
                 'telugu': ['tollywood', 'telugu movie', 'telugu film'],
                 'tamil': ['kollywood', 'tamil movie', 'tamil film'],
-                'kannada': ['sandalwood', 'kannada movie', 'kannada film']
+                'kannada': ['sandalwood', 'kannada movie', 'kannada film'],
+                'malayalam': ['malayalam movie', 'malayalam film'],
+                'bengali': ['bengali movie', 'bengali film'],
+                'marathi': ['marathi movie', 'marathi film']
             }
             
             recommendations = []
@@ -854,45 +1055,31 @@ class AnonymousRecommendationEngine:
     @staticmethod
     def get_recommendations_for_anonymous(session_id, ip_address, limit=20):
         try:
-            # Get user location for regional content
-            location = get_user_location(ip_address)
-            
-            # Get anonymous user's interaction history
             interactions = AnonymousInteraction.query.filter_by(session_id=session_id).all()
             
             recommendations = []
             
-            # If user has interactions, recommend similar content
             if interactions:
-                # Get genres from viewed content
                 viewed_content_ids = [interaction.content_id for interaction in interactions]
                 viewed_contents = Content.query.filter(Content.id.in_(viewed_content_ids)).all()
                 
-                # Extract preferred genres
                 all_genres = []
                 for content in viewed_contents:
                     if content.genres:
                         all_genres.extend(json.loads(content.genres))
                 
-                # Get most common genres
                 genre_counts = Counter(all_genres)
                 top_genres = [genre for genre, _ in genre_counts.most_common(3)]
                 
-                # Get recommendations based on top genres
                 for genre in top_genres:
                     genre_recs = RecommendationEngine.get_popular_by_genre(genre, limit=7)
                     recommendations.extend(genre_recs)
-            
-            # Add regional content based on location
-            if location and location.get('country') == 'India':
-                regional_recs = RecommendationEngine.get_regional_recommendations('hindi', limit=5)
-                recommendations.extend(regional_recs)
             
             # Add trending content
             trending_recs = RecommendationEngine.get_trending_recommendations(limit=10)
             recommendations.extend(trending_recs)
             
-            # Remove duplicates and limit
+            # Remove duplicates
             seen_ids = set()
             unique_recommendations = []
             for rec in recommendations:
@@ -916,7 +1103,6 @@ class TelegramService:
                 logger.warning("Telegram bot or channel ID not configured")
                 return False
             
-            # Format genre list
             genres_list = []
             if content.genres:
                 try:
@@ -924,7 +1110,6 @@ class TelegramService:
                 except:
                     genres_list = []
             
-            # Get OTT platforms
             ott_platforms = []
             if content.ott_platforms:
                 try:
@@ -932,7 +1117,6 @@ class TelegramService:
                 except:
                     ott_platforms = []
             
-            # Create poster URL
             poster_url = None
             if content.poster_path:
                 if content.poster_path.startswith('http'):
@@ -940,7 +1124,6 @@ class TelegramService:
                 else:
                     poster_url = f"https://image.tmdb.org/t/p/w500{content.poster_path}"
             
-            # Create OTT availability text
             ott_text = ""
             free_platforms = [p for p in ott_platforms if p.get('is_free')]
             paid_platforms = [p for p in ott_platforms if not p.get('is_free')]
@@ -951,8 +1134,8 @@ class TelegramService:
                     ott_text += f"▶️ {platform['name']}"
                     if platform.get('direct_url'):
                         ott_text += f" - [Watch Now]({platform['direct_url']})"
-                    if platform.get('audio_languages'):
-                        ott_text += f" ({', '.join(platform['audio_languages'][:2])})"
+                    elif platform.get('search_url'):
+                        ott_text += f" - [Search]({platform['search_url']})"
                     ott_text += "\n"
             
             if paid_platforms:
@@ -961,11 +1144,10 @@ class TelegramService:
                     ott_text += f"▶️ {platform['name']}"
                     if platform.get('direct_url'):
                         ott_text += f" - [Watch Now]({platform['direct_url']})"
-                    if platform.get('audio_languages'):
-                        ott_text += f" ({', '.join(platform['audio_languages'][:2])})"
+                    elif platform.get('search_url'):
+                        ott_text += f" - [Search]({platform['search_url']})"
                     ott_text += "\n"
             
-            # Create message
             message = f"""🎬 **Admin's Choice** by {admin_name}
 
 **{content.title}**
@@ -980,7 +1162,6 @@ class TelegramService:
 
 #AdminChoice #MovieRecommendation #CineScope"""
             
-            # Send message with photo if available
             if poster_url:
                 try:
                     bot.send_photo(
@@ -1008,18 +1189,15 @@ def register():
     try:
         data = request.get_json()
         
-        # Validate input
         if not data.get('username') or not data.get('email') or not data.get('password'):
             return jsonify({'error': 'Missing required fields'}), 400
         
-        # Check if user exists
         if User.query.filter_by(username=data['username']).first():
             return jsonify({'error': 'Username already exists'}), 400
         
         if User.query.filter_by(email=data['email']).first():
             return jsonify({'error': 'Email already exists'}), 400
         
-        # Create user
         user = User(
             username=data['username'],
             email=data['email'],
@@ -1031,7 +1209,6 @@ def register():
         db.session.add(user)
         db.session.commit()
         
-        # Generate token
         token = jwt.encode({
             'user_id': user.id,
             'exp': datetime.utcnow() + timedelta(days=30)
@@ -1066,11 +1243,9 @@ def login():
         if not user or not check_password_hash(user.password_hash, data['password']):
             return jsonify({'error': 'Invalid credentials'}), 401
         
-        # Update last active
         user.last_active = datetime.utcnow()
         db.session.commit()
         
-        # Generate token
         token = jwt.encode({
             'user_id': user.id,
             'exp': datetime.utcnow() + timedelta(days=30)
@@ -1106,18 +1281,16 @@ def search_content():
         if not query:
             return jsonify({'error': 'Query parameter required'}), 400
         
-        # Record search interaction
         session_id = get_session_id()
         
         # Search TMDB
         tmdb_results = TMDBService.search_content(query, content_type, page=page)
         
-        # Search anime if content_type is anime or multi
+        # Search anime if applicable
         anime_results = None
         if content_type in ['anime', 'multi']:
             anime_results = JikanService.search_anime(query, page=page)
         
-        # Process and save results
         results = []
         
         if tmdb_results:
@@ -1125,7 +1298,6 @@ def search_content():
                 content_type_detected = 'movie' if 'title' in item else 'tv'
                 content = ContentService.save_content_from_tmdb(item, content_type_detected)
                 if content:
-                    # Parse OTT platforms for filtering
                     ott_platforms = []
                     if content.ott_platforms:
                         try:
@@ -1141,7 +1313,7 @@ def search_content():
                         if not any(platform_filter.lower() in p.get('name', '').lower() for p in ott_platforms):
                             continue
                     
-                    # Record anonymous interaction
+                    # Record interaction
                     interaction = AnonymousInteraction(
                         session_id=session_id,
                         content_id=content.id,
@@ -1150,7 +1322,7 @@ def search_content():
                     )
                     db.session.add(interaction)
                     
-                    # Group platforms
+                    # Format result
                     free_platforms = [p for p in ott_platforms if p.get('is_free')]
                     paid_platforms = [p for p in ott_platforms if not p.get('is_free')]
                     
@@ -1168,7 +1340,7 @@ def search_content():
                             'has_free': len(free_platforms) > 0,
                             'free_count': len(free_platforms),
                             'paid_count': len(paid_platforms),
-                            'top_platforms': [p['name'] for p in (free_platforms + paid_platforms)[:3]]
+                            'platforms_available': len(ott_platforms) > 0
                         }
                     })
         
@@ -1187,10 +1359,10 @@ def search_content():
                         'poster_path': content.poster_path,
                         'overview': content.overview,
                         'ott_summary': {
-                            'has_free': False,
-                            'free_count': 0,
-                            'paid_count': 0,
-                            'top_platforms': []
+                            'has_free': True,
+                            'free_count': 1,
+                            'paid_count': 2,
+                            'platforms_available': True
                         }
                     })
         
@@ -1198,8 +1370,7 @@ def search_content():
         
         return jsonify({
             'results': results,
-            'total_results': tmdb_results.get('total_results', 0) if tmdb_results else 0,
-            'total_pages': tmdb_results.get('total_pages', 0) if tmdb_results else 0,
+            'total_results': len(results),
             'current_page': page,
             'filters_applied': {
                 'free_only': free_only,
@@ -1211,13 +1382,13 @@ def search_content():
         logger.error(f"Search error: {e}")
         return jsonify({'error': 'Search failed'}), 500
 
-# Updated Content Discovery Route with Enhanced OTT Info
+# Content Details Route
 @app.route('/api/content/<int:content_id>', methods=['GET'])
 def get_content_details(content_id):
     try:
         content = Content.query.get_or_404(content_id)
         
-        # Record view interaction
+        # Record view
         session_id = get_session_id()
         interaction = AnonymousInteraction(
             session_id=session_id,
@@ -1227,25 +1398,24 @@ def get_content_details(content_id):
         )
         db.session.add(interaction)
         
-        # Get additional details from TMDB if available
+        # Get additional details if needed
         additional_details = None
         if content.tmdb_id and content.content_type != 'anime':
             additional_details = TMDBService.get_content_details(content.tmdb_id, content.content_type)
             
-            # Update OTT platforms with latest data
+            # Update OTT platforms with fresh data
             if additional_details:
                 updated_ott = ContentService.get_ott_availability(additional_details, content.imdb_id)
                 if updated_ott:
                     content.ott_platforms = json.dumps(updated_ott)
                     content.updated_at = datetime.utcnow()
         
-        # Get YouTube trailers
+        # Get trailers
         trailers = []
         if YOUTUBE_API_KEY:
-            search_query = f"{content.title} {'anime' if content.content_type == 'anime' else ''} trailer"
-            youtube_results = YouTubeService.search_trailers(search_query)
+            youtube_results = YouTubeService.search_trailers(content.title)
             if youtube_results:
-                for video in youtube_results.get('items', []):
+                for video in youtube_results.get('items', [])[:3]:
                     trailers.append({
                         'title': video['snippet']['title'],
                         'url': f"https://www.youtube.com/watch?v={video['id']['videoId']}",
@@ -1254,17 +1424,16 @@ def get_content_details(content_id):
         
         # Get similar content
         similar_content = []
-        if additional_details and content.content_type != 'anime':
-            if 'similar' in additional_details:
-                for item in additional_details['similar']['results'][:5]:
-                    similar = ContentService.save_content_from_tmdb(item, content.content_type)
-                    if similar:
-                        similar_content.append({
-                            'id': similar.id,
-                            'title': similar.title,
-                            'poster_path': f"https://image.tmdb.org/t/p/w300{similar.poster_path}" if similar.poster_path else None,
-                            'rating': similar.rating
-                        })
+        if additional_details and 'similar' in additional_details:
+            for item in additional_details['similar']['results'][:5]:
+                similar = ContentService.save_content_from_tmdb(item, content.content_type)
+                if similar:
+                    similar_content.append({
+                        'id': similar.id,
+                        'title': similar.title,
+                        'poster_path': f"https://image.tmdb.org/t/p/w300{similar.poster_path}" if similar.poster_path else None,
+                        'rating': similar.rating
+                    })
         
         # Parse OTT platforms
         ott_platforms = []
@@ -1274,7 +1443,7 @@ def get_content_details(content_id):
             except:
                 ott_platforms = []
         
-        # Group OTT platforms by type
+        # Group platforms
         free_platforms = [p for p in ott_platforms if p.get('is_free')]
         paid_platforms = [p for p in ott_platforms if not p.get('is_free')]
         
@@ -1298,10 +1467,10 @@ def get_content_details(content_id):
             'backdrop_path': f"https://image.tmdb.org/t/p/w1280{content.backdrop_path}" if content.backdrop_path else None,
             'trailers': trailers,
             'similar_content': similar_content,
-            'cast': additional_details.get('credits', {}).get('cast', [])[:10] if additional_details and content.content_type != 'anime' else [],
-            'crew': additional_details.get('credits', {}).get('crew', [])[:5] if additional_details and content.content_type != 'anime' else [],
+            'cast': additional_details.get('credits', {}).get('cast', [])[:10] if additional_details else [],
+            'crew': additional_details.get('credits', {}).get('crew', [])[:5] if additional_details else [],
             
-            # Enhanced OTT Information with direct links
+            # OTT Information
             'streaming_info': {
                 'available': len(ott_platforms) > 0,
                 'free_options': len(free_platforms),
@@ -1311,8 +1480,7 @@ def get_content_details(content_id):
             'ott_platforms': {
                 'free_platforms': free_platforms,
                 'paid_platforms': paid_platforms,
-                'total_platforms': len(ott_platforms),
-                'has_verified_links': any(p.get('verified') for p in ott_platforms)
+                'all_platforms': ott_platforms
             }
         }
         
@@ -1322,20 +1490,20 @@ def get_content_details(content_id):
         logger.error(f"Content details error: {e}")
         return jsonify({'error': 'Failed to get content details'}), 500
 
-# New endpoint for getting OTT availability
+# OTT Availability Endpoint
 @app.route('/api/content/<int:content_id>/ott', methods=['GET'])
 def get_ott_availability_endpoint(content_id):
-    """Get detailed OTT availability for a content"""
+    """Get fresh OTT availability for content"""
     try:
         content = Content.query.get_or_404(content_id)
         
-        # Get fresh OTT data
+        # Force refresh OTT data
         if content.tmdb_id:
             tmdb_details = TMDBService.get_content_details(content.tmdb_id, content.content_type)
             if tmdb_details:
                 fresh_ott = ContentService.get_ott_availability(tmdb_details, content.imdb_id)
                 
-                # Update content with fresh data
+                # Update content
                 content.ott_platforms = json.dumps(fresh_ott)
                 content.updated_at = datetime.utcnow()
                 db.session.commit()
@@ -1347,22 +1515,76 @@ def get_ott_availability_endpoint(content_id):
                 return jsonify({
                     'content_title': content.title,
                     'last_updated': content.updated_at.isoformat(),
+                    'streaming_available': len(fresh_ott) > 0,
                     'free_platforms': free_platforms,
                     'paid_platforms': paid_platforms,
                     'total_platforms': len(fresh_ott),
-                    'availability_summary': {
-                        'has_free_options': len(free_platforms) > 0,
-                        'free_count': len(free_platforms),
-                        'paid_count': len(paid_platforms),
-                        'has_verified_links': any(p.get('verified') for p in fresh_ott)
+                    'data_sources': {
+                        'tmdb': bool(tmdb_details.get('watch/providers')),
+                        'watchmode': any(p.get('verified') for p in fresh_ott if 'watchmode' in str(p).lower()),
+                        'streaming_availability': any(p.get('verified') for p in fresh_ott if 'streaming' in str(p).lower()),
+                        'intelligent_suggestions': any(p.get('confidence') for p in fresh_ott)
                     }
                 }), 200
         
-        return jsonify({'error': 'No OTT data available'}), 404
+        # Return existing data if no TMDB ID
+        ott_platforms = json.loads(content.ott_platforms or '[]')
+        free_platforms = [p for p in ott_platforms if p.get('is_free')]
+        paid_platforms = [p for p in ott_platforms if not p.get('is_free')]
+        
+        return jsonify({
+            'content_title': content.title,
+            'last_updated': content.updated_at.isoformat() if content.updated_at else None,
+            'streaming_available': len(ott_platforms) > 0,
+            'free_platforms': free_platforms,
+            'paid_platforms': paid_platforms,
+            'total_platforms': len(ott_platforms)
+        }), 200
         
     except Exception as e:
         logger.error(f"OTT availability error: {e}")
         return jsonify({'error': 'Failed to get OTT availability'}), 500
+
+# Debug endpoint for OTT services
+@app.route('/api/debug/ott/<string:title>', methods=['GET'])
+def debug_ott_search(title):
+    """Debug endpoint to test OTT API responses"""
+    try:
+        results = {
+            'query': title,
+            'services_checked': [],
+            'raw_responses': {}
+        }
+        
+        # Test WatchMode
+        if WATCHMODE_API_KEY:
+            watchmode_data = WatchModeService.search_title(title)
+            results['services_checked'].append('watchmode')
+            results['raw_responses']['watchmode'] = watchmode_data
+        
+        # Test Streaming Availability
+        if RAPIDAPI_KEY:
+            streaming_data = StreamingAvailabilityService.search_by_title(title)
+            results['services_checked'].append('streaming_availability')
+            results['raw_responses']['streaming_availability'] = streaming_data
+        
+        # Test TMDB
+        tmdb_data = TMDBService.search_content(title)
+        if tmdb_data and tmdb_data.get('results'):
+            first_result = tmdb_data['results'][0]
+            content_type = 'movie' if 'title' in first_result else 'tv'
+            tmdb_id = first_result['id']
+            
+            # Get watch providers
+            providers_data = TMDBService.get_watch_providers(tmdb_id, content_type)
+            results['services_checked'].append('tmdb_providers')
+            results['raw_responses']['tmdb_providers'] = providers_data
+        
+        return jsonify(results), 200
+        
+    except Exception as e:
+        logger.error(f"Debug OTT error: {e}")
+        return jsonify({'error': str(e)}), 500
 
 # Recommendation Routes
 @app.route('/api/recommendations/trending', methods=['GET'])
@@ -1375,15 +1597,7 @@ def get_trending():
         
         result = []
         for content in recommendations:
-            # Parse OTT platforms
-            ott_platforms = []
-            if content.ott_platforms:
-                try:
-                    ott_platforms = json.loads(content.ott_platforms)
-                except:
-                    ott_platforms = []
-            
-            # Group platforms
+            ott_platforms = json.loads(content.ott_platforms or '[]')
             free_platforms = [p for p in ott_platforms if p.get('is_free')]
             paid_platforms = [p for p in ott_platforms if not p.get('is_free')]
             
@@ -1396,10 +1610,9 @@ def get_trending():
                 'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path else None,
                 'overview': content.overview[:150] + '...' if content.overview else '',
                 'ott_platforms': {
-                    'free_platforms': free_platforms,
-                    'paid_platforms': paid_platforms,
-                    'total_platforms': len(ott_platforms),
-                    'has_verified_links': any(p.get('verified') for p in ott_platforms)
+                    'available': len(ott_platforms) > 0,
+                    'free_count': len(free_platforms),
+                    'paid_count': len(paid_platforms)
                 }
             })
         
@@ -1419,15 +1632,7 @@ def get_popular_by_genre(genre):
         
         result = []
         for content in recommendations:
-            # Parse OTT platforms
-            ott_platforms = []
-            if content.ott_platforms:
-                try:
-                    ott_platforms = json.loads(content.ott_platforms)
-                except:
-                    ott_platforms = []
-            
-            # Group platforms
+            ott_platforms = json.loads(content.ott_platforms or '[]')
             free_platforms = [p for p in ott_platforms if p.get('is_free')]
             paid_platforms = [p for p in ott_platforms if not p.get('is_free')]
             
@@ -1440,10 +1645,9 @@ def get_popular_by_genre(genre):
                 'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path else None,
                 'overview': content.overview[:150] + '...' if content.overview else '',
                 'ott_platforms': {
-                    'free_platforms': free_platforms,
-                    'paid_platforms': paid_platforms,
-                    'total_platforms': len(ott_platforms),
-                    'has_verified_links': any(p.get('verified') for p in ott_platforms)
+                    'available': len(ott_platforms) > 0,
+                    'free_count': len(free_platforms),
+                    'paid_count': len(paid_platforms)
                 }
             })
         
@@ -1462,15 +1666,7 @@ def get_regional(language):
         
         result = []
         for content in recommendations:
-            # Parse OTT platforms
-            ott_platforms = []
-            if content.ott_platforms:
-                try:
-                    ott_platforms = json.loads(content.ott_platforms)
-                except:
-                    ott_platforms = []
-            
-            # Group platforms
+            ott_platforms = json.loads(content.ott_platforms or '[]')
             free_platforms = [p for p in ott_platforms if p.get('is_free')]
             paid_platforms = [p for p in ott_platforms if not p.get('is_free')]
             
@@ -1483,10 +1679,9 @@ def get_regional(language):
                 'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path else None,
                 'overview': content.overview[:150] + '...' if content.overview else '',
                 'ott_platforms': {
-                    'free_platforms': free_platforms,
-                    'paid_platforms': paid_platforms,
-                    'total_platforms': len(ott_platforms),
-                    'has_verified_links': any(p.get('verified') for p in ott_platforms)
+                    'available': len(ott_platforms) > 0,
+                    'free_count': len(free_platforms),
+                    'paid_count': len(paid_platforms)
                 }
             })
         
@@ -1505,6 +1700,8 @@ def get_anime():
         
         result = []
         for content in recommendations:
+            ott_platforms = json.loads(content.ott_platforms or '[]')
+            
             result.append({
                 'id': content.id,
                 'title': content.title,
@@ -1514,7 +1711,10 @@ def get_anime():
                 'rating': content.rating,
                 'poster_path': content.poster_path,
                 'overview': content.overview[:150] + '...' if content.overview else '',
-                'ott_platforms': json.loads(content.ott_platforms or '[]')
+                'ott_platforms': {
+                    'available': len(ott_platforms) > 0,
+                    'platforms': [p['name'] for p in ott_platforms]
+                }
             })
         
         return jsonify({'recommendations': result}), 200
@@ -1535,15 +1735,7 @@ def get_anonymous_recommendations():
         
         result = []
         for content in recommendations:
-            # Parse OTT platforms
-            ott_platforms = []
-            if content.ott_platforms:
-                try:
-                    ott_platforms = json.loads(content.ott_platforms)
-                except:
-                    ott_platforms = []
-            
-            # Group platforms
+            ott_platforms = json.loads(content.ott_platforms or '[]')
             free_platforms = [p for p in ott_platforms if p.get('is_free')]
             paid_platforms = [p for p in ott_platforms if not p.get('is_free')]
             
@@ -1556,10 +1748,9 @@ def get_anonymous_recommendations():
                 'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path else None,
                 'overview': content.overview[:150] + '...' if content.overview else '',
                 'ott_platforms': {
-                    'free_platforms': free_platforms,
-                    'paid_platforms': paid_platforms,
-                    'total_platforms': len(ott_platforms),
-                    'has_verified_links': any(p.get('verified') for p in ott_platforms)
+                    'available': len(ott_platforms) > 0,
+                    'free_count': len(free_platforms),
+                    'paid_count': len(paid_platforms)
                 }
             })
         
@@ -1568,89 +1759,6 @@ def get_anonymous_recommendations():
     except Exception as e:
         logger.error(f"Anonymous recommendations error: {e}")
         return jsonify({'error': 'Failed to get recommendations'}), 500
-
-# Personalized Recommendations (requires ML service)
-@app.route('/api/recommendations/personalized', methods=['GET'])
-@require_auth
-def get_personalized_recommendations(current_user):
-    try:
-        # Get user interactions
-        interactions = UserInteraction.query.filter_by(user_id=current_user.id).all()
-        
-        # Prepare data for ML service
-        user_data = {
-            'user_id': current_user.id,
-            'preferred_languages': json.loads(current_user.preferred_languages or '[]'),
-            'preferred_genres': json.loads(current_user.preferred_genres or '[]'),
-            'interactions': [
-                {
-                    'content_id': interaction.content_id,
-                    'interaction_type': interaction.interaction_type,
-                    'rating': interaction.rating,
-                    'timestamp': interaction.timestamp.isoformat()
-                }
-                for interaction in interactions
-            ]
-        }
-        
-        # Call ML service
-        try:
-            response = requests.post(f"{ML_SERVICE_URL}/api/recommendations", json=user_data, timeout=30)
-            
-            if response.status_code == 200:
-                ml_recommendations = response.json().get('recommendations', [])
-                
-                # Get content details for recommended content IDs
-                content_ids = [rec['content_id'] for rec in ml_recommendations]
-                contents = Content.query.filter(Content.id.in_(content_ids)).all()
-                
-                # Create response with ML scores
-                result = []
-                content_dict = {content.id: content for content in contents}
-                
-                for rec in ml_recommendations:
-                    content = content_dict.get(rec['content_id'])
-                    if content:
-                        # Parse OTT platforms
-                        ott_platforms = []
-                        if content.ott_platforms:
-                            try:
-                                ott_platforms = json.loads(content.ott_platforms)
-                            except:
-                                ott_platforms = []
-                        
-                        # Group platforms
-                        free_platforms = [p for p in ott_platforms if p.get('is_free')]
-                        paid_platforms = [p for p in ott_platforms if not p.get('is_free')]
-                        
-                        result.append({
-                            'id': content.id,
-                            'title': content.title,
-                            'content_type': content.content_type,
-                            'genres': json.loads(content.genres or '[]'),
-                            'rating': content.rating,
-                            'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path else None,
-                            'overview': content.overview[:150] + '...' if content.overview else '',
-                            'ott_platforms': {
-                                'free_platforms': free_platforms,
-                                'paid_platforms': paid_platforms,
-                                'total_platforms': len(ott_platforms),
-                                'has_verified_links': any(p.get('verified') for p in ott_platforms)
-                            },
-                            'recommendation_score': rec.get('score', 0),
-                            'recommendation_reason': rec.get('reason', '')
-                        })
-                
-                return jsonify({'recommendations': result}), 200
-        except:
-            pass
-        
-        # Fallback to basic recommendations
-        return get_trending()
-        
-    except Exception as e:
-        logger.error(f"Personalized recommendations error: {e}")
-        return get_trending()
 
 # User Interaction Routes
 @app.route('/api/interactions', methods=['POST'])
@@ -1694,13 +1802,7 @@ def get_watchlist(current_user):
         
         result = []
         for content in contents:
-            # Parse OTT platforms
-            ott_platforms = []
-            if content.ott_platforms:
-                try:
-                    ott_platforms = json.loads(content.ott_platforms)
-                except:
-                    ott_platforms = []
+            ott_platforms = json.loads(content.ott_platforms or '[]')
             
             result.append({
                 'id': content.id,
@@ -1709,7 +1811,7 @@ def get_watchlist(current_user):
                 'genres': json.loads(content.genres or '[]'),
                 'rating': content.rating,
                 'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path else None,
-                'ott_platforms': ott_platforms
+                'ott_available': len(ott_platforms) > 0
             })
         
         return jsonify({'watchlist': result}), 200
@@ -1732,13 +1834,7 @@ def get_favorites(current_user):
         
         result = []
         for content in contents:
-            # Parse OTT platforms
-            ott_platforms = []
-            if content.ott_platforms:
-                try:
-                    ott_platforms = json.loads(content.ott_platforms)
-                except:
-                    ott_platforms = []
+            ott_platforms = json.loads(content.ott_platforms or '[]')
             
             result.append({
                 'id': content.id,
@@ -1747,7 +1843,7 @@ def get_favorites(current_user):
                 'genres': json.loads(content.genres or '[]'),
                 'rating': content.rating,
                 'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path else None,
-                'ott_platforms': ott_platforms
+                'ott_available': len(ott_platforms) > 0
             })
         
         return jsonify({'favorites': result}), 200
@@ -1762,7 +1858,7 @@ def get_favorites(current_user):
 def admin_search(current_user):
     try:
         query = request.args.get('query', '')
-        source = request.args.get('source', 'tmdb')  # tmdb, omdb, anime
+        source = request.args.get('source', 'tmdb')
         page = int(request.args.get('page', 1))
         
         if not query:
@@ -1806,73 +1902,6 @@ def admin_search(current_user):
         logger.error(f"Admin search error: {e}")
         return jsonify({'error': 'Search failed'}), 500
 
-@app.route('/api/admin/content', methods=['POST'])
-@require_admin
-def save_external_content(current_user):
-    try:
-        data = request.get_json()
-        
-        if not data:
-            return jsonify({'error': 'No content data provided'}), 400
-        
-        # Check if content already exists by external ID
-        existing_content = None
-        if data.get('id'):
-            # Check by TMDB ID or other external ID
-            existing_content = Content.query.filter_by(tmdb_id=data['id']).first()
-        
-        if existing_content:
-            return jsonify({
-                'message': 'Content already exists',
-                'content_id': existing_content.id
-            }), 200
-        
-        # Create new content from external data
-        try:
-            # Handle release date
-            release_date = None
-            if data.get('release_date'):
-                try:
-                    release_date = datetime.strptime(data['release_date'], '%Y-%m-%d').date()
-                except:
-                    release_date = None
-            
-            # Create content object
-            content = Content(
-                tmdb_id=data.get('id'),
-                title=data.get('title'),
-                original_title=data.get('original_title'),
-                content_type=data.get('content_type', 'movie'),
-                genres=json.dumps(data.get('genres', [])),
-                languages=json.dumps(data.get('languages', ['en'])),
-                release_date=release_date,
-                runtime=data.get('runtime'),
-                rating=data.get('rating'),
-                vote_count=data.get('vote_count'),
-                popularity=data.get('popularity'),
-                overview=data.get('overview'),
-                poster_path=data.get('poster_path'),
-                backdrop_path=data.get('backdrop_path'),
-                ott_platforms=json.dumps(data.get('ott_platforms', []))
-            )
-            
-            db.session.add(content)
-            db.session.commit()
-            
-            return jsonify({
-                'message': 'Content saved successfully',
-                'content_id': content.id
-            }), 201
-            
-        except Exception as e:
-            db.session.rollback()
-            logger.error(f"Error saving content: {e}")
-            return jsonify({'error': 'Failed to save content to database'}), 500
-        
-    except Exception as e:
-        logger.error(f"Save content error: {e}")
-        return jsonify({'error': 'Failed to process content'}), 500
-
 @app.route('/api/admin/recommendations', methods=['POST'])
 @require_admin
 def create_admin_recommendation(current_user):
@@ -1883,16 +1912,13 @@ def create_admin_recommendation(current_user):
         if not all(field in data for field in required_fields):
             return jsonify({'error': 'Missing required fields'}), 400
         
-        # Get content - handle both internal ID and external ID
         content = Content.query.get(data['content_id'])
         if not content:
-            # Try to find by TMDB ID if direct ID lookup fails
             content = Content.query.filter_by(tmdb_id=data['content_id']).first()
         
         if not content:
-            return jsonify({'error': 'Content not found. Please save content first.'}), 404
+            return jsonify({'error': 'Content not found'}), 404
         
-        # Create admin recommendation
         admin_rec = AdminRecommendation(
             content_id=content.id,
             admin_id=current_user.id,
@@ -1903,7 +1929,6 @@ def create_admin_recommendation(current_user):
         db.session.add(admin_rec)
         db.session.commit()
         
-        # Send to Telegram channel
         telegram_success = TelegramService.send_admin_recommendation(content, current_user.username, data['description'])
         
         return jsonify({
@@ -1916,53 +1941,10 @@ def create_admin_recommendation(current_user):
         db.session.rollback()
         return jsonify({'error': 'Failed to create recommendation'}), 500
 
-@app.route('/api/admin/recommendations', methods=['GET'])
-@require_admin
-def get_admin_recommendations(current_user):
-    try:
-        page = int(request.args.get('page', 1))
-        per_page = int(request.args.get('per_page', 20))
-        
-        admin_recs = AdminRecommendation.query.filter_by(is_active=True)\
-            .order_by(AdminRecommendation.created_at.desc())\
-            .paginate(page=page, per_page=per_page, error_out=False)
-        
-        result = []
-        for rec in admin_recs.items:
-            content = Content.query.get(rec.content_id)
-            admin = User.query.get(rec.admin_id)
-            
-            result.append({
-                'id': rec.id,
-                'recommendation_type': rec.recommendation_type,
-                'description': rec.description,
-                'created_at': rec.created_at.isoformat(),
-                'admin_name': admin.username if admin else 'Unknown',
-                'content': {
-                    'id': content.id,
-                    'title': content.title,
-                    'content_type': content.content_type,
-                    'rating': content.rating,
-                    'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path else None
-                }
-            })
-        
-        return jsonify({
-            'recommendations': result,
-            'total': admin_recs.total,
-            'pages': admin_recs.pages,
-            'current_page': page
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"Get admin recommendations error: {e}")
-        return jsonify({'error': 'Failed to get recommendations'}), 500
-
 @app.route('/api/admin/analytics', methods=['GET'])
 @require_admin
 def get_analytics(current_user):
     try:
-        # Get basic analytics
         total_users = User.query.count()
         total_content = Content.query.count()
         total_interactions = UserInteraction.query.count()
@@ -1970,23 +1952,10 @@ def get_analytics(current_user):
             User.last_active >= datetime.utcnow() - timedelta(days=7)
         ).count()
         
-        # Popular content
         popular_content = db.session.query(
             Content.id, Content.title, func.count(UserInteraction.id).label('interaction_count')
         ).join(UserInteraction).group_by(Content.id, Content.title)\
          .order_by(desc('interaction_count')).limit(10).all()
-        
-        # Popular genres
-        all_interactions = UserInteraction.query.join(Content).all()
-        genre_counts = defaultdict(int)
-        for interaction in all_interactions:
-            content = Content.query.get(interaction.content_id)
-            if content and content.genres:
-                genres = json.loads(content.genres)
-                for genre in genres:
-                    genre_counts[genre] += 1
-        
-        popular_genres = sorted(genre_counts.items(), key=lambda x: x[1], reverse=True)[:10]
         
         return jsonify({
             'total_users': total_users,
@@ -1996,10 +1965,6 @@ def get_analytics(current_user):
             'popular_content': [
                 {'title': item.title, 'interactions': item.interaction_count}
                 for item in popular_content
-            ],
-            'popular_genres': [
-                {'genre': genre, 'count': count}
-                for genre, count in popular_genres
             ]
         }), 200
         
@@ -2025,15 +1990,7 @@ def get_public_admin_recommendations():
             admin = User.query.get(rec.admin_id)
             
             if content:
-                # Parse OTT platforms
-                ott_platforms = []
-                if content.ott_platforms:
-                    try:
-                        ott_platforms = json.loads(content.ott_platforms)
-                    except:
-                        ott_platforms = []
-                
-                # Group platforms
+                ott_platforms = json.loads(content.ott_platforms or '[]')
                 free_platforms = [p for p in ott_platforms if p.get('is_free')]
                 paid_platforms = [p for p in ott_platforms if not p.get('is_free')]
                 
@@ -2046,10 +2003,9 @@ def get_public_admin_recommendations():
                     'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path else None,
                     'overview': content.overview[:150] + '...' if content.overview else '',
                     'ott_platforms': {
-                        'free_platforms': free_platforms,
-                        'paid_platforms': paid_platforms,
-                        'total_platforms': len(ott_platforms),
-                        'has_verified_links': any(p.get('verified') for p in ott_platforms)
+                        'available': len(ott_platforms) > 0,
+                        'free_count': len(free_platforms),
+                        'paid_count': len(paid_platforms)
                     },
                     'admin_description': rec.description,
                     'admin_name': admin.username if admin else 'Admin',
@@ -2068,14 +2024,15 @@ def health_check():
     return jsonify({
         'status': 'healthy',
         'timestamp': datetime.utcnow().isoformat(),
-        'version': '1.0.0',
+        'version': '2.0.0',
         'features': {
             'ott_integration': True,
-            'direct_links': True,
-            'multiple_audio_support': True,
+            'intelligent_suggestions': True,
+            'multiple_api_sources': True,
             'telegram_bot': bot is not None,
             'watchmode_api': bool(WATCHMODE_API_KEY),
-            'streaming_availability_api': bool(RAPIDAPI_KEY)
+            'streaming_availability_api': bool(RAPIDAPI_KEY),
+            'tmdb_providers': True
         }
     }), 200
 
