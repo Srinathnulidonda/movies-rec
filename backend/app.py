@@ -1217,6 +1217,7 @@ class AnonymousRecommendationEngine:
             return []
 
 # Telegram Service
+# Enhanced Telegram Service with OTT Platform Links
 class TelegramService:
     @staticmethod
     def send_admin_recommendation(content, admin_name, description):
@@ -1233,6 +1234,9 @@ class TelegramService:
                 except:
                     genres_list = []
             
+            # Get streaming links organized by language
+            streaming_links = json.loads(content.streaming_links or '{}')
+            
             # Create poster URL
             poster_url = None
             if content.poster_path:
@@ -1241,7 +1245,10 @@ class TelegramService:
                 else:
                     poster_url = f"https://image.tmdb.org/t/p/w500{content.poster_path}"
             
-            # Create message
+            # Format streaming links by language
+            streaming_message = TelegramService.format_streaming_links(streaming_links, content.title)
+            
+            # Create main message
             message = f"""🎬 **Admin's Choice** by {admin_name}
 
 **{content.title}**
@@ -1253,6 +1260,8 @@ class TelegramService:
 📝 **Admin's Note:** {description}
 
 📖 **Synopsis:** {(content.overview[:200] + '...') if content.overview else 'No synopsis available'}
+
+{streaming_message}
 
 #AdminChoice #MovieRecommendation #CineScope"""
             
@@ -1275,7 +1284,277 @@ class TelegramService:
         except Exception as e:
             logger.error(f"Telegram send error: {e}")
             return False
+    
+    @staticmethod
+    def format_streaming_links(streaming_links, content_title):
+        """Format streaming links organized by language with direct watch links"""
+        if not streaming_links:
+            return "\n🎥 **Watch Now:**\n❌ Streaming links not available yet"
+        
+        streaming_message = "\n🎥 **Watch Now:**\n"
+        
+        # Sort languages by priority (Telugu, English first)
+        language_priority = {
+            'telugu': 1, 'english': 2, 'hindi': 3, 
+            'tamil': 4, 'malayalam': 5, 'kannada': 6
+        }
+        
+        # Filter and sort available languages
+        available_languages = []
+        for lang_code, lang_data in streaming_links.items():
+            if lang_data.get('free_options') or lang_data.get('paid_options'):
+                priority = language_priority.get(lang_code, 999)
+                available_languages.append((priority, lang_code, lang_data))
+        
+        # Sort by priority
+        available_languages.sort(key=lambda x: x[0])
+        
+        if not available_languages:
+            return "\n🎥 **Watch Now:**\n❌ No streaming links available"
+        
+        # Format each language section
+        for priority, lang_code, lang_data in available_languages:
+            lang_name = lang_code.title()
+            lang_emoji = TelegramService.get_language_emoji(lang_code)
+            
+            streaming_message += f"\n{lang_emoji} **{lang_name} Audio:**\n"
+            
+            # Free platforms first
+            free_options = lang_data.get('free_options', [])
+            paid_options = lang_data.get('paid_options', [])
+            
+            if free_options:
+                streaming_message += "🆓 **Free Platforms:**\n"
+                for platform in free_options[:3]:  # Limit to 3 free platforms
+                    platform_emoji = TelegramService.get_platform_emoji(platform['platform_id'])
+                    direct_link = TelegramService.create_direct_watch_link(
+                        platform['url'], 
+                        content_title, 
+                        lang_code,
+                        platform['platform_id']
+                    )
+                    streaming_message += f"   {platform_emoji} [{platform['platform_name']}]({direct_link})\n"
+            
+            if paid_options:
+                streaming_message += "💰 **Premium Platforms:**\n"
+                for platform in paid_options[:3]:  # Limit to 3 paid platforms
+                    platform_emoji = TelegramService.get_platform_emoji(platform['platform_id'])
+                    direct_link = TelegramService.create_direct_watch_link(
+                        platform['url'], 
+                        content_title, 
+                        lang_code,
+                        platform['platform_id']
+                    )
+                    streaming_message += f"   {platform_emoji} [{platform['platform_name']}]({direct_link})\n"
+            
+            # Add separator between languages
+            if priority < len(available_languages):
+                streaming_message += "\n"
+        
+        # Add footer note
+        streaming_message += "\n💡 *Click on platform names for direct watch links*"
+        
+        return streaming_message
+    
+    @staticmethod
+    def get_language_emoji(lang_code):
+        """Get emoji for language"""
+        language_emojis = {
+            'telugu': '🇮🇳 తె',
+            'english': '🇺🇸 EN',
+            'hindi': '🇮🇳 हि',
+            'tamil': '🇮🇳 த',
+            'malayalam': '🇮🇳 മ',
+            'kannada': '🇮🇳 ಕ'
+        }
+        return language_emojis.get(lang_code, '🎬')
+    
+    @staticmethod
+    def get_platform_emoji(platform_id):
+        """Get emoji for streaming platform"""
+        platform_emojis = {
+            'netflix': '🔴',
+            'amazon_prime': '📦',
+            'disney_plus_hotstar': '✨',
+            'youtube': '📹',
+            'mx_player': '🎬',
+            'jio_hotstar': '🟣',
+            'sonyliv_premium': '📺',
+            'sonyliv_free': '📺',
+            'zee5_premium': '🟨',
+            'zee5_free': '🟨',
+            'aha': '💙',
+            'sun_nxt': '☀️',
+            'crunchyroll': '🟠',
+            'airtel_xstream': '📡'
+        }
+        return platform_emojis.get(platform_id, '🎦')
+    
+    @staticmethod
+    def create_direct_watch_link(base_url, content_title, language, platform_id):
+        """Create direct watch link for the platform"""
+        # Clean title for URL
+        clean_title = content_title.lower().replace(' ', '-').replace(':', '').replace(',', '')
+        
+        # Platform-specific URL formatting
+        if platform_id == 'netflix':
+            return f"{base_url}/search?q={content_title.replace(' ', '%20')}"
+        
+        elif platform_id == 'amazon_prime':
+            return f"{base_url}/search/ref=atv_sr_sug_0?query={content_title.replace(' ', '+')}"
+        
+        elif platform_id == 'disney_plus_hotstar':
+            if language == 'telugu':
+                return f"{base_url}/in/search?q={content_title.replace(' ', '%20')}&content=movies&lang=telugu"
+            elif language == 'tamil':
+                return f"{base_url}/in/search?q={content_title.replace(' ', '%20')}&content=movies&lang=tamil"
+            elif language == 'hindi':
+                return f"{base_url}/in/search?q={content_title.replace(' ', '%20')}&content=movies&lang=hindi"
+            else:
+                return f"{base_url}/in/search?q={content_title.replace(' ', '%20')}"
+        
+        elif platform_id == 'youtube':
+            return f"{base_url}/results?search_query={content_title.replace(' ', '+')}+{language}+full+movie"
+        
+        elif platform_id == 'mx_player':
+            return f"{base_url}/search?q={content_title.replace(' ', '%20')}"
+        
+        elif platform_id == 'jio_hotstar':
+            if language == 'telugu':
+                return f"{base_url}/movies/telugu?search={content_title.replace(' ', '%20')}"
+            else:
+                return f"{base_url}/search/{clean_title}"
+        
+        elif platform_id in ['sonyliv_premium', 'sonyliv_free']:
+            if language == 'telugu':
+                return f"{base_url}/shows/genre/telugu-1700000016?search={content_title.replace(' ', '%20')}"
+            else:
+                return f"{base_url}/search?q={content_title.replace(' ', '%20')}"
+        
+        elif platform_id in ['zee5_premium', 'zee5_free']:
+            if language == 'telugu':
+                return f"{base_url}/search?q={content_title.replace(' ', '%20')}&lang=telugu"
+            else:
+                return f"{base_url}/search?q={content_title.replace(' ', '%20')}"
+        
+        elif platform_id == 'aha':
+            return f"{base_url}/search?q={content_title.replace(' ', '%20')}"
+        
+        elif platform_id == 'sun_nxt':
+            if language == 'telugu':
+                return f"{base_url}/search?q={content_title.replace(' ', '%20')}&language=telugu"
+            elif language == 'tamil':
+                return f"{base_url}/search?q={content_title.replace(' ', '%20')}&language=tamil"
+            else:
+                return f"{base_url}/search?q={content_title.replace(' ', '%20')}"
+        
+        elif platform_id == 'crunchyroll':
+            return f"{base_url}/search?q={content_title.replace(' ', '%20')}"
+        
+        elif platform_id == 'airtel_xstream':
+            return f"{base_url}/search?query={content_title.replace(' ', '+')}"
+        
+        else:
+            # Default fallback
+            return f"{base_url}/search?q={content_title.replace(' ', '%20')}"
+    
+    @staticmethod
+    def send_new_content_notification(content, notification_type="new_release"):
+        """Send notification for new content additions"""
+        try:
+            if not bot or not TELEGRAM_CHANNEL_ID:
+                return False
+            
+            streaming_links = json.loads(content.streaming_links or '{}')
+            streaming_message = TelegramService.format_streaming_links(streaming_links, content.title)
+            
+            notification_emoji = {
+                'new_release': '🆕',
+                'trending': '🔥',
+                'popular': '⭐',
+                'anime': '🎌'
+            }
+            
+            emoji = notification_emoji.get(notification_type, '🎬')
+            
+            message = f"""{emoji} **New Addition to CineScope!**
 
+**{content.title}**
+⭐ Rating: {content.rating or 'N/A'}/10
+🎬 Type: {content.content_type.upper()}
+
+📖 **Synopsis:** {(content.overview[:150] + '...') if content.overview else 'No synopsis available'}
+
+{streaming_message}
+
+#NewRelease #CineScope #Movies"""
+            
+            poster_url = None
+            if content.poster_path:
+                if content.poster_path.startswith('http'):
+                    poster_url = content.poster_path
+                else:
+                    poster_url = f"https://image.tmdb.org/t/p/w500{content.poster_path}"
+            
+            if poster_url:
+                try:
+                    bot.send_photo(
+                        chat_id=TELEGRAM_CHANNEL_ID,
+                        photo=poster_url,
+                        caption=message,
+                        parse_mode='Markdown'
+                    )
+                except:
+                    bot.send_message(TELEGRAM_CHANNEL_ID, message, parse_mode='Markdown')
+            else:
+                bot.send_message(TELEGRAM_CHANNEL_ID, message, parse_mode='Markdown')
+            
+            return True
+        except Exception as e:
+            logger.error(f"New content notification error: {e}")
+            return False
+    
+    @staticmethod
+    def send_weekly_recommendations():
+        """Send weekly top recommendations"""
+        try:
+            if not bot or not TELEGRAM_CHANNEL_ID:
+                return False
+            
+            # Get top trending content
+            trending_content = RecommendationEngine.get_trending_recommendations(limit=5)
+            
+            message = """📅 **Weekly Recommendations**
+
+🔥 **This Week's Trending:**
+
+"""
+            
+            for i, content in enumerate(trending_content[:3], 1):
+                streaming_links = json.loads(content.streaming_links or '{}')
+                
+                # Get primary streaming platform
+                primary_platform = None
+                for lang_code, lang_data in streaming_links.items():
+                    if lang_data.get('free_options'):
+                        primary_platform = lang_data['free_options'][0]['platform_name']
+                        break
+                    elif lang_data.get('paid_options'):
+                        primary_platform = lang_data['paid_options'][0]['platform_name']
+                        break
+                
+                platform_text = f" on {primary_platform}" if primary_platform else ""
+                
+                message += f"{i}. **{content.title}** ⭐{content.rating or 'N/A'}{platform_text}\n"
+            
+            message += f"\n💡 Check out our app for complete streaming links and more recommendations!\n\n#WeeklyRecs #CineScope"
+            
+            bot.send_message(TELEGRAM_CHANNEL_ID, message, parse_mode='Markdown')
+            return True
+            
+        except Exception as e:
+            logger.error(f"Weekly recommendations error: {e}")
+            return False
 # API Routes
 
 # Authentication Routes
