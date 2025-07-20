@@ -1122,48 +1122,83 @@ class TelegramService:
                 except:
                     streaming_data = {}
             
-            # Create language-specific watch buttons
-            language_buttons = []
+            # Create language-specific watch links
+            language_links = []
+            watch_buttons = []
             languages = streaming_data.get('languages', {})
             
             # Sort languages by priority
             sorted_languages = sorted(languages.keys(), key=lambda x: LANGUAGE_PRIORITY.get(x, {}).get('priority', 999))
             
-            for lang in sorted_languages[:4]:  # Limit to 4 languages
+            # Create direct watch links for each language
+            for lang in sorted_languages[:6]:  # Limit to 6 languages
                 platforms = languages[lang]
                 if platforms:
-                    platform = platforms[0]  # Get first available platform
-                    platform_name = STREAMING_PLATFORMS.get(platform.get('platform', ''), {}).get('name', platform.get('platform', ''))
-                    platform_icon = STREAMING_PLATFORMS.get(platform.get('platform', ''), {}).get('icon', '🎬')
-                    is_free = platform.get('type') == 'free'
+                    # Get the best platform for this language (prefer free, then popular paid)
+                    best_platform = TelegramService._get_best_platform(platforms)
                     
-                    lang_info = LANGUAGE_PRIORITY.get(lang, {})
-                    lang_flag = lang_info.get('flag', '🎬')
-                    lang_name = lang_info.get('name', lang.title())
-                    
-                    button_text = f"{lang_flag} {lang_name} ({'Free' if is_free else platform_name})"
-                    language_buttons.append(f"[{button_text}]")
+                    if best_platform and best_platform.get('link'):
+                        lang_info = LANGUAGE_PRIORITY.get(lang, {})
+                        platform_info = STREAMING_PLATFORMS.get(best_platform.get('platform', ''), {})
+                        
+                        lang_flag = lang_info.get('flag', '🎬')
+                        lang_name = lang_info.get('name', lang.title())
+                        platform_name = platform_info.get('name', best_platform.get('platform', ''))
+                        platform_icon = platform_info.get('icon', '🎬')
+                        is_free = best_platform.get('type') == 'free' or platform_info.get('is_free', False)
+                        
+                        # Format the link text
+                        link_text = f"{lang_flag} {lang_name}"
+                        if is_free:
+                            link_text += f" (Free on {platform_name})"
+                        else:
+                            link_text += f" ({platform_name})"
+                        
+                        # Create clickable link
+                        watch_link = f"[{platform_icon} {link_text}]({best_platform['link']})"
+                        language_links.append(watch_link)
+                        
+                        # Also create inline keyboard button data
+                        watch_buttons.append({
+                            'text': f"{lang_flag} {lang_name} {'🆓' if is_free else '💎'}",
+                            'url': best_platform['link']
+                        })
             
-            # Create free/paid platform info
+            # Get free platforms
             free_platforms = []
+            free_links = []
+            for platform in streaming_data.get('free_options', [])[:3]:  # Limit to 3 free options
+                platform_info = STREAMING_PLATFORMS.get(platform.get('platform', ''), {})
+                platform_name = platform_info.get('name', platform.get('platform', ''))
+                platform_icon = platform_info.get('icon', '🎬')
+                
+                if platform.get('link') and platform_name not in [p['name'] for p in free_platforms]:
+                    free_platforms.append({'name': platform_name, 'icon': platform_icon})
+                    free_links.append(f"[{platform_icon} {platform_name}]({platform['link']})")
+            
+            # Get paid platforms
             paid_platforms = []
-            
-            for platform in streaming_data.get('free_options', []):
-                platform_name = STREAMING_PLATFORMS.get(platform.get('platform', ''), {}).get('name', platform.get('platform', ''))
-                if platform_name not in free_platforms:
-                    free_platforms.append(platform_name)
-            
-            for platform in streaming_data.get('paid_options', []):
-                platform_name = STREAMING_PLATFORMS.get(platform.get('platform', ''), {}).get('name', platform.get('platform', ''))
-                if platform_name not in paid_platforms:
-                    paid_platforms.append(platform_name)
+            paid_links = []
+            for platform in streaming_data.get('paid_options', [])[:3]:  # Limit to 3 paid options
+                platform_info = STREAMING_PLATFORMS.get(platform.get('platform', ''), {})
+                platform_name = platform_info.get('name', platform.get('platform', ''))
+                platform_icon = platform_info.get('icon', '🎬')
+                
+                if platform.get('link') and platform_name not in [p['name'] for p in paid_platforms]:
+                    paid_platforms.append({'name': platform_name, 'icon': platform_icon})
+                    paid_links.append(f"[{platform_icon} {platform_name}]({platform['link']})")
             
             # Create availability text
             availability_text = ""
             if free_platforms:
-                availability_text += f"🎬 Free on {', '.join(free_platforms[:2])}!"
+                platform_names = [f"{p['icon']} {p['name']}" for p in free_platforms]
+                availability_text = f"🎬 Free on {', '.join(platform_names)}!"
             elif paid_platforms:
-                availability_text += f"💎 Available on {', '.join(paid_platforms[:2])}"
+                platform_names = [f"{p['icon']} {p['name']}" for p in paid_platforms]
+                availability_text = f"💎 Available on {', '.join(platform_names)}"
+            
+            # Get trailer link
+            trailer_link = TelegramService._get_trailer_link(content.title)
             
             # Create poster URL
             poster_url = None
@@ -1173,7 +1208,7 @@ class TelegramService:
                 else:
                     poster_url = f"https://image.tmdb.org/t/p/w500{content.poster_path}"
             
-            # Create message
+            # Create the main message
             message = f"""**{content.title}**
 ⭐ Rating: {content.rating or 'N/A'}/10
 📅 Release: {content.release_date or 'N/A'}
@@ -1185,35 +1220,309 @@ class TelegramService:
 
 📖 **Synopsis:** {(content.overview[:200] + '...') if content.overview else 'No synopsis available'}
 
-🎯 **Choose Your Language to Watch:**
-{' '.join(language_buttons)}
+🎯 **Choose Your Language to Watch:**"""
+            
+            # Add language-specific watch links
+            if language_links:
+                # Group links in pairs for better formatting
+                for i in range(0, len(language_links), 2):
+                    if i + 1 < len(language_links):
+                        message += f"\n{language_links[i]} | {language_links[i + 1]}"
+                    else:
+                        message += f"\n{language_links[i]}"
+            
+            # Add general platform links if no language-specific links
+            if not language_links and (free_links or paid_links):
+                message += "\n🎬 **Watch Now:**"
+                all_links = free_links + paid_links
+                for i in range(0, len(all_links), 2):
+                    if i + 1 < len(all_links):
+                        message += f"\n{all_links[i]} | {all_links[i + 1]}"
+                    else:
+                        message += f"\n{all_links[i]}"
+            
+            # Add trailer and website links
+            message += f"""
 
-[📺 Watch Trailer] [⭐ More Details]
+[📺 Watch Trailer]({trailer_link}) | [⭐ More Details](https://movierecommendations.com/content/{content.id})
 
-For More - https://movierecommendations.com
+For More Movies & Shows - [Visit Our Website](https://movierecommendations.com)
 
 #AdminChoice #MovieRecommendation #CineScope #{content.content_type.title()}"""
             
-            # Send message with photo if available
+            # Try to send with inline keyboard for better UX
+            if watch_buttons:
+                try:
+                    # Create inline keyboard
+                    markup = TelegramService._create_inline_keyboard(watch_buttons, trailer_link, content.id)
+                    
+                    if poster_url:
+                        bot.send_photo(
+                            chat_id=TELEGRAM_CHANNEL_ID,
+                            photo=poster_url,
+                            caption=message,
+                            parse_mode='Markdown',
+                            reply_markup=markup
+                        )
+                    else:
+                        bot.send_message(
+                            TELEGRAM_CHANNEL_ID, 
+                            message, 
+                            parse_mode='Markdown',
+                            reply_markup=markup
+                        )
+                    return True
+                except Exception as keyboard_error:
+                    logger.error(f"Failed to send with keyboard, trying regular message: {keyboard_error}")
+            
+            # Fallback to regular message with clickable links
             if poster_url:
                 try:
                     bot.send_photo(
                         chat_id=TELEGRAM_CHANNEL_ID,
                         photo=poster_url,
                         caption=message,
-                        parse_mode='Markdown'
+                        parse_mode='Markdown',
+                        disable_web_page_preview=False
                     )
                 except Exception as photo_error:
                     logger.error(f"Failed to send photo, sending text only: {photo_error}")
-                    bot.send_message(TELEGRAM_CHANNEL_ID, message, parse_mode='Markdown')
+                    bot.send_message(
+                        TELEGRAM_CHANNEL_ID, 
+                        message, 
+                        parse_mode='Markdown',
+                        disable_web_page_preview=False
+                    )
             else:
-                bot.send_message(TELEGRAM_CHANNEL_ID, message, parse_mode='Markdown')
+                bot.send_message(
+                    TELEGRAM_CHANNEL_ID, 
+                    message, 
+                    parse_mode='Markdown',
+                    disable_web_page_preview=False
+                )
             
             return True
+            
         except Exception as e:
             logger.error(f"Telegram send error: {e}")
             return False
+    
+    @staticmethod
+    def _get_best_platform(platforms):
+        """Get the best platform for a language (prefer free, then popular paid)"""
+        if not platforms:
+            return None
+        
+        # Priority order: free platforms first, then popular paid platforms
+        platform_priority = {
+            'youtube': 1,
+            'mxplayer': 2,
+            'jiocinema': 3,
+            'sonyliv_free': 4,
+            'zee5_free': 5,
+            'netflix': 6,
+            'amazon_prime': 7,
+            'disney_hotstar': 8,
+            'zee5_premium': 9,
+            'sonyliv_premium': 10,
+            'aha': 11,
+            'sun_nxt': 12
+        }
+        
+        # Sort platforms by priority and availability of link
+        valid_platforms = [p for p in platforms if p.get('link')]
+        if not valid_platforms:
+            return platforms[0] if platforms else None
+        
+        # Sort by priority (lower number = higher priority)
+        sorted_platforms = sorted(
+            valid_platforms, 
+            key=lambda x: platform_priority.get(x.get('platform', ''), 999)
+        )
+        
+        return sorted_platforms[0]
+    
+    @staticmethod
+    def _get_trailer_link(title):
+        """Get YouTube trailer link for the title"""
+        try:
+            # Search for trailer on YouTube
+            if YOUTUBE_API_KEY and YOUTUBE_API_KEY != 'your_youtube_api_key':
+                youtube_results = YouTubeService.search_trailers(title)
+                if youtube_results and youtube_results.get('items'):
+                    video_id = youtube_results['items'][0]['id']['videoId']
+                    return f"https://www.youtube.com/watch?v={video_id}"
+            
+            # Fallback to YouTube search URL
+            return f"https://www.youtube.com/results?search_query={title.replace(' ', '+')}+trailer"
+        except:
+            return f"https://www.youtube.com/results?search_query={title.replace(' ', '+')}+trailer"
+    
+    @staticmethod
+    def _create_inline_keyboard(watch_buttons, trailer_link, content_id):
+        """Create inline keyboard with watch buttons"""
+        try:
+            from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+            
+            markup = InlineKeyboardMarkup()
+            
+            # Add watch buttons (2 per row)
+            for i in range(0, len(watch_buttons), 2):
+                row = []
+                
+                # First button
+                btn1 = InlineKeyboardButton(
+                    text=watch_buttons[i]['text'],
+                    url=watch_buttons[i]['url']
+                )
+                row.append(btn1)
+                
+                # Second button if exists
+                if i + 1 < len(watch_buttons):
+                    btn2 = InlineKeyboardButton(
+                        text=watch_buttons[i + 1]['text'],
+                        url=watch_buttons[i + 1]['url']
+                    )
+                    row.append(btn2)
+                
+                markup.row(*row)
+            
+            # Add trailer and details buttons
+            trailer_btn = InlineKeyboardButton("📺 Trailer", url=trailer_link)
+            details_btn = InlineKeyboardButton("⭐ Details", url=f"https://movierecommendations.com/content/{content_id}")
+            markup.row(trailer_btn, details_btn)
+            
+            # Add website button
+            website_btn = InlineKeyboardButton("🌐 More Movies", url="https://movierecommendations.com")
+            markup.row(website_btn)
+            
+            return markup
+            
+        except Exception as e:
+            logger.error(f"Error creating inline keyboard: {e}")
+            return None
+    
+    @staticmethod
+    def send_trending_update():
+        """Send daily trending updates to the channel"""
+        try:
+            if not bot or not TELEGRAM_CHANNEL_ID:
+                return False
+            
+            # Get trending content
+            trending_movies = RecommendationEngine.get_trending_recommendations(limit=5, content_type='movie')
+            trending_tv = RecommendationEngine.get_trending_recommendations(limit=3, content_type='tv')
+            
+            if not trending_movies and not trending_tv:
+                return False
+            
+            message = f"""🔥 **TRENDING NOW** 🔥
 
+📱 **Top Movies:**"""
+            
+            for i, movie in enumerate(trending_movies[:3], 1):
+                # Get streaming info
+                streaming_data = {}
+                if movie.streaming_links:
+                    try:
+                        streaming_data = json.loads(movie.streaming_links)
+                    except:
+                        pass
+                
+                # Get free platform if available
+                free_platform = ""
+                if streaming_data.get('free_options'):
+                    platform = streaming_data['free_options'][0]
+                    platform_info = STREAMING_PLATFORMS.get(platform.get('platform', ''), {})
+                    if platform_info:
+                        free_platform = f" - Free on {platform_info.get('name', '')}"
+                
+                message += f"""
+{i}. **{movie.title}** ⭐ {movie.rating or 'N/A'}{free_platform}"""
+            
+            if trending_tv:
+                message += f"""
+
+📺 **Top TV Shows:**"""
+                for i, show in enumerate(trending_tv[:2], 1):
+                    message += f"""
+{i}. **{show.title}** ⭐ {show.rating or 'N/A'}"""
+            
+            message += f"""
+
+[🎬 Explore All Movies](https://movierecommendations.com/trending)
+
+#Trending #Movies #TVShows #DailyUpdate"""
+            
+            bot.send_message(TELEGRAM_CHANNEL_ID, message, parse_mode='Markdown')
+            return True
+            
+        except Exception as e:
+            logger.error(f"Trending update error: {e}")
+            return False
+    
+    @staticmethod
+    def send_language_specific_recommendation(language='telugu'):
+        """Send language-specific recommendations"""
+        try:
+            if not bot or not TELEGRAM_CHANNEL_ID:
+                return False
+            
+            # Get regional recommendations
+            recommendations = RecommendationEngine.get_regional_recommendations(language, limit=5)
+            
+            if not recommendations:
+                return False
+            
+            lang_info = LANGUAGE_PRIORITY.get(language.lower(), {})
+            lang_flag = lang_info.get('flag', '🎬')
+            lang_name = lang_info.get('name', language.title())
+            
+            message = f"""{lang_flag} **{lang_name.upper()} CINEMA SPECIAL** {lang_flag}
+
+🎬 **Best {lang_name} Movies & Shows:**"""
+            
+            for i, content in enumerate(recommendations[:3], 1):
+                # Get streaming info
+                streaming_data = {}
+                if content.streaming_links:
+                    try:
+                        streaming_data = json.loads(content.streaming_links)
+                    except:
+                        pass
+                
+                # Get language-specific links
+                lang_links = []
+                if streaming_data.get('languages', {}).get(language.lower()):
+                    platforms = streaming_data['languages'][language.lower()]
+                    for platform in platforms[:2]:  # Max 2 platforms
+                        platform_info = STREAMING_PLATFORMS.get(platform.get('platform', ''), {})
+                        if platform_info and platform.get('link'):
+                            is_free = platform.get('type') == 'free'
+                            link_text = f"{'🆓' if is_free else '💎'} {platform_info.get('name', '')}"
+                            lang_links.append(f"[{link_text}]({platform['link']})")
+                
+                message += f"""
+
+{i}. **{content.title}**
+   ⭐ {content.rating or 'N/A'}/10 | 📅 {content.release_date or 'N/A'}"""
+                
+                if lang_links:
+                    message += f"""
+   🎯 Watch: {' | '.join(lang_links)}"""
+            
+            message += f"""
+
+[🌟 More {lang_name} Movies](https://movierecommendations.com/regional/{language})
+
+#{lang_name}Cinema #Regional #MovieRecommendations"""
+            
+            bot.send_message(TELEGRAM_CHANNEL_ID, message, parse_mode='Markdown')
+            return True
+            
+        except Exception as e:
+            logger.error(f"Language recommendation error: {e}")
+            return False
 # API Routes
 
 # Authentication Routes
