@@ -1,4 +1,4 @@
-# ml-service/app.py
+# ml-service/app.py 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import pandas as pd
@@ -28,8 +28,6 @@ from sklearn.cluster import KMeans
 from sklearn.neighbors import NearestNeighbors
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.neural_network import MLPRegressor
-from surprise import Dataset, Reader, SVD, NMF as SurpriseNMF, accuracy
-from surprise.model_selection import train_test_split
 import implicit
 import scipy.sparse as sp
 
@@ -126,6 +124,195 @@ def init_cache_db():
     ''')
     conn.commit()
     conn.close()
+
+# Custom SVD Implementation (replacing scikit-surprise)
+class CustomSVDRecommender:
+    """Custom SVD implementation to replace scikit-surprise"""
+    
+    def __init__(self, n_factors=100, learning_rate=0.005, regularization=0.05, n_epochs=100):
+        self.n_factors = n_factors
+        self.learning_rate = learning_rate
+        self.regularization = regularization
+        self.n_epochs = n_epochs
+        self.is_trained = False
+        self.user_factors = None
+        self.item_factors = None
+        self.user_bias = None
+        self.item_bias = None
+        self.global_bias = None
+        self.user_id_map = {}
+        self.item_id_map = {}
+        
+    def _prepare_data(self, interactions_data):
+        """Prepare data for training"""
+        try:
+            # Create mappings
+            unique_users = interactions_data['user_id'].unique()
+            unique_items = interactions_data['content_id'].unique()
+            
+            self.user_id_map = {uid: idx for idx, uid in enumerate(unique_users)}
+            self.item_id_map = {iid: idx for idx, iid in enumerate(unique_items)}
+            
+            n_users = len(unique_users)
+            n_items = len(unique_items)
+            
+            # Prepare training data
+            user_indices = []
+            item_indices = []
+            ratings = []
+            
+            for _, interaction in interactions_data.iterrows():
+                user_id = interaction['user_id']
+                item_id = interaction['content_id']
+                
+                if user_id in self.user_id_map and item_id in self.item_id_map:
+                    user_idx = self.user_id_map[user_id]
+                    item_idx = self.item_id_map[item_id]
+                    
+                    # Calculate rating
+                    base_rating = interaction.get('rating', 5.0)
+                    interaction_weight = INTERACTION_WEIGHTS.get(interaction['interaction_type'], 0.3)
+                    
+                    # Apply temporal decay
+                    try:
+                        interaction_time = datetime.fromisoformat(interaction['timestamp'].replace('Z', '+00:00'))
+                        days_ago = (datetime.now() - interaction_time).days
+                        temporal_weight = self._get_temporal_weight(days_ago)
+                    except:
+                        temporal_weight = 0.5
+                    
+                    final_rating = base_rating * interaction_weight * temporal_weight
+                    final_rating = max(1.0, min(10.0, final_rating))
+                    
+                    user_indices.append(user_idx)
+                    item_indices.append(item_idx)
+                    ratings.append(final_rating)
+            
+            return np.array(user_indices), np.array(item_indices), np.array(ratings), n_users, n_items
+            
+        except Exception as e:
+            logger.error(f"Error preparing SVD data: {e}")
+            return None, None, None, 0, 0
+    
+    def train(self, interactions_data):
+        """Train custom SVD model"""
+        try:
+            user_indices, item_indices, ratings, n_users, n_items = self._prepare_data(interactions_data)
+            
+            if user_indices is None or len(user_indices) == 0:
+                return False
+            
+            # Initialize factors and biases
+            self.user_factors = np.random.normal(0, 0.1, (n_users, self.n_factors))
+            self.item_factors = np.random.normal(0, 0.1, (n_items, self.n_factors))
+            self.user_bias = np.zeros(n_users)
+            self.item_bias = np.zeros(n_items)
+            self.global_bias = np.mean(ratings)
+            
+            # Training loop
+            for epoch in range(self.n_epochs):
+                total_error = 0
+                
+                for i in range(len(user_indices)):
+                    user_idx = user_indices[i]
+                    item_idx = item_indices[i]
+                    rating = ratings[i]
+                    
+                    # Prediction
+                    prediction = (self.global_bias + 
+                                self.user_bias[user_idx] + 
+                                self.item_bias[item_idx] + 
+                                np.dot(self.user_factors[user_idx], self.item_factors[item_idx]))
+                    
+                    # Error
+                    error = rating - prediction
+                    total_error += error ** 2
+                    
+                    # Update biases
+                    self.user_bias[user_idx] += self.learning_rate * (error - self.regularization * self.user_bias[user_idx])
+                    self.item_bias[item_idx] += self.learning_rate * (error - self.regularization * self.item_bias[item_idx])
+                    
+                    # Update factors
+                    user_factors_old = self.user_factors[user_idx].copy()
+                    self.user_factors[user_idx] += self.learning_rate * (error * self.item_factors[item_idx] - self.regularization * self.user_factors[user_idx])
+                    self.item_factors[item_idx] += self.learning_rate * (error * user_factors_old - self.regularization * self.item_factors[item_idx])
+                
+                if epoch % 20 == 0:
+                    rmse = np.sqrt(total_error / len(ratings))
+                    logger.info(f"Custom SVD epoch {epoch}, RMSE: {rmse:.4f}")
+            
+            self.is_trained = True
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error training custom SVD: {e}")
+            return False
+    
+    def predict(self, user_id, item_id):
+        """Predict rating for user-item pair"""
+        try:
+            if not self.is_trained:
+                return 5.0
+            
+            if user_id not in self.user_id_map or item_id not in self.item_id_map:
+                return 5.0
+            
+            user_idx = self.user_id_map[user_id]
+            item_idx = self.item_id_map[item_id]
+            
+            prediction = (self.global_bias + 
+                         self.user_bias[user_idx] + 
+                         self.item_bias[item_idx] + 
+                         np.dot(self.user_factors[user_idx], self.item_factors[item_idx]))
+            
+            return max(1.0, min(10.0, prediction))
+            
+        except Exception as e:
+            logger.error(f"Error predicting with custom SVD: {e}")
+            return 5.0
+    
+    def get_user_recommendations(self, user_id, content_ids, n_recommendations=20):
+        """Get SVD-based recommendations for user"""
+        try:
+            if not self.is_trained:
+                return []
+            
+            predictions = []
+            for content_id in content_ids:
+                try:
+                    pred_rating = self.predict(user_id, content_id)
+                    predictions.append((content_id, pred_rating))
+                except:
+                    continue
+            
+            # Sort by predicted rating
+            predictions.sort(key=lambda x: x[1], reverse=True)
+            
+            recommendations = []
+            for content_id, score in predictions[:n_recommendations]:
+                recommendations.append({
+                    'content_id': content_id,
+                    'score': float(score),
+                    'reason': 'Custom SVD matrix factorization prediction'
+                })
+            
+            return recommendations
+        except Exception as e:
+            logger.error(f"Error getting custom SVD recommendations: {e}")
+            return []
+    
+    def _get_temporal_weight(self, days_ago):
+        """Calculate temporal weight based on recency"""
+        if days_ago <= 7:
+            return TEMPORAL_DECAY['recent']
+        elif days_ago <= 30:
+            return TEMPORAL_DECAY['week']
+        elif days_ago <= 90:
+            return TEMPORAL_DECAY['month']
+        elif days_ago <= 180:
+            return TEMPORAL_DECAY['quarter']
+        else:
+            return TEMPORAL_DECAY['old']
 
 # Advanced User Profile Builder
 class UserProfileBuilder:
@@ -923,112 +1110,21 @@ class CollaborativeFilteringRecommender:
         else:
             return TEMPORAL_DECAY['old']
 
-# SVD-based Recommender using Surprise (Enhanced)
+# SVD-based Recommender (Custom Implementation)
 class SVDRecommender:
     def __init__(self):
-        self.model = SVD(n_factors=150, reg_all=0.05, lr_all=0.005, n_epochs=100)
-        self.trainset = None
+        self.model = CustomSVDRecommender(n_factors=150, regularization=0.05, learning_rate=0.005, n_epochs=100)
         self.is_trained = False
-        self.user_bias = {}
-        self.item_bias = {}
         
     def train(self, interactions_data):
-        """Train enhanced SVD model with weighted ratings"""
-        try:
-            # Prepare weighted ratings
-            enhanced_ratings = []
-            
-            for _, interaction in interactions_data.iterrows():
-                user_id = interaction['user_id']
-                content_id = interaction['content_id']
-                
-                # Calculate enhanced rating
-                base_rating = interaction.get('rating', 5.0)
-                interaction_weight = INTERACTION_WEIGHTS.get(interaction['interaction_type'], 0.3)
-                
-                # Apply temporal decay
-                try:
-                    interaction_time = datetime.fromisoformat(interaction['timestamp'].replace('Z', '+00:00'))
-                    days_ago = (datetime.now() - interaction_time).days
-                    temporal_weight = self._get_temporal_weight(days_ago)
-                except:
-                    temporal_weight = 0.5
-                
-                # Calculate final rating (scale to 1-10)
-                if base_rating > 0:
-                    final_rating = base_rating * interaction_weight * temporal_weight
-                else:
-                    final_rating = 5.0 * interaction_weight * temporal_weight
-                
-                # Ensure rating is in valid range
-                final_rating = max(1.0, min(10.0, final_rating))
-                
-                enhanced_ratings.append({
-                    'user_id': user_id,
-                    'content_id': content_id,
-                    'rating': final_rating
-                })
-            
-            # Create DataFrame
-            df = pd.DataFrame(enhanced_ratings)
-            
-            # Group by user-item and take mean rating
-            df = df.groupby(['user_id', 'content_id'])['rating'].mean().reset_index()
-            
-            reader = Reader(rating_scale=(1, 10))
-            dataset = Dataset.load_from_df(df, reader)
-            
-            self.trainset = dataset.build_full_trainset()
-            self.model.fit(self.trainset)
-            self.is_trained = True
-            
-            return True
-        except Exception as e:
-            logger.error(f"Error training SVD model: {e}")
-            return False
+        """Train custom SVD model"""
+        success = self.model.train(interactions_data)
+        self.is_trained = success
+        return success
     
     def get_user_recommendations(self, user_id, content_ids, n_recommendations=20):
         """Get SVD-based recommendations for user"""
-        try:
-            if not self.is_trained:
-                return []
-            
-            predictions = []
-            for content_id in content_ids:
-                try:
-                    pred = self.model.predict(user_id, content_id)
-                    predictions.append((content_id, pred.est))
-                except:
-                    continue
-            
-            # Sort by predicted rating
-            predictions.sort(key=lambda x: x[1], reverse=True)
-            
-            recommendations = []
-            for content_id, score in predictions[:n_recommendations]:
-                recommendations.append({
-                    'content_id': content_id,
-                    'score': float(score),
-                    'reason': 'Predicted to match your rating preferences'
-                })
-            
-            return recommendations
-        except Exception as e:
-            logger.error(f"Error getting SVD recommendations: {e}")
-            return []
-    
-    def _get_temporal_weight(self, days_ago):
-        """Calculate temporal weight based on recency"""
-        if days_ago <= 7:
-            return TEMPORAL_DECAY['recent']
-        elif days_ago <= 30:
-            return TEMPORAL_DECAY['week']
-        elif days_ago <= 90:
-            return TEMPORAL_DECAY['month']
-        elif days_ago <= 180:
-            return TEMPORAL_DECAY['quarter']
-        else:
-            return TEMPORAL_DECAY['old']
+        return self.model.get_user_recommendations(user_id, content_ids, n_recommendations)
 
 # Neural Network Recommender using PyTorch (Enhanced)
 class NeuralRecommender:
@@ -1368,6 +1464,41 @@ class HybridRecommendationEngine:
             
         except Exception as e:
             logger.error(f"Error generating hybrid recommendations: {e}")
+            return []
+    
+    def get_similar_recommendations(self, content_id, content_data, n_recommendations=20):
+        """Get similar content recommendations"""
+        try:
+            recommendations = []
+            
+            # Get content-based similar recommendations
+            if hasattr(self.content_recommender, 'similarity_matrix'):
+                content_recs = self.content_recommender.get_content_recommendations(
+                    content_id, content_data, n_recommendations
+                )
+                recommendations.extend(content_recs)
+            
+            # Get collaborative filtering based similar items
+            if self.collaborative_recommender.user_item_matrix is not None:
+                collab_recs = self.collaborative_recommender.get_item_based_recommendations(
+                    content_id, n_recommendations//2
+                )
+                recommendations.extend(collab_recs)
+            
+            # Remove duplicates and sort by score
+            seen_ids = set()
+            unique_recommendations = []
+            for rec in recommendations:
+                if rec['content_id'] not in seen_ids:
+                    seen_ids.add(rec['content_id'])
+                    unique_recommendations.append(rec)
+            
+            # Sort by score and limit
+            unique_recommendations.sort(key=lambda x: x['score'], reverse=True)
+            return unique_recommendations[:n_recommendations]
+            
+        except Exception as e:
+            logger.error(f"Error getting similar recommendations: {e}")
             return []
     
     def _get_behavior_based_recommendations(self, user_profile, user_interactions, content_data, n_recommendations):
@@ -2623,7 +2754,7 @@ def get_recommendations():
             'cache_stats': cache_system.get_cache_stats(),
             'recommendation_info': {
                 'total_recommendations': len(recommendations),
-                'diversity_score': self._calculate_recommendation_diversity(recommendations),
+                'diversity_score': _calculate_recommendation_diversity(recommendations),
                 'average_score': np.mean([r['score'] for r in recommendations]) if recommendations else 0
             }
         }
@@ -2703,7 +2834,7 @@ def get_similar_content():
                 )
                 
                 # Apply personalization boost to similar recommendations
-                recommendations = self._personalize_similar_recommendations(
+                recommendations = _personalize_similar_recommendations(
                     recommendations, user_profile, content_data
                 )
         
@@ -2817,7 +2948,7 @@ def get_trending_recommendations():
                 user_profile = ml_engine.user_profile_builder.build_user_profile(
                     user_id, user_interactions, content_data
                 )
-                trending_content = self._personalize_similar_recommendations(
+                trending_content = _personalize_similar_recommendations(
                     trending_content, user_profile, content_data
                 )
         
@@ -2887,8 +3018,8 @@ def analyze_user_profile():
                 'rating_patterns': user_profile.get('rating_patterns', [])[-10:]  # Last 10 ratings
             },
             'recommendations_insight': {
-                'recommended_algorithms': self._get_recommended_algorithms(user_profile),
-                'content_discovery_suggestions': self._get_discovery_suggestions(user_profile)
+                'recommended_algorithms': _get_recommended_algorithms(user_profile),
+                'content_discovery_suggestions': _get_discovery_suggestions(user_profile)
             }
         }
         
@@ -2969,7 +3100,7 @@ def force_model_update():
             'models_to_update': [
                 'content_based_recommender',
                 'collaborative_filtering',
-                'svd_matrix_factorization', 
+                'custom_svd_matrix_factorization', 
                 'neural_collaborative_filtering',
                 'user_profile_builder',
                 'popularity_calculator'
@@ -2993,7 +3124,7 @@ def health_check():
                 'content_based': hasattr(ml_engine.content_recommender, 'similarity_matrix') and 
                                 ml_engine.content_recommender.similarity_matrix is not None,
                 'collaborative': ml_engine.collaborative_recommender.user_item_matrix is not None,
-                'svd': ml_engine.svd_recommender.is_trained,
+                'custom_svd': ml_engine.svd_recommender.is_trained,
                 'neural': ml_engine.neural_recommender.is_trained
             },
             'data_status': {
@@ -3042,7 +3173,7 @@ def get_ml_stats():
                     'content_based': hasattr(ml_engine.content_recommender, 'similarity_matrix') and 
                                     ml_engine.content_recommender.similarity_matrix is not None,
                     'collaborative': ml_engine.collaborative_recommender.user_item_matrix is not None,
-                    'svd': ml_engine.svd_recommender.is_trained,
+                    'custom_svd': ml_engine.svd_recommender.is_trained,
                     'neural': ml_engine.neural_recommender.is_trained
                 },
                 'user_profiles_built': len(ml_engine.user_profile_builder.user_profiles),
@@ -3065,7 +3196,7 @@ def get_ml_stats():
                 'supported_algorithms': [
                     'content_based_filtering',
                     'collaborative_filtering', 
-                    'matrix_factorization_svd',
+                    'custom_svd_matrix_factorization',
                     'neural_collaborative_filtering',
                     'hybrid_ensemble',
                     'behavioral_pattern_analysis',

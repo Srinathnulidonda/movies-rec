@@ -4,13 +4,12 @@ pandas
 numpy
 scipy
 scikit-learn
-scikit-surprise
 implicit
-torch
-torchvision
-torchaudio
+torch+cpu
+torchvision+cpu
+torchaudio+cpu
+--find-links https://download.pytorch.org/whl/torch_stable.html
 requests
-pickle5
 Werkzeug
 Jinja2
 MarkupSafe
@@ -18,9 +17,7 @@ itsdangerous
 click
 joblib
 threadpoolctl
-numba
-cython
+pytz
+python-dateutil
 gunicorn
-waitress
-psutil
-colorlog
+six
