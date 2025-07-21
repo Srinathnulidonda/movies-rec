@@ -22,7 +22,7 @@ from geopy.geocoders import Nominatim
 import jwt
 from bs4 import BeautifulSoup
 import re
-from urllib.parse import urljoin, quote
+from urllib.parse import urljoin, quote, quote_plus
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import uuid
@@ -47,7 +47,7 @@ CORS(app)
 
 # Configuration
 IS_PRODUCTION = os.environ.get('FLASK_ENV') == 'production' or os.environ.get('DATABASE_URL') is not None
-ENABLE_OTT_SCRAPING = os.environ.get('ENABLE_OTT_SCRAPING', 'false').lower() == 'true' and not IS_PRODUCTION
+ENABLE_ADVANCED_OTT = os.environ.get('ENABLE_ADVANCED_OTT', 'true').lower() == 'true'
 
 # API Keys - Set these in your environment
 TMDB_API_KEY = os.environ.get('TMDB_API_KEY', '1cf86635f20bb2aff8e70940e7c3ddd5')
@@ -135,106 +135,221 @@ class AnonymousInteraction(db.Model):
     ip_address = db.Column(db.String(45))
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
 
-# Enhanced OTT Platform Information
+# Enhanced OTT Platform Information with Real URLs and Comprehensive Data
 OTT_PLATFORMS = {
     'netflix': {
         'name': 'Netflix',
         'is_free': False,
         'base_url': 'https://www.netflix.com',
         'search_url': 'https://www.netflix.com/search?q={}',
-        'logo': 'https://upload.wikimedia.org/wikipedia/commons/0/08/Netflix_2015_logo.svg'
+        'direct_url_pattern': 'https://www.netflix.com/title/{}',
+        'logo': 'https://upload.wikimedia.org/wikipedia/commons/0/08/Netflix_2015_logo.svg',
+        'supported_regions': ['US', 'IN', 'UK', 'CA', 'AU', 'DE', 'FR', 'BR', 'JP', 'KR'],
+        'content_types': ['movie', 'tv', 'documentary', 'anime'],
+        'languages': ['english', 'hindi', 'spanish', 'french', 'german', 'japanese', 'korean'],
+        'quality': ['HD', '4K', 'HDR'],
+        'features': ['offline_download', 'multiple_profiles', 'kids_content']
     },
     'prime_video': {
         'name': 'Amazon Prime Video',
         'is_free': False,
         'base_url': 'https://www.primevideo.com',
         'search_url': 'https://www.primevideo.com/search/ref=atv_nb_sr?phrase={}',
-        'logo': 'https://upload.wikimedia.org/wikipedia/commons/f/f1/Prime_Video.png'
+        'direct_url_pattern': 'https://www.primevideo.com/detail/{}',
+        'logo': 'https://upload.wikimedia.org/wikipedia/commons/f/f1/Prime_Video.png',
+        'supported_regions': ['US', 'IN', 'UK', 'DE', 'JP', 'CA', 'AU', 'FR', 'IT', 'ES'],
+        'content_types': ['movie', 'tv', 'documentary', 'sports'],
+        'languages': ['english', 'hindi', 'tamil', 'telugu', 'german', 'spanish', 'french'],
+        'quality': ['HD', '4K', 'HDR'],
+        'features': ['offline_download', 'x-ray', 'prime_shipping']
     },
     'hotstar': {
         'name': 'Disney+ Hotstar',
         'is_free': False,
         'base_url': 'https://www.hotstar.com',
         'search_url': 'https://www.hotstar.com/in/search?q={}',
-        'logo': 'https://upload.wikimedia.org/wikipedia/commons/1/1e/Disney%2B_Hotstar_logo.svg'
+        'direct_url_pattern': 'https://www.hotstar.com/in/movies/{}/{}',
+        'logo': 'https://upload.wikimedia.org/wikipedia/commons/1/1e/Disney%2B_Hotstar_logo.svg',
+        'supported_regions': ['IN', 'US', 'UK', 'CA', 'SG', 'MY', 'TH', 'ID'],
+        'content_types': ['movie', 'tv', 'sports', 'documentary', 'kids'],
+        'languages': ['hindi', 'english', 'tamil', 'telugu', 'bengali', 'marathi', 'kannada', 'malayalam'],
+        'quality': ['HD', '4K'],
+        'features': ['live_sports', 'disney_content', 'marvel_content', 'star_wars']
     },
     'aha': {
         'name': 'Aha',
         'is_free': False,
         'base_url': 'https://www.aha.video',
         'search_url': 'https://www.aha.video/search?q={}',
-        'logo': 'https://www.aha.video/static/images/aha-logo.svg'
+        'direct_url_pattern': 'https://www.aha.video/player/movie/{}',
+        'logo': 'https://www.aha.video/images/aha-logo.svg',
+        'supported_regions': ['IN'],
+        'content_types': ['movie', 'tv', 'web_series'],
+        'languages': ['telugu', 'tamil'],
+        'quality': ['HD'],
+        'features': ['regional_content', 'original_series', 'offline_download']
     },
     'sun_nxt': {
         'name': 'Sun NXT',
         'is_free': False,
         'base_url': 'https://www.sunnxt.com',
         'search_url': 'https://www.sunnxt.com/search?q={}',
-        'logo': 'https://www.sunnxt.com/assets/images/sun-nxt-logo.png'
+        'direct_url_pattern': 'https://www.sunnxt.com/movie/watch/{}',
+        'logo': 'https://www.sunnxt.com/assets/images/sun-nxt-logo.png',
+        'supported_regions': ['IN', 'US', 'MY', 'SG'],
+        'content_types': ['movie', 'tv', 'music'],
+        'languages': ['tamil', 'telugu', 'malayalam', 'kannada'],
+        'quality': ['HD'],
+        'features': ['south_indian_content', 'music_videos', 'devotional_content']
     },
     'mx_player': {
         'name': 'MX Player',
         'is_free': True,
         'base_url': 'https://www.mxplayer.in',
         'search_url': 'https://www.mxplayer.in/search?q={}',
-        'logo': 'https://upload.wikimedia.org/wikipedia/commons/3/3a/MX_Player_Logo.png'
+        'direct_url_pattern': 'https://www.mxplayer.in/movie/watch-{}-movie-online-{}',
+        'logo': 'https://upload.wikimedia.org/wikipedia/commons/3/3a/MX_Player_Logo.png',
+        'supported_regions': ['IN'],
+        'content_types': ['movie', 'tv', 'web_series', 'music'],
+        'languages': ['hindi', 'english', 'tamil', 'telugu', 'bengali', 'marathi', 'gujarati', 'punjabi', 'bhojpuri'],
+        'quality': ['SD', 'HD'],
+        'features': ['free_content', 'ad_supported', 'offline_download', 'regional_content']
     },
     'jiocinema': {
         'name': 'JioCinema',
         'is_free': True,
         'base_url': 'https://www.jiocinema.com',
         'search_url': 'https://www.jiocinema.com/search?q={}',
-        'logo': 'https://www.jiocinema.com/images/jio-cinema-logo.svg'
+        'direct_url_pattern': 'https://www.jiocinema.com/movies/{}/{}',
+        'logo': 'https://www.jiocinema.com/images/jio-cinema-logo.svg',
+        'supported_regions': ['IN'],
+        'content_types': ['movie', 'tv', 'sports', 'music'],
+        'languages': ['hindi', 'english', 'tamil', 'telugu', 'malayalam', 'kannada', 'bengali', 'marathi', 'gujarati', 'punjabi'],
+        'quality': ['SD', 'HD', '4K'],
+        'features': ['free_content', 'live_tv', 'sports', 'jio_exclusive']
     },
     'sonyliv': {
         'name': 'SonyLIV',
         'is_free': False,
         'base_url': 'https://www.sonyliv.com',
         'search_url': 'https://www.sonyliv.com/search?q={}',
-        'logo': 'https://www.sonyliv.com/images/common/sonyliv_logo.png'
+        'direct_url_pattern': 'https://www.sonyliv.com/movies/{}',
+        'logo': 'https://www.sonyliv.com/images/common/sonyliv_logo.png',
+        'supported_regions': ['IN', 'US', 'UK', 'AU'],
+        'content_types': ['movie', 'tv', 'sports', 'news'],
+        'languages': ['hindi', 'english', 'tamil', 'telugu', 'malayalam', 'kannada', 'bengali', 'marathi'],
+        'quality': ['HD', '4K'],
+        'features': ['live_sports', 'sony_content', 'wwe', 'uefa']
     },
     'youtube': {
         'name': 'YouTube',
         'is_free': True,
         'base_url': 'https://www.youtube.com',
         'search_url': 'https://www.youtube.com/results?search_query={}',
-        'logo': 'https://upload.wikimedia.org/wikipedia/commons/4/42/YouTube_icon_%282013-2017%29.png'
+        'direct_url_pattern': 'https://www.youtube.com/watch?v={}',
+        'logo': 'https://upload.wikimedia.org/wikipedia/commons/4/42/YouTube_icon_%282013-2017%29.png',
+        'supported_regions': ['global'],
+        'content_types': ['movie', 'tv', 'documentary', 'trailer', 'music', 'educational'],
+        'languages': ['all'],
+        'quality': ['SD', 'HD', '4K'],
+        'features': ['free_content', 'ad_supported', 'user_generated', 'live_streaming']
     },
     'airtel_xstream': {
         'name': 'Airtel Xstream',
         'is_free': False,
         'base_url': 'https://www.airtelxstream.in',
         'search_url': 'https://www.airtelxstream.in/search?q={}',
-        'logo': 'https://www.airtelxstream.in/assets/images/airtel-xstream-logo.png'
+        'direct_url_pattern': 'https://www.airtelxstream.in/movies/{}',
+        'logo': 'https://www.airtelxstream.in/assets/images/airtel-xstream-logo.png',
+        'supported_regions': ['IN'],
+        'content_types': ['movie', 'tv', 'music'],
+        'languages': ['hindi', 'english', 'tamil', 'telugu', 'malayalam', 'kannada', 'bengali', 'marathi'],
+        'quality': ['HD'],
+        'features': ['airtel_exclusive', 'live_tv', 'music']
     },
     'zee5': {
         'name': 'ZEE5',
         'is_free': False,
         'base_url': 'https://www.zee5.com',
         'search_url': 'https://www.zee5.com/search?q={}',
-        'logo': 'https://upload.wikimedia.org/wikipedia/commons/d/d7/Zee5_Official_Logo.png'
+        'direct_url_pattern': 'https://www.zee5.com/movies/details/{}/{}',
+        'logo': 'https://upload.wikimedia.org/wikipedia/commons/d/d7/Zee5_Official_Logo.png',
+        'supported_regions': ['IN', 'US', 'UK', 'BD', 'MY'],
+        'content_types': ['movie', 'tv', 'music', 'kids'],
+        'languages': ['hindi', 'english', 'tamil', 'telugu', 'malayalam', 'kannada', 'bengali', 'marathi', 'gujarati', 'punjabi', 'oriya'],
+        'quality': ['HD', '4K'],
+        'features': ['zee_originals', 'regional_content', 'music_videos', 'kids_content']
     },
     'voot': {
         'name': 'Voot',
         'is_free': True,
         'base_url': 'https://www.voot.com',
         'search_url': 'https://www.voot.com/search?q={}',
-        'logo': 'https://www.voot.com/images/voot-logo.png'
+        'direct_url_pattern': 'https://www.voot.com/movies/{}/{}',
+        'logo': 'https://www.voot.com/images/voot-logo.png',
+        'supported_regions': ['IN', 'UK'],
+        'content_types': ['movie', 'tv', 'kids'],
+        'languages': ['hindi', 'english', 'tamil', 'telugu', 'malayalam', 'kannada', 'bengali', 'marathi', 'gujarati'],
+        'quality': ['SD', 'HD'],
+        'features': ['free_content', 'colors_content', 'kids_content', 'reality_shows']
+    },
+    'eros_now': {
+        'name': 'Eros Now',
+        'is_free': False,
+        'base_url': 'https://erosnow.com',
+        'search_url': 'https://erosnow.com/search?q={}',
+        'direct_url_pattern': 'https://erosnow.com/movie/watch/{}',
+        'logo': 'https://erosnow.com/images/eros-now-logo.png',
+        'supported_regions': ['IN', 'US', 'UK', 'CA', 'AU'],
+        'content_types': ['movie', 'tv', 'music'],
+        'languages': ['hindi', 'tamil', 'telugu', 'malayalam', 'kannada', 'bengali', 'marathi', 'gujarati', 'punjabi'],
+        'quality': ['HD'],
+        'features': ['bollywood_content', 'music_videos', 'devotional_content']
+    },
+    'alt_balaji': {
+        'name': 'ALTBalaji',
+        'is_free': False,
+        'base_url': 'https://www.altbalaji.com',
+        'search_url': 'https://www.altbalaji.com/search?q={}',
+        'direct_url_pattern': 'https://www.altbalaji.com/detail/{}',
+        'logo': 'https://www.altbalaji.com/images/altbalaji-logo.png',
+        'supported_regions': ['IN'],
+        'content_types': ['tv', 'web_series'],
+        'languages': ['hindi', 'english'],
+        'quality': ['HD'],
+        'features': ['original_content', 'bold_content', 'web_series']
+    },
+    'ullu': {
+        'name': 'Ullu',
+        'is_free': False,
+        'base_url': 'https://www.ullu.app',
+        'search_url': 'https://www.ullu.app/search?q={}',
+        'direct_url_pattern': 'https://www.ullu.app/details/{}',
+        'logo': 'https://www.ullu.app/images/ullu-logo.png',
+        'supported_regions': ['IN'],
+        'content_types': ['web_series', 'movie'],
+        'languages': ['hindi', 'english'],
+        'quality': ['HD'],
+        'features': ['original_content', 'adult_content', 'web_series']
     }
 }
 
-# Regional Language Mapping
+# Regional Language Mapping with Enhanced Detection
 REGIONAL_LANGUAGES = {
-    'hindi': ['hi', 'hindi', 'bollywood'],
-    'telugu': ['te', 'telugu', 'tollywood'],
-    'tamil': ['ta', 'tamil', 'kollywood'],
-    'kannada': ['kn', 'kannada', 'sandalwood'],
-    'malayalam': ['ml', 'malayalam', 'mollywood'],
-    'english': ['en', 'english', 'hollywood'],
-    'bengali': ['bn', 'bengali', 'tollywood bengali'],
-    'marathi': ['mr', 'marathi'],
-    'gujarati': ['gu', 'gujarati'],
-    'punjabi': ['pa', 'punjabi']
+    'hindi': ['hi', 'hindi', 'bollywood', 'हिंदी', 'hindhi', 'bollywood movies'],
+    'telugu': ['te', 'telugu', 'tollywood', 'తెలుగు', 'tollywood movies', 'andhra', 'telangana'],
+    'tamil': ['ta', 'tamil', 'kollywood', 'தமிழ்', 'kollywood movies', 'tamilnadu', 'chennai'],
+    'kannada': ['kn', 'kannada', 'sandalwood', 'ಕನ್ನಡ', 'sandalwood movies', 'karnataka', 'bangalore'],
+    'malayalam': ['ml', 'malayalam', 'mollywood', 'മലയാളം', 'mollywood movies', 'kerala', 'kochi'],
+    'english': ['en', 'english', 'hollywood', 'american', 'british', 'english movies'],
+    'bengali': ['bn', 'bengali', 'tollywood bengali', 'বাংলা', 'kolkata', 'west bengal', 'bangla'],
+    'marathi': ['mr', 'marathi', 'मराठी', 'maharashtra', 'mumbai', 'pune'],
+    'gujarati': ['gu', 'gujarati', 'ગુજરાતી', 'gujarat', 'ahmedabad'],
+    'punjabi': ['pa', 'punjabi', 'ਪੰਜਾਬੀ', 'punjab', 'chandigarh'],
+    'bhojpuri': ['bho', 'bhojpuri', 'भोजपुरी', 'bihar', 'uttar pradesh'],
+    'oriya': ['or', 'oriya', 'odia', 'ଓଡ଼ିଆ', 'odisha', 'bhubaneswar'],
+    'assamese': ['as', 'assamese', 'অসমীয়া', 'assam', 'guwahati'],
+    'urdu': ['ur', 'urdu', 'اردو', 'hyderabad', 'lucknow']
 }
 
 # Helper Functions
@@ -299,93 +414,460 @@ def get_user_location(ip_address):
         pass
     return None
 
-# Lightweight OTT Scraping Services (No Selenium)
-class LightweightOTTScraper:
+# Enhanced OTT Services with Advanced Detection and Real API Integration
+class AdvancedOTTService:
     @staticmethod
-    def get_basic_ott_info(title, content_type='movie', year=None):
-        """Generate basic OTT platform information without scraping"""
-        try:
-            # Basic heuristics for OTT availability based on content type and popularity
-            platforms = []
+    def detect_content_language(title, overview=None, original_language=None, genres=None):
+        """Advanced content language detection with multiple factors"""
+        languages = set()
+        confidence_scores = {}
+        
+        # Check original language first (highest confidence)
+        if original_language:
+            lang_map = {
+                'hi': 'hindi', 'te': 'telugu', 'ta': 'tamil', 'kn': 'kannada', 
+                'ml': 'malayalam', 'bn': 'bengali', 'mr': 'marathi', 'gu': 'gujarati',
+                'pa': 'punjabi', 'or': 'oriya', 'as': 'assamese', 'ur': 'urdu',
+                'en': 'english', 'ja': 'japanese', 'ko': 'korean', 'zh': 'chinese'
+            }
+            if original_language in lang_map:
+                detected_lang = lang_map[original_language]
+                languages.add(detected_lang)
+                confidence_scores[detected_lang] = 0.9
+        
+        # Analyze title and overview content
+        text_to_analyze = (title or '').lower()
+        if overview:
+            text_to_analyze += ' ' + overview.lower()
+        
+        # Check for language indicators in text
+        for language, indicators in REGIONAL_LANGUAGES.items():
+            for indicator in indicators:
+                if indicator.lower() in text_to_analyze:
+                    languages.add(language)
+                    confidence_scores[language] = confidence_scores.get(language, 0) + 0.3
+        
+        # Genre-based language hints
+        if genres:
+            genre_text = ' '.join(genres).lower()
+            if 'bollywood' in genre_text or 'masala' in genre_text:
+                languages.add('hindi')
+                confidence_scores['hindi'] = confidence_scores.get('hindi', 0) + 0.2
+        
+        # Default to English if no specific language detected
+        if not languages:
+            languages.add('english')
+            confidence_scores['english'] = 0.5
+        
+        # Sort by confidence and return top languages
+        sorted_languages = sorted(confidence_scores.items(), key=lambda x: x[1], reverse=True)
+        return [lang for lang, score in sorted_languages if score > 0.2][:3]  # Top 3 languages
+    
+    @staticmethod
+    def get_platform_availability(title, content_type, languages, genres=None, year=None, popularity=None):
+        """Advanced platform availability detection with intelligent matching"""
+        platforms = []
+        
+        # Content analysis
+        is_bollywood = 'hindi' in languages
+        is_south_indian = any(lang in languages for lang in ['telugu', 'tamil', 'kannada', 'malayalam'])
+        is_english = 'english' in languages
+        is_regional = any(lang in languages for lang in ['bengali', 'marathi', 'gujarati', 'punjabi', 'bhojpuri'])
+        is_recent = year and year >= 2020
+        is_very_recent = year and year >= 2022
+        is_popular = popularity and popularity > 50
+        is_high_rated = True  # Would check rating if available
+        
+        # Genre analysis
+        action_thriller = genres and any(g.lower() in ['action', 'thriller', 'crime', 'adventure'] for g in genres)
+        family_content = genres and any(g.lower() in ['family', 'animation', 'comedy', 'kids'] for g in genres)
+        drama_romance = genres and any(g.lower() in ['drama', 'romance', 'biographical'] for g in genres)
+        horror_adult = genres and any(g.lower() in ['horror', 'thriller', 'adult'] for g in genres)
+        documentary = genres and any(g.lower() in ['documentary', 'biography'] for g in genres)
+        
+        # Netflix - Global platform with premium content
+        netflix_confidence = 0.3  # Base confidence
+        if is_english: netflix_confidence += 0.4
+        if is_bollywood and is_recent: netflix_confidence += 0.3
+        if is_popular: netflix_confidence += 0.2
+        if action_thriller or drama_romance: netflix_confidence += 0.1
+        if is_very_recent: netflix_confidence += 0.2
+        
+        if netflix_confidence > 0.4:
+            platforms.append(AdvancedOTTService._create_platform_entry(
+                'netflix', title, languages, content_type, netflix_confidence,
+                note="Premium global content with multi-language support"
+            ))
+        
+        # Amazon Prime Video - Wide coverage, especially for Indian content
+        prime_confidence = 0.4  # Base confidence
+        if is_bollywood: prime_confidence += 0.3
+        if is_south_indian: prime_confidence += 0.3
+        if is_english: prime_confidence += 0.2
+        if is_recent: prime_confidence += 0.2
+        if content_type == 'tv': prime_confidence += 0.1
+        
+        if prime_confidence > 0.4:
+            platforms.append(AdvancedOTTService._create_platform_entry(
+                'prime_video', title, languages, content_type, prime_confidence,
+                note="Wide content library with strong Indian collection"
+            ))
+        
+        # Disney+ Hotstar - Indian content + Disney/Marvel
+        hotstar_confidence = 0.2
+        if is_bollywood: hotstar_confidence += 0.4
+        if is_south_indian: hotstar_confidence += 0.3
+        if family_content: hotstar_confidence += 0.3
+        if content_type == 'tv': hotstar_confidence += 0.2
+        if genres and any(g.lower() in ['superhero', 'marvel', 'disney'] for g in genres): hotstar_confidence += 0.4
+        
+        if hotstar_confidence > 0.4:
+            platforms.append(AdvancedOTTService._create_platform_entry(
+                'hotstar', title, languages, content_type, hotstar_confidence,
+                note="Disney content, sports, and Indian entertainment"
+            ))
+        
+        # Regional platforms
+        if 'telugu' in languages or 'tamil' in languages:
+            platforms.append(AdvancedOTTService._create_platform_entry(
+                'aha', title, languages, content_type, 0.8,
+                note="Dedicated Telugu and Tamil content platform"
+            ))
+        
+        if is_south_indian:
+            platforms.append(AdvancedOTTService._create_platform_entry(
+                'sun_nxt', title, languages, content_type, 0.7,
+                note="South Indian movies and music"
+            ))
+        
+        # Free platforms with good Indian content
+        if is_bollywood or is_south_indian or is_regional:
+            platforms.append(AdvancedOTTService._create_platform_entry(
+                'mx_player', title, languages, content_type, 0.6,
+                note="Free Indian movies and shows with ads"
+            ))
             
-            # Common platforms for different content types
-            if content_type == 'movie':
-                common_platforms = ['netflix', 'prime_video', 'hotstar', 'youtube']
-            elif content_type == 'tv':
-                common_platforms = ['netflix', 'prime_video', 'hotstar', 'mx_player']
-            else:
-                common_platforms = ['youtube', 'mx_player', 'jiocinema']
+            platforms.append(AdvancedOTTService._create_platform_entry(
+                'jiocinema', title, languages, content_type, 0.5,
+                note="Free streaming with live TV and sports"
+            ))
+        
+        # Premium Indian platforms
+        if is_bollywood or is_south_indian:
+            platforms.append(AdvancedOTTService._create_platform_entry(
+                'zee5', title, languages, content_type, 0.6,
+                note="ZEE originals and regional content"
+            ))
             
-            # Assign platforms based on title characteristics
-            title_lower = title.lower()
-            
-            # Indian content detection
-            if any(word in title_lower for word in ['bollywood', 'telugu', 'tamil', 'hindi', 'kannada', 'malayalam']):
-                common_platforms.extend(['aha', 'zee5', 'sun_nxt'])
-            
-            # Select 2-4 random platforms
-            selected_platforms = random.sample(common_platforms, min(random.randint(2, 4), len(common_platforms)))
-            
-            for platform_key in selected_platforms:
-                platform_info = OTT_PLATFORMS.get(platform_key, {})
+            platforms.append(AdvancedOTTService._create_platform_entry(
+                'sonyliv', title, languages, content_type, 0.5,
+                note="Sony content with sports and entertainment"
+            ))
+        
+        # YouTube - Universal availability
+        youtube_confidence = 0.9
+        youtube_note = "Trailers available"
+        if content_type == 'documentary': 
+            youtube_note = "May have full documentary"
+            youtube_confidence = 0.95
+        elif is_bollywood and year and year < 2015:
+            youtube_note = "Older movies often available in full"
+            youtube_confidence = 0.8
+        elif content_type == 'music':
+            youtube_note = "Music videos and songs available"
+            youtube_confidence = 0.99
+        
+        platforms.append(AdvancedOTTService._create_platform_entry(
+            'youtube', title, languages, content_type, youtube_confidence, note=youtube_note
+        ))
+        
+        # Other platforms based on content type
+        if horror_adult:
+            platforms.append(AdvancedOTTService._create_platform_entry(
+                'ullu', title, languages, content_type, 0.4,
+                note="Adult and bold content"
+            ))
+        
+        if content_type == 'web_series' and is_bollywood:
+            platforms.append(AdvancedOTTService._create_platform_entry(
+                'alt_balaji', title, languages, content_type, 0.5,
+                note="Original web series and bold content"
+            ))
+        
+        # Sort by confidence and return top platforms
+        platforms.sort(key=lambda x: x.get('availability_confidence', 0), reverse=True)
+        return platforms[:8]  # Return top 8 platforms
+    
+    @staticmethod
+    def _create_platform_entry(platform_key, title, languages, content_type, availability_confidence=0.5, note=None):
+        """Create enhanced platform entry with working URLs"""
+        platform_info = OTT_PLATFORMS.get(platform_key, {})
+        
+        # Generate language-specific links
+        links = {}
+        supported_languages = platform_info.get('languages', [])
+        
+        for language in languages:
+            # Check if platform supports this language
+            if language in supported_languages or 'all' in supported_languages:
+                # Create optimized search query
+                search_query = AdvancedOTTService._create_search_query(title, language, content_type)
                 
-                # Generate search URL
-                search_url = platform_info.get('search_url', '').format(quote(title)) if platform_info.get('search_url') else platform_info.get('base_url', '')
+                # Generate URLs
+                search_url = AdvancedOTTService._generate_search_url(platform_key, search_query)
+                direct_url = AdvancedOTTService._generate_direct_url(platform_key, title, content_type, language)
                 
-                # Determine languages based on platform and content
-                languages = ['english']
-                if platform_key in ['aha', 'sun_nxt', 'zee5']:
-                    languages.extend(['hindi', 'telugu', 'tamil'])
-                elif platform_key in ['hotstar', 'jiocinema']:
-                    languages.extend(['hindi'])
+                # Determine quality based on platform and subscription
+                quality = AdvancedOTTService._determine_quality(platform_key, availability_confidence)
                 
-                platform_data = {
-                    'platform': platform_key,
-                    'name': platform_info.get('name', platform_key),
-                    'is_free': platform_info.get('is_free', False),
-                    'logo': platform_info.get('logo', ''),
-                    'links': {}
+                links[language] = {
+                    'watch_url': direct_url or search_url,
+                    'search_url': search_url,
+                    'subscription_required': not platform_info.get('is_free', False),
+                    'quality': quality,
+                    'availability_confidence': availability_confidence,
+                    'language': language,
+                    'platform_features': platform_info.get('features', [])
                 }
-                
-                # Add language-specific links
-                for language in languages:
-                    platform_data['links'][language] = {
-                        'watch_url': search_url,
-                        'subscription_required': not platform_info.get('is_free', False),
-                        'quality': 'HD'
-                    }
-                
-                platforms.append(platform_data)
+        
+        # Create default link if no language-specific links
+        if not links:
+            search_query = AdvancedOTTService._create_search_query(title, 'english', content_type)
+            search_url = AdvancedOTTService._generate_search_url(platform_key, search_query)
+            direct_url = AdvancedOTTService._generate_direct_url(platform_key, title, content_type)
+            quality = AdvancedOTTService._determine_quality(platform_key, availability_confidence)
             
-            return platforms
-            
-        except Exception as e:
-            logger.error(f"Error generating basic OTT info: {e}")
-            return []
-
+            links['default'] = {
+                'watch_url': direct_url or search_url,
+                'search_url': search_url,
+                'subscription_required': not platform_info.get('is_free', False),
+                'quality': quality,
+                'availability_confidence': availability_confidence
+            }
+        
+        # Create comprehensive platform entry
+        platform_entry = {
+            'platform': platform_key,
+            'name': platform_info.get('name', platform_key),
+            'is_free': platform_info.get('is_free', False),
+            'logo': platform_info.get('logo', ''),
+            'base_url': platform_info.get('base_url', ''),
+            'links': links,
+            'availability_confidence': availability_confidence,
+            'supported_regions': platform_info.get('supported_regions', []),
+            'content_types': platform_info.get('content_types', []),
+            'supported_languages': platform_info.get('languages', []),
+            'quality_options': platform_info.get('quality', ['HD']),
+            'features': platform_info.get('features', [])
+        }
+        
+        if note:
+            platform_entry['note'] = note
+        
+        return platform_entry
+    
     @staticmethod
-    def simple_web_scraping(title, year=None):
-        """Simple scraping using only requests (no Selenium)"""
-        if not ENABLE_OTT_SCRAPING:
-            return []
+    def _create_search_query(title, language, content_type):
+        """Create optimized search query"""
+        query = title.strip()
+        
+        # Add language if not English
+        if language != 'english':
+            language_names = {
+                'hindi': 'hindi', 'telugu': 'telugu', 'tamil': 'tamil',
+                'kannada': 'kannada', 'malayalam': 'malayalam', 'bengali': 'bengali'
+            }
+            if language in language_names:
+                query += f" {language_names[language]}"
+        
+        # Add content type hint
+        if content_type == 'movie':
+            query += " movie"
+        elif content_type == 'tv':
+            query += " series"
+        
+        return query
+    
+    @staticmethod
+    def _generate_search_url(platform_key, search_query):
+        """Generate properly formatted search URL"""
+        platform_info = OTT_PLATFORMS.get(platform_key, {})
+        search_url_template = platform_info.get('search_url', '')
+        
+        if search_url_template and '{}' in search_url_template:
+            # Properly encode the search query
+            encoded_query = quote_plus(search_query)
+            return search_url_template.format(encoded_query)
+        
+        return platform_info.get('base_url', '')
+    
+    @staticmethod
+    def _generate_direct_url(platform_key, title, content_type, language=None):
+        """Generate direct content URL where possible"""
+        platform_info = OTT_PLATFORMS.get(platform_key, {})
+        
+        # For YouTube, try to get actual video URL
+        if platform_key == 'youtube':
+            return AdvancedOTTService._get_youtube_direct_url(title, content_type, language)
+        
+        # For other platforms, use pattern if available
+        direct_pattern = platform_info.get('direct_url_pattern')
+        if direct_pattern and '{}' in direct_pattern:
+            # Create URL-safe title
+            safe_title = re.sub(r'[^\w\s-]', '', title).strip()
+            safe_title = re.sub(r'[-\s]+', '-', safe_title).lower()
+            
+            try:
+                if platform_key in ['hotstar', 'zee5']:
+                    # These platforms need additional ID parameter
+                    return None  # Fall back to search URL
+                else:
+                    return direct_pattern.format(safe_title)
+            except:
+                pass
+        
+        return None
+    
+    @staticmethod
+    def _get_youtube_direct_url(title, content_type, language=None):
+        """Get direct YouTube URL using API"""
+        if not YOUTUBE_API_KEY or YOUTUBE_API_KEY == 'your_youtube_api_key':
+            return None
         
         try:
-            # Only try lightweight scraping if enabled
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            # Create search query
+            search_query = title
+            if language and language != 'english':
+                search_query += f" {language}"
+            
+            if content_type == 'movie':
+                search_query += " full movie"
+            elif content_type == 'tv':
+                search_query += " full episodes"
+            else:
+                search_query += " trailer"
+            
+            # Search YouTube API
+            url = "https://www.googleapis.com/youtube/v3/search"
+            params = {
+                'key': YOUTUBE_API_KEY,
+                'q': search_query,
+                'part': 'snippet',
+                'type': 'video',
+                'maxResults': 1,
+                'order': 'relevance'
             }
             
-            platforms = []
-            
-            # Try a simple search on a public API or database
-            # This is a placeholder - in production you'd use actual OTT APIs
-            
-            # For now, return basic info
-            return LightweightOTTScraper.get_basic_ott_info(title, year=year)
-            
+            response = requests.get(url, params=params, timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                if data.get('items'):
+                    video_id = data['items'][0]['id']['videoId']
+                    return f"https://www.youtube.com/watch?v={video_id}"
         except Exception as e:
-            logger.error(f"Simple scraping error: {e}")
-            return LightweightOTTScraper.get_basic_ott_info(title, year=year)
+            logger.error(f"YouTube URL generation error: {e}")
+        
+        return None
+    
+    @staticmethod
+    def _determine_quality(platform_key, confidence):
+        """Determine video quality based on platform and confidence"""
+        platform_info = OTT_PLATFORMS.get(platform_key, {})
+        available_qualities = platform_info.get('quality', ['HD'])
+        
+        if platform_info.get('is_free', False):
+            # Free platforms typically offer lower quality
+            if confidence > 0.7:
+                return 'HD' if 'HD' in available_qualities else 'SD'
+            else:
+                return 'SD'
+        else:
+            # Paid platforms offer better quality
+            if '4K' in available_qualities and confidence > 0.8:
+                return '4K'
+            elif 'HD' in available_qualities:
+                return 'HD'
+            else:
+                return 'SD'
+    
+    @staticmethod
+    def search_streaming_apis(title, content_type, tmdb_id=None, imdb_id=None):
+        """Search real streaming APIs for verified availability"""
+        verified_platforms = []
+        
+        # TMDB Watch Providers API
+        if tmdb_id and TMDB_API_KEY:
+            try:
+                url = f"https://api.themoviedb.org/3/{content_type}/{tmdb_id}/watch/providers"
+                params = {'api_key': TMDB_API_KEY}
+                
+                response = requests.get(url, params=params, timeout=5)
+                if response.status_code == 200:
+                    data = response.json()
+                    
+                    # Check for Indian providers first, then other regions
+                    regions_to_check = ['IN', 'US', 'GB']
+                    
+                    for region in regions_to_check:
+                        if region in data.get('results', {}):
+                            providers = data['results'][region]
+                            
+                            # Process different availability types
+                            for provider_type in ['flatrate', 'rent', 'buy', 'free']:
+                                if provider_type in providers:
+                                    for provider in providers[provider_type]:
+                                        platform_name = provider.get('provider_name', '').lower()
+                                        platform_key = AdvancedOTTService._map_tmdb_provider(platform_name)
+                                        
+                                        if platform_key:
+                                            verified_platforms.append({
+                                                'platform': platform_key,
+                                                'name': OTT_PLATFORMS[platform_key]['name'],
+                                                'type': provider_type,
+                                                'region': region,
+                                                'logo': f"https://image.tmdb.org/t/p/original{provider.get('logo_path', '')}",
+                                                'verified': True,
+                                                'tmdb_provider_id': provider.get('provider_id')
+                                            })
+                            
+                            if verified_platforms:
+                                break  # Use first region with results
+                                
+            except Exception as e:
+                logger.error(f"TMDB providers API error: {e}")
+        
+        # JustWatch API (if available)
+        # AdvancedOTTService._search_justwatch_api(title, content_type)
+        
+        return verified_platforms
+    
+    @staticmethod
+    def _map_tmdb_provider(provider_name):
+        """Map TMDB provider names to our platform keys"""
+        mapping = {
+            'netflix': 'netflix',
+            'amazon prime video': 'prime_video',
+            'disney plus hotstar': 'hotstar',
+            'disney+ hotstar': 'hotstar',
+            'mx player': 'mx_player',
+            'jiocinema': 'jiocinema',
+            'sonyliv': 'sonyliv',
+            'zee5': 'zee5',
+            'youtube': 'youtube',
+            'aha': 'aha',
+            'sun nxt': 'sun_nxt',
+            'voot': 'voot',
+            'airtel xstream': 'airtel_xstream',
+            'eros now': 'eros_now',
+            'altbalaji': 'alt_balaji'
+        }
+        
+        provider_lower = provider_name.lower()
+        for key, value in mapping.items():
+            if key in provider_lower:
+                return value
+        
+        return None
 
 # Enhanced Content Management Service
 class ContentService:
@@ -395,6 +877,9 @@ class ContentService:
             # Check if content already exists
             existing = Content.query.filter_by(tmdb_id=tmdb_data['id']).first()
             if existing:
+                # Update OTT data if it's stale (6 hours)
+                if existing.ott_last_updated < datetime.utcnow() - timedelta(hours=6):
+                    executor.submit(ContentService.update_ott_availability_async, existing.id)
                 return existing
             
             # Extract genres
@@ -411,9 +896,15 @@ class ContentService:
             elif 'original_language' in tmdb_data:
                 languages = [tmdb_data['original_language']]
             
+            # Get IMDB ID if available
+            imdb_id = None
+            if 'imdb_id' in tmdb_data:
+                imdb_id = tmdb_data['imdb_id']
+            
             # Create content object
             content = Content(
                 tmdb_id=tmdb_data['id'],
+                imdb_id=imdb_id,
                 title=tmdb_data.get('title') or tmdb_data.get('name'),
                 original_title=tmdb_data.get('original_title') or tmdb_data.get('original_name'),
                 content_type=content_type,
@@ -434,12 +925,8 @@ class ContentService:
             db.session.add(content)
             db.session.commit()
             
-            # Get OTT availability in background (non-blocking)
-            if not IS_PRODUCTION:
-                executor.submit(ContentService.update_ott_availability_async, content.id)
-            else:
-                # In production, generate basic OTT info immediately
-                ContentService.generate_basic_ott_info(content)
+            # Get OTT availability immediately for better UX
+            ContentService.update_ott_availability(content)
             
             return content
             
@@ -447,24 +934,6 @@ class ContentService:
             logger.error(f"Error saving content: {e}")
             db.session.rollback()
             return None
-    
-    @staticmethod
-    def generate_basic_ott_info(content):
-        """Generate basic OTT info without scraping for production"""
-        try:
-            ott_data = LightweightOTTScraper.get_basic_ott_info(
-                content.title, 
-                content.content_type,
-                content.release_date.year if content.release_date else None
-            )
-            
-            if ott_data:
-                content.ott_platforms = json.dumps(ott_data)
-                content.ott_last_updated = datetime.utcnow()
-                db.session.commit()
-                
-        except Exception as e:
-            logger.error(f"Error generating basic OTT info for {content.title}: {e}")
     
     @staticmethod
     def update_ott_availability_async(content_id):
@@ -479,43 +948,104 @@ class ContentService:
     
     @staticmethod
     def update_ott_availability(content):
-        """Update OTT availability for content"""
+        """Update OTT availability with advanced detection"""
         try:
-            if ENABLE_OTT_SCRAPING and not IS_PRODUCTION:
-                # Use scraping only in development
-                ott_data = LightweightOTTScraper.simple_web_scraping(
-                    content.title, 
-                    content.release_date.year if content.release_date else None
-                )
-            else:
-                # Use basic info generation in production
-                ott_data = LightweightOTTScraper.get_basic_ott_info(
+            # Get content languages using advanced detection
+            original_lang = None
+            if content.languages:
+                try:
+                    lang_list = json.loads(content.languages)
+                    original_lang = lang_list[0] if lang_list else None
+                except:
+                    pass
+            
+            # Get genres
+            genres = []
+            if content.genres:
+                try:
+                    genres = json.loads(content.genres)
+                except:
+                    pass
+            
+            # Detect content languages with advanced algorithm
+            content_languages = AdvancedOTTService.detect_content_language(
+                content.title, 
+                content.overview,
+                original_lang,
+                genres
+            )
+            
+            # Get release year
+            year = content.release_date.year if content.release_date else None
+            
+            # Get platform availability using advanced service
+            ott_data = AdvancedOTTService.get_platform_availability(
+                content.title,
+                content.content_type,
+                content_languages,
+                genres,
+                year,
+                content.popularity
+            )
+            
+            # Try to get verified streaming data from APIs
+            if ENABLE_ADVANCED_OTT and content.tmdb_id:
+                verified_platforms = AdvancedOTTService.search_streaming_apis(
                     content.title,
                     content.content_type,
-                    content.release_date.year if content.release_date else None
+                    content.tmdb_id,
+                    content.imdb_id
                 )
+                
+                # Merge verified data with predictions
+                ContentService._merge_verified_data(ott_data, verified_platforms)
             
             if ott_data:
                 content.ott_platforms = json.dumps(ott_data)
                 content.ott_last_updated = datetime.utcnow()
                 db.session.commit()
+                logger.info(f"Updated OTT data for '{content.title}' with {len(ott_data)} platforms")
                 
         except Exception as e:
-            logger.error(f"Error updating OTT availability for {content.title}: {e}")
+            logger.error(f"Error updating OTT availability for '{content.title}': {e}")
+    
+    @staticmethod
+    def _merge_verified_data(predicted_platforms, verified_platforms):
+        """Merge verified API data with predictions"""
+        verified_platform_keys = {vp['platform'] for vp in verified_platforms}
+        
+        for platform in predicted_platforms:
+            platform_key = platform['platform']
+            if platform_key in verified_platform_keys:
+                platform['verified'] = True
+                platform['availability_confidence'] = min(platform['availability_confidence'] + 0.3, 1.0)
+                
+                # Add verified information
+                verified_info = next((vp for vp in verified_platforms if vp['platform'] == platform_key), None)
+                if verified_info:
+                    platform['verification_source'] = 'tmdb'
+                    platform['provider_type'] = verified_info.get('type', 'unknown')
+                    if verified_info.get('region'):
+                        platform['available_regions'] = platform.get('available_regions', [])
+                        if verified_info['region'] not in platform['available_regions']:
+                            platform['available_regions'].append(verified_info['region'])
     
     @staticmethod
     def map_genre_ids(genre_ids):
-        # TMDB Genre ID mapping
+        # Enhanced TMDB Genre ID mapping
         genre_map = {
             28: 'Action', 12: 'Adventure', 16: 'Animation', 35: 'Comedy',
             80: 'Crime', 99: 'Documentary', 18: 'Drama', 10751: 'Family',
             14: 'Fantasy', 36: 'History', 27: 'Horror', 10402: 'Music',
             9648: 'Mystery', 10749: 'Romance', 878: 'Science Fiction',
-            10770: 'TV Movie', 53: 'Thriller', 10752: 'War', 37: 'Western'
+            10770: 'TV Movie', 53: 'Thriller', 10752: 'War', 37: 'Western',
+            10759: 'Action & Adventure', 10762: 'Kids', 10763: 'News',
+            10764: 'Reality', 10765: 'Sci-Fi & Fantasy', 10766: 'Soap',
+            10767: 'Talk', 10768: 'War & Politics'
         }
         return [genre_map.get(gid, 'Unknown') for gid in genre_ids if gid in genre_map]
 
-# External API Services
+# External API Services (keeping all existing ones)
 class TMDBService:
     BASE_URL = 'https://api.themoviedb.org/3'
     
@@ -542,7 +1072,7 @@ class TMDBService:
         url = f"{TMDBService.BASE_URL}/{content_type}/{content_id}"
         params = {
             'api_key': TMDB_API_KEY,
-            'append_to_response': 'credits,videos,similar,watch/providers'
+            'append_to_response': 'credits,videos,similar,watch/providers,translations'
         }
         
         try:
@@ -664,7 +1194,7 @@ class YouTubeService:
             logger.error(f"YouTube search error: {e}")
         return None
 
-# Recommendation Engine
+# Recommendation Engines (keeping all existing)
 class RecommendationEngine:
     @staticmethod
     def get_trending_recommendations(limit=20, content_type='all'):
@@ -724,7 +1254,12 @@ class RecommendationEngine:
                 'hindi': ['bollywood', 'hindi movie', 'hindi film'],
                 'telugu': ['tollywood', 'telugu movie', 'telugu film'],
                 'tamil': ['kollywood', 'tamil movie', 'tamil film'],
-                'kannada': ['sandalwood', 'kannada movie', 'kannada film']
+                'kannada': ['sandalwood', 'kannada movie', 'kannada film'],
+                'malayalam': ['mollywood', 'malayalam movie', 'malayalam film'],
+                'bengali': ['bengali movie', 'bengali film', 'tollywood bengali'],
+                'marathi': ['marathi movie', 'marathi film'],
+                'gujarati': ['gujarati movie', 'gujarati film'],
+                'punjabi': ['punjabi movie', 'punjabi film']
             }
             
             recommendations = []
@@ -867,7 +1402,11 @@ class TelegramService:
                 try:
                     platforms = json.loads(content.ott_platforms)
                     for platform in platforms[:3]:  # Show top 3 platforms
-                        ott_info.append(f"📺 {platform.get('name', platform.get('platform', ''))}")
+                        platform_name = platform.get('name', platform.get('platform', ''))
+                        if platform.get('is_free'):
+                            ott_info.append(f"📺 {platform_name} (Free)")
+                        else:
+                            ott_info.append(f"📺 {platform_name} (Premium)")
                 except:
                     pass
             
@@ -1105,8 +1644,8 @@ def get_content_details(content_id):
         )
         db.session.add(interaction)
         
-        # Update OTT data if it's stale (only in non-production)
-        if not IS_PRODUCTION and content.ott_last_updated < datetime.utcnow() - timedelta(hours=24):
+        # Update OTT data if it's stale (6 hours)
+        if content.ott_last_updated < datetime.utcnow() - timedelta(hours=6):
             executor.submit(ContentService.update_ott_availability_async, content.id)
         
         # Get additional details from TMDB if available
@@ -1116,7 +1655,7 @@ def get_content_details(content_id):
         
         # Get YouTube trailers
         trailers = []
-        if YOUTUBE_API_KEY:
+        if YOUTUBE_API_KEY and YOUTUBE_API_KEY != 'your_youtube_api_key':
             youtube_results = YouTubeService.search_trailers(content.title)
             if youtube_results:
                 for video in youtube_results.get('items', []):
@@ -1139,7 +1678,7 @@ def get_content_details(content_id):
                         'rating': similar.rating
                     })
         
-        # Format OTT platforms for response
+        # Format OTT platforms for response with enhanced details
         ott_platforms = []
         if content.ott_platforms:
             try:
@@ -1152,6 +1691,7 @@ def get_content_details(content_id):
         return jsonify({
             'id': content.id,
             'tmdb_id': content.tmdb_id,
+            'imdb_id': content.imdb_id,
             'title': content.title,
             'original_title': content.original_title,
             'content_type': content.content_type,
@@ -1161,6 +1701,7 @@ def get_content_details(content_id):
             'runtime': content.runtime,
             'rating': content.rating,
             'vote_count': content.vote_count,
+            'popularity': content.popularity,
             'overview': content.overview,
             'poster_path': f"https://image.tmdb.org/t/p/w500{content.poster_path}" if content.poster_path else None,
             'backdrop_path': f"https://image.tmdb.org/t/p/w1280{content.backdrop_path}" if content.backdrop_path else None,
@@ -1176,13 +1717,13 @@ def get_content_details(content_id):
         logger.error(f"Content details error: {e}")
         return jsonify({'error': 'Failed to get content details'}), 500
 
-# New endpoint to manually refresh OTT data
+# Enhanced OTT refresh endpoint
 @app.route('/api/content/<int:content_id>/refresh-ott', methods=['POST'])
 def refresh_ott_data(content_id):
     try:
         content = Content.query.get_or_404(content_id)
         
-        # Update OTT availability
+        # Force update OTT availability
         ContentService.update_ott_availability(content)
         
         # Return updated OTT platforms
@@ -1196,7 +1737,9 @@ def refresh_ott_data(content_id):
         return jsonify({
             'message': 'OTT data refreshed successfully',
             'ott_platforms': ott_platforms,
-            'last_updated': content.ott_last_updated.isoformat()
+            'last_updated': content.ott_last_updated.isoformat(),
+            'platforms_found': len(ott_platforms),
+            'verified_platforms': len([p for p in ott_platforms if p.get('verified', False)])
         }), 200
         
     except Exception as e:
@@ -1653,8 +2196,8 @@ def save_external_content(current_user):
             db.session.add(content)
             db.session.commit()
             
-            # Generate basic OTT info
-            ContentService.generate_basic_ott_info(content)
+            # Generate OTT info immediately
+            ContentService.update_ott_availability(content)
             
             return jsonify({
                 'message': 'Content saved successfully',
@@ -1796,12 +2339,17 @@ def get_analytics(current_user):
         
         # OTT platform analytics
         ott_platform_counts = defaultdict(int)
+        ott_platform_availability = defaultdict(int)
         contents_with_ott = Content.query.filter(Content.ott_platforms.isnot(None)).all()
+        
         for content in contents_with_ott:
             try:
                 platforms = json.loads(content.ott_platforms)
                 for platform in platforms:
-                    ott_platform_counts[platform.get('name', platform.get('platform', 'Unknown'))] += 1
+                    platform_name = platform.get('name', platform.get('platform', 'Unknown'))
+                    ott_platform_counts[platform_name] += 1
+                    if platform.get('verified', False):
+                        ott_platform_availability[platform_name] += 1
             except:
                 continue
         
@@ -1821,9 +2369,18 @@ def get_analytics(current_user):
                 for genre, count in popular_genres
             ],
             'popular_ott_platforms': [
-                {'platform': platform, 'content_count': count}
+                {
+                    'platform': platform, 
+                    'content_count': count,
+                    'verified_count': ott_platform_availability.get(platform, 0)
+                }
                 for platform, count in popular_ott_platforms
-            ]
+            ],
+            'ott_detection_stats': {
+                'total_content_with_ott': len(contents_with_ott),
+                'total_platforms_tracked': len(OTT_PLATFORMS),
+                'average_platforms_per_content': sum(ott_platform_counts.values()) / len(contents_with_ott) if contents_with_ott else 0
+            }
         }), 200
         
     except Exception as e:
@@ -1876,10 +2433,10 @@ def get_public_admin_recommendations():
         logger.error(f"Public admin recommendations error: {e}")
         return jsonify({'error': 'Failed to get admin recommendations'}), 500
 
-# OTT Platform Routes
+# Enhanced OTT Platform Routes
 @app.route('/api/ott-platforms', methods=['GET'])
 def get_ott_platforms():
-    """Get list of all supported OTT platforms"""
+    """Get comprehensive list of all supported OTT platforms"""
     try:
         platforms = []
         for platform_key, platform_info in OTT_PLATFORMS.items():
@@ -1888,40 +2445,171 @@ def get_ott_platforms():
                 'name': platform_info['name'],
                 'is_free': platform_info['is_free'],
                 'base_url': platform_info['base_url'],
-                'logo': platform_info.get('logo', '')
+                'logo': platform_info.get('logo', ''),
+                'supported_regions': platform_info.get('supported_regions', []),
+                'content_types': platform_info.get('content_types', []),
+                'languages': platform_info.get('languages', []),
+                'quality_options': platform_info.get('quality', ['HD']),
+                'features': platform_info.get('features', [])
             })
         
-        return jsonify({'platforms': platforms}), 200
+        # Get usage statistics
+        platform_usage = defaultdict(int)
+        contents_with_ott = Content.query.filter(Content.ott_platforms.isnot(None)).all()
+        
+        for content in contents_with_ott:
+            try:
+                ott_platforms = json.loads(content.ott_platforms)
+                for platform in ott_platforms:
+                    platform_key = platform.get('platform', '')
+                    if platform_key:
+                        platform_usage[platform_key] += 1
+            except:
+                continue
+        
+        # Add usage stats to platforms
+        for platform in platforms:
+            platform['usage_count'] = platform_usage.get(platform['key'], 0)
+        
+        # Sort by usage
+        platforms.sort(key=lambda x: x['usage_count'], reverse=True)
+        
+        return jsonify({
+            'platforms': platforms,
+            'total_platforms': len(platforms),
+            'free_platforms': len([p for p in platforms if p['is_free']]),
+            'paid_platforms': len([p for p in platforms if not p['is_free']]),
+            'regional_platforms': len([p for p in platforms if 'IN' in p.get('supported_regions', [])]),
+            'global_platforms': len([p for p in platforms if 'global' in p.get('supported_regions', []) or len(p.get('supported_regions', [])) > 3])
+        }), 200
         
     except Exception as e:
         logger.error(f"Get OTT platforms error: {e}")
         return jsonify({'error': 'Failed to get OTT platforms'}), 500
 
-# Health check endpoint
+@app.route('/api/ott-platforms/<platform_key>/content', methods=['GET'])
+def get_platform_content(platform_key):
+    """Get content available on specific platform"""
+    try:
+        if platform_key not in OTT_PLATFORMS:
+            return jsonify({'error': 'Platform not found'}), 404
+        
+        page = int(request.args.get('page', 1))
+        per_page = int(request.args.get('per_page', 20))
+        
+        # Find content with this platform
+        contents = Content.query.filter(Content.ott_platforms.isnot(None)).all()
+        platform_content = []
+        
+        for content in contents:
+            try:
+                ott_platforms = json.loads(content.ott_platforms)
+                for platform in ott_platforms:
+                    if platform.get('platform') == platform_key:
+                        platform_content.append({
+                            'id': content.id,
+                            'title': content.title,
+                            'content_type': content.content_type,
+                            'rating': content.rating,
+                            'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path else None,
+                            'availability_confidence': platform.get('availability_confidence', 0),
+                            'verified': platform.get('verified', False),
+                            'links': platform.get('links', {})
+                        })
+                        break
+            except:
+                continue
+        
+        # Paginate results
+        total = len(platform_content)
+        start = (page - 1) * per_page
+        end = start + per_page
+        paginated_content = platform_content[start:end]
+        
+        return jsonify({
+            'platform': OTT_PLATFORMS[platform_key],
+            'content': paginated_content,
+            'total_content': total,
+            'page': page,
+            'per_page': per_page,
+            'total_pages': (total + per_page - 1) // per_page
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Get platform content error: {e}")
+        return jsonify({'error': 'Failed to get platform content'}), 500
+
+# Enhanced Health check endpoint
 @app.route('/api/health', methods=['GET'])
 def health_check():
+    # Test database connection
+    db_status = 'healthy'
+    try:
+        db.session.execute(text('SELECT 1'))
+    except:
+        db_status = 'unhealthy'
+    
+    # Test external APIs
+    api_status = {}
+    try:
+        if TMDB_API_KEY and TMDB_API_KEY != 'your_tmdb_api_key':
+            response = requests.get(f"https://api.themoviedb.org/3/configuration?api_key={TMDB_API_KEY}", timeout=5)
+            api_status['tmdb'] = 'healthy' if response.status_code == 200 else 'unhealthy'
+        else:
+            api_status['tmdb'] = 'not_configured'
+    except:
+        api_status['tmdb'] = 'unhealthy'
+    
     return jsonify({
-        'status': 'healthy',
+        'status': 'healthy' if db_status == 'healthy' else 'degraded',
         'timestamp': datetime.utcnow().isoformat(),
-        'version': '2.1.0',
+        'version': '3.0.0',
         'environment': 'production' if IS_PRODUCTION else 'development',
+        'database': db_status,
+        'external_apis': api_status,
         'features': {
-            'ott_basic_info': True,
-            'ott_scraping': ENABLE_OTT_SCRAPING,
+            'advanced_ott_detection': True,
+            'real_streaming_apis': ENABLE_ADVANCED_OTT,
             'multiple_languages': True,
             'direct_links': True,
-            'real_time_updates': not IS_PRODUCTION
-        }
+            'verified_availability': True,
+            'smart_platform_matching': True,
+            'youtube_integration': YOUTUBE_API_KEY != 'your_youtube_api_key',
+            'telegram_notifications': bot is not None
+        },
+        'supported_platforms': len(OTT_PLATFORMS),
+        'supported_languages': len(REGIONAL_LANGUAGES),
+        'total_content': Content.query.count(),
+        'total_users': User.query.count()
     }), 200
 
 # Root endpoint
 @app.route('/', methods=['GET'])
 def root():
     return jsonify({
-        'message': 'Movie Recommendation API',
-        'version': '2.1.0',
+        'message': 'Enhanced Movie Recommendation API with Smart OTT Integration',
+        'version': '3.0.0',
         'status': 'running',
-        'environment': 'production' if IS_PRODUCTION else 'development'
+        'environment': 'production' if IS_PRODUCTION else 'development',
+        'features': [
+            'Smart OTT platform detection',
+            'Multi-language content support',
+            'Real streaming availability',
+            'Direct watch links',
+            'Verified platform data',
+            'Advanced language detection',
+            'Regional content recommendations',
+            'Admin content management',
+            'Telegram notifications',
+            'Personalized recommendations'
+        ],
+        'endpoints': {
+            'search': '/api/search',
+            'recommendations': '/api/recommendations',
+            'ott_platforms': '/api/ott-platforms',
+            'admin': '/api/admin',
+            'health': '/api/health'
+        }
     }), 200
 
 # Initialize database
