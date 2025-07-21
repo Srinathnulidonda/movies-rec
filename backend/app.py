@@ -2057,6 +2057,189 @@ def get_public_admin_recommendations():
     except Exception as e:
         logger.error(f"Public admin recommendations error: {e}")
         return jsonify({'error': 'Failed to get admin recommendations'}), 500
+    
+@app.route('/api/admin/ml-service-check', methods=['GET'])
+@require_admin
+def ml_service_comprehensive_check(current_user):
+    """Simple comprehensive ML service check"""
+    try:
+        ml_url = ML_SERVICE_URL
+        if not ml_url:
+            return jsonify({
+                'status': 'error',
+                'message': 'ML_SERVICE_URL not configured',
+                'checks': {}
+            }), 500
+
+        checks = {}
+        overall_status = 'healthy'
+        
+        # 1. Basic Health Check
+        try:
+            start_time = time.time()
+            health_resp = requests.get(f"{ml_url}/api/health", timeout=10)
+            health_time = time.time() - start_time
+            
+            if health_resp.status_code == 200:
+                health_data = health_resp.json()
+                checks['connectivity'] = {
+                    'status': 'pass',
+                    'response_time': f"{health_time:.2f}s",
+                    'models_initialized': health_data.get('models_initialized', False),
+                    'data_status': health_data.get('data_status', {})
+                }
+            else:
+                checks['connectivity'] = {'status': 'fail', 'error': f'HTTP {health_resp.status_code}'}
+                overall_status = 'unhealthy'
+        except Exception as e:
+            checks['connectivity'] = {'status': 'fail', 'error': str(e)}
+            overall_status = 'unhealthy'
+
+        # 2. Recommendation Test (only if connectivity passes)
+        if checks['connectivity']['status'] == 'pass':
+            try:
+                start_time = time.time()
+                test_request = {
+                    'user_id': 1,
+                    'preferred_languages': ['english'],
+                    'preferred_genres': ['Action'],
+                    'interactions': [{
+                        'content_id': 1,
+                        'interaction_type': 'view',
+                        'timestamp': datetime.utcnow().isoformat()
+                    }]
+                }
+                
+                rec_resp = requests.post(f"{ml_url}/api/recommendations", json=test_request, timeout=20)
+                rec_time = time.time() - start_time
+                
+                if rec_resp.status_code == 200:
+                    rec_data = rec_resp.json()
+                    checks['recommendations'] = {
+                        'status': 'pass',
+                        'response_time': f"{rec_time:.2f}s",
+                        'count': len(rec_data.get('recommendations', [])),
+                        'strategy': rec_data.get('strategy', 'unknown'),
+                        'cached': rec_data.get('cached', False)
+                    }
+                else:
+                    checks['recommendations'] = {'status': 'fail', 'error': f'HTTP {rec_resp.status_code}'}
+                    overall_status = 'partial'
+            except Exception as e:
+                checks['recommendations'] = {'status': 'fail', 'error': str(e)}
+                overall_status = 'partial'
+
+        # 3. Statistics Check
+        if checks['connectivity']['status'] == 'pass':
+            try:
+                start_time = time.time()
+                stats_resp = requests.get(f"{ml_url}/api/stats", timeout=10)
+                stats_time = time.time() - start_time
+                
+                if stats_resp.status_code == 200:
+                    stats_data = stats_resp.json()
+                    checks['statistics'] = {
+                        'status': 'pass',
+                        'response_time': f"{stats_time:.2f}s",
+                        'data_count': stats_data.get('data_statistics', {}).get('total_content', 0),
+                        'user_count': stats_data.get('data_statistics', {}).get('unique_users', 0)
+                    }
+                else:
+                    checks['statistics'] = {'status': 'fail', 'error': f'HTTP {stats_resp.status_code}'}
+            except Exception as e:
+                checks['statistics'] = {'status': 'fail', 'error': str(e)}
+
+        # 4. Quick Performance Test
+        endpoints = [
+            {'name': 'trending', 'url': '/api/trending?limit=3'},
+        ]
+        
+        performance = {}
+        for endpoint in endpoints:
+            try:
+                start_time = time.time()
+                resp = requests.get(f"{ml_url}{endpoint['url']}", timeout=10)
+                response_time = time.time() - start_time
+                
+                performance[endpoint['name']] = {
+                    'status': 'pass' if resp.status_code == 200 else 'fail',
+                    'response_time': f"{response_time:.2f}s"
+                }
+            except Exception as e:
+                performance[endpoint['name']] = {'status': 'fail', 'error': str(e)}
+
+        checks['performance'] = performance
+
+        # 5. Database Integration Check
+        try:
+            total_users = User.query.count()
+            total_content = Content.query.count() 
+            total_interactions = UserInteraction.query.count()
+            
+            checks['database_integration'] = {
+                'status': 'pass',
+                'backend_users': total_users,
+                'backend_content': total_content,
+                'backend_interactions': total_interactions,
+                'data_ready': total_content > 0 and total_interactions > 0
+            }
+        except Exception as e:
+            checks['database_integration'] = {'status': 'fail', 'error': str(e)}
+
+        # Summary
+        failed_checks = sum(1 for check in checks.values() 
+                           if isinstance(check, dict) and check.get('status') == 'fail')
+        total_checks = len([check for check in checks.values() if isinstance(check, dict)])
+        
+        if failed_checks == 0:
+            overall_status = 'healthy'
+        elif failed_checks < total_checks:
+            overall_status = 'partial'
+        else:
+            overall_status = 'unhealthy'
+
+        return jsonify({
+            'status': overall_status,
+            'timestamp': datetime.utcnow().isoformat(),
+            'ml_service_url': ml_url,
+            'summary': {
+                'total_checks': total_checks,
+                'passed': total_checks - failed_checks,
+                'failed': failed_checks
+            },
+            'checks': checks,
+            'quick_actions': {
+                'force_update_available': checks.get('connectivity', {}).get('status') == 'pass',
+                'recommendations_working': checks.get('recommendations', {}).get('status') == 'pass'
+            }
+        }), 200
+
+    except Exception as e:
+        logger.error(f"ML service check error: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e),
+            'timestamp': datetime.utcnow().isoformat()
+        }), 500
+
+# Simple force update endpoint
+@app.route('/api/admin/ml-service-update', methods=['POST'])
+@require_admin  
+def ml_service_force_update(current_user):
+    """Force ML service model update"""
+    try:
+        if not ML_SERVICE_URL:
+            return jsonify({'success': False, 'message': 'ML service not configured'}), 400
+            
+        response = requests.post(f"{ML_SERVICE_URL}/api/update-models", timeout=30)
+        
+        if response.status_code == 200:
+            return jsonify({'success': True, 'message': 'Model update initiated'})
+        else:
+            return jsonify({'success': False, 'message': f'Update failed: {response.status_code}'})
+            
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)})
 
 # Health check endpoint
 @app.route('/api/health', methods=['GET'])
