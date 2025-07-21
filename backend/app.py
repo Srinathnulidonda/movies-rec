@@ -1372,6 +1372,7 @@ class AnonymousRecommendationEngine:
             return []
 
 # Telegram Service
+# Enhanced Telegram Service with Direct Watch Links
 class TelegramService:
     @staticmethod
     def send_admin_recommendation(content, admin_name, description):
@@ -1396,21 +1397,10 @@ class TelegramService:
                 else:
                     poster_url = f"https://image.tmdb.org/t/p/w500{content.poster_path}"
             
-            # Get OTT platforms info
-            ott_info = []
-            if content.ott_platforms:
-                try:
-                    platforms = json.loads(content.ott_platforms)
-                    for platform in platforms[:3]:  # Show top 3 platforms
-                        platform_name = platform.get('name', platform.get('platform', ''))
-                        if platform.get('is_free'):
-                            ott_info.append(f"📺 {platform_name} (Free)")
-                        else:
-                            ott_info.append(f"📺 {platform_name} (Premium)")
-                except:
-                    pass
+            # Get OTT platforms with direct watch links
+            ott_links = TelegramService._format_ott_links(content.ott_platforms)
             
-            # Create message
+            # Create enhanced message with watch links
             message = f"""🎬 **Admin's Choice** by {admin_name}
 
 **{content.title}**
@@ -1423,8 +1413,7 @@ class TelegramService:
 
 📖 **Synopsis:** {(content.overview[:200] + '...') if content.overview else 'No synopsis available'}
 
-**Available on:**
-{chr(10).join(ott_info) if ott_info else '📺 Check your favorite streaming platforms!'}
+{ott_links}
 
 #AdminChoice #MovieRecommendation #CineScope"""
             
@@ -1435,19 +1424,309 @@ class TelegramService:
                         chat_id=TELEGRAM_CHANNEL_ID,
                         photo=poster_url,
                         caption=message,
-                        parse_mode='Markdown'
+                        parse_mode='Markdown',
+                        disable_web_page_preview=False
                     )
                 except Exception as photo_error:
                     logger.error(f"Failed to send photo, sending text only: {photo_error}")
-                    bot.send_message(TELEGRAM_CHANNEL_ID, message, parse_mode='Markdown')
+                    bot.send_message(
+                        TELEGRAM_CHANNEL_ID, 
+                        message, 
+                        parse_mode='Markdown',
+                        disable_web_page_preview=False
+                    )
             else:
-                bot.send_message(TELEGRAM_CHANNEL_ID, message, parse_mode='Markdown')
+                bot.send_message(
+                    TELEGRAM_CHANNEL_ID, 
+                    message, 
+                    parse_mode='Markdown',
+                    disable_web_page_preview=False
+                )
             
             return True
         except Exception as e:
             logger.error(f"Telegram send error: {e}")
             return False
+    
+    @staticmethod
+    def _format_ott_links(ott_platforms_json):
+        """Format OTT platform links for Telegram message"""
+        if not ott_platforms_json:
+            return "📺 **Watch On:**\n🔍 Check your favorite streaming platforms!"
+        
+        try:
+            platforms = json.loads(ott_platforms_json)
+            if not platforms:
+                return "📺 **Watch On:**\n🔍 Check your favorite streaming platforms!"
+            
+            # Separate free and paid platforms
+            free_platforms = []
+            paid_platforms = []
+            
+            for platform in platforms[:8]:  # Limit to top 8 platforms
+                platform_info = TelegramService._extract_platform_info(platform)
+                if platform_info:
+                    if platform.get('is_free', False):
+                        free_platforms.append(platform_info)
+                    else:
+                        paid_platforms.append(platform_info)
+            
+            # Build the formatted message
+            watch_section = "📺 **Watch On:**\n"
+            
+            # Add free platforms first
+            if free_platforms:
+                watch_section += "\n🆓 **FREE:**\n"
+                for i, platform_info in enumerate(free_platforms[:4], 1):  # Max 4 free platforms
+                    watch_section += f"{i}. {platform_info}\n"
+            
+            # Add paid platforms
+            if paid_platforms:
+                watch_section += "\n💰 **PREMIUM:**\n"
+                for i, platform_info in enumerate(paid_platforms[:4], 1):  # Max 4 paid platforms
+                    watch_section += f"{i}. {platform_info}\n"
+            
+            # Add helpful note
+            if len(platforms) > 8:
+                watch_section += f"\n*+{len(platforms) - 8} more platforms available*"
+            
+            watch_section += "\n💡 *Tip: Click the links to watch directly!*"
+            
+            return watch_section
+            
+        except Exception as e:
+            logger.error(f"Error formatting OTT links: {e}")
+            return "📺 **Watch On:**\n🔍 Check your favorite streaming platforms!"
+    
+    @staticmethod
+    def _extract_platform_info(platform):
+        """Extract and format platform information with links"""
+        try:
+            platform_name = platform.get('name', platform.get('platform', 'Unknown'))
+            is_free = platform.get('is_free', False)
+            confidence = platform.get('availability_confidence', 0)
+            verified = platform.get('verified', False)
+            links = platform.get('links', {})
+            
+            # Get the best available link
+            best_link = TelegramService._get_best_link(links, platform_name)
+            
+            if not best_link:
+                return None
+            
+            # Create status indicators
+            status_indicators = []
+            if verified:
+                status_indicators.append("✅")
+            elif confidence > 0.7:
+                status_indicators.append("🎯")
+            elif confidence > 0.5:
+                status_indicators.append("🎲")
+            
+            if platform.get('note'):
+                status_indicators.append("ℹ️")
+            
+            # Format quality info
+            quality_info = ""
+            if best_link.get('quality'):
+                quality = best_link['quality']
+                if quality == '4K':
+                    quality_info = " (4K)"
+                elif quality == 'HD':
+                    quality_info = " (HD)"
+            
+            # Create the formatted link
+            status_text = "".join(status_indicators)
+            watch_url = best_link['watch_url']
+            
+            # Create clickable link
+            if watch_url and watch_url.startswith('http'):
+                platform_text = f"[{platform_name}{quality_info}]({watch_url})"
+            else:
+                platform_text = f"{platform_name}{quality_info}"
+            
+            # Add language info if multiple languages available
+            language_info = ""
+            if len(links) > 1:
+                languages = list(links.keys())
+                if 'default' in languages:
+                    languages.remove('default')
+                if languages:
+                    language_info = f" ({', '.join(languages[:2])}{'...' if len(languages) > 2 else ''})"
+            
+            # Add subscription info for paid platforms
+            subscription_info = ""
+            if not is_free and best_link.get('subscription_required', True):
+                subscription_info = " 🔐"
+            
+            return f"{status_text} {platform_text}{language_info}{subscription_info}"
+            
+        except Exception as e:
+            logger.error(f"Error extracting platform info: {e}")
+            return None
+    
+    @staticmethod
+    def _get_best_link(links, platform_name):
+        """Get the best available link from platform links"""
+        if not links:
+            return None
+        
+        # Priority order for language selection
+        priority_languages = ['hindi', 'english', 'tamil', 'telugu', 'default']
+        
+        # Special handling for YouTube - prefer English for wider audience
+        if 'youtube' in platform_name.lower():
+            priority_languages = ['english', 'hindi', 'default']
+        
+        # Find the best link based on language priority
+        for lang in priority_languages:
+            if lang in links:
+                link_info = links[lang]
+                if link_info.get('watch_url'):
+                    return link_info
+        
+        # If no priority language found, return first available link
+        for lang, link_info in links.items():
+            if link_info.get('watch_url'):
+                return link_info
+        
+        return None
+    
+    @staticmethod
+    def send_weekly_digest(top_content, stats):
+        """Send weekly digest with top content and watch links"""
+        try:
+            if not bot or not TELEGRAM_CHANNEL_ID:
+                logger.warning("Telegram bot or channel ID not configured")
+                return False
+            
+            message = f"""📊 **Weekly CineScope Digest**
 
+🔥 **This Week's Top Picks:**
+
+"""
+            
+            for i, content in enumerate(top_content[:5], 1):
+                # Get OTT links for each content
+                ott_summary = TelegramService._get_ott_summary(content.ott_platforms)
+                
+                message += f"""**{i}. {content.title}**
+⭐ {content.rating or 'N/A'}/10 | 🎭 {content.content_type.upper()}
+{ott_summary}
+
+"""
+            
+            message += f"""📈 **Platform Stats:**
+🎬 Total Content: {stats.get('total_content', 0)}
+👥 Active Users: {stats.get('active_users', 0)}
+🔥 Most Popular: {stats.get('top_platform', 'Netflix')}
+
+#WeeklyDigest #CineScope #Streaming"""
+            
+            bot.send_message(
+                TELEGRAM_CHANNEL_ID, 
+                message, 
+                parse_mode='Markdown',
+                disable_web_page_preview=False
+            )
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Weekly digest send error: {e}")
+            return False
+    
+    @staticmethod
+    def _get_ott_summary(ott_platforms_json):
+        """Get a brief summary of OTT availability"""
+        try:
+            if not ott_platforms_json:
+                return "📺 Check streaming platforms"
+            
+            platforms = json.loads(ott_platforms_json)
+            if not platforms:
+                return "📺 Check streaming platforms"
+            
+            # Get top 3 platforms
+            top_platforms = platforms[:3]
+            platform_names = []
+            
+            for platform in top_platforms:
+                name = platform.get('name', platform.get('platform', ''))
+                if platform.get('is_free'):
+                    platform_names.append(f"{name} (Free)")
+                else:
+                    platform_names.append(name)
+            
+            return f"📺 {', '.join(platform_names)}"
+            
+        except:
+            return "📺 Check streaming platforms"
+    
+    @staticmethod
+    def send_new_content_alert(content, content_type="new_release"):
+        """Send alert for new content with watch links"""
+        try:
+            if not bot or not TELEGRAM_CHANNEL_ID:
+                return False
+            
+            # Get content details
+            genres = []
+            if content.genres:
+                try:
+                    genres = json.loads(content.genres)[:2]  # Top 2 genres
+                except:
+                    pass
+            
+            # Get poster
+            poster_url = None
+            if content.poster_path:
+                if content.poster_path.startswith('http'):
+                    poster_url = content.poster_path
+                else:
+                    poster_url = f"https://image.tmdb.org/t/p/w500{content.poster_path}"
+            
+            # Format OTT links
+            ott_links = TelegramService._format_ott_links(content.ott_platforms)
+            
+            # Create alert message
+            alert_emoji = "🆕" if content_type == "new_release" else "🔥"
+            content_type_text = "NEW RELEASE" if content_type == "new_release" else "HOT PICK"
+            
+            message = f"""{alert_emoji} **{content_type_text}**
+
+**{content.title}**
+⭐ {content.rating or 'N/A'}/10
+🎭 {', '.join(genres) if genres else 'Entertainment'}
+📅 {content.release_date or 'Recent'}
+
+📖 {(content.overview[:150] + '...') if content.overview else 'New content alert!'}
+
+{ott_links}
+
+#NewRelease #CineScope #Streaming"""
+            
+            if poster_url:
+                bot.send_photo(
+                    chat_id=TELEGRAM_CHANNEL_ID,
+                    photo=poster_url,
+                    caption=message,
+                    parse_mode='Markdown',
+                    disable_web_page_preview=False
+                )
+            else:
+                bot.send_message(
+                    TELEGRAM_CHANNEL_ID,
+                    message,
+                    parse_mode='Markdown',
+                    disable_web_page_preview=False
+                )
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"New content alert error: {e}")
+            return False
 # API Routes
 
 # Authentication Routes
