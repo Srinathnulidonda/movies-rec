@@ -207,6 +207,75 @@ def get_user_location(ip_address):
         pass
     return None
 
+# ML Service Client
+class MLServiceClient:
+    """Client for interacting with ML recommendation service"""
+    
+    @staticmethod
+    def call_ml_service(endpoint, params=None, timeout=15):
+        """Generic ML service call with error handling"""
+        try:
+            if not ML_SERVICE_URL:
+                return None
+                
+            url = f"{ML_SERVICE_URL}{endpoint}"
+            response = requests.get(url, params=params, timeout=timeout)
+            
+            if response.status_code == 200:
+                return response.json()
+            else:
+                logger.warning(f"ML service returned {response.status_code} for {endpoint}")
+                return None
+                
+        except Exception as e:
+            logger.warning(f"ML service call failed for {endpoint}: {e}")
+            return None
+    
+    @staticmethod
+    def process_ml_recommendations(ml_response, limit=20):
+        """Process ML service response and get content details from database"""
+        try:
+            if not ml_response or 'recommendations' not in ml_response:
+                return []
+            
+            recommendations = []
+            ml_recs = ml_response['recommendations'][:limit]
+            
+            # Extract content IDs from ML response
+            content_ids = []
+            for rec in ml_recs:
+                if isinstance(rec, dict) and 'content_id' in rec:
+                    content_ids.append(rec['content_id'])
+                elif isinstance(rec, int):
+                    content_ids.append(rec)
+            
+            if not content_ids:
+                return []
+            
+            # Get content details from database
+            contents = Content.query.filter(Content.id.in_(content_ids)).all()
+            content_dict = {content.id: content for content in contents}
+            
+            # Maintain ML service ordering and add ML scores if available
+            for i, rec in enumerate(ml_recs):
+                content_id = rec['content_id'] if isinstance(rec, dict) else rec
+                content = content_dict.get(content_id)
+                
+                if content:
+                    content_data = {
+                        'content': content,
+                        'ml_score': rec.get('score', 0) if isinstance(rec, dict) else 0,
+                        'ml_reason': rec.get('reason', '') if isinstance(rec, dict) else '',
+                        'ml_rank': i + 1
+                    }
+                    recommendations.append(content_data)
+            
+            return recommendations
+            
+        except Exception as e:
+            logger.error(f"Error processing ML recommendations: {e}")
+            return []
+
 # External API Services
 class TMDBService:
     BASE_URL = 'https://api.themoviedb.org/3'
@@ -643,11 +712,29 @@ class ContentService:
         }
         return [genre_map.get(gid, 'Unknown') for gid in genre_ids if gid in genre_map]
 
-# Enhanced Recommendation Engine
+# Enhanced Recommendation Engine with ML Integration
 class RecommendationEngine:
     @staticmethod
     def get_trending_recommendations(limit=20, content_type='all', region=None):
+        """Enhanced trending recommendations with ML service integration"""
         try:
+            # First try ML service
+            ml_params = {
+                'limit': limit,
+                'content_type': content_type,
+                'region': region
+            }
+            
+            ml_response = MLServiceClient.call_ml_service('/api/trending', ml_params)
+            if ml_response:
+                ml_recommendations = MLServiceClient.process_ml_recommendations(ml_response, limit)
+                if ml_recommendations:
+                    logger.info(f"Using ML service for trending recommendations: {len(ml_recommendations)} items")
+                    return [rec['content'] for rec in ml_recommendations]
+            
+            # Fallback to original logic
+            logger.info("Falling back to TMDB for trending recommendations")
+            
             # Get trending from TMDB for both day and week
             trending_day = TMDBService.get_trending(content_type=content_type, time_window='day')
             trending_week = TMDBService.get_trending(content_type=content_type, time_window='week')
@@ -687,7 +774,25 @@ class RecommendationEngine:
     
     @staticmethod
     def get_new_releases(limit=20, language=None, content_type='movie'):
+        """Enhanced new releases with ML service integration"""
         try:
+            # First try ML service
+            ml_params = {
+                'limit': limit,
+                'language': language,
+                'content_type': content_type
+            }
+            
+            ml_response = MLServiceClient.call_ml_service('/api/new-releases', ml_params)
+            if ml_response:
+                ml_recommendations = MLServiceClient.process_ml_recommendations(ml_response, limit)
+                if ml_recommendations:
+                    logger.info(f"Using ML service for new releases: {len(ml_recommendations)} items")
+                    return [rec['content'] for rec in ml_recommendations]
+            
+            # Fallback to original logic
+            logger.info("Falling back to TMDB for new releases")
+            
             # Map language to TMDB language code
             language_code = None
             if language:
@@ -717,7 +822,24 @@ class RecommendationEngine:
     
     @staticmethod
     def get_critics_choice(limit=20, content_type='movie'):
+        """Enhanced critics choice with ML service integration"""
         try:
+            # First try ML service
+            ml_params = {
+                'limit': limit,
+                'content_type': content_type
+            }
+            
+            ml_response = MLServiceClient.call_ml_service('/api/critics-choice', ml_params)
+            if ml_response:
+                ml_recommendations = MLServiceClient.process_ml_recommendations(ml_response, limit)
+                if ml_recommendations:
+                    logger.info(f"Using ML service for critics choice: {len(ml_recommendations)} items")
+                    return [rec['content'] for rec in ml_recommendations]
+            
+            # Fallback to original logic
+            logger.info("Falling back to TMDB for critics choice")
+            
             critics_choice = TMDBService.get_critics_choice(content_type)
             
             recommendations = []
@@ -734,7 +856,25 @@ class RecommendationEngine:
     
     @staticmethod
     def get_genre_recommendations(genre, limit=20, content_type='movie', region=None):
+        """Enhanced genre recommendations with ML service integration"""
         try:
+            # First try ML service
+            ml_params = {
+                'limit': limit,
+                'content_type': content_type,
+                'region': region
+            }
+            
+            ml_response = MLServiceClient.call_ml_service(f'/api/genre/{genre}', ml_params)
+            if ml_response:
+                ml_recommendations = MLServiceClient.process_ml_recommendations(ml_response, limit)
+                if ml_recommendations:
+                    logger.info(f"Using ML service for genre {genre}: {len(ml_recommendations)} items")
+                    return [rec['content'] for rec in ml_recommendations]
+            
+            # Fallback to original logic
+            logger.info(f"Falling back to TMDB for genre {genre}")
+            
             # Genre ID mapping for TMDB
             genre_ids = {
                 'action': 28, 'adventure': 12, 'animation': 16, 'biography': -1,
@@ -772,7 +912,24 @@ class RecommendationEngine:
     
     @staticmethod
     def get_regional_recommendations(language, limit=20, content_type='movie'):
+        """Enhanced regional recommendations with ML service integration"""
         try:
+            # First try ML service
+            ml_params = {
+                'limit': limit,
+                'content_type': content_type
+            }
+            
+            ml_response = MLServiceClient.call_ml_service(f'/api/regional/{language}', ml_params)
+            if ml_response:
+                ml_recommendations = MLServiceClient.process_ml_recommendations(ml_response, limit)
+                if ml_recommendations:
+                    logger.info(f"Using ML service for regional {language}: {len(ml_recommendations)} items")
+                    return [rec['content'] for rec in ml_recommendations]
+            
+            # Fallback to original logic
+            logger.info(f"Falling back to TMDB for regional {language}")
+            
             # Map language to TMDB language code
             lang_mapping = {
                 'hindi': 'hi', 'telugu': 'te', 'tamil': 'ta', 
@@ -814,7 +971,24 @@ class RecommendationEngine:
     
     @staticmethod
     def get_anime_recommendations(limit=20, genre=None):
+        """Enhanced anime recommendations with ML service integration"""
         try:
+            # First try ML service
+            ml_params = {
+                'limit': limit,
+                'genre': genre
+            }
+            
+            ml_response = MLServiceClient.call_ml_service('/api/anime', ml_params)
+            if ml_response:
+                ml_recommendations = MLServiceClient.process_ml_recommendations(ml_response, limit)
+                if ml_recommendations:
+                    logger.info(f"Using ML service for anime recommendations: {len(ml_recommendations)} items")
+                    return [rec['content'] for rec in ml_recommendations]
+            
+            # Fallback to original logic
+            logger.info("Falling back to Jikan API for anime recommendations")
+            
             recommendations = []
             
             if genre and genre.lower() in ANIME_GENRES:
@@ -847,8 +1021,23 @@ class RecommendationEngine:
     
     @staticmethod
     def get_similar_recommendations(content_id, limit=20):
-        """Enhanced similar recommendations"""
+        """Enhanced similar recommendations with ML service integration"""
         try:
+            # First try ML service
+            ml_params = {
+                'limit': limit
+            }
+            
+            ml_response = MLServiceClient.call_ml_service(f'/api/similar/{content_id}', ml_params)
+            if ml_response:
+                ml_recommendations = MLServiceClient.process_ml_recommendations(ml_response, limit)
+                if ml_recommendations:
+                    logger.info(f"Using ML service for similar recommendations: {len(ml_recommendations)} items")
+                    return [rec['content'] for rec in ml_recommendations]
+            
+            # Fallback to original logic
+            logger.info("Falling back to TMDB/database for similar recommendations")
+            
             base_content = Content.query.get(content_id)
             if not base_content:
                 return []
@@ -1649,6 +1838,82 @@ def get_personalized_recommendations(current_user):
         logger.error(f"Personalized recommendations error: {e}")
         return get_trending()
 
+# ML-Enhanced Personalized Recommendations
+@app.route('/api/recommendations/ml-personalized', methods=['GET'])
+@require_auth
+def get_ml_personalized_recommendations(current_user):
+    """ML-enhanced personalized recommendations with detailed ML insights"""
+    try:
+        limit = int(request.args.get('limit', 20))
+        
+        # Get user interactions
+        interactions = UserInteraction.query.filter_by(user_id=current_user.id).all()
+        
+        # Prepare data for ML service
+        user_data = {
+            'user_id': current_user.id,
+            'preferred_languages': json.loads(current_user.preferred_languages or '[]'),
+            'preferred_genres': json.loads(current_user.preferred_genres or '[]'),
+            'interactions': [
+                {
+                    'content_id': interaction.content_id,
+                    'interaction_type': interaction.interaction_type,
+                    'rating': interaction.rating,
+                    'timestamp': interaction.timestamp.isoformat()
+                }
+                for interaction in interactions
+            ]
+        }
+        
+        # Call ML service
+        try:
+            response = requests.post(f"{ML_SERVICE_URL}/api/recommendations", json=user_data, timeout=30)
+            
+            if response.status_code == 200:
+                ml_response = response.json()
+                ml_recommendations = MLServiceClient.process_ml_recommendations(ml_response, limit)
+                
+                if ml_recommendations:
+                    # Create detailed response with ML insights
+                    result = []
+                    for rec in ml_recommendations:
+                        content = rec['content']
+                        youtube_url = None
+                        if content.youtube_trailer_id:
+                            youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
+                        
+                        result.append({
+                            'id': content.id,
+                            'title': content.title,
+                            'content_type': content.content_type,
+                            'genres': json.loads(content.genres or '[]'),
+                            'rating': content.rating,
+                            'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
+                            'overview': content.overview[:150] + '...' if content.overview else '',
+                            'youtube_trailer': youtube_url,
+                            'ml_score': rec['ml_score'],
+                            'ml_reason': rec['ml_reason'],
+                            'ml_rank': rec['ml_rank'],
+                            'recommendation_source': 'ml_service'
+                        })
+                    
+                    return jsonify({
+                        'recommendations': result,
+                        'ml_strategy': ml_response.get('strategy', 'unknown'),
+                        'ml_cached': ml_response.get('cached', False),
+                        'total_interactions': len(interactions),
+                        'source': 'ml_service'
+                    }), 200
+        except:
+            pass
+        
+        # Fallback to basic personalized recommendations
+        return get_trending()
+        
+    except Exception as e:
+        logger.error(f"ML personalized recommendations error: {e}")
+        return get_trending()
+
 # User Interaction Routes
 @app.route('/api/interactions', methods=['POST'])
 @require_auth
@@ -2016,48 +2281,7 @@ def get_analytics(current_user):
         logger.error(f"Analytics error: {e}")
         return jsonify({'error': 'Failed to get analytics'}), 500
 
-# Public Admin Recommendations
-@app.route('/api/recommendations/admin-choice', methods=['GET'])
-def get_public_admin_recommendations():
-    try:
-        limit = int(request.args.get('limit', 20))
-        rec_type = request.args.get('type', 'admin_choice')
-        
-        admin_recs = AdminRecommendation.query.filter_by(
-            is_active=True,
-            recommendation_type=rec_type
-        ).order_by(AdminRecommendation.created_at.desc()).limit(limit).all()
-        
-        result = []
-        for rec in admin_recs:
-            content = Content.query.get(rec.content_id)
-            admin = User.query.get(rec.admin_id)
-            
-            if content:
-                youtube_url = None
-                if content.youtube_trailer_id:
-                    youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
-                
-                result.append({
-                    'id': content.id,
-                    'title': content.title,
-                    'content_type': content.content_type,
-                    'genres': json.loads(content.genres or '[]'),
-                    'rating': content.rating,
-                    'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
-                    'overview': content.overview[:150] + '...' if content.overview else '',
-                    'youtube_trailer': youtube_url,
-                    'admin_description': rec.description,
-                    'admin_name': admin.username if admin else 'Admin',
-                    'recommended_at': rec.created_at.isoformat()
-                })
-        
-        return jsonify({'recommendations': result}), 200
-        
-    except Exception as e:
-        logger.error(f"Public admin recommendations error: {e}")
-        return jsonify({'error': 'Failed to get admin recommendations'}), 500
-    
+# ML Service Admin Routes
 @app.route('/api/admin/ml-service-check', methods=['GET'])
 @require_admin
 def ml_service_comprehensive_check(current_user):
@@ -2222,7 +2446,6 @@ def ml_service_comprehensive_check(current_user):
             'timestamp': datetime.utcnow().isoformat()
         }), 500
 
-# Simple force update endpoint
 @app.route('/api/admin/ml-service-update', methods=['POST'])
 @require_admin  
 def ml_service_force_update(current_user):
@@ -2240,6 +2463,85 @@ def ml_service_force_update(current_user):
             
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)})
+
+@app.route('/api/admin/ml-stats', methods=['GET'])
+@require_admin
+def get_ml_service_stats(current_user):
+    """Get ML service statistics and performance metrics"""
+    try:
+        if not ML_SERVICE_URL:
+            return jsonify({'error': 'ML service not configured'}), 400
+        
+        # Get ML service stats
+        ml_stats = MLServiceClient.call_ml_service('/api/stats')
+        
+        if ml_stats:
+            # Add backend stats for comparison
+            backend_stats = {
+                'total_users': User.query.count(),
+                'total_content': Content.query.count(),
+                'total_interactions': UserInteraction.query.count(),
+                'active_users_last_week': User.query.filter(
+                    User.last_active >= datetime.utcnow() - timedelta(days=7)
+                ).count()
+            }
+            
+            return jsonify({
+                'ml_service_stats': ml_stats,
+                'backend_stats': backend_stats,
+                'data_sync_status': {
+                    'content_match': backend_stats['total_content'] == ml_stats.get('data_statistics', {}).get('total_content', 0),
+                    'user_match': backend_stats['total_users'] == ml_stats.get('data_statistics', {}).get('unique_users', 0)
+                }
+            }), 200
+        else:
+            return jsonify({'error': 'Failed to get ML service stats'}), 500
+            
+    except Exception as e:
+        logger.error(f"ML stats error: {e}")
+        return jsonify({'error': 'Failed to get ML statistics'}), 500
+
+# Public Admin Recommendations
+@app.route('/api/recommendations/admin-choice', methods=['GET'])
+def get_public_admin_recommendations():
+    try:
+        limit = int(request.args.get('limit', 20))
+        rec_type = request.args.get('type', 'admin_choice')
+        
+        admin_recs = AdminRecommendation.query.filter_by(
+            is_active=True,
+            recommendation_type=rec_type
+        ).order_by(AdminRecommendation.created_at.desc()).limit(limit).all()
+        
+        result = []
+        for rec in admin_recs:
+            content = Content.query.get(rec.content_id)
+            admin = User.query.get(rec.admin_id)
+            
+            if content:
+                youtube_url = None
+                if content.youtube_trailer_id:
+                    youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
+                
+                result.append({
+                    'id': content.id,
+                    'title': content.title,
+                    'content_type': content.content_type,
+                    'genres': json.loads(content.genres or '[]'),
+                    'rating': content.rating,
+                    'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
+                    'overview': content.overview[:150] + '...' if content.overview else '',
+                    'youtube_trailer': youtube_url,
+                    'admin_description': rec.description,
+                    'admin_name': admin.username if admin else 'Admin',
+                    'recommended_at': rec.created_at.isoformat()
+                })
+        
+        return jsonify({'recommendations': result}), 200
+        
+    except Exception as e:
+        logger.error(f"Public admin recommendations error: {e}")
+        return jsonify({'error': 'Failed to get admin recommendations'}), 500
 
 # Health check endpoint
 @app.route('/api/health', methods=['GET'])
@@ -2270,7 +2572,8 @@ def create_tables():
                 logger.info("Admin user created with username: admin, password: admin123")
     except Exception as e:
         logger.error(f"Database initialization error: {e}")
-        
+
+# Initialize database when app starts
 create_tables()
 
 if __name__ == '__main__':
