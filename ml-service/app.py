@@ -2319,12 +2319,30 @@ ultimate_engine = UltimateRecommendationEngine()
 
 @app.route('/api/health', methods=['GET'])
 def ultimate_health_check():
-    """Ultimate health check with comprehensive status"""
+    """Ultimate health check with database status"""
     try:
-        # Database connectivity
-        total_content = Content.query.count()
-        total_users = User.query.count()
-        total_interactions = UserInteraction.query.count()
+        # Check database connectivity
+        database_status = 'disconnected'
+        tables_exist = False
+        data_counts = {'content': 0, 'users': 0, 'interactions': 0}
+        
+        try:
+            with app.app_context():
+                # Test database connection
+                db.session.execute('SELECT 1')
+                database_status = 'connected'
+                
+                # Check if tables exist and get counts
+                try:
+                    data_counts['content'] = Content.query.count()
+                    data_counts['users'] = User.query.count()
+                    data_counts['interactions'] = UserInteraction.query.count()
+                    tables_exist = True
+                except:
+                    tables_exist = False
+                    
+        except Exception as e:
+            logger.warning(f"Database check failed: {e}")
         
         # Model status
         models_status = {
@@ -2337,48 +2355,47 @@ def ultimate_health_check():
         
         # Performance metrics
         performance_metrics = {
-            'cache_hit_rate': len(ultra_memory_cache) / max(len(ultra_memory_cache) + 1, 1),
+            'cache_size': len(ultra_memory_cache),
             'real_time_interactions': len(real_time_interactions),
             'user_profiles_active': len(ultimate_engine.real_time_engine.user_profiles),
             'trending_items_tracked': len(ultimate_engine.real_time_engine.content_momentum)
         }
         
-        # Feature status
-        feature_status = {
-            'transformer_neural_cf': ultimate_engine.neural_model is not None,
-            'real_time_trending': True,
-            'advanced_content_analysis': ultimate_engine.content_analyzer.content_features is not None,
-            'cultural_awareness': True,
-            'diversity_filtering': True,
-            'ensemble_recommendations': True,
-            'otaku_level_anime': True,
-            'quality_assessment': True
-        }
+        # Overall status
+        overall_status = 'healthy'
+        if database_status == 'disconnected':
+            overall_status = 'database_issue'
+        elif not tables_exist:
+            overall_status = 'needs_initialization'
+        elif data_counts['content'] == 0:
+            overall_status = 'needs_data'
         
         return jsonify({
-            'status': 'ultimate_healthy',
+            'status': overall_status,
             'timestamp': datetime.utcnow().isoformat(),
             'version': '3.0.0-ultimate',
-            'backend_sync': True,
-            'models_initialized': ultimate_engine.is_trained,
-            'data_status': {
-                'total_content': total_content,
-                'total_users': total_users,
-                'total_interactions': total_interactions,
-                'data_quality': 'excellent' if total_content > 100 and total_interactions > 500 else 'good'
-            },
+            'database_status': database_status,
+            'tables_exist': tables_exist,
+            'data_counts': data_counts,
             'models_status': models_status,
             'performance_metrics': performance_metrics,
-            'feature_status': feature_status,
-            'algorithms': [
-                'Transformer Neural Collaborative Filtering',
-                'Ultra-Advanced Content Analysis',
-                'Real-time Intelligence Engine',
-                'Cultural & Regional Awareness',
-                'Advanced Diversity Filtering',
-                'Ensemble Recommendation System',
-                'Otaku-level Anime Intelligence',
-                'Multi-factor Quality Assessment'
+            'recommendations': [
+                'Initialize database: POST /api/init-database' if not tables_exist else None,
+                'Sync data from backend to start getting recommendations' if data_counts['content'] == 0 else None,
+                'ML service is ready for recommendations!' if data_counts['content'] > 0 else None
+            ],
+            'endpoints_available': [
+                'GET /api/health - This health check',
+                'POST /api/init-database - Initialize database tables',
+                'GET /api/data-status - Check data status',
+                'POST /api/recommendations - Get personalized recommendations',
+                'GET /api/trending - Get trending content',
+                'GET /api/similar/<id> - Get similar content',
+                'GET /api/genre/<genre> - Get genre recommendations',
+                'GET /api/regional/<language> - Get regional recommendations',
+                'GET /api/anime - Get anime recommendations',
+                'GET /api/critics-choice - Get critics choice',
+                'GET /api/new-releases - Get new releases'
             ]
         }), 200
         
@@ -3053,29 +3070,167 @@ def initialize_ultimate_models():
     """Initialize ultimate models on startup"""
     try:
         with app.app_context():
-            logger.info("🚀 Initializing Ultimate ML Models...")
-            ultimate_engine.train_all_models()
-            logger.info("✅ Ultimate ML Models initialized successfully!")
+            logger.info("🚀 Initializing Ultimate ML Service...")
+            
+            # First, try to create database tables
+            create_database_tables()
+            
+            # Then try to train models safely
+            safe_train_models()
+            
+            logger.info("✅ Ultimate ML Service initialization completed!")
     except Exception as e:
-        logger.error(f"❌ Ultimate model initialization error: {e}")
+        logger.error(f"❌ Ultimate initialization error: {e}")
 
 def background_ultimate_updater():
     """Background task for periodic model updates"""
     while True:
         try:
-            time.sleep(1800)  # Update every 30 minutes
+            time.sleep(3600)  # Wait 1 hour
             with app.app_context():
-                logger.info("🔄 Background ultimate model update...")
-                ultimate_engine.train_all_models()
-                logger.info("✅ Background update completed")
+                logger.info("🔄 Background model update check...")
+                
+                # Only update if we have data
+                try:
+                    content_count = Content.query.count()
+                    if content_count > 0:
+                        logger.info("🔄 Updating models with latest data...")
+                        safe_train_models()
+                        logger.info("✅ Background update completed")
+                    else:
+                        logger.info("📊 No data available for model update")
+                except:
+                    logger.info("📊 Database not ready for background update")
+                    
         except Exception as e:
             logger.error(f"❌ Background update error: {e}")
 
-# Start background processes
-threading.Thread(target=initialize_ultimate_models, daemon=True).start()
-threading.Thread(target=background_ultimate_updater, daemon=True).start()
+# Database Initialization
+def create_database_tables():
+    """Create database tables if they don't exist"""
+    try:
+        with app.app_context():
+            # Check if tables exist
+            inspector = db.inspect(db.engine)
+            existing_tables = inspector.get_table_names()
+            
+            if not existing_tables:
+                logger.info("🔧 Creating database tables...")
+                db.create_all()
+                logger.info("✅ Database tables created successfully!")
+                
+                # Create admin user if not exists
+                admin = User.query.filter_by(username='admin').first()
+                if not admin:
+                    admin = User(
+                        username='admin',
+                        email='admin@movierec.com',
+                        password_hash='pbkdf2:sha256:260000$xyz$abc123',  # Change this
+                        is_admin=True,
+                        preferred_languages='["english"]',
+                        preferred_genres='["Action", "Drama", "Comedy"]'
+                    )
+                    db.session.add(admin)
+                    db.session.commit()
+                    logger.info("✅ Admin user created!")
+            else:
+                logger.info("✅ Database tables already exist")
+                
+    except Exception as e:
+        logger.error(f"❌ Database initialization error: {e}")
+
+# Enhanced model training with error handling
+def safe_train_models():
+    """Train models safely with proper error handling"""
+    try:
+        with app.app_context():
+            # Check if we have data
+            content_count = 0
+            interaction_count = 0
+            
+            try:
+                content_count = Content.query.count()
+                interaction_count = UserInteraction.query.count()
+            except Exception as e:
+                logger.warning(f"⚠️ Database not ready: {e}")
+                return
+            
+            if content_count == 0:
+                logger.info("📊 No content data available yet - skipping model training")
+                ultimate_engine.is_trained = False
+                return
+            
+            if interaction_count == 0:
+                logger.info("📊 No interaction data available yet - training with content only")
+            
+            logger.info(f"📊 Training with {content_count} content items and {interaction_count} interactions")
+            ultimate_engine.train_all_models()
+            
+    except Exception as e:
+        logger.error(f"❌ Safe model training error: {e}")
+        ultimate_engine.is_trained = False
+
+# Add database initialization endpoint
+@app.route('/api/init-database', methods=['POST'])
+def initialize_database():
+    """Initialize database tables"""
+    try:
+        create_database_tables()
+        return jsonify({
+            'success': True,
+            'message': 'Database initialized successfully',
+            'timestamp': datetime.utcnow().isoformat()
+        }), 200
+    except Exception as e:
+        logger.error(f"❌ Database init error: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+# Add data status endpoint
+@app.route('/api/data-status', methods=['GET'])
+def get_data_status():
+    """Get current data status"""
+    try:
+        with app.app_context():
+            try:
+                content_count = Content.query.count()
+                user_count = User.query.count()
+                interaction_count = UserInteraction.query.count()
+                tables_exist = True
+            except:
+                content_count = 0
+                user_count = 0
+                interaction_count = 0
+                tables_exist = False
+            
+            return jsonify({
+                'tables_exist': tables_exist,
+                'content_count': content_count,
+                'user_count': user_count,
+                'interaction_count': interaction_count,
+                'models_trained': ultimate_engine.is_trained,
+                'ready_for_recommendations': content_count > 0,
+                'timestamp': datetime.utcnow().isoformat()
+            }), 200
+            
+    except Exception as e:
+        return jsonify({
+            'error': str(e),
+            'tables_exist': False,
+            'ready_for_recommendations': False
+        }), 500
 
 if __name__ == '__main__':
+    # Start background processes
+    threading.Thread(target=initialize_ultimate_models, daemon=True).start()
+    threading.Thread(target=background_ultimate_updater, daemon=True).start()
+    
     port = int(os.environ.get('PORT', 5001))
     debug = os.environ.get('FLASK_ENV') == 'development'
     app.run(host='0.0.0.0', port=port, debug=debug, threaded=True)
+else:
+    # For production deployment (gunicorn)
+    threading.Thread(target=initialize_ultimate_models, daemon=True).start()
+    threading.Thread(target=background_ultimate_updater, daemon=True).start()
