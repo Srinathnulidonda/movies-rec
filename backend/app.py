@@ -2270,8 +2270,7 @@ def create_tables():
                 logger.info("Admin user created with username: admin, password: admin123")
     except Exception as e:
         logger.error(f"Database initialization error: {e}")
-
-# Initialize database when app starts
+        
 create_tables()
 
 if __name__ == '__main__':
