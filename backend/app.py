@@ -1,7 +1,8 @@
-#backend/app.py
+# backend/app.py
 from flask import Flask, request, jsonify, session, render_template
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
+from flask_caching import Cache
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta
 import requests
@@ -14,31 +15,47 @@ from collections import defaultdict, Counter
 import random
 import hashlib
 import time
-from sqlalchemy import func, and_, or_, desc, text
+from sqlalchemy import func, and_, or_, desc, text, Index, create_engine
+from sqlalchemy.pool import QueuePool
 import telebot
 import threading
 from geopy.geocoders import Nominatim
 import jwt
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import redis
+from fuzzywuzzy import fuzz
 
-# Initialize Flask app
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'your-secret-key-change-in-production')
 
-# Database configuration
+# Database configuration with connection pooling
 if os.environ.get('DATABASE_URL'):
-    # Production - PostgreSQL on Render
     app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL').replace('postgres://', 'postgresql://')
 else:
-    # Local development - SQLite
     app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///movie_recommendations.db'
 
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    'pool_size': 20,
+    'pool_recycle': 3600,
+    'pool_pre_ping': True,
+    'max_overflow': 40
+}
 
-# Initialize extensions
 db = SQLAlchemy(app)
 CORS(app)
 
-# API Keys - Set these in your environment
+# Cache configuration
+cache = Cache(app, config={
+    'CACHE_TYPE': 'redis' if os.environ.get('REDIS_URL') else 'simple',
+    'CACHE_REDIS_URL': os.environ.get('REDIS_URL', 'redis://localhost:6379/0'),
+    'CACHE_DEFAULT_TIMEOUT': 3600  # 1 hour
+})
+
+# Create thread pool for parallel API calls
+executor = ThreadPoolExecutor(max_workers=10)
+
+# API Keys
 TMDB_API_KEY = os.environ.get('TMDB_API_KEY', '1cf86635f20bb2aff8e70940e7c3ddd5')
 OMDB_API_KEY = os.environ.get('OMDB_API_KEY', '52260795')
 YOUTUBE_API_KEY = os.environ.get('YOUTUBE_API_KEY', 'AIzaSyDU-JLASTdIdoLOmlpWuJYLTZDUspqw2T4')
@@ -56,11 +73,11 @@ if TELEGRAM_BOT_TOKEN and TELEGRAM_BOT_TOKEN != 'your_telegram_bot_token':
 else:
     bot = None
 
-# Configure logging
+# Logging configuration
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Regional Language Mapping
+# Constants
 REGIONAL_LANGUAGES = {
     'hindi': ['hi', 'hindi', 'bollywood'],
     'telugu': ['te', 'telugu', 'tollywood'],
@@ -70,7 +87,6 @@ REGIONAL_LANGUAGES = {
     'english': ['en', 'english', 'hollywood']
 }
 
-# Anime Genre Mapping
 ANIME_GENRES = {
     'shonen': ['Action', 'Adventure', 'Martial Arts', 'School', 'Shounen'],
     'shojo': ['Romance', 'Drama', 'School', 'Slice of Life', 'Shoujo'],
@@ -86,8 +102,8 @@ class User(db.Model):
     email = db.Column(db.String(120), unique=True, nullable=False)
     password_hash = db.Column(db.String(255), nullable=False)
     is_admin = db.Column(db.Boolean, default=False)
-    preferred_languages = db.Column(db.Text)  # JSON string
-    preferred_genres = db.Column(db.Text)  # JSON string
+    preferred_languages = db.Column(db.Text)
+    preferred_genres = db.Column(db.Text)
     location = db.Column(db.String(100))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     last_active = db.Column(db.DateTime, default=datetime.utcnow)
@@ -96,13 +112,13 @@ class Content(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     tmdb_id = db.Column(db.Integer, unique=True)
     imdb_id = db.Column(db.String(20))
-    mal_id = db.Column(db.Integer)  # For anime
+    mal_id = db.Column(db.Integer)
     title = db.Column(db.String(255), nullable=False)
     original_title = db.Column(db.String(255))
-    content_type = db.Column(db.String(20), nullable=False)  # movie, tv, anime
-    genres = db.Column(db.Text)  # JSON string
-    anime_genres = db.Column(db.Text)  # JSON string for anime-specific genres
-    languages = db.Column(db.Text)  # JSON string
+    content_type = db.Column(db.String(20), nullable=False)
+    genres = db.Column(db.Text)
+    anime_genres = db.Column(db.Text)
+    languages = db.Column(db.Text)
     release_date = db.Column(db.Date)
     runtime = db.Column(db.Integer)
     rating = db.Column(db.Float)
@@ -119,12 +135,24 @@ class Content(db.Model):
     critics_score = db.Column(db.Float)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Add indexes for faster searching
+    __table_args__ = (
+        Index('idx_title', 'title'),
+        Index('idx_original_title', 'original_title'),
+        Index('idx_content_type', 'content_type'),
+        Index('idx_tmdb_id', 'tmdb_id'),
+        Index('idx_mal_id', 'mal_id'),
+        Index('idx_popularity', 'popularity'),
+        Index('idx_rating', 'rating'),
+        Index('idx_release_date', 'release_date'),
+    )
 
 class UserInteraction(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     content_id = db.Column(db.Integer, db.ForeignKey('content.id'), nullable=False)
-    interaction_type = db.Column(db.String(20), nullable=False)  # view, like, favorite, watchlist, search
+    interaction_type = db.Column(db.String(20), nullable=False)
     rating = db.Column(db.Float)
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
 
@@ -132,7 +160,7 @@ class AdminRecommendation(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     content_id = db.Column(db.Integer, db.ForeignKey('content.id'), nullable=False)
     admin_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    recommendation_type = db.Column(db.String(50))  # trending, popular, critics_choice, admin_choice
+    recommendation_type = db.Column(db.String(50))
     description = db.Column(db.Text)
     is_active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
@@ -145,7 +173,7 @@ class AnonymousInteraction(db.Model):
     ip_address = db.Column(db.String(45))
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
 
-# Helper Functions
+# Authentication decorators
 def require_auth(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
@@ -184,6 +212,7 @@ def require_admin(f):
         return f(current_user, *args, **kwargs)
     return decorated_function
 
+# Utility functions
 def get_session_id():
     if 'session_id' not in session:
         session['session_id'] = hashlib.md5(f"{request.remote_addr}{time.time()}".encode()).hexdigest()
@@ -191,7 +220,6 @@ def get_session_id():
 
 def get_user_location(ip_address):
     try:
-        # Simple IP-based location detection
         response = requests.get(f'http://ip-api.com/json/{ip_address}', timeout=5)
         if response.status_code == 200:
             data = response.json()
@@ -207,13 +235,10 @@ def get_user_location(ip_address):
         pass
     return None
 
-# ML Service Client
+# Service Classes
 class MLServiceClient:
-    """Client for interacting with ML recommendation service"""
-    
     @staticmethod
     def call_ml_service(endpoint, params=None, timeout=15):
-        """Generic ML service call with error handling"""
         try:
             if not ML_SERVICE_URL:
                 return None
@@ -233,7 +258,6 @@ class MLServiceClient:
     
     @staticmethod
     def process_ml_recommendations(ml_response, limit=20):
-        """Process ML service response and get content details from database"""
         try:
             if not ml_response or 'recommendations' not in ml_response:
                 return []
@@ -241,7 +265,6 @@ class MLServiceClient:
             recommendations = []
             ml_recs = ml_response['recommendations'][:limit]
             
-            # Extract content IDs from ML response
             content_ids = []
             for rec in ml_recs:
                 if isinstance(rec, dict) and 'content_id' in rec:
@@ -252,11 +275,9 @@ class MLServiceClient:
             if not content_ids:
                 return []
             
-            # Get content details from database
             contents = Content.query.filter(Content.id.in_(content_ids)).all()
             content_dict = {content.id: content for content in contents}
             
-            # Maintain ML service ordering and add ML scores if available
             for i, rec in enumerate(ml_recs):
                 content_id = rec['content_id'] if isinstance(rec, dict) else rec
                 content = content_dict.get(content_id)
@@ -276,7 +297,6 @@ class MLServiceClient:
             logger.error(f"Error processing ML recommendations: {e}")
             return []
 
-# External API Services
 class TMDBService:
     BASE_URL = 'https://api.themoviedb.org/3'
     
@@ -350,7 +370,6 @@ class TMDBService:
     
     @staticmethod
     def get_new_releases(content_type='movie', region=None, page=1):
-        """Get content released in the last 60 days"""
         end_date = datetime.now().strftime('%Y-%m-%d')
         start_date = (datetime.now() - timedelta(days=60)).strftime('%Y-%m-%d')
         
@@ -376,7 +395,6 @@ class TMDBService:
     
     @staticmethod
     def get_critics_choice(content_type='movie', page=1):
-        """Get highly rated content with significant vote count"""
         url = f"{TMDBService.BASE_URL}/discover/{content_type}"
         params = {
             'api_key': TMDB_API_KEY,
@@ -396,7 +414,6 @@ class TMDBService:
     
     @staticmethod
     def get_by_genre(genre_id, content_type='movie', page=1, region=None):
-        """Get content by specific genre"""
         url = f"{TMDBService.BASE_URL}/discover/{content_type}"
         params = {
             'api_key': TMDB_API_KEY,
@@ -418,7 +435,6 @@ class TMDBService:
     
     @staticmethod
     def get_language_specific(language_code, content_type='movie', page=1):
-        """Get content in specific language"""
         url = f"{TMDBService.BASE_URL}/discover/{content_type}"
         params = {
             'api_key': TMDB_API_KEY,
@@ -504,7 +520,6 @@ class JikanService:
     
     @staticmethod
     def get_anime_by_genre(genre_name, page=1):
-        """Get anime by specific genre"""
         url = f"{JikanService.BASE_URL}/anime"
         params = {
             'genres': genre_name,
@@ -528,7 +543,6 @@ class YouTubeService:
     def search_trailers(query, content_type='movie'):
         url = f"{YouTubeService.BASE_URL}/search"
         
-        # Customize search query based on content type
         if content_type == 'anime':
             search_query = f"{query} anime trailer PV"
         else:
@@ -551,54 +565,45 @@ class YouTubeService:
             logger.error(f"YouTube search error: {e}")
         return None
 
-# Content Management Service
 class ContentService:
     @staticmethod
     def save_content_from_tmdb(tmdb_data, content_type):
         try:
-            # Check if content already exists
             existing = Content.query.filter_by(tmdb_id=tmdb_data['id']).first()
             if existing:
                 return existing
             
-            # Extract genres
             genres = []
             if 'genres' in tmdb_data:
                 genres = [genre['name'] for genre in tmdb_data['genres']]
             elif 'genre_ids' in tmdb_data:
                 genres = ContentService.map_genre_ids(tmdb_data['genre_ids'])
             
-            # Extract languages
             languages = []
             if 'spoken_languages' in tmdb_data:
                 languages = [lang['name'] for lang in tmdb_data['spoken_languages']]
             elif 'original_language' in tmdb_data:
                 languages = [tmdb_data['original_language']]
             
-            # Determine if it's a new release
             is_new_release = False
             release_date = None
             if tmdb_data.get('release_date') or tmdb_data.get('first_air_date'):
                 date_str = tmdb_data.get('release_date') or tmdb_data.get('first_air_date')
                 try:
                     release_date = datetime.strptime(date_str, '%Y-%m-%d').date()
-                    # Check if released in last 60 days
                     if release_date >= (datetime.now() - timedelta(days=60)).date():
                         is_new_release = True
                 except:
                     pass
             
-            # Determine if it's critics' choice
             is_critics_choice = False
             critics_score = tmdb_data.get('vote_average', 0)
             vote_count = tmdb_data.get('vote_count', 0)
             if critics_score >= 7.5 and vote_count >= 100:
                 is_critics_choice = True
             
-            # Get YouTube trailer
             youtube_trailer_id = ContentService.get_youtube_trailer(tmdb_data.get('title') or tmdb_data.get('name'))
             
-            # Create content object
             content = Content(
                 tmdb_id=tmdb_data['id'],
                 title=tmdb_data.get('title') or tmdb_data.get('name'),
@@ -632,25 +637,20 @@ class ContentService:
     @staticmethod
     def save_anime_content(anime_data):
         try:
-            # Check if anime already exists
             existing = Content.query.filter_by(mal_id=anime_data['mal_id']).first()
             if existing:
                 return existing
             
-            # Extract anime genres
             genres = [genre['name'] for genre in anime_data.get('genres', [])]
             
-            # Map to anime genre categories
             anime_genre_categories = []
             for genre in genres:
                 for category, category_genres in ANIME_GENRES.items():
                     if genre in category_genres:
                         anime_genre_categories.append(category)
             
-            # Remove duplicates
             anime_genre_categories = list(set(anime_genre_categories))
             
-            # Get release date
             release_date = None
             if anime_data.get('aired', {}).get('from'):
                 try:
@@ -658,10 +658,8 @@ class ContentService:
                 except:
                     pass
             
-            # Get YouTube trailer for anime
             youtube_trailer_id = ContentService.get_youtube_trailer(anime_data.get('title'), 'anime')
             
-            # Create anime content
             content = Content(
                 mal_id=anime_data['mal_id'],
                 title=anime_data.get('title'),
@@ -690,11 +688,9 @@ class ContentService:
     
     @staticmethod
     def get_youtube_trailer(title, content_type='movie'):
-        """Get YouTube trailer ID for content"""
         try:
             youtube_results = YouTubeService.search_trailers(title, content_type)
             if youtube_results and youtube_results.get('items'):
-                # Return the first relevant trailer
                 return youtube_results['items'][0]['id']['videoId']
         except Exception as e:
             logger.error(f"Error getting YouTube trailer: {e}")
@@ -702,7 +698,6 @@ class ContentService:
     
     @staticmethod
     def map_genre_ids(genre_ids):
-        # TMDB Genre ID mapping
         genre_map = {
             28: 'Action', 12: 'Adventure', 16: 'Animation', 35: 'Comedy',
             80: 'Crime', 99: 'Documentary', 18: 'Drama', 10751: 'Family',
@@ -712,13 +707,10 @@ class ContentService:
         }
         return [genre_map.get(gid, 'Unknown') for gid in genre_ids if gid in genre_map]
 
-# Enhanced Recommendation Engine with ML Integration
 class RecommendationEngine:
     @staticmethod
     def get_trending_recommendations(limit=20, content_type='all', region=None):
-        """Enhanced trending recommendations with ML service integration"""
         try:
-            # First try ML service
             ml_params = {
                 'limit': limit,
                 'content_type': content_type,
@@ -732,25 +724,20 @@ class RecommendationEngine:
                     logger.info(f"Using ML service for trending recommendations: {len(ml_recommendations)} items")
                     return [rec['content'] for rec in ml_recommendations]
             
-            # Fallback to original logic
             logger.info("Falling back to TMDB for trending recommendations")
             
-            # Get trending from TMDB for both day and week
             trending_day = TMDBService.get_trending(content_type=content_type, time_window='day')
             trending_week = TMDBService.get_trending(content_type=content_type, time_window='week')
             
-            # Combine and remove duplicates
             all_trending = []
             seen_ids = set()
             
-            # Process day trending first (more current)
             if trending_day:
                 for item in trending_day.get('results', []):
                     if item['id'] not in seen_ids:
                         all_trending.append(item)
                         seen_ids.add(item['id'])
             
-            # Add week trending
             if trending_week:
                 for item in trending_week.get('results', []):
                     if item['id'] not in seen_ids and len(all_trending) < limit * 2:
@@ -762,7 +749,6 @@ class RecommendationEngine:
                 content_type_detected = 'movie' if 'title' in item else 'tv'
                 content = ContentService.save_content_from_tmdb(item, content_type_detected)
                 if content:
-                    # Mark as trending
                     content.is_trending = True
                     db.session.commit()
                     recommendations.append(content)
@@ -774,9 +760,7 @@ class RecommendationEngine:
     
     @staticmethod
     def get_new_releases(limit=20, language=None, content_type='movie'):
-        """Enhanced new releases with ML service integration"""
         try:
-            # First try ML service
             ml_params = {
                 'limit': limit,
                 'language': language,
@@ -790,10 +774,8 @@ class RecommendationEngine:
                     logger.info(f"Using ML service for new releases: {len(ml_recommendations)} items")
                     return [rec['content'] for rec in ml_recommendations]
             
-            # Fallback to original logic
             logger.info("Falling back to TMDB for new releases")
             
-            # Map language to TMDB language code
             language_code = None
             if language:
                 lang_mapping = {'hindi': 'hi', 'telugu': 'te', 'tamil': 'ta', 
@@ -803,10 +785,8 @@ class RecommendationEngine:
             recommendations = []
             
             if language_code:
-                # Get language-specific new releases
                 new_releases = TMDBService.get_language_specific(language_code, content_type)
             else:
-                # Get general new releases
                 new_releases = TMDBService.get_new_releases(content_type)
             
             if new_releases:
@@ -822,9 +802,7 @@ class RecommendationEngine:
     
     @staticmethod
     def get_critics_choice(limit=20, content_type='movie'):
-        """Enhanced critics choice with ML service integration"""
         try:
-            # First try ML service
             ml_params = {
                 'limit': limit,
                 'content_type': content_type
@@ -837,7 +815,6 @@ class RecommendationEngine:
                     logger.info(f"Using ML service for critics choice: {len(ml_recommendations)} items")
                     return [rec['content'] for rec in ml_recommendations]
             
-            # Fallback to original logic
             logger.info("Falling back to TMDB for critics choice")
             
             critics_choice = TMDBService.get_critics_choice(content_type)
@@ -856,9 +833,7 @@ class RecommendationEngine:
     
     @staticmethod
     def get_genre_recommendations(genre, limit=20, content_type='movie', region=None):
-        """Enhanced genre recommendations with ML service integration"""
         try:
-            # First try ML service
             ml_params = {
                 'limit': limit,
                 'content_type': content_type,
@@ -872,10 +847,8 @@ class RecommendationEngine:
                     logger.info(f"Using ML service for genre {genre}: {len(ml_recommendations)} items")
                     return [rec['content'] for rec in ml_recommendations]
             
-            # Fallback to original logic
             logger.info(f"Falling back to TMDB for genre {genre}")
             
-            # Genre ID mapping for TMDB
             genre_ids = {
                 'action': 28, 'adventure': 12, 'animation': 16, 'biography': -1,
                 'comedy': 35, 'crime': 80, 'documentary': 99, 'drama': 18,
@@ -885,7 +858,6 @@ class RecommendationEngine:
             
             genre_id = genre_ids.get(genre.lower())
             if not genre_id or genre_id == -1:
-                # Fallback to search for biography and other genres
                 search_results = TMDBService.search_content(genre, content_type)
                 recommendations = []
                 if search_results:
@@ -895,7 +867,6 @@ class RecommendationEngine:
                             recommendations.append(content)
                 return recommendations
             
-            # Get content by genre
             genre_content = TMDBService.get_by_genre(genre_id, content_type, region=region)
             
             recommendations = []
@@ -912,9 +883,7 @@ class RecommendationEngine:
     
     @staticmethod
     def get_regional_recommendations(language, limit=20, content_type='movie'):
-        """Enhanced regional recommendations with ML service integration"""
         try:
-            # First try ML service
             ml_params = {
                 'limit': limit,
                 'content_type': content_type
@@ -927,10 +896,8 @@ class RecommendationEngine:
                     logger.info(f"Using ML service for regional {language}: {len(ml_recommendations)} items")
                     return [rec['content'] for rec in ml_recommendations]
             
-            # Fallback to original logic
             logger.info(f"Falling back to TMDB for regional {language}")
             
-            # Map language to TMDB language code
             lang_mapping = {
                 'hindi': 'hi', 'telugu': 'te', 'tamil': 'ta', 
                 'kannada': 'kn', 'malayalam': 'ml', 'english': 'en'
@@ -940,7 +907,6 @@ class RecommendationEngine:
             recommendations = []
             
             if language_code:
-                # Get language-specific content
                 lang_content = TMDBService.get_language_specific(language_code, content_type)
                 if lang_content:
                     for item in lang_content.get('results', [])[:limit]:
@@ -948,7 +914,6 @@ class RecommendationEngine:
                         if content:
                             recommendations.append(content)
             
-            # If not enough results, search with language keywords
             if len(recommendations) < limit:
                 search_queries = REGIONAL_LANGUAGES.get(language.lower(), [language])
                 for query in search_queries:
@@ -971,9 +936,7 @@ class RecommendationEngine:
     
     @staticmethod
     def get_anime_recommendations(limit=20, genre=None):
-        """Enhanced anime recommendations with ML service integration"""
         try:
-            # First try ML service
             ml_params = {
                 'limit': limit,
                 'genre': genre
@@ -986,15 +949,13 @@ class RecommendationEngine:
                     logger.info(f"Using ML service for anime recommendations: {len(ml_recommendations)} items")
                     return [rec['content'] for rec in ml_recommendations]
             
-            # Fallback to original logic
             logger.info("Falling back to Jikan API for anime recommendations")
             
             recommendations = []
             
             if genre and genre.lower() in ANIME_GENRES:
-                # Get anime by specific genre category
                 genre_keywords = ANIME_GENRES[genre.lower()]
-                for keyword in genre_keywords[:2]:  # Limit to avoid too many requests
+                for keyword in genre_keywords[:2]:
                     anime_results = JikanService.get_anime_by_genre(keyword)
                     if anime_results:
                         for anime in anime_results.get('data', []):
@@ -1006,7 +967,6 @@ class RecommendationEngine:
                     if len(recommendations) >= limit:
                         break
             else:
-                # Get top anime
                 top_anime = JikanService.get_top_anime()
                 if top_anime:
                     for anime in top_anime.get('data', [])[:limit]:
@@ -1021,9 +981,7 @@ class RecommendationEngine:
     
     @staticmethod
     def get_similar_recommendations(content_id, limit=20):
-        """Enhanced similar recommendations with ML service integration"""
         try:
-            # First try ML service
             ml_params = {
                 'limit': limit
             }
@@ -1035,7 +993,6 @@ class RecommendationEngine:
                     logger.info(f"Using ML service for similar recommendations: {len(ml_recommendations)} items")
                     return [rec['content'] for rec in ml_recommendations]
             
-            # Fallback to original logic
             logger.info("Falling back to TMDB/database for similar recommendations")
             
             base_content = Content.query.get(content_id)
@@ -1044,35 +1001,29 @@ class RecommendationEngine:
             
             similar_content = []
             
-            # Get similar from TMDB if available
             if base_content.tmdb_id and base_content.content_type != 'anime':
                 tmdb_details = TMDBService.get_content_details(base_content.tmdb_id, base_content.content_type)
                 if tmdb_details:
-                    # Get similar content
                     if 'similar' in tmdb_details:
                         for item in tmdb_details['similar']['results'][:10]:
                             content = ContentService.save_content_from_tmdb(item, base_content.content_type)
                             if content:
                                 similar_content.append(content)
                     
-                    # Get recommendations
                     if 'recommendations' in tmdb_details:
                         for item in tmdb_details['recommendations']['results'][:10]:
                             content = ContentService.save_content_from_tmdb(item, base_content.content_type)
                             if content:
                                 similar_content.append(content)
             
-            # Add genre-based recommendations
             if base_content.genres:
                 genres = json.loads(base_content.genres)
                 if genres:
-                    # Get content with similar genres from database
                     db_similar = Content.query.filter(
                         Content.id != content_id,
                         Content.content_type == base_content.content_type
                     ).all()
                     
-                    # Score by genre overlap
                     scored_content = []
                     for content in db_similar:
                         if content.genres:
@@ -1081,13 +1032,11 @@ class RecommendationEngine:
                             if overlap > 0:
                                 scored_content.append((content, overlap))
                     
-                    # Sort by score and add to similar content
                     scored_content.sort(key=lambda x: x[1], reverse=True)
                     for content, score in scored_content[:10]:
                         if content not in similar_content:
                             similar_content.append(content)
             
-            # Remove duplicates and limit
             seen_ids = set()
             unique_similar = []
             for content in similar_content:
@@ -1102,50 +1051,39 @@ class RecommendationEngine:
             logger.error(f"Error getting similar recommendations: {e}")
             return []
 
-# Anonymous User Recommendations
 class AnonymousRecommendationEngine:
     @staticmethod
     def get_recommendations_for_anonymous(session_id, ip_address, limit=20):
         try:
-            # Get user location for regional content
             location = get_user_location(ip_address)
             
-            # Get anonymous user's interaction history
             interactions = AnonymousInteraction.query.filter_by(session_id=session_id).all()
             
             recommendations = []
             
-            # If user has interactions, recommend similar content
             if interactions:
-                # Get genres from viewed content
                 viewed_content_ids = [interaction.content_id for interaction in interactions]
                 viewed_contents = Content.query.filter(Content.id.in_(viewed_content_ids)).all()
                 
-                # Extract preferred genres
                 all_genres = []
                 for content in viewed_contents:
                     if content.genres:
                         all_genres.extend(json.loads(content.genres))
                 
-                # Get most common genres
                 genre_counts = Counter(all_genres)
                 top_genres = [genre for genre, _ in genre_counts.most_common(3)]
                 
-                # Get recommendations based on top genres
                 for genre in top_genres:
                     genre_recs = RecommendationEngine.get_genre_recommendations(genre, limit=7)
                     recommendations.extend(genre_recs)
             
-            # Add regional content based on location
             if location and location.get('country') == 'India':
                 regional_recs = RecommendationEngine.get_regional_recommendations('hindi', limit=5)
                 recommendations.extend(regional_recs)
             
-            # Add trending content
             trending_recs = RecommendationEngine.get_trending_recommendations(limit=10)
             recommendations.extend(trending_recs)
             
-            # Remove duplicates and limit
             seen_ids = set()
             unique_recommendations = []
             for rec in recommendations:
@@ -1160,7 +1098,6 @@ class AnonymousRecommendationEngine:
             logger.error(f"Error getting anonymous recommendations: {e}")
             return []
 
-# Telegram Service
 class TelegramService:
     @staticmethod
     def send_admin_recommendation(content, admin_name, description):
@@ -1169,7 +1106,6 @@ class TelegramService:
                 logger.warning("Telegram bot or channel ID not configured")
                 return False
             
-            # Format genre list
             genres_list = []
             if content.genres:
                 try:
@@ -1177,7 +1113,6 @@ class TelegramService:
                 except:
                     genres_list = []
             
-            # Create poster URL
             poster_url = None
             if content.poster_path:
                 if content.poster_path.startswith('http'):
@@ -1185,7 +1120,6 @@ class TelegramService:
                 else:
                     poster_url = f"https://image.tmdb.org/t/p/w500{content.poster_path}"
             
-            # Create message
             message = f"""🎬 **Admin's Choice** by {admin_name}
 
 **{content.title}**
@@ -1200,7 +1134,6 @@ class TelegramService:
 
 #AdminChoice #MovieRecommendation #CineScope"""
             
-            # Send message with photo if available
             if poster_url:
                 try:
                     bot.send_photo(
@@ -1220,26 +1153,244 @@ class TelegramService:
             logger.error(f"Telegram send error: {e}")
             return False
 
-# API Routes
+# Search optimization functions
+def search_local_database(query, content_type, limit=50):
+    """Fast local database search with fuzzy matching"""
+    try:
+        # Build base query
+        base_query = Content.query
+        
+        if content_type != 'multi':
+            base_query = base_query.filter(Content.content_type == content_type)
+        
+        # Search by exact match first
+        exact_matches = base_query.filter(
+            or_(
+                Content.title.ilike(f'%{query}%'),
+                Content.original_title.ilike(f'%{query}%')
+            )
+        ).order_by(Content.popularity.desc()).limit(limit).all()
+        
+        results = []
+        for content in exact_matches:
+            # Calculate relevance score
+            title_score = fuzz.partial_ratio(query.lower(), content.title.lower())
+            
+            youtube_url = None
+            if content.youtube_trailer_id:
+                youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
+            
+            result = {
+                'id': content.id,
+                'tmdb_id': content.tmdb_id,
+                'mal_id': content.mal_id,
+                'title': content.title,
+                'content_type': content.content_type,
+                'genres': json.loads(content.genres or '[]'),
+                'rating': content.rating,
+                'release_date': content.release_date.isoformat() if content.release_date else None,
+                'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
+                'overview': (content.overview[:150] + '...') if content.overview else '',
+                'youtube_trailer': youtube_url,
+                'relevance_score': title_score,
+                'source': 'local'
+            }
+            results.append(result)
+        
+        # Sort by relevance score
+        results.sort(key=lambda x: x['relevance_score'], reverse=True)
+        
+        return results
+        
+    except Exception as e:
+        logger.error(f"Local search error: {e}")
+        return []
 
-# Authentication Routes
+def search_external_apis_parallel(query, content_type, page):
+    """Search external APIs in parallel for faster results"""
+    results = []
+    futures = []
+    
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        # Submit TMDB search
+        if content_type in ['movie', 'tv', 'multi']:
+            future = executor.submit(search_tmdb_cached, query, content_type, page)
+            futures.append(('tmdb', future))
+        
+        # Submit anime search
+        if content_type in ['anime', 'multi']:
+            future = executor.submit(search_anime_cached, query, page)
+            futures.append(('anime', future))
+        
+        # Collect results
+        for source, future in futures:
+            try:
+                api_results = future.result(timeout=5)  # 5 second timeout
+                if api_results:
+                    results.extend(api_results)
+            except Exception as e:
+                logger.warning(f"External API search failed for {source}: {e}")
+    
+    return results
+
+@cache.memoize(timeout=3600)
+def search_tmdb_cached(query, content_type, page):
+    """Cached TMDB search"""
+    try:
+        tmdb_results = TMDBService.search_content(query, content_type, page=page)
+        if not tmdb_results:
+            return []
+        
+        results = []
+        for item in tmdb_results.get('results', [])[:10]:  # Limit to 10 results
+            content_type_detected = 'movie' if 'title' in item else 'tv'
+            
+            # Save to database in background
+            executor.submit(ContentService.save_content_from_tmdb, item, content_type_detected)
+            
+            youtube_url = None
+            youtube_id = ContentService.get_youtube_trailer(
+                item.get('title') or item.get('name'), 
+                content_type_detected
+            )
+            if youtube_id:
+                youtube_url = f"https://www.youtube.com/watch?v={youtube_id}"
+            
+            result = {
+                'tmdb_id': item['id'],
+                'title': item.get('title') or item.get('name'),
+                'content_type': content_type_detected,
+                'genres': ContentService.map_genre_ids(item.get('genre_ids', [])),
+                'rating': item.get('vote_average'),
+                'release_date': item.get('release_date') or item.get('first_air_date'),
+                'poster_path': f"https://image.tmdb.org/t/p/w300{item['poster_path']}" if item.get('poster_path') else None,
+                'overview': (item.get('overview', '')[:150] + '...') if item.get('overview') else '',
+                'youtube_trailer': youtube_url,
+                'popularity': item.get('popularity', 0),
+                'source': 'tmdb'
+            }
+            results.append(result)
+        
+        return results
+        
+    except Exception as e:
+        logger.error(f"TMDB search error: {e}")
+        return []
+
+@cache.memoize(timeout=3600)
+def search_anime_cached(query, page):
+    """Cached anime search"""
+    try:
+        anime_results = JikanService.search_anime(query, page=page)
+        if not anime_results:
+            return []
+        
+        results = []
+        for anime in anime_results.get('data', [])[:10]:  # Limit to 10 results
+            # Save to database in background
+            executor.submit(ContentService.save_anime_content, anime)
+            
+            youtube_url = None
+            youtube_id = ContentService.get_youtube_trailer(anime.get('title'), 'anime')
+            if youtube_id:
+                youtube_url = f"https://www.youtube.com/watch?v={youtube_id}"
+            
+            result = {
+                'mal_id': anime['mal_id'],
+                'title': anime.get('title'),
+                'content_type': 'anime',
+                'genres': [genre['name'] for genre in anime.get('genres', [])],
+                'rating': anime.get('score'),
+                'release_date': anime.get('aired', {}).get('from'),
+                'poster_path': anime.get('images', {}).get('jpg', {}).get('image_url'),
+                'overview': (anime.get('synopsis', '')[:150] + '...') if anime.get('synopsis') else '',
+                'youtube_trailer': youtube_url,
+                'popularity': anime.get('popularity', 0),
+                'source': 'jikan'
+            }
+            results.append(result)
+        
+        return results
+        
+    except Exception as e:
+        logger.error(f"Anime search error: {e}")
+        return []
+
+def combine_and_rank_results(local_results, external_results, query):
+    """Combine and rank results by relevance"""
+    all_results = []
+    seen_titles = set()
+    
+    # Add local results first (they're already ranked)
+    for result in local_results:
+        title_key = result['title'].lower()
+        if title_key not in seen_titles:
+            seen_titles.add(title_key)
+            all_results.append(result)
+    
+    # Add external results
+    for result in external_results:
+        title_key = result['title'].lower()
+        if title_key not in seen_titles:
+            seen_titles.add(title_key)
+            # Calculate relevance score for external results
+            result['relevance_score'] = fuzz.partial_ratio(query.lower(), result['title'].lower())
+            all_results.append(result)
+    
+    # Sort by relevance and popularity
+    all_results.sort(key=lambda x: (
+        x.get('relevance_score', 0),
+        x.get('rating', 0),
+        x.get('popularity', 0)
+    ), reverse=True)
+    
+    return all_results
+
+def track_search_interaction(session_id, results, ip_address):
+    """Track search interactions asynchronously"""
+    try:
+        with app.app_context():
+            for result in results[:5]:  # Track top 5 results
+                if 'id' in result:  # Local result
+                    interaction = AnonymousInteraction(
+                        session_id=session_id,
+                        content_id=result['id'],
+                        interaction_type='search',
+                        ip_address=ip_address
+                    )
+                    db.session.add(interaction)
+            db.session.commit()
+    except Exception as e:
+        logger.error(f"Error tracking search interaction: {e}")
+
+def warm_search_cache():
+    """Pre-cache popular search terms"""
+    popular_terms = ['action', 'comedy', 'drama', 'horror', 'romance', 'thriller', 'anime', 'marvel', 'disney']
+    
+    with app.app_context():
+        for term in popular_terms:
+            try:
+                # Warm cache for each term
+                search_tmdb_cached(term, 'multi', 1)
+                search_anime_cached(term, 1)
+            except:
+                pass
+
+# API Routes
 @app.route('/api/register', methods=['POST'])
 def register():
     try:
         data = request.get_json()
         
-        # Validate input
         if not data.get('username') or not data.get('email') or not data.get('password'):
             return jsonify({'error': 'Missing required fields'}), 400
         
-        # Check if user exists
         if User.query.filter_by(username=data['username']).first():
             return jsonify({'error': 'Username already exists'}), 400
         
         if User.query.filter_by(email=data['email']).first():
             return jsonify({'error': 'Email already exists'}), 400
         
-        # Create user
         user = User(
             username=data['username'],
             email=data['email'],
@@ -1251,7 +1402,6 @@ def register():
         db.session.add(user)
         db.session.commit()
         
-        # Generate token
         token = jwt.encode({
             'user_id': user.id,
             'exp': datetime.utcnow() + timedelta(days=30)
@@ -1286,11 +1436,9 @@ def login():
         if not user or not check_password_hash(user.password_hash, data['password']):
             return jsonify({'error': 'Invalid credentials'}), 401
         
-        # Update last active
         user.last_active = datetime.utcnow()
         db.session.commit()
         
-        # Generate token
         token = jwt.encode({
             'user_id': user.id,
             'exp': datetime.utcnow() + timedelta(days=30)
@@ -1313,107 +1461,134 @@ def login():
         logger.error(f"Login error: {e}")
         return jsonify({'error': 'Login failed'}), 500
 
-# Content Discovery Routes
+# Optimized search endpoint
 @app.route('/api/search', methods=['GET'])
+@cache.cached(timeout=1800, query_string=True)
 def search_content():
     try:
-        query = request.args.get('query', '')
+        query = request.args.get('query', '').strip()
         content_type = request.args.get('type', 'multi')
         page = int(request.args.get('page', 1))
+        limit = int(request.args.get('limit', 20))
         
-        if not query:
-            return jsonify({'error': 'Query parameter required'}), 400
+        if not query or len(query) < 2:
+            return jsonify({'error': 'Query must be at least 2 characters'}), 400
         
-        # Record search interaction
+        # Start with local database search (instant results)
+        local_results = search_local_database(query, content_type, limit)
+        
+        # If we have enough local results, return them immediately
+        if len(local_results) >= limit:
+            return jsonify({
+                'results': local_results[:limit],
+                'total_results': len(local_results),
+                'total_pages': 1,
+                'current_page': 1,
+                'source': 'local'
+            }), 200
+        
+        # Otherwise, search external APIs in parallel
+        external_results = search_external_apis_parallel(query, content_type, page)
+        
+        # Combine and rank results
+        all_results = combine_and_rank_results(local_results, external_results, query)
+        
+        # Paginate results
+        start_idx = (page - 1) * limit
+        end_idx = start_idx + limit
+        paginated_results = all_results[start_idx:end_idx]
+        
+        # Track search interaction asynchronously
         session_id = get_session_id()
-        
-        # Search TMDB
-        tmdb_results = TMDBService.search_content(query, content_type, page=page)
-        
-        # Search anime if content_type is anime or multi
-        anime_results = None
-        if content_type in ['anime', 'multi']:
-            anime_results = JikanService.search_anime(query, page=page)
-        
-        # Process and save results
-        results = []
-        
-        if tmdb_results:
-            for item in tmdb_results.get('results', []):
-                content_type_detected = 'movie' if 'title' in item else 'tv'
-                content = ContentService.save_content_from_tmdb(item, content_type_detected)
-                if content:
-                    # Record anonymous interaction
-                    interaction = AnonymousInteraction(
-                        session_id=session_id,
-                        content_id=content.id,
-                        interaction_type='search',
-                        ip_address=request.remote_addr
-                    )
-                    db.session.add(interaction)
-                    
-                    # Get YouTube trailer URL
-                    youtube_url = None
-                    if content.youtube_trailer_id:
-                        youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
-                    
-                    results.append({
-                        'id': content.id,
-                        'tmdb_id': content.tmdb_id,
-                        'title': content.title,
-                        'content_type': content.content_type,
-                        'genres': json.loads(content.genres or '[]'),
-                        'rating': content.rating,
-                        'release_date': content.release_date.isoformat() if content.release_date else None,
-                        'poster_path': f"https://image.tmdb.org/t/p/w500{content.poster_path}" if content.poster_path else None,
-                        'overview': content.overview,
-                        'youtube_trailer': youtube_url
-                    })
-        
-        # Add anime results
-        if anime_results:
-            for anime in anime_results.get('data', []):
-                # Save anime content
-                content = ContentService.save_anime_content(anime)
-                if content:
-                    # Get YouTube trailer URL
-                    youtube_url = None
-                    if content.youtube_trailer_id:
-                        youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
-                    
-                    results.append({
-                        'id': content.id,
-                        'mal_id': content.mal_id,
-                        'title': content.title,
-                        'content_type': 'anime',
-                        'genres': json.loads(content.genres or '[]'),
-                        'anime_genres': json.loads(content.anime_genres or '[]'),
-                        'rating': content.rating,
-                        'release_date': content.release_date.isoformat() if content.release_date else None,
-                        'poster_path': content.poster_path,
-                        'overview': content.overview,
-                        'youtube_trailer': youtube_url
-                    })
-        
-        db.session.commit()
+        executor.submit(track_search_interaction, session_id, paginated_results, request.remote_addr)
         
         return jsonify({
-            'results': results,
-            'total_results': tmdb_results.get('total_results', 0) if tmdb_results else 0,
-            'total_pages': tmdb_results.get('total_pages', 0) if tmdb_results else 0,
-            'current_page': page
+            'results': paginated_results,
+            'total_results': len(all_results),
+            'total_pages': (len(all_results) + limit - 1) // limit,
+            'current_page': page,
+            'source': 'mixed'
         }), 200
         
     except Exception as e:
         logger.error(f"Search error: {e}")
         return jsonify({'error': 'Search failed'}), 500
 
+# Add search suggestions endpoint
+@app.route('/api/search/suggestions', methods=['GET'])
+@cache.cached(timeout=3600, query_string=True)
+def search_suggestions():
+    """Fast autocomplete suggestions"""
+    try:
+        query = request.args.get('query', '').strip()
+        if len(query) < 2:
+            return jsonify({'suggestions': []}), 200
+        
+        # Get popular content matching the query
+        suggestions = Content.query.filter(
+            or_(
+                Content.title.ilike(f'{query}%'),
+                Content.original_title.ilike(f'{query}%')
+            )
+        ).order_by(Content.popularity.desc()).limit(10).all()
+        
+        result = []
+        for content in suggestions:
+            result.append({
+                'id': content.id,
+                'title': content.title,
+                'content_type': content.content_type,
+                'year': content.release_date.year if content.release_date else None,
+                'poster_path': f"https://image.tmdb.org/t/p/w92{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else None
+            })
+        
+        return jsonify({'suggestions': result}), 200
+        
+    except Exception as e:
+        logger.error(f"Suggestions error: {e}")
+        return jsonify({'suggestions': []}), 200
+
+# Add quick search endpoint for instant results
+@app.route('/api/search/quick', methods=['GET'])
+def quick_search():
+    """Ultra-fast search for instant results"""
+    try:
+        query = request.args.get('query', '').strip()
+        if len(query) < 2:
+            return jsonify({'results': []}), 200
+        
+        # Only search local database for instant results
+        results = Content.query.filter(
+            or_(
+                Content.title.ilike(f'%{query}%'),
+                Content.original_title.ilike(f'%{query}%')
+            )
+        ).order_by(
+            Content.popularity.desc(),
+            Content.rating.desc()
+        ).limit(5).all()
+        
+        quick_results = []
+        for content in results:
+            quick_results.append({
+                'id': content.id,
+                'title': content.title,
+                'content_type': content.content_type,
+                'rating': content.rating,
+                'poster_path': f"https://image.tmdb.org/t/p/w92{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path
+            })
+        
+        return jsonify({'results': quick_results}), 200
+        
+    except Exception as e:
+        logger.error(f"Quick search error: {e}")
+        return jsonify({'results': []}), 200
+
 @app.route('/api/content/<int:content_id>', methods=['GET'])
 def get_content_details(content_id):
     try:
         content = Content.query.get_or_404(content_id)
         
-        # Record view interaction
         session_id = get_session_id()
         interaction = AnonymousInteraction(
             session_id=session_id,
@@ -1423,33 +1598,26 @@ def get_content_details(content_id):
         )
         db.session.add(interaction)
         
-        # Get additional details
         additional_details = None
         cast = []
         crew = []
         
         if content.content_type == 'anime' and content.mal_id:
-            # Get anime details
             additional_details = JikanService.get_anime_details(content.mal_id)
             if additional_details:
                 anime_data = additional_details.get('data', {})
-                # Extract voice actors as cast
                 if 'voices' in anime_data:
                     cast = anime_data['voices'][:10]
-                # Extract staff as crew
                 if 'staff' in anime_data:
                     crew = anime_data['staff'][:5]
         elif content.tmdb_id:
-            # Get TMDB details
             additional_details = TMDBService.get_content_details(content.tmdb_id, content.content_type)
             if additional_details:
                 cast = additional_details.get('credits', {}).get('cast', [])[:10]
                 crew = additional_details.get('credits', {}).get('crew', [])[:5]
         
-        # Get similar content using enhanced algorithm
         similar_content = RecommendationEngine.get_similar_recommendations(content.id, limit=10)
         
-        # Format similar content
         similar_formatted = []
         for similar in similar_content:
             youtube_url = None
@@ -1467,7 +1635,6 @@ def get_content_details(content_id):
         
         db.session.commit()
         
-        # Get YouTube trailer URL
         youtube_trailer_url = None
         if content.youtube_trailer_id:
             youtube_trailer_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
@@ -1497,7 +1664,6 @@ def get_content_details(content_id):
             'is_critics_choice': content.is_critics_choice
         }
         
-        # Add anime-specific data
         if content.content_type == 'anime':
             response_data['anime_genres'] = json.loads(content.anime_genres or '[]')
         
@@ -1507,7 +1673,6 @@ def get_content_details(content_id):
         logger.error(f"Content details error: {e}")
         return jsonify({'error': 'Failed to get content details'}), 500
 
-# Enhanced Recommendation Routes
 @app.route('/api/recommendations/trending', methods=['GET'])
 def get_trending():
     try:
@@ -1674,7 +1839,7 @@ def get_regional(language):
 @app.route('/api/recommendations/anime', methods=['GET'])
 def get_anime():
     try:
-        genre = request.args.get('genre')  # shonen, shojo, seinen, josei, kodomomuke
+        genre = request.args.get('genre')
         limit = int(request.args.get('limit', 20))
         
         recommendations = RecommendationEngine.get_anime_recommendations(limit, genre)
@@ -1768,15 +1933,12 @@ def get_anonymous_recommendations():
         logger.error(f"Anonymous recommendations error: {e}")
         return jsonify({'error': 'Failed to get recommendations'}), 500
 
-# Personalized Recommendations (requires ML service)
 @app.route('/api/recommendations/personalized', methods=['GET'])
 @require_auth
 def get_personalized_recommendations(current_user):
     try:
-        # Get user interactions
         interactions = UserInteraction.query.filter_by(user_id=current_user.id).all()
         
-        # Prepare data for ML service
         user_data = {
             'user_id': current_user.id,
             'preferred_languages': json.loads(current_user.preferred_languages or '[]'),
@@ -1792,18 +1954,15 @@ def get_personalized_recommendations(current_user):
             ]
         }
         
-        # Call ML service
         try:
             response = requests.post(f"{ML_SERVICE_URL}/api/recommendations", json=user_data, timeout=30)
             
             if response.status_code == 200:
                 ml_recommendations = response.json().get('recommendations', [])
                 
-                # Get content details for recommended content IDs
                 content_ids = [rec['content_id'] for rec in ml_recommendations]
                 contents = Content.query.filter(Content.id.in_(content_ids)).all()
                 
-                # Create response with ML scores
                 result = []
                 content_dict = {content.id: content for content in contents}
                 
@@ -1831,25 +1990,20 @@ def get_personalized_recommendations(current_user):
         except:
             pass
         
-        # Fallback to basic recommendations
         return get_trending()
         
     except Exception as e:
         logger.error(f"Personalized recommendations error: {e}")
         return get_trending()
 
-# ML-Enhanced Personalized Recommendations
 @app.route('/api/recommendations/ml-personalized', methods=['GET'])
 @require_auth
 def get_ml_personalized_recommendations(current_user):
-    """ML-enhanced personalized recommendations with detailed ML insights"""
     try:
         limit = int(request.args.get('limit', 20))
         
-        # Get user interactions
         interactions = UserInteraction.query.filter_by(user_id=current_user.id).all()
         
-        # Prepare data for ML service
         user_data = {
             'user_id': current_user.id,
             'preferred_languages': json.loads(current_user.preferred_languages or '[]'),
@@ -1865,7 +2019,6 @@ def get_ml_personalized_recommendations(current_user):
             ]
         }
         
-        # Call ML service
         try:
             response = requests.post(f"{ML_SERVICE_URL}/api/recommendations", json=user_data, timeout=30)
             
@@ -1874,7 +2027,6 @@ def get_ml_personalized_recommendations(current_user):
                 ml_recommendations = MLServiceClient.process_ml_recommendations(ml_response, limit)
                 
                 if ml_recommendations:
-                    # Create detailed response with ML insights
                     result = []
                     for rec in ml_recommendations:
                         content = rec['content']
@@ -1907,14 +2059,12 @@ def get_ml_personalized_recommendations(current_user):
         except:
             pass
         
-        # Fallback to basic personalized recommendations
         return get_trending()
         
     except Exception as e:
         logger.error(f"ML personalized recommendations error: {e}")
         return get_trending()
 
-# User Interaction Routes
 @app.route('/api/interactions', methods=['POST'])
 @require_auth
 def record_interaction(current_user):
@@ -2010,13 +2160,12 @@ def get_favorites(current_user):
         logger.error(f"Favorites error: {e}")
         return jsonify({'error': 'Failed to get favorites'}), 500
 
-# Admin Routes
 @app.route('/api/admin/search', methods=['GET'])
 @require_admin
 def admin_search(current_user):
     try:
         query = request.args.get('query', '')
-        source = request.args.get('source', 'tmdb')  # tmdb, omdb, anime
+        source = request.args.get('source', 'tmdb')
         page = int(request.args.get('page', 1))
         
         if not query:
@@ -2069,7 +2218,6 @@ def save_external_content(current_user):
         if not data:
             return jsonify({'error': 'No content data provided'}), 400
         
-        # Check if content already exists by external ID
         existing_content = None
         if data.get('source') == 'anime' and data.get('id'):
             existing_content = Content.query.filter_by(mal_id=data['id']).first()
@@ -2082,9 +2230,7 @@ def save_external_content(current_user):
                 'content_id': existing_content.id
             }), 200
         
-        # Create new content from external data
         try:
-            # Handle release date
             release_date = None
             if data.get('release_date'):
                 try:
@@ -2092,10 +2238,8 @@ def save_external_content(current_user):
                 except:
                     release_date = None
             
-            # Get YouTube trailer
             youtube_trailer_id = ContentService.get_youtube_trailer(data.get('title'), data.get('content_type'))
             
-            # Create content object
             if data.get('source') == 'anime':
                 content = Content(
                     mal_id=data.get('id'),
@@ -2157,16 +2301,13 @@ def create_admin_recommendation(current_user):
         if not all(field in data for field in required_fields):
             return jsonify({'error': 'Missing required fields'}), 400
         
-        # Get content - handle both internal ID and external ID
         content = Content.query.get(data['content_id'])
         if not content:
-            # Try to find by TMDB ID if direct ID lookup fails
             content = Content.query.filter_by(tmdb_id=data['content_id']).first()
         
         if not content:
             return jsonify({'error': 'Content not found. Please save content first.'}), 404
         
-        # Create admin recommendation
         admin_rec = AdminRecommendation(
             content_id=content.id,
             admin_id=current_user.id,
@@ -2177,7 +2318,6 @@ def create_admin_recommendation(current_user):
         db.session.add(admin_rec)
         db.session.commit()
         
-        # Send to Telegram channel
         telegram_success = TelegramService.send_admin_recommendation(content, current_user.username, data['description'])
         
         return jsonify({
@@ -2236,7 +2376,6 @@ def get_admin_recommendations(current_user):
 @require_admin
 def get_analytics(current_user):
     try:
-        # Get basic analytics
         total_users = User.query.count()
         total_content = Content.query.count()
         total_interactions = UserInteraction.query.count()
@@ -2244,13 +2383,11 @@ def get_analytics(current_user):
             User.last_active >= datetime.utcnow() - timedelta(days=7)
         ).count()
         
-        # Popular content
         popular_content = db.session.query(
             Content.id, Content.title, func.count(UserInteraction.id).label('interaction_count')
         ).join(UserInteraction).group_by(Content.id, Content.title)\
          .order_by(desc('interaction_count')).limit(10).all()
         
-        # Popular genres
         all_interactions = UserInteraction.query.join(Content).all()
         genre_counts = defaultdict(int)
         for interaction in all_interactions:
@@ -2281,11 +2418,9 @@ def get_analytics(current_user):
         logger.error(f"Analytics error: {e}")
         return jsonify({'error': 'Failed to get analytics'}), 500
 
-# ML Service Admin Routes
 @app.route('/api/admin/ml-service-check', methods=['GET'])
 @require_admin
 def ml_service_comprehensive_check(current_user):
-    """Simple comprehensive ML service check"""
     try:
         ml_url = ML_SERVICE_URL
         if not ml_url:
@@ -2298,7 +2433,6 @@ def ml_service_comprehensive_check(current_user):
         checks = {}
         overall_status = 'healthy'
         
-        # 1. Basic Health Check
         try:
             start_time = time.time()
             health_resp = requests.get(f"{ml_url}/api/health", timeout=10)
@@ -2319,7 +2453,6 @@ def ml_service_comprehensive_check(current_user):
             checks['connectivity'] = {'status': 'fail', 'error': str(e)}
             overall_status = 'unhealthy'
 
-        # 2. Recommendation Test (only if connectivity passes)
         if checks['connectivity']['status'] == 'pass':
             try:
                 start_time = time.time()
@@ -2353,7 +2486,6 @@ def ml_service_comprehensive_check(current_user):
                 checks['recommendations'] = {'status': 'fail', 'error': str(e)}
                 overall_status = 'partial'
 
-        # 3. Statistics Check
         if checks['connectivity']['status'] == 'pass':
             try:
                 start_time = time.time()
@@ -2373,7 +2505,6 @@ def ml_service_comprehensive_check(current_user):
             except Exception as e:
                 checks['statistics'] = {'status': 'fail', 'error': str(e)}
 
-        # 4. Quick Performance Test
         endpoints = [
             {'name': 'trending', 'url': '/api/trending?limit=3'},
         ]
@@ -2394,7 +2525,6 @@ def ml_service_comprehensive_check(current_user):
 
         checks['performance'] = performance
 
-        # 5. Database Integration Check
         try:
             total_users = User.query.count()
             total_content = Content.query.count() 
@@ -2410,7 +2540,6 @@ def ml_service_comprehensive_check(current_user):
         except Exception as e:
             checks['database_integration'] = {'status': 'fail', 'error': str(e)}
 
-        # Summary
         failed_checks = sum(1 for check in checks.values() 
                            if isinstance(check, dict) and check.get('status') == 'fail')
         total_checks = len([check for check in checks.values() if isinstance(check, dict)])
@@ -2449,7 +2578,6 @@ def ml_service_comprehensive_check(current_user):
 @app.route('/api/admin/ml-service-update', methods=['POST'])
 @require_admin  
 def ml_service_force_update(current_user):
-    """Force ML service model update"""
     try:
         if not ML_SERVICE_URL:
             return jsonify({'success': False, 'message': 'ML service not configured'}), 400
@@ -2467,16 +2595,13 @@ def ml_service_force_update(current_user):
 @app.route('/api/admin/ml-stats', methods=['GET'])
 @require_admin
 def get_ml_service_stats(current_user):
-    """Get ML service statistics and performance metrics"""
     try:
         if not ML_SERVICE_URL:
             return jsonify({'error': 'ML service not configured'}), 400
         
-        # Get ML service stats
         ml_stats = MLServiceClient.call_ml_service('/api/stats')
         
         if ml_stats:
-            # Add backend stats for comparison
             backend_stats = {
                 'total_users': User.query.count(),
                 'total_content': Content.query.count(),
@@ -2501,7 +2626,6 @@ def get_ml_service_stats(current_user):
         logger.error(f"ML stats error: {e}")
         return jsonify({'error': 'Failed to get ML statistics'}), 500
 
-# Public Admin Recommendations
 @app.route('/api/recommendations/admin-choice', methods=['GET'])
 def get_public_admin_recommendations():
     try:
@@ -2543,7 +2667,6 @@ def get_public_admin_recommendations():
         logger.error(f"Public admin recommendations error: {e}")
         return jsonify({'error': 'Failed to get admin recommendations'}), 500
 
-# Health check endpoint
 @app.route('/api/health', methods=['GET'])
 def health_check():
     return jsonify({
@@ -2552,13 +2675,12 @@ def health_check():
         'version': '2.0.0'
     }), 200
 
-# Initialize database
+# Database initialization
 def create_tables():
     try:
         with app.app_context():
             db.create_all()
             
-            # Create admin user if not exists
             admin = User.query.filter_by(username='admin').first()
             if not admin:
                 admin = User(
@@ -2573,8 +2695,12 @@ def create_tables():
     except Exception as e:
         logger.error(f"Database initialization error: {e}")
 
-# Initialize database when app starts
+# Initialize database
 create_tables()
+
+# Warm cache after initialization
+if not os.environ.get('DISABLE_CACHE_WARMING'):
+    executor.submit(warm_search_cache)
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
