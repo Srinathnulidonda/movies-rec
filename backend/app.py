@@ -1,7 +1,8 @@
-#backend/app.py
+# backend/app.py
 from flask import Flask, request, jsonify, session, render_template
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
+from flask_caching import Cache
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta
 import requests
@@ -19,6 +20,10 @@ import telebot
 import threading
 from geopy.geocoders import Nominatim
 import jwt
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import redis
+from requests.adapters import HTTPAdapter
+from requests.packages.urllib3.util.retry import Retry
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -34,9 +39,22 @@ else:
 
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
+# Cache configuration
+REDIS_URL = os.environ.get('REDIS_URL','redis://red-d1l75ap5pdvs73bk295g:rE0xu32o3U2bNUQKz6mG7KIybWzle9xf@red-d1l75ap5pdvs73bk295g:6379')
+if REDIS_URL:
+    # Production - Redis
+    app.config['CACHE_TYPE'] = 'redis'
+    app.config['CACHE_REDIS_URL'] = REDIS_URL
+    app.config['CACHE_DEFAULT_TIMEOUT'] = 3600  # 1 hour default
+else:
+    # Development - Simple in-memory cache
+    app.config['CACHE_TYPE'] = 'simple'
+    app.config['CACHE_DEFAULT_TIMEOUT'] = 1800  # 30 minutes default
+
 # Initialize extensions
 db = SQLAlchemy(app)
 CORS(app)
+cache = Cache(app)
 
 # API Keys - Set these in your environment
 TMDB_API_KEY = os.environ.get('TMDB_API_KEY', '1cf86635f20bb2aff8e70940e7c3ddd5')
@@ -60,6 +78,27 @@ else:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# HTTP Session with retry logic
+def create_http_session():
+    session = requests.Session()
+    retry = Retry(
+        total=3,
+        read=3,
+        connect=3,
+        backoff_factor=0.3,
+        status_forcelist=(500, 502, 504)
+    )
+    adapter = HTTPAdapter(max_retries=retry, pool_connections=10, pool_maxsize=10)
+    session.mount('http://', adapter)
+    session.mount('https://', adapter)
+    return session
+
+# Global HTTP session
+http_session = create_http_session()
+
+# Thread pool for concurrent API calls
+executor = ThreadPoolExecutor(max_workers=5)
+
 # Regional Language Mapping
 REGIONAL_LANGUAGES = {
     'hindi': ['hi', 'hindi', 'bollywood'],
@@ -79,7 +118,27 @@ ANIME_GENRES = {
     'kodomomuke': ['Kids', 'Family', 'Adventure', 'Comedy']
 }
 
-# Database Models
+# Cache key generators
+def make_cache_key(*args, **kwargs):
+    """Generate cache key from function arguments"""
+    path = request.path
+    args_str = str(hash(frozenset(request.args.items())))
+    return f"{path}:{args_str}"
+
+def content_cache_key(content_id):
+    """Generate cache key for content details"""
+    return f"content:{content_id}"
+
+def search_cache_key(query, content_type, page):
+    """Generate cache key for search results"""
+    return f"search:{query}:{content_type}:{page}"
+
+def recommendations_cache_key(rec_type, **kwargs):
+    """Generate cache key for recommendations"""
+    params = ':'.join([f"{k}={v}" for k, v in sorted(kwargs.items())])
+    return f"recommendations:{rec_type}:{params}"
+
+# Database Models (keeping existing models)
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
@@ -190,39 +249,63 @@ def get_session_id():
     return session['session_id']
 
 def get_user_location(ip_address):
+    """Get user location with caching"""
+    cache_key = f"location:{ip_address}"
+    cached_location = cache.get(cache_key)
+    
+    if cached_location:
+        return cached_location
+    
     try:
         # Simple IP-based location detection
-        response = requests.get(f'http://ip-api.com/json/{ip_address}', timeout=5)
+        response = http_session.get(f'http://ip-api.com/json/{ip_address}', timeout=5)
         if response.status_code == 200:
             data = response.json()
             if data['status'] == 'success':
-                return {
+                location = {
                     'country': data.get('country'),
                     'region': data.get('regionName'),
                     'city': data.get('city'),
                     'lat': data.get('lat'),
                     'lon': data.get('lon')
                 }
+                # Cache for 24 hours
+                cache.set(cache_key, location, timeout=86400)
+                return location
     except:
         pass
     return None
 
-# ML Service Client
+# ML Service Client with caching
 class MLServiceClient:
     """Client for interacting with ML recommendation service"""
     
     @staticmethod
-    def call_ml_service(endpoint, params=None, timeout=15):
-        """Generic ML service call with error handling"""
+    def call_ml_service(endpoint, params=None, timeout=15, use_cache=True):
+        """Generic ML service call with error handling and caching"""
         try:
             if not ML_SERVICE_URL:
                 return None
-                
+            
+            # Generate cache key
+            cache_key = f"ml:{endpoint}:{json.dumps(params, sort_keys=True)}"
+            
+            # Check cache first
+            if use_cache:
+                cached_result = cache.get(cache_key)
+                if cached_result:
+                    logger.info(f"ML service cache hit for {endpoint}")
+                    return cached_result
+            
             url = f"{ML_SERVICE_URL}{endpoint}"
-            response = requests.get(url, params=params, timeout=timeout)
+            response = http_session.get(url, params=params, timeout=timeout)
             
             if response.status_code == 200:
-                return response.json()
+                result = response.json()
+                # Cache ML results for 30 minutes
+                if use_cache:
+                    cache.set(cache_key, result, timeout=1800)
+                return result
             else:
                 logger.warning(f"ML service returned {response.status_code} for {endpoint}")
                 return None
@@ -276,11 +359,12 @@ class MLServiceClient:
             logger.error(f"Error processing ML recommendations: {e}")
             return []
 
-# External API Services
+# Enhanced External API Services with caching
 class TMDBService:
     BASE_URL = 'https://api.themoviedb.org/3'
     
     @staticmethod
+    @cache.memoize(timeout=3600)  # Cache for 1 hour
     def search_content(query, content_type='multi', language='en-US', page=1):
         url = f"{TMDBService.BASE_URL}/search/{content_type}"
         params = {
@@ -291,7 +375,7 @@ class TMDBService:
         }
         
         try:
-            response = requests.get(url, params=params, timeout=10)
+            response = http_session.get(url, params=params, timeout=10)
             if response.status_code == 200:
                 return response.json()
         except Exception as e:
@@ -299,6 +383,7 @@ class TMDBService:
         return None
     
     @staticmethod
+    @cache.memoize(timeout=7200)  # Cache for 2 hours
     def get_content_details(content_id, content_type='movie'):
         url = f"{TMDBService.BASE_URL}/{content_type}/{content_id}"
         params = {
@@ -307,7 +392,7 @@ class TMDBService:
         }
         
         try:
-            response = requests.get(url, params=params, timeout=10)
+            response = http_session.get(url, params=params, timeout=10)
             if response.status_code == 200:
                 return response.json()
         except Exception as e:
@@ -315,6 +400,7 @@ class TMDBService:
         return None
     
     @staticmethod
+    @cache.memoize(timeout=1800)  # Cache for 30 minutes
     def get_trending(content_type='all', time_window='day', page=1):
         url = f"{TMDBService.BASE_URL}/trending/{content_type}/{time_window}"
         params = {
@@ -323,7 +409,7 @@ class TMDBService:
         }
         
         try:
-            response = requests.get(url, params=params, timeout=10)
+            response = http_session.get(url, params=params, timeout=10)
             if response.status_code == 200:
                 return response.json()
         except Exception as e:
@@ -331,6 +417,7 @@ class TMDBService:
         return None
     
     @staticmethod
+    @cache.memoize(timeout=3600)  # Cache for 1 hour
     def get_popular(content_type='movie', page=1, region=None):
         url = f"{TMDBService.BASE_URL}/{content_type}/popular"
         params = {
@@ -341,7 +428,7 @@ class TMDBService:
             params['region'] = region
         
         try:
-            response = requests.get(url, params=params, timeout=10)
+            response = http_session.get(url, params=params, timeout=10)
             if response.status_code == 200:
                 return response.json()
         except Exception as e:
@@ -349,6 +436,7 @@ class TMDBService:
         return None
     
     @staticmethod
+    @cache.memoize(timeout=3600)  # Cache for 1 hour
     def get_new_releases(content_type='movie', region=None, page=1):
         """Get content released in the last 60 days"""
         end_date = datetime.now().strftime('%Y-%m-%d')
@@ -367,7 +455,7 @@ class TMDBService:
             params['region'] = region
         
         try:
-            response = requests.get(url, params=params, timeout=10)
+            response = http_session.get(url, params=params, timeout=10)
             if response.status_code == 200:
                 return response.json()
         except Exception as e:
@@ -375,6 +463,7 @@ class TMDBService:
         return None
     
     @staticmethod
+    @cache.memoize(timeout=3600)  # Cache for 1 hour
     def get_critics_choice(content_type='movie', page=1):
         """Get highly rated content with significant vote count"""
         url = f"{TMDBService.BASE_URL}/discover/{content_type}"
@@ -387,7 +476,7 @@ class TMDBService:
         }
         
         try:
-            response = requests.get(url, params=params, timeout=10)
+            response = http_session.get(url, params=params, timeout=10)
             if response.status_code == 200:
                 return response.json()
         except Exception as e:
@@ -395,6 +484,7 @@ class TMDBService:
         return None
     
     @staticmethod
+    @cache.memoize(timeout=3600)  # Cache for 1 hour
     def get_by_genre(genre_id, content_type='movie', page=1, region=None):
         """Get content by specific genre"""
         url = f"{TMDBService.BASE_URL}/discover/{content_type}"
@@ -409,7 +499,7 @@ class TMDBService:
             params['region'] = region
         
         try:
-            response = requests.get(url, params=params, timeout=10)
+            response = http_session.get(url, params=params, timeout=10)
             if response.status_code == 200:
                 return response.json()
         except Exception as e:
@@ -417,6 +507,7 @@ class TMDBService:
         return None
     
     @staticmethod
+    @cache.memoize(timeout=3600)  # Cache for 1 hour
     def get_language_specific(language_code, content_type='movie', page=1):
         """Get content in specific language"""
         url = f"{TMDBService.BASE_URL}/discover/{content_type}"
@@ -428,7 +519,7 @@ class TMDBService:
         }
         
         try:
-            response = requests.get(url, params=params, timeout=10)
+            response = http_session.get(url, params=params, timeout=10)
             if response.status_code == 200:
                 return response.json()
         except Exception as e:
@@ -439,6 +530,7 @@ class OMDbService:
     BASE_URL = 'http://www.omdbapi.com/'
     
     @staticmethod
+    @cache.memoize(timeout=7200)  # Cache for 2 hours
     def get_content_by_imdb(imdb_id):
         params = {
             'apikey': OMDB_API_KEY,
@@ -447,7 +539,7 @@ class OMDbService:
         }
         
         try:
-            response = requests.get(OMDbService.BASE_URL, params=params, timeout=10)
+            response = http_session.get(OMDbService.BASE_URL, params=params, timeout=10)
             if response.status_code == 200:
                 return response.json()
         except Exception as e:
@@ -458,6 +550,7 @@ class JikanService:
     BASE_URL = 'https://api.jikan.moe/v4'
     
     @staticmethod
+    @cache.memoize(timeout=3600)  # Cache for 1 hour
     def search_anime(query, page=1):
         url = f"{JikanService.BASE_URL}/anime"
         params = {
@@ -467,7 +560,7 @@ class JikanService:
         }
         
         try:
-            response = requests.get(url, params=params, timeout=10)
+            response = http_session.get(url, params=params, timeout=10)
             if response.status_code == 200:
                 return response.json()
         except Exception as e:
@@ -475,11 +568,12 @@ class JikanService:
         return None
     
     @staticmethod
+    @cache.memoize(timeout=7200)  # Cache for 2 hours
     def get_anime_details(anime_id):
         url = f"{JikanService.BASE_URL}/anime/{anime_id}/full"
         
         try:
-            response = requests.get(url, params={}, timeout=10)
+            response = http_session.get(url, params={}, timeout=10)
             if response.status_code == 200:
                 return response.json()
         except Exception as e:
@@ -487,6 +581,7 @@ class JikanService:
         return None
     
     @staticmethod
+    @cache.memoize(timeout=3600)  # Cache for 1 hour
     def get_top_anime(type='tv', page=1):
         url = f"{JikanService.BASE_URL}/top/anime"
         params = {
@@ -495,7 +590,7 @@ class JikanService:
         }
         
         try:
-            response = requests.get(url, params=params, timeout=10)
+            response = http_session.get(url, params=params, timeout=10)
             if response.status_code == 200:
                 return response.json()
         except Exception as e:
@@ -503,6 +598,7 @@ class JikanService:
         return None
     
     @staticmethod
+    @cache.memoize(timeout=3600)  # Cache for 1 hour
     def get_anime_by_genre(genre_name, page=1):
         """Get anime by specific genre"""
         url = f"{JikanService.BASE_URL}/anime"
@@ -514,7 +610,7 @@ class JikanService:
         }
         
         try:
-            response = requests.get(url, params=params, timeout=10)
+            response = http_session.get(url, params=params, timeout=10)
             if response.status_code == 200:
                 return response.json()
         except Exception as e:
@@ -525,6 +621,7 @@ class YouTubeService:
     BASE_URL = 'https://www.googleapis.com/youtube/v3'
     
     @staticmethod
+    @cache.memoize(timeout=86400)  # Cache for 24 hours
     def search_trailers(query, content_type='movie'):
         url = f"{YouTubeService.BASE_URL}/search"
         
@@ -544,14 +641,14 @@ class YouTubeService:
         }
         
         try:
-            response = requests.get(url, params=params, timeout=10)
+            response = http_session.get(url, params=params, timeout=10)
             if response.status_code == 200:
                 return response.json()
         except Exception as e:
             logger.error(f"YouTube search error: {e}")
         return None
 
-# Content Management Service
+# Enhanced Content Management Service with caching
 class ContentService:
     @staticmethod
     def save_content_from_tmdb(tmdb_data, content_type):
@@ -559,6 +656,9 @@ class ContentService:
             # Check if content already exists
             existing = Content.query.filter_by(tmdb_id=tmdb_data['id']).first()
             if existing:
+                # Update if older than 24 hours
+                if existing.updated_at < datetime.utcnow() - timedelta(hours=24):
+                    ContentService.update_content_from_tmdb(existing, tmdb_data)
                 return existing
             
             # Extract genres
@@ -622,12 +722,35 @@ class ContentService:
             
             db.session.add(content)
             db.session.commit()
+            
+            # Cache the content
+            cache.set(content_cache_key(content.id), content, timeout=7200)
+            
             return content
             
         except Exception as e:
             logger.error(f"Error saving content: {e}")
             db.session.rollback()
             return None
+    
+    @staticmethod
+    def update_content_from_tmdb(content, tmdb_data):
+        """Update existing content with new TMDB data"""
+        try:
+            # Update fields
+            content.rating = tmdb_data.get('vote_average', content.rating)
+            content.vote_count = tmdb_data.get('vote_count', content.vote_count)
+            content.popularity = tmdb_data.get('popularity', content.popularity)
+            content.updated_at = datetime.utcnow()
+            
+            db.session.commit()
+            
+            # Invalidate cache
+            cache.delete(content_cache_key(content.id))
+            
+        except Exception as e:
+            logger.error(f"Error updating content: {e}")
+            db.session.rollback()
     
     @staticmethod
     def save_anime_content(anime_data):
@@ -681,6 +804,10 @@ class ContentService:
             
             db.session.add(content)
             db.session.commit()
+            
+            # Cache the content
+            cache.set(content_cache_key(content.id), content, timeout=7200)
+            
             return content
             
         except Exception as e:
@@ -712,9 +839,10 @@ class ContentService:
         }
         return [genre_map.get(gid, 'Unknown') for gid in genre_ids if gid in genre_map]
 
-# Enhanced Recommendation Engine with ML Integration
+# Enhanced Recommendation Engine with ML Integration and caching
 class RecommendationEngine:
     @staticmethod
+    @cache.memoize(timeout=1800, make_name=lambda fname: recommendations_cache_key('trending', limit=request.args.get('limit', 20), content_type=request.args.get('type', 'all'), region=request.args.get('region')))
     def get_trending_recommendations(limit=20, content_type='all', region=None):
         """Enhanced trending recommendations with ML service integration"""
         try:
@@ -735,9 +863,15 @@ class RecommendationEngine:
             # Fallback to original logic
             logger.info("Falling back to TMDB for trending recommendations")
             
-            # Get trending from TMDB for both day and week
-            trending_day = TMDBService.get_trending(content_type=content_type, time_window='day')
-            trending_week = TMDBService.get_trending(content_type=content_type, time_window='week')
+            # Use concurrent requests for better performance
+            futures = []
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                # Get trending from TMDB for both day and week
+                futures.append(executor.submit(TMDBService.get_trending, content_type=content_type, time_window='day'))
+                futures.append(executor.submit(TMDBService.get_trending, content_type=content_type, time_window='week'))
+            
+            trending_day = futures[0].result()
+            trending_week = futures[1].result()
             
             # Combine and remove duplicates
             all_trending = []
@@ -773,6 +907,7 @@ class RecommendationEngine:
             return []
     
     @staticmethod
+    @cache.memoize(timeout=1800)
     def get_new_releases(limit=20, language=None, content_type='movie'):
         """Enhanced new releases with ML service integration"""
         try:
@@ -821,6 +956,7 @@ class RecommendationEngine:
             return []
     
     @staticmethod
+    @cache.memoize(timeout=3600)
     def get_critics_choice(limit=20, content_type='movie'):
         """Enhanced critics choice with ML service integration"""
         try:
@@ -855,6 +991,7 @@ class RecommendationEngine:
             return []
     
     @staticmethod
+    @cache.memoize(timeout=3600)
     def get_genre_recommendations(genre, limit=20, content_type='movie', region=None):
         """Enhanced genre recommendations with ML service integration"""
         try:
@@ -911,6 +1048,7 @@ class RecommendationEngine:
             return []
     
     @staticmethod
+    @cache.memoize(timeout=3600)
     def get_regional_recommendations(language, limit=20, content_type='movie'):
         """Enhanced regional recommendations with ML service integration"""
         try:
@@ -970,6 +1108,7 @@ class RecommendationEngine:
             return []
     
     @staticmethod
+    @cache.memoize(timeout=3600)
     def get_anime_recommendations(limit=20, genre=None):
         """Enhanced anime recommendations with ML service integration"""
         try:
@@ -1023,17 +1162,25 @@ class RecommendationEngine:
     def get_similar_recommendations(content_id, limit=20):
         """Enhanced similar recommendations with ML service integration"""
         try:
+            # Check cache first
+            cache_key = f"similar:{content_id}:{limit}"
+            cached_result = cache.get(cache_key)
+            if cached_result:
+                return cached_result
+            
             # First try ML service
             ml_params = {
                 'limit': limit
             }
             
-            ml_response = MLServiceClient.call_ml_service(f'/api/similar/{content_id}', ml_params)
+            ml_response = MLServiceClient.call_ml_service(f'/api/similar/{content_id}', ml_params, use_cache=False)
             if ml_response:
                 ml_recommendations = MLServiceClient.process_ml_recommendations(ml_response, limit)
                 if ml_recommendations:
                     logger.info(f"Using ML service for similar recommendations: {len(ml_recommendations)} items")
-                    return [rec['content'] for rec in ml_recommendations]
+                    result = [rec['content'] for rec in ml_recommendations]
+                    cache.set(cache_key, result, timeout=3600)
+                    return result
             
             # Fallback to original logic
             logger.info("Falling back to TMDB/database for similar recommendations")
@@ -1096,6 +1243,9 @@ class RecommendationEngine:
                     unique_similar.append(content)
                     if len(unique_similar) >= limit:
                         break
+            
+            # Cache the result
+            cache.set(cache_key, unique_similar, timeout=3600)
             
             return unique_similar
         except Exception as e:
@@ -1313,8 +1463,9 @@ def login():
         logger.error(f"Login error: {e}")
         return jsonify({'error': 'Login failed'}), 500
 
-# Content Discovery Routes
+# Enhanced Content Discovery Routes with caching
 @app.route('/api/search', methods=['GET'])
+@cache.cached(timeout=300, key_prefix=make_cache_key)
 def search_content():
     try:
         query = request.args.get('query', '')
@@ -1327,13 +1478,19 @@ def search_content():
         # Record search interaction
         session_id = get_session_id()
         
-        # Search TMDB
-        tmdb_results = TMDBService.search_content(query, content_type, page=page)
+        # Use concurrent requests for multiple sources
+        futures = []
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            # Search TMDB
+            futures.append(executor.submit(TMDBService.search_content, query, content_type, page=page))
+            
+            # Search anime if content_type is anime or multi
+            if content_type in ['anime', 'multi']:
+                futures.append(executor.submit(JikanService.search_anime, query, page=page))
         
-        # Search anime if content_type is anime or multi
-        anime_results = None
-        if content_type in ['anime', 'multi']:
-            anime_results = JikanService.search_anime(query, page=page)
+        # Get results
+        tmdb_results = futures[0].result()
+        anime_results = futures[1].result() if len(futures) > 1 else None
         
         # Process and save results
         results = []
@@ -1411,7 +1568,15 @@ def search_content():
 @app.route('/api/content/<int:content_id>', methods=['GET'])
 def get_content_details(content_id):
     try:
-        content = Content.query.get_or_404(content_id)
+        # Check cache first
+        cache_key = content_cache_key(content_id)
+        cached_content = cache.get(cache_key)
+        
+        if cached_content:
+            content = cached_content
+        else:
+            content = Content.query.get_or_404(content_id)
+            cache.set(cache_key, content, timeout=7200)
         
         # Record view interaction
         session_id = get_session_id()
@@ -1509,6 +1674,7 @@ def get_content_details(content_id):
 
 # Enhanced Recommendation Routes
 @app.route('/api/recommendations/trending', methods=['GET'])
+@cache.cached(timeout=300, key_prefix=make_cache_key)
 def get_trending():
     try:
         content_type = request.args.get('type', 'all')
@@ -1542,6 +1708,7 @@ def get_trending():
         return jsonify({'error': 'Failed to get trending recommendations'}), 500
 
 @app.route('/api/recommendations/new-releases', methods=['GET'])
+@cache.cached(timeout=300, key_prefix=make_cache_key)
 def get_new_releases():
     try:
         language = request.args.get('language')
@@ -1576,6 +1743,7 @@ def get_new_releases():
         return jsonify({'error': 'Failed to get new releases'}), 500
 
 @app.route('/api/recommendations/critics-choice', methods=['GET'])
+@cache.cached(timeout=600, key_prefix=make_cache_key)
 def get_critics_choice():
     try:
         content_type = request.args.get('type', 'movie')
@@ -1609,6 +1777,7 @@ def get_critics_choice():
         return jsonify({'error': 'Failed to get critics choice'}), 500
 
 @app.route('/api/recommendations/genre/<genre>', methods=['GET'])
+@cache.cached(timeout=600, key_prefix=make_cache_key)
 def get_genre_recommendations(genre):
     try:
         content_type = request.args.get('type', 'movie')
@@ -1641,6 +1810,7 @@ def get_genre_recommendations(genre):
         return jsonify({'error': 'Failed to get genre recommendations'}), 500
 
 @app.route('/api/recommendations/regional/<language>', methods=['GET'])
+@cache.cached(timeout=600, key_prefix=make_cache_key)
 def get_regional(language):
     try:
         content_type = request.args.get('type', 'movie')
@@ -1672,6 +1842,7 @@ def get_regional(language):
         return jsonify({'error': 'Failed to get regional recommendations'}), 500
 
 @app.route('/api/recommendations/anime', methods=['GET'])
+@cache.cached(timeout=600, key_prefix=make_cache_key)
 def get_anime():
     try:
         genre = request.args.get('genre')  # shonen, shojo, seinen, josei, kodomomuke
@@ -1794,7 +1965,7 @@ def get_personalized_recommendations(current_user):
         
         # Call ML service
         try:
-            response = requests.post(f"{ML_SERVICE_URL}/api/recommendations", json=user_data, timeout=30)
+            response = http_session.post(f"{ML_SERVICE_URL}/api/recommendations", json=user_data, timeout=30)
             
             if response.status_code == 200:
                 ml_recommendations = response.json().get('recommendations', [])
@@ -1867,7 +2038,7 @@ def get_ml_personalized_recommendations(current_user):
         
         # Call ML service
         try:
-            response = requests.post(f"{ML_SERVICE_URL}/api/recommendations", json=user_data, timeout=30)
+            response = http_session.post(f"{ML_SERVICE_URL}/api/recommendations", json=user_data, timeout=30)
             
             if response.status_code == 200:
                 ml_response = response.json()
@@ -1934,6 +2105,9 @@ def record_interaction(current_user):
         
         db.session.add(interaction)
         db.session.commit()
+        
+        # Invalidate user's personalized recommendations cache
+        # cache.delete(f"user_recommendations:{current_user.id}")
         
         return jsonify({'message': 'Interaction recorded successfully'}), 201
         
@@ -2180,6 +2354,9 @@ def create_admin_recommendation(current_user):
         # Send to Telegram channel
         telegram_success = TelegramService.send_admin_recommendation(content, current_user.username, data['description'])
         
+        # Invalidate admin recommendations cache
+        cache.delete_memoized(get_public_admin_recommendations)
+        
         return jsonify({
             'message': 'Admin recommendation created successfully',
             'telegram_sent': telegram_success
@@ -2301,7 +2478,7 @@ def ml_service_comprehensive_check(current_user):
         # 1. Basic Health Check
         try:
             start_time = time.time()
-            health_resp = requests.get(f"{ml_url}/api/health", timeout=10)
+            health_resp = http_session.get(f"{ml_url}/api/health", timeout=10)
             health_time = time.time() - start_time
             
             if health_resp.status_code == 200:
@@ -2334,7 +2511,7 @@ def ml_service_comprehensive_check(current_user):
                     }]
                 }
                 
-                rec_resp = requests.post(f"{ml_url}/api/recommendations", json=test_request, timeout=20)
+                rec_resp = http_session.post(f"{ml_url}/api/recommendations", json=test_request, timeout=20)
                 rec_time = time.time() - start_time
                 
                 if rec_resp.status_code == 200:
@@ -2357,7 +2534,7 @@ def ml_service_comprehensive_check(current_user):
         if checks['connectivity']['status'] == 'pass':
             try:
                 start_time = time.time()
-                stats_resp = requests.get(f"{ml_url}/api/stats", timeout=10)
+                stats_resp = http_session.get(f"{ml_url}/api/stats", timeout=10)
                 stats_time = time.time() - start_time
                 
                 if stats_resp.status_code == 200:
@@ -2382,7 +2559,7 @@ def ml_service_comprehensive_check(current_user):
         for endpoint in endpoints:
             try:
                 start_time = time.time()
-                resp = requests.get(f"{ml_url}{endpoint['url']}", timeout=10)
+                resp = http_session.get(f"{ml_url}{endpoint['url']}", timeout=10)
                 response_time = time.time() - start_time
                 
                 performance[endpoint['name']] = {
@@ -2454,7 +2631,7 @@ def ml_service_force_update(current_user):
         if not ML_SERVICE_URL:
             return jsonify({'success': False, 'message': 'ML service not configured'}), 400
             
-        response = requests.post(f"{ML_SERVICE_URL}/api/update-models", timeout=30)
+        response = http_session.post(f"{ML_SERVICE_URL}/api/update-models", timeout=30)
         
         if response.status_code == 200:
             return jsonify({'success': True, 'message': 'Model update initiated'})
@@ -2501,8 +2678,78 @@ def get_ml_service_stats(current_user):
         logger.error(f"ML stats error: {e}")
         return jsonify({'error': 'Failed to get ML statistics'}), 500
 
+# Cache management endpoints
+@app.route('/api/admin/cache/clear', methods=['POST'])
+@require_admin
+def clear_cache(current_user):
+    """Clear all or specific cache entries"""
+    try:
+        cache_type = request.args.get('type', 'all')
+        
+        if cache_type == 'all':
+            cache.clear()
+            message = 'All cache cleared'
+        elif cache_type == 'search':
+            # Clear search-related cache
+            cache.delete_memoized(TMDBService.search_content)
+            cache.delete_memoized(JikanService.search_anime)
+            message = 'Search cache cleared'
+        elif cache_type == 'recommendations':
+            # Clear recommendation-related cache
+            cache.delete_memoized(RecommendationEngine.get_trending_recommendations)
+            cache.delete_memoized(RecommendationEngine.get_new_releases)
+            cache.delete_memoized(RecommendationEngine.get_critics_choice)
+            cache.delete_memoized(RecommendationEngine.get_genre_recommendations)
+            cache.delete_memoized(RecommendationEngine.get_regional_recommendations)
+            cache.delete_memoized(RecommendationEngine.get_anime_recommendations)
+            message = 'Recommendations cache cleared'
+        else:
+            return jsonify({'error': 'Invalid cache type'}), 400
+        
+        return jsonify({
+            'message': message,
+            'timestamp': datetime.utcnow().isoformat()
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Cache clear error: {e}")
+        return jsonify({'error': 'Failed to clear cache'}), 500
+
+@app.route('/api/admin/cache/stats', methods=['GET'])
+@require_admin
+def get_cache_stats(current_user):
+    """Get cache statistics"""
+    try:
+        # Get cache type and basic info
+        cache_info = {
+            'type': app.config.get('CACHE_TYPE', 'unknown'),
+            'default_timeout': app.config.get('CACHE_DEFAULT_TIMEOUT', 0),
+        }
+        
+        # Add Redis-specific stats if using Redis
+        if app.config.get('CACHE_TYPE') == 'redis' and REDIS_URL:
+            try:
+                import redis
+                r = redis.from_url(REDIS_URL)
+                redis_info = r.info()
+                cache_info['redis'] = {
+                    'used_memory': redis_info.get('used_memory_human', 'N/A'),
+                    'connected_clients': redis_info.get('connected_clients', 0),
+                    'total_commands_processed': redis_info.get('total_commands_processed', 0),
+                    'uptime_in_seconds': redis_info.get('uptime_in_seconds', 0)
+                }
+            except:
+                cache_info['redis'] = {'status': 'Unable to connect'}
+        
+        return jsonify(cache_info), 200
+        
+    except Exception as e:
+        logger.error(f"Cache stats error: {e}")
+        return jsonify({'error': 'Failed to get cache stats'}), 500
+
 # Public Admin Recommendations
 @app.route('/api/recommendations/admin-choice', methods=['GET'])
+@cache.cached(timeout=600, key_prefix=make_cache_key)
 def get_public_admin_recommendations():
     try:
         limit = int(request.args.get('limit', 20))
@@ -2546,11 +2793,51 @@ def get_public_admin_recommendations():
 # Health check endpoint
 @app.route('/api/health', methods=['GET'])
 def health_check():
-    return jsonify({
-        'status': 'healthy',
-        'timestamp': datetime.utcnow().isoformat(),
-        'version': '2.0.0'
-    }), 200
+    """Enhanced health check with cache status"""
+    try:
+        # Basic health info
+        health_info = {
+            'status': 'healthy',
+            'timestamp': datetime.utcnow().isoformat(),
+            'version': '2.1.0'  # Updated version
+        }
+        
+        # Check database connectivity
+        try:
+            db.session.execute('SELECT 1')
+            health_info['database'] = 'connected'
+        except:
+            health_info['database'] = 'disconnected'
+            health_info['status'] = 'degraded'
+        
+        # Check cache connectivity
+        try:
+            cache.set('health_check', 'ok', timeout=10)
+            if cache.get('health_check') == 'ok':
+                health_info['cache'] = 'connected'
+            else:
+                health_info['cache'] = 'error'
+                health_info['status'] = 'degraded'
+        except:
+            health_info['cache'] = 'disconnected'
+            health_info['status'] = 'degraded'
+        
+        # Check external services
+        health_info['services'] = {
+            'tmdb': bool(TMDB_API_KEY),
+            'omdb': bool(OMDB_API_KEY),
+            'youtube': bool(YOUTUBE_API_KEY),
+            'ml_service': bool(ML_SERVICE_URL)
+        }
+        
+        return jsonify(health_info), 200
+        
+    except Exception as e:
+        return jsonify({
+            'status': 'unhealthy',
+            'error': str(e),
+            'timestamp': datetime.utcnow().isoformat()
+        }), 500
 
 # Initialize database
 def create_tables():
