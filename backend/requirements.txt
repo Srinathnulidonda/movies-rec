@@ -7,8 +7,14 @@ psycopg2-binary
 PyJWT
 Werkzeug
 requests
+aiohttp
+urllib3
 redis
 pyTelegramBotAPI
 geopy
+fuzzywuzzy
+python-Levenshtein
 gunicorn
 python-dotenv
+python-dateutil
+ujson

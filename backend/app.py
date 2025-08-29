@@ -24,6 +24,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import redis
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
+from enhanced_search import EnhancedSearchEngine, SearchOptimizer
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -55,7 +56,12 @@ else:
 db = SQLAlchemy(app)
 CORS(app)
 cache = Cache(app)
-
+enhanced_search_engine = EnhancedSearchEngine(
+    tmdb_service=TMDBService,
+    omdb_service=OMDbService,
+    jikan_service=JikanService,
+    youtube_service=YouTubeService
+)
 # API Keys - Set these in your environment
 TMDB_API_KEY = os.environ.get('TMDB_API_KEY', '1cf86635f20bb2aff8e70940e7c3ddd5')
 OMDB_API_KEY = os.environ.get('OMDB_API_KEY', '52260795')
@@ -1464,105 +1470,65 @@ def login():
         return jsonify({'error': 'Login failed'}), 500
 
 # Enhanced Content Discovery Routes with caching
-@app.route('/api/search', methods=['GET'])
+@app.route('/api/search/', methods=['GET'])
 @cache.cached(timeout=300, key_prefix=make_cache_key)
-def search_content():
+async def enhanced_search():
     try:
-        query = request.args.get('query', '')
+        query = request.args.get('query', '').strip()
         content_type = request.args.get('type', 'multi')
         page = int(request.args.get('page', 1))
+        limit = int(request.args.get('limit', 20))
         
         if not query:
             return jsonify({'error': 'Query parameter required'}), 400
         
-        # Record search interaction
-        session_id = get_session_id()
+        # Optimize query
+        optimized_query = SearchOptimizer.optimize_query(query)
         
-        # Use concurrent requests for multiple sources
-        futures = []
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            # Search TMDB
-            futures.append(executor.submit(TMDBService.search_content, query, content_type, page=page))
-            
-            # Search anime if content_type is anime or multi
-            if content_type in ['anime', 'multi']:
-                futures.append(executor.submit(JikanService.search_anime, query, page=page))
+        # Get search results from multiple sources
+        search_results = await enhanced_search_engine.search_multi_source(
+            optimized_query, content_type, page, limit
+        )
         
-        # Get results
-        tmdb_results = futures[0].result()
-        anime_results = futures[1].result() if len(futures) > 1 else None
-        
-        # Process and save results
-        results = []
-        
-        if tmdb_results:
-            for item in tmdb_results.get('results', []):
-                content_type_detected = 'movie' if 'title' in item else 'tv'
+        # Process and save results to database
+        processed_results = []
+        for item in search_results['combined']:
+            # Save to database based on source
+            if item['source'] == 'jikan':
+                content = ContentService.save_anime_content(item)
+            else:
+                content_type_detected = item.get('content_type', 'movie')
                 content = ContentService.save_content_from_tmdb(item, content_type_detected)
-                if content:
-                    # Record anonymous interaction
-                    interaction = AnonymousInteraction(
-                        session_id=session_id,
-                        content_id=content.id,
-                        interaction_type='search',
-                        ip_address=request.remote_addr
-                    )
-                    db.session.add(interaction)
-                    
-                    # Get YouTube trailer URL
-                    youtube_url = None
-                    if content.youtube_trailer_id:
-                        youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
-                    
-                    results.append({
-                        'id': content.id,
-                        'tmdb_id': content.tmdb_id,
-                        'title': content.title,
-                        'content_type': content.content_type,
-                        'genres': json.loads(content.genres or '[]'),
-                        'rating': content.rating,
-                        'release_date': content.release_date.isoformat() if content.release_date else None,
-                        'poster_path': f"https://image.tmdb.org/t/p/w500{content.poster_path}" if content.poster_path else None,
-                        'overview': content.overview,
-                        'youtube_trailer': youtube_url
-                    })
-        
-        # Add anime results
-        if anime_results:
-            for anime in anime_results.get('data', []):
-                # Save anime content
-                content = ContentService.save_anime_content(anime)
-                if content:
-                    # Get YouTube trailer URL
-                    youtube_url = None
-                    if content.youtube_trailer_id:
-                        youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
-                    
-                    results.append({
-                        'id': content.id,
-                        'mal_id': content.mal_id,
-                        'title': content.title,
-                        'content_type': 'anime',
-                        'genres': json.loads(content.genres or '[]'),
-                        'anime_genres': json.loads(content.anime_genres or '[]'),
-                        'rating': content.rating,
-                        'release_date': content.release_date.isoformat() if content.release_date else None,
-                        'poster_path': content.poster_path,
-                        'overview': content.overview,
-                        'youtube_trailer': youtube_url
-                    })
-        
-        db.session.commit()
+            
+            if content:
+                # Get image URLs
+                images = enhanced_search_engine.get_image_urls(
+                    content.poster_path, 
+                    content.backdrop_path
+                )
+                
+                processed_results.append({
+                    'id': content.id,
+                    'title': content.title,
+                    'content_type': content.content_type,
+                    'poster': images['poster'],
+                    'backdrop': images['backdrop'],
+                    'rating': content.rating,
+                    'release_date': content.release_date.isoformat() if content.release_date else None,
+                    'overview': content.overview,
+                    'relevance_score': item.get('relevance_score', 0),
+                    'search_rank': item.get('search_rank', 0)
+                })
         
         return jsonify({
-            'results': results,
-            'total_results': tmdb_results.get('total_results', 0) if tmdb_results else 0,
-            'total_pages': tmdb_results.get('total_pages', 0) if tmdb_results else 0,
-            'current_page': page
+            'results': processed_results,
+            'total_results': len(processed_results),
+            'query': query,
+            'page': page
         }), 200
         
     except Exception as e:
-        logger.error(f"Search error: {e}")
+        logger.error(f"Enhanced search error: {e}")
         return jsonify({'error': 'Search failed'}), 500
 
 @app.route('/api/content/<int:content_id>', methods=['GET'])
