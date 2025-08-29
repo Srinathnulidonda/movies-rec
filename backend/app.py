@@ -284,6 +284,7 @@ class CacheService:
         return hashlib.md5(key_str.encode()).hexdigest()
 
 # Enhanced Fuzzy Search Service
+# Enhanced Fuzzy Search Service
 class FuzzySearchService:
     @staticmethod
     def clean_query(query: str) -> str:
@@ -328,11 +329,26 @@ class FuzzySearchService:
             # Bonus for exact matches
             exact_bonus = 20 if clean_query in FuzzySearchService.clean_query(title).lower() else 0
             
-            # Popularity bonus (if available)
-            popularity_bonus = min(result.get('popularity', 0) / 100, 10) if 'popularity' in result else 0
+            # Popularity bonus (if available) - Ensure it's never None
+            popularity_bonus = 0
+            if 'popularity' in result and result.get('popularity') is not None:
+                try:
+                    popularity_bonus = min(float(result.get('popularity')) / 100, 10)
+                except (TypeError, ValueError):
+                    popularity_bonus = 0
             
-            # Rating bonus
-            rating_bonus = result.get('vote_average', 0) if 'vote_average' in result else result.get('rating', 0)
+            # Rating bonus - Ensure it's never None
+            rating_bonus = 0
+            if 'vote_average' in result and result.get('vote_average') is not None:
+                try:
+                    rating_bonus = float(result.get('vote_average'))
+                except (TypeError, ValueError):
+                    rating_bonus = 0
+            elif 'rating' in result and result.get('rating') is not None:
+                try:
+                    rating_bonus = float(result.get('rating'))
+                except (TypeError, ValueError):
+                    rating_bonus = 0
             
             total_score = max(title_score, original_score) + exact_bonus + popularity_bonus + rating_bonus
             
@@ -345,7 +361,6 @@ class FuzzySearchService:
         scored_results.sort(key=lambda x: x['score'], reverse=True)
         
         return [item['result'] for item in scored_results]
-
 # Enhanced Multi-Source Search Service
 class MultiSourceSearchService:
     @staticmethod
@@ -502,8 +517,9 @@ class MultiSourceSearchService:
                     'release_date': item.get('release_date') or item.get('first_air_date'),
                     'poster_path': item.get('poster_path'),
                     'overview': item.get('overview'),
-                    'rating': item.get('vote_average'),
-                    'popularity': item.get('popularity', 0)
+                    'rating': item.get('vote_average', 0) if item.get('vote_average') is not None else 0,
+                    'vote_average': item.get('vote_average', 0) if item.get('vote_average') is not None else 0,
+                    'popularity': item.get('popularity', 0) if item.get('popularity') is not None else 0
                 })
         
         # Process OMDb results
@@ -517,6 +533,14 @@ class MultiSourceSearchService:
                     seen_ids['imdb'].add(imdb_id)
                     seen_titles.add(title.lower())
                     
+                    # Parse rating safely
+                    rating_value = 0
+                    if item.get('imdbRating') and item.get('imdbRating') != 'N/A':
+                        try:
+                            rating_value = float(item.get('imdbRating'))
+                        except (TypeError, ValueError):
+                            rating_value = 0
+                    
                     aggregated.append({
                         'source': 'omdb',
                         'imdb_id': imdb_id,
@@ -525,9 +549,11 @@ class MultiSourceSearchService:
                         'release_date': item.get('Year'),
                         'poster_path': item.get('Poster'),
                         'overview': item.get('Plot'),
-                        'rating': float(item.get('imdbRating', 0)) if item.get('imdbRating', 'N/A') != 'N/A' else 0,
+                        'rating': rating_value,
+                        'vote_average': rating_value,
                         'runtime': item.get('Runtime'),
-                        'genres': item.get('Genre', '').split(', ') if item.get('Genre') else []
+                        'genres': item.get('Genre', '').split(', ') if item.get('Genre') else [],
+                        'popularity': 0  # OMDb doesn't provide popularity
                     })
         
         # Process Jikan results
@@ -541,6 +567,14 @@ class MultiSourceSearchService:
                     seen_ids['mal'].add(mal_id)
                     seen_titles.add(title.lower())
                     
+                    # Parse score safely
+                    score_value = 0
+                    if item.get('score') is not None:
+                        try:
+                            score_value = float(item.get('score'))
+                        except (TypeError, ValueError):
+                            score_value = 0
+                    
                     aggregated.append({
                         'source': 'jikan',
                         'mal_id': mal_id,
@@ -550,13 +584,14 @@ class MultiSourceSearchService:
                         'release_date': item.get('aired', {}).get('from'),
                         'poster_path': item.get('images', {}).get('jpg', {}).get('image_url'),
                         'overview': item.get('synopsis'),
-                        'rating': item.get('score'),
+                        'rating': score_value,
+                        'vote_average': score_value,
                         'episodes': item.get('episodes'),
-                        'genres': [g['name'] for g in item.get('genres', [])]
+                        'genres': [g['name'] for g in item.get('genres', [])],
+                        'popularity': item.get('popularity', 0) if item.get('popularity') is not None else 0
                     })
         
         return aggregated
-
 # ML Service Client
 class MLServiceClient:
     @staticmethod
@@ -1615,69 +1650,81 @@ def search_stream():
         return jsonify({'error': 'Query must be at least 2 characters'}), 400
     
     def generate():
-        # Clean the query for better matching
-        clean_query = FuzzySearchService.clean_query(query)
-        
-        # Start searching all sources in parallel
-        results = MultiSourceSearchService.search_all_sources_parallel(query)
-        
-        # Aggregate and deduplicate results
-        aggregated = MultiSourceSearchService.aggregate_and_deduplicate(results)
-        
-        # Apply fuzzy matching and ranking
-        fuzzy_matched = []
-        for item in aggregated:
-            title = item.get('title', '')
-            is_match, score = FuzzySearchService.fuzzy_match(query, title, threshold=60)
-            if is_match:
-                item['match_score'] = score
-                fuzzy_matched.append(item)
-        
-        # Rank results by relevance
-        ranked_results = FuzzySearchService.rank_results(query, fuzzy_matched)
-        
-        # Stream results in batches
-        batch_size = 5
-        for i in range(0, len(ranked_results), batch_size):
-            batch = ranked_results[i:i + batch_size]
+        try:
+            # Clean the query for better matching
+            clean_query = FuzzySearchService.clean_query(query)
             
-            # Save to database and format results
-            formatted_batch = []
-            for item in batch:
-                try:
-                    # Save to database based on source
-                    if item['source'] == 'tmdb':
-                        content = ContentService.save_content_from_tmdb(item, item['content_type'])
-                    elif item['source'] == 'jikan':
-                        content = ContentService.save_anime_content(item)
-                    else:
-                        content = ContentService.save_content_from_omdb(item)
-                    
-                    if content:
-                        formatted_batch.append({
-                            'id': content.id,
-                            'title': content.title,
-                            'content_type': content.content_type,
-                            'genres': json.loads(content.genres or '[]'),
-                            'rating': content.rating,
-                            'release_date': content.release_date.isoformat() if content.release_date else None,
-                            'poster_path': ContentService.format_poster_url(content.poster_path),
-                            'overview': content.overview[:200] + '...' if content.overview else '',
-                            'match_score': item.get('match_score', 0),
-                            'source': item['source']
-                        })
-                except Exception as e:
-                    logger.error(f"Error processing search result: {e}")
+            # Start searching all sources in parallel
+            results = MultiSourceSearchService.search_all_sources_parallel(query)
             
-            # Send batch as Server-Sent Event
-            if formatted_batch:
-                yield f"data: {json.dumps({'results': formatted_batch, 'batch': i // batch_size + 1})}\n\n"
-        
-        # Send completion signal
-        yield f"data: {json.dumps({'complete': True, 'total_results': len(ranked_results)})}\n\n"
+            # Aggregate and deduplicate results
+            aggregated = MultiSourceSearchService.aggregate_and_deduplicate(results)
+            
+            # Apply fuzzy matching and ranking
+            fuzzy_matched = []
+            for item in aggregated:
+                title = item.get('title', '')
+                is_match, score = FuzzySearchService.fuzzy_match(query, title, threshold=60)
+                if is_match:
+                    item['match_score'] = score
+                    # Ensure all required fields have default values
+                    if 'popularity' not in item or item.get('popularity') is None:
+                        item['popularity'] = 0
+                    if 'vote_average' not in item or item.get('vote_average') is None:
+                        item['vote_average'] = 0
+                    if 'rating' not in item or item.get('rating') is None:
+                        item['rating'] = 0
+                    fuzzy_matched.append(item)
+            
+            # Rank results by relevance
+            ranked_results = FuzzySearchService.rank_results(query, fuzzy_matched)
+            
+            # Stream results in batches
+            batch_size = 5
+            for i in range(0, len(ranked_results), batch_size):
+                batch = ranked_results[i:i + batch_size]
+                
+                # Save to database and format results
+                formatted_batch = []
+                for item in batch:
+                    try:
+                        # Save to database based on source
+                        if item['source'] == 'tmdb':
+                            content = ContentService.save_content_from_tmdb(item, item['content_type'])
+                        elif item['source'] == 'jikan':
+                            content = ContentService.save_anime_content(item)
+                        else:
+                            content = ContentService.save_content_from_omdb(item)
+                        
+                        if content:
+                            formatted_batch.append({
+                                'id': content.id,
+                                'title': content.title,
+                                'content_type': content.content_type,
+                                'genres': json.loads(content.genres or '[]'),
+                                'rating': content.rating,
+                                'release_date': content.release_date.isoformat() if content.release_date else None,
+                                'poster_path': ContentService.format_poster_url(content.poster_path),
+                                'overview': content.overview[:200] + '...' if content.overview else '',
+                                'match_score': item.get('match_score', 0),
+                                'source': item['source']
+                            })
+                    except Exception as e:
+                        logger.error(f"Error processing search result: {e}")
+                
+                # Send batch as Server-Sent Event
+                if formatted_batch:
+                    yield f"data: {json.dumps({'results': formatted_batch, 'batch': i // batch_size + 1})}\n\n"
+            
+            # Send completion signal
+            yield f"data: {json.dumps({'complete': True, 'total_results': len(ranked_results)})}\n\n"
+            
+        except Exception as e:
+            logger.error(f"Search stream error: {e}")
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
     
     return Response(generate(), mimetype='text/event-stream')
-
+# Enhanced Regular Search Endpoint
 # Enhanced Regular Search Endpoint
 @app.route('/api/search', methods=['GET'])
 def search_content():
@@ -1719,6 +1766,13 @@ def search_content():
             is_match, score = FuzzySearchService.fuzzy_match(query, title, threshold=50)
             if is_match:
                 item['match_score'] = score
+                # Ensure all required fields have default values
+                if 'popularity' not in item or item.get('popularity') is None:
+                    item['popularity'] = 0
+                if 'vote_average' not in item or item.get('vote_average') is None:
+                    item['vote_average'] = 0
+                if 'rating' not in item or item.get('rating') is None:
+                    item['rating'] = 0
                 fuzzy_matched.append(item)
         
         # Rank results
@@ -1790,7 +1844,7 @@ def search_content():
     except Exception as e:
         logger.error(f"Search error: {e}")
         return jsonify({'error': 'Search failed', 'message': str(e)}), 500
-
+    
 # Cache Management Endpoints
 @app.route('/api/cache/warm', methods=['POST'])
 def warm_cache():
