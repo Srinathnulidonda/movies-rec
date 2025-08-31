@@ -33,24 +33,26 @@ app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'your-secret-key-change-in-production')
 
 # Database configuration
-DATABASE_URL = os.environ.get('DATABASE_URL', 'postgresql://movies_rec_panf_user:BO5X3d2QihK7GG9hxgtBiCtni8NTbbIi@dpg-d2q7gamr433s73e0hcm0-a/movies_rec_panf')
+DATABASE_URL = 'postgresql://movies_rec_panf_user:BO5X3d2QihK7GG9hxgtBiCtni8NTbbIi@dpg-d2q7gamr433s73e0hcm0-a/movies_rec_panf'
 
-# Ensure postgresql:// prefix (some services use postgres://)
-if DATABASE_URL.startswith('postgres://'):
-    DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://')
+if os.environ.get('DATABASE_URL'):
+    app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL').replace('postgres://', 'postgresql://')
+else:
+    app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
 
-app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-# Cache configuration
-REDIS_URL = os.environ.get('REDIS_URL','postgresql://movies_rec_rpb4_user:JVrJ7d90Vy309EOPiKdw0OQYGcTA2ZCa@dpg-d2pu82be5dus73bfh250-a/movies_rec_rpb4')
-if REDIS_URL:
+# Cache configuration with Redis
+# Add your actual Redis URL here (must start with redis:// or rediss://)
+REDIS_URL = os.environ.get('REDIS_URL', 'redis://red-d1l75ap5pdvs73bk295g:rE0xu32o3U2bNUQKz6mG7KIybWzle9xf@red-d1l75ap5pdvs73bk295g:6379')  # Replace with your actual Redis URL
+
+if REDIS_URL and REDIS_URL.startswith(('redis://', 'rediss://')):
     # Production - Redis
     app.config['CACHE_TYPE'] = 'redis'
     app.config['CACHE_REDIS_URL'] = REDIS_URL
     app.config['CACHE_DEFAULT_TIMEOUT'] = 3600  # 1 hour default
 else:
-    # Development - Simple in-memory cache
+    # Fallback to simple cache if Redis URL is invalid
     app.config['CACHE_TYPE'] = 'simple'
     app.config['CACHE_DEFAULT_TIMEOUT'] = 1800  # 30 minutes default
 
