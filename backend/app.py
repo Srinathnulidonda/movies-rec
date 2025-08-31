@@ -144,10 +144,6 @@ def recommendations_cache_key(rec_type, **kwargs):
     return f"recommendations:{rec_type}:{params}"
 
 
-auth.init_auth(app, db, User)
-app.register_blueprint(auth.auth_bp)
-
-
 # Database Models (keeping existing models)
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -160,6 +156,11 @@ class User(db.Model):
     location = db.Column(db.String(100))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     last_active = db.Column(db.DateTime, default=datetime.utcnow)
+
+# Initialize auth module AFTER User model is defined
+import auth
+auth.init_auth(app, db, User)
+app.register_blueprint(auth.auth_bp)
 
 class Content(db.Model):
     id = db.Column(db.Integer, primary_key=True)
