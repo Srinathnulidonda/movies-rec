@@ -25,20 +25,21 @@ import redis
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
 from flask_mail import Mail
-from auth import auth_bp
+import auth
+
 
 # Initialize Flask app
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'your-secret-key-change-in-production')
 
 # Database configuration
-if os.environ.get('DATABASE_URL'):
-    # Production - PostgreSQL on Render
-    app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL').replace('postgres://', 'postgresql://')
-else:
-    # Local development - SQLite
-    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///movie_recommendations.db'
+DATABASE_URL = os.environ.get('DATABASE_URL', 'postgresql://movies_rec_panf_user:BO5X3d2QihK7GG9hxgtBiCtni8NTbbIi@dpg-d2q7gamr433s73e0hcm0-a/movies_rec_panf')
 
+# Ensure postgresql:// prefix (some services use postgres://)
+if DATABASE_URL.startswith('postgres://'):
+    DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://')
+
+app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 # Cache configuration
@@ -141,7 +142,8 @@ def recommendations_cache_key(rec_type, **kwargs):
     return f"recommendations:{rec_type}:{params}"
 
 
-app.register_blueprint(auth_bp)
+auth.init_auth(app, db, User)
+app.register_blueprint(auth.auth_bp)
 
 
 # Database Models (keeping existing models)

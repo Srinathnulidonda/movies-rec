@@ -9,9 +9,6 @@ import logging
 from functools import wraps
 import re
 
-# Import from main app
-from app import app, db, User
-
 # Configure logging
 logger = logging.getLogger(__name__)
 
@@ -22,26 +19,41 @@ auth_bp = Blueprint('auth', __name__)
 FRONTEND_URL = os.environ.get('FRONTEND_URL', 'https://cinebrain.vercel.app')
 BACKEND_URL = os.environ.get('BACKEND_URL', 'https://backend-app-970m.onrender.com')
 
-# Configure Flask-Mail
-app.config['MAIL_SERVER'] = 'smtp.gmail.com'
-app.config['MAIL_PORT'] = 587
-app.config['MAIL_USE_TLS'] = True
-app.config['MAIL_USE_SSL'] = False
-app.config['MAIL_USERNAME'] = os.environ.get('GMAIL_USERNAME', 'projects.srinath@gmail.com')
-app.config['MAIL_PASSWORD'] = os.environ.get('GMAIL_APP_PASSWORD', 'wmky gpui ygqg dhqr')
-app.config['MAIL_DEFAULT_SENDER'] = os.environ.get('GMAIL_USERNAME', 'mail@cinebrain.com')
+# Email validation regex
+EMAIL_REGEX = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
 
-# Initialize Flask-Mail
-mail = Mail(app)
-
-# Initialize token serializer
-serializer = URLSafeTimedSerializer(app.secret_key)
+# These will be initialized by init_auth function
+app = None
+db = None
+User = None
+mail = None
+serializer = None
 
 # Password reset token salt
 PASSWORD_RESET_SALT = 'password-reset-salt-cinebrain-2025'
 
-# Email validation regex
-EMAIL_REGEX = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
+def init_auth(flask_app, database, user_model):
+    """Initialize auth module with Flask app and models"""
+    global app, db, User, mail, serializer
+    
+    app = flask_app
+    db = database
+    User = user_model
+    
+    # Configure Flask-Mail
+    app.config['MAIL_SERVER'] = 'smtp.gmail.com'
+    app.config['MAIL_PORT'] = 587
+    app.config['MAIL_USE_TLS'] = True
+    app.config['MAIL_USE_SSL'] = False
+    app.config['MAIL_USERNAME'] = os.environ.get('GMAIL_USERNAME', 'your-email@gmail.com')
+    app.config['MAIL_PASSWORD'] = os.environ.get('GMAIL_APP_PASSWORD', 'your-app-password')
+    app.config['MAIL_DEFAULT_SENDER'] = os.environ.get('GMAIL_USERNAME', 'your-email@gmail.com')
+    
+    # Initialize Flask-Mail
+    mail = Mail(app)
+    
+    # Initialize token serializer
+    serializer = URLSafeTimedSerializer(app.secret_key)
 
 # Helper functions
 def generate_reset_token(email):
