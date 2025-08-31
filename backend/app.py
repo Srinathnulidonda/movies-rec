@@ -24,6 +24,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import redis
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
+from flask_mail import Mail
+from auth import auth_bp
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -40,7 +42,7 @@ else:
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 # Cache configuration
-REDIS_URL = os.environ.get('REDIS_URL','redis://red-d1l75ap5pdvs73bk295g:rE0xu32o3U2bNUQKz6mG7KIybWzle9xf@red-d1l75ap5pdvs73bk295g:6379')
+REDIS_URL = os.environ.get('REDIS_URL','postgresql://movies_rec_rpb4_user:JVrJ7d90Vy309EOPiKdw0OQYGcTA2ZCa@dpg-d2pu82be5dus73bfh250-a/movies_rec_rpb4')
 if REDIS_URL:
     # Production - Redis
     app.config['CACHE_TYPE'] = 'redis'
@@ -137,6 +139,10 @@ def recommendations_cache_key(rec_type, **kwargs):
     """Generate cache key for recommendations"""
     params = ':'.join([f"{k}={v}" for k, v in sorted(kwargs.items())])
     return f"recommendations:{rec_type}:{params}"
+
+
+app.register_blueprint(auth_bp)
+
 
 # Database Models (keeping existing models)
 class User(db.Model):

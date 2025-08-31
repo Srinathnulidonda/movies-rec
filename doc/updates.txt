@@ -1,43 +1,65 @@
 Update the recommendation system to fetch and return accurate content across all types (movies, TV shows, anime) using the following APIs: Jikan (anime), TMDB (movies & TV shows), and OMDB (movies & TV shows). Implement and optimize the following endpoints:
+use my 
+REDIS_URL ='redis://red-d1l75ap5pdvs73bk295g:rE0xu32o3U2bNUQKz6mG7KIybWzle9xf@red-d1l75ap5pdvs73bk295g:6379'
+DATABASE_URL='postgresql://movies_rec_user:G7P007g7laXlvv6POBqaPFs5KVaHmj2r@dpg-d1km8qre5dus73eovgs0-a/movies_rec'
 
 Endpoints
 1. /recommendations/trending
    - Aggregate trending content from TMDB, OMDB, and Jikan.
-   - Include movies, TV shows, and anime across all languages. Prioritize content in English, Telugu, Hindi, Tamil, Malayalam    first, but include other languages as fallback.
+   - Include movies, TV shows, and anime across all languages. Prioritize content in Telugu, English, Hindi, Tamil, Malayalam first, but include other languages as fallback.
    - Sort by a combined metric of popularity and recency (e.g., TMDB popularity_score, Jikan score, release date).
    - Remove duplicates (based on normalized title and type).
    
 2. /recommendations/new-releases
    - Aggregate new releases from all APIs.
    - Include movies, TV shows, and anime.
-   - **Prioritize content in English, Telugu, Hindi, Tamil, Malayalam** first, but include other languages as fallback.
+   - **Prioritize content in Telugu, English, Hindi, Tamil, Malayalam first, but include other languages as fallback.
    - Sort by release_date descending, then by popularity.
    - Support optional type/language filters.
    
-3. /recommendations/critics-choice
+3. /recommendations/Popular-Movies
    - Aggregate top-rated content from all APIs.
-   - Sort by critic/user ratings (descending) and popularity.
-   - Ensure all types and languages are included.
+   - Prioritize content in Telugu, English, Hindi, Tamil, Malayalam first, but include other languages as fallback.
 
-General Requirements
-- Response Schema (consistent for all endpoints):
-  `{ id, title, type: "movie"|"tv"|"anime", language, genres:[], release_date, release_year, rating, critic_score, popularity_score, poster_url, synopsis, source_api }`
-- Accuracy & Matching:
-  - Normalize titles and aliases across APIs to avoid duplicates.
-  - Implement fuzzy/partial matching for search and recommendations.
-  - Ensure proper language tagging and prioritization for new releases.
-- Performance:
-  - Use server-side caching (Redis or Flask-Caching) per API endpoint.
-  - Cache aggregated responses for 30–60 minutes to reduce API calls.
-  - Implement pagination or cursor-based results.
-- Error Handling:
-  - Gracefully handle API failures: retry automatically, return partial results if some APIs fail.
-- Frontend:
-  - Include proper loading states (skeleton cards) and retry button if content fails to load.
-  - Carousels: Trending Now, New Releases, Critics Choice — accept type/language filters.
 
-Deliverables
-- Fully implemented backend endpoints aggregating from Jikan, TMDB, and OMDB.
-- Optimized caching and de-duplication across APIs.
-- Documentation with endpoint parameters, sorting rules, cache TTLs, and sample responses.
-- Frontend integration notes for loading states, retry policies, and carousel consumption.
+Anime
+•  Trending Anime → /recommendations/trending?type=anime
+•  New Anime Releases → /recommendations/new-releases?type=anime
+•  Top Rated Anime → /recommendations/critics-choice?type=anime
+•  Anime by Genre → multiple carousels like:
+•	Action Anime
+•	Romance Anime
+•	Comedy Anime
+•	Fantasy / Isekai Anime
+(API filter: /content/genre?type=anime&genre={genre})
+________________________________________
+🎬 Movies
+•	Trending Movies → /recommendations/trending?type=movie
+•	New Movie Releases → /recommendations/new-releases?type=movie
+•	Top Rated Movies → /recommendations/critics-choice?type=movie
+•	Movies by Genre → multiple carousels like:
+o	Action Movies → /content/genre?type=movie&genre=Action
+o	Romance Movies → /content/genre?type=movie&genre=Romance
+o	Comedy Movies → /content/genre?type=movie&genre=Comedy
+o	Thriller Movies → /content/genre?type=movie&genre=Thriller
+o	(API filter: /content/genre?type=movies &genre={genre})
+________________________________________
+📺 TV Shows
+•	Trending TV Shows → /recommendations/trending?type=tv
+•	New TV Show Releases → /recommendations/new-releases?type=tv
+•	Top Rated TV Shows → /recommendations/critics-choice?type=tv
+•	TV Shows by Genre → multiple carousels like:
+o	Drama TV Shows → /content/genre?type=tv&genre=Drama
+o	Mystery TV Shows → /content/genre?type=tv&genre=Mystery
+o	Sitcoms / Comedy → /content/genre?type=tv&genre=Comedy
+o	Sci-Fi / Fantasy TV → /content/genre?type=tv&genre=Sci-Fi
+o	(API filter: /content/genre?type=tv-show&genre={genre})
+
+The exact specifications needed for 100% accurate implementation. It includes:
+Precise API endpoints and data structures
+Exact scoring algorithms and formulas
+Specific language prioritization logic
+Detailed error handling and caching requirements
+Complete duplicate removal algorithm
+Performance benchmarks and validation rules
+Comprehensive testing checklist
