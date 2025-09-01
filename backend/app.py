@@ -71,7 +71,8 @@ else:
 db = SQLAlchemy(app)
 CORS(app)
 cache = Cache(app)
-
+cache = Cache()
+cache.init_app(app) 
 # API Keys - Set these in your environment
 TMDB_API_KEY = os.environ.get('TMDB_API_KEY', '1cf86635f20bb2aff8e70940e7c3ddd5')
 OMDB_API_KEY = os.environ.get('OMDB_API_KEY', '52260795')

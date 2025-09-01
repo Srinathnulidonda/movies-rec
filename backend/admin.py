@@ -1,6 +1,6 @@
 # backend/admin.py
 from flask import Blueprint, request, jsonify
-from flask_caching import cache
+from flask_caching import Cache
 from datetime import datetime, timedelta
 import json
 import logging
@@ -17,6 +17,8 @@ admin_bp = Blueprint('admin', __name__)
 
 # Configure logging
 logger = logging.getLogger(__name__)
+
+cache = Cache()
 
 # Initialize Telegram bot
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '7974343726:AAFUCW444L6jbj1tVLRyf8V7Isz2Ua1SxSk')
@@ -66,6 +68,7 @@ def init_admin(flask_app, database, models, services):
     http_session = services['http_session']
     ML_SERVICE_URL = services['ML_SERVICE_URL']
     cache = services['cache']
+
 
 def require_admin(f):
     @wraps(f)
