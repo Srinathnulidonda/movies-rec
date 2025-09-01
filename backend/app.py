@@ -1730,14 +1730,12 @@ def init_services():
     """Initialize all services after app context is ready"""
     global trending_service
     try:
-        # Pass database, cache, and TMDB API key to trending service
-        trending_service = init_advanced_trending_service(db, cache, TMDB_API_KEY)
+        # Pass app instance to trending service
+        trending_service = init_advanced_trending_service(db, cache, TMDB_API_KEY, app)
         logger.info(f"Trending service initialized with priority languages: {PRIORITY_LANGUAGES}")
         
-        # Start background updates
-        if trending_service:
-            trending_service.start_background_updates()
-            logger.info("Background trending updates started")
+        # Background updates are started automatically in init_advanced_trending_service
+        logger.info("Background trending updates started")
         
         return trending_service
     except Exception as e:

@@ -1,5 +1,5 @@
 #backend/trending.py
-from __future__ import annotations  # Add this at the very top
+from __future__ import annotations
 import logging
 import math
 import numpy as np
@@ -19,6 +19,7 @@ from bs4 import BeautifulSoup
 import random
 from scipy.spatial.distance import cosine
 from sklearn.preprocessing import MinMaxScaler
+from flask import current_app
 
 logger = logging.getLogger(__name__)
 
@@ -114,19 +115,15 @@ class ContentMetrics:
             config.weight_matrix['search'] * self.search_score
         )
         
-        # Add vector score if available
         if self.vector_metrics and 'vector' in config.weight_matrix:
             vector_score = self.vector_metrics.similarity_score * 100
             base_score += config.weight_matrix['vector'] * vector_score
         
-        # Apply momentum and viral boosts
         momentum_boost = 1 + (self.momentum / 100) if self.momentum > 0 else 1
         viral_boost = 1 + (self.viral_score / 10) if self.viral_score > 0 else 1
         
-        # Apply priority language boost
         priority_boost = config.priority_boost if self.language in PRIORITY_LANGUAGES else 1.0
         
-        # Apply all multipliers including priority boost
         final_score = (base_score * momentum_boost * viral_boost * 
                       self.festival_boost * (1 + self.geographic_score / 100) * 
                       priority_boost * self.priority_language_boost)
@@ -311,38 +308,30 @@ CROSS_LANGUAGE_INFLUENCE = {
 # ================== Advanced Algorithms Implementation ==================
 
 class MultiSourceTrendingAlgorithm:
-    """
-    Algorithm 1: Multi-Source Real-Time Trending Score Algorithm (MRTSA)
-    Aggregates multiple data sources with weighted scoring
-    """
+    """Multi-Source Real-Time Trending Score Algorithm (MRTSA)"""
     
     def __init__(self, session):
         self.session = session
         self.data_cache = {}
-        self.cache_ttl = 300  # 5 minutes
+        self.cache_ttl = 300
         
     def calculate_recency_factor(self, timestamp: datetime, lambda_val: float = 0.05) -> float:
-        """Calculate recency factor with exponential decay"""
-        time_diff = (datetime.utcnow() - timestamp).total_seconds() / 3600  # hours
+        time_diff = (datetime.utcnow() - timestamp).total_seconds() / 3600
         return math.exp(-lambda_val * time_diff)
     
     def normalize_score(self, score: float, max_score: float = 100) -> float:
-        """Normalize score to 0-100 range"""
         return min(100, (score / max_score) * 100)
     
     def aggregate_scores(self, content_id: int, language: str) -> ContentMetrics:
-        """Aggregate scores from multiple sources"""
         config = LANGUAGE_CONFIGS.get(language, LANGUAGE_CONFIGS['english'])
         metrics = ContentMetrics(tmdb_id=content_id, title='', language=language)
         
-        # Fetch from various sources
         metrics.tmdb_score = self._fetch_tmdb_score(content_id)
         metrics.box_office_score = self._fetch_box_office_score(content_id, language)
         metrics.ott_score = self._fetch_ott_score(content_id, language)
         metrics.social_score = self._fetch_social_score(content_id)
         metrics.search_score = self._fetch_search_score(content_id)
         
-        # Apply recency factors
         for source in ['tmdb', 'box_office', 'ott', 'social', 'search']:
             recency = self.calculate_recency_factor(metrics.timestamp)
             score_attr = f"{source}_score"
@@ -352,38 +341,29 @@ class MultiSourceTrendingAlgorithm:
         return metrics
     
     def _fetch_tmdb_score(self, content_id: int) -> float:
-        """Fetch and normalize TMDb score"""
         return random.uniform(60, 95)
     
     def _fetch_box_office_score(self, content_id: int, language: str) -> float:
-        """Fetch box office performance score"""
         config = LANGUAGE_CONFIGS[language]
         base_score = random.uniform(40, 90)
         return base_score * config.market_adjustment
     
     def _fetch_ott_score(self, content_id: int, language: str) -> float:
-        """Fetch OTT platform engagement score"""
         return random.uniform(50, 85)
     
     def _fetch_social_score(self, content_id: int) -> float:
-        """Fetch social media engagement score"""
         return random.uniform(45, 88)
     
     def _fetch_search_score(self, content_id: int) -> float:
-        """Fetch search volume score"""
         return random.uniform(35, 75)
 
 class VelocityBasedTrendingDetection:
-    """
-    Algorithm 2: Velocity-Based Trending Detection (VBTD)
-    Measures rate of change in popularity metrics
-    """
+    """Velocity-Based Trending Detection (VBTD)"""
     
     def __init__(self):
         self.history_buffer = defaultdict(lambda: deque(maxlen=168))
         
     def calculate_velocity(self, content_id: int, current_score: float) -> Tuple[float, float]:
-        """Calculate velocity and acceleration"""
         history = self.history_buffer[content_id]
         
         if len(history) < 2:
@@ -402,13 +382,11 @@ class VelocityBasedTrendingDetection:
     
     def calculate_momentum(self, velocity: float, acceleration: float, 
                           consistency_factor: float) -> float:
-        """Calculate momentum score"""
         alpha, beta, gamma = 0.5, 0.3, 0.2
         momentum = alpha * velocity + beta * acceleration + gamma * consistency_factor
         return momentum
     
     def calculate_consistency(self, content_id: int) -> float:
-        """Calculate consistency factor based on velocity stability"""
         history = list(self.history_buffer[content_id])
         if len(history) < 7:
             return 0.5
@@ -427,7 +405,6 @@ class VelocityBasedTrendingDetection:
         return max(0, min(1, consistency))
     
     def is_trending_by_velocity(self, metrics: ContentMetrics, config: LanguageConfig) -> bool:
-        """Determine if content is trending based on velocity"""
         consistency = self.calculate_consistency(metrics.tmdb_id)
         metrics.momentum = self.calculate_momentum(
             metrics.velocity, metrics.acceleration, consistency
@@ -437,16 +414,12 @@ class VelocityBasedTrendingDetection:
                 metrics.tmdb_score > config.min_absolute_score)
 
 class GeographicCascadeModel:
-    """
-    Algorithm 3: Geographic Cascade Trending Model (GCTM)
-    Models how trending spreads geographically
-    """
+    """Geographic Cascade Trending Model (GCTM)"""
     
     def __init__(self):
         self.city_influence_graph = self._build_influence_graph()
         
     def _build_influence_graph(self) -> Dict[Tuple[str, str], float]:
-        """Build geographic influence graph between cities"""
         return {
             ('Hyderabad', 'Vijayawada'): 0.8,
             ('Hyderabad', 'Bangalore'): 0.6,
@@ -460,7 +433,6 @@ class GeographicCascadeModel:
     
     def calculate_cascade_probability(self, source_city: str, target_city: str,
                                      language_overlap: float = 0.5) -> float:
-        """Calculate probability of trending cascade between cities"""
         geographic_influence = self.city_influence_graph.get(
             (source_city, target_city), 0.1
         )
@@ -468,7 +440,6 @@ class GeographicCascadeModel:
     
     def predict_geographic_spread(self, content_id: int, initial_cities: List[str],
                                  language: str) -> float:
-        """Predict geographic spread score"""
         config = LANGUAGE_CONFIGS[language]
         spread_score = 0.0
         
@@ -487,16 +458,12 @@ class GeographicCascadeModel:
         return spread_score
 
 class BoxOfficePerformancePredictor:
-    """
-    Algorithm 4: Box Office Performance Predictor (BOPP)
-    Uses box office data to predict trending status
-    """
+    """Box Office Performance Predictor (BOPP)"""
     
     def __init__(self):
         self.performance_cache = {}
         
     def calculate_performance_score(self, box_office_data: Dict, language: str) -> float:
-        """Calculate performance score from box office metrics"""
         config = LANGUAGE_CONFIGS[language]
         
         collection = box_office_data.get('collection', 0)
@@ -513,7 +480,6 @@ class BoxOfficePerformancePredictor:
     
     def classify_trending_status(self, performance_score: float, 
                                 growth_rate: float) -> TrendingCategory:
-        """Classify trending status based on performance"""
         if performance_score > 90 and growth_rate > 20:
             return TrendingCategory.BLOCKBUSTER_TRENDING
         elif performance_score > 75 and growth_rate > 15:
@@ -524,10 +490,7 @@ class BoxOfficePerformancePredictor:
             return TrendingCategory.RISING_FAST
 
 class OTTPlatformAggregator:
-    """
-    Algorithm 5: OTT Platform Aggregation Algorithm (OPAA)
-    Monitors OTT platforms for viewing trends
-    """
+    """OTT Platform Aggregation Algorithm (OPAA)"""
     
     PLATFORM_WEIGHTS = {
         'netflix': 0.3,
@@ -540,7 +503,6 @@ class OTTPlatformAggregator:
     }
     
     def calculate_engagement_score(self, platform_data: Dict, language: str) -> float:
-        """Calculate OTT engagement score"""
         total_score = 0.0
         
         for platform, weight in self.PLATFORM_WEIGHTS.items():
@@ -568,7 +530,6 @@ class OTTPlatformAggregator:
         return min(100, total_score * cross_platform_boost)
     
     def _calculate_language_relevance(self, platform: str, language: str) -> float:
-        """Calculate platform relevance for language"""
         relevance_map = {
             ('aha', 'telugu'): 1.0,
             ('sun_nxt', 'tamil'): 1.0,
@@ -580,16 +541,12 @@ class OTTPlatformAggregator:
         return relevance_map.get((platform, language), 0.5)
 
 class TemporalPatternRecognizer:
-    """
-    Algorithm 6: Temporal Pattern Recognition for Trending (TPRT)
-    Identifies patterns based on time and cultural events
-    """
+    """Temporal Pattern Recognition for Trending (TPRT)"""
     
     def __init__(self):
         self.current_festivals = self._get_current_festivals()
         
     def _get_current_festivals(self) -> Dict[str, float]:
-        """Get currently active festivals and their boost factors"""
         current_date = datetime.now()
         festivals = {}
         
@@ -606,7 +563,6 @@ class TemporalPatternRecognizer:
     
     def calculate_temporal_score(self, base_score: float, language: str,
                                 release_date: datetime, genre: str) -> float:
-        """Calculate temporal pattern score"""
         config = LANGUAGE_CONFIGS[language]
         
         festival_multiplier = 1.0
@@ -644,17 +600,13 @@ class TemporalPatternRecognizer:
         return min(100, temporal_score)
 
 class AnomalyDetector:
-    """
-    Algorithm 9: Anomaly Detection for Viral Content (ADVC)
-    Detects viral spikes in popularity
-    """
+    """Anomaly Detection for Viral Content (ADVC)"""
     
     def __init__(self):
         self.baseline_history = defaultdict(lambda: deque(maxlen=30))
         
     def detect_viral_spike(self, content_id: int, current_score: float,
                           language: str) -> Tuple[bool, float]:
-        """Detect if content has gone viral"""
         config = LANGUAGE_CONFIGS[language]
         history = self.baseline_history[content_id]
         
@@ -679,13 +631,9 @@ class AnomalyDetector:
         return is_viral, viral_boost
 
 class CrossLanguageDetector:
-    """
-    Algorithm 13: Multi-Language Cross-Pollination Detection (MLCPD)
-    Detects cross-language trending patterns
-    """
+    """Multi-Language Cross-Pollination Detection (MLCPD)"""
     
     def calculate_cross_language_score(self, content_metrics: Dict[str, ContentMetrics]) -> float:
-        """Calculate cross-language trending score"""
         total_score = 0.0
         
         for source_lang, source_metrics in content_metrics.items():
@@ -712,16 +660,12 @@ class CrossLanguageDetector:
     
     def _calculate_adaptability(self, metrics: ContentMetrics, 
                                source_lang: str, target_lang: str) -> float:
-        """Calculate content adaptability between languages"""
         return 0.7
 
 # ================== New Vector-Based Algorithms ==================
 
 class VectorSpaceModel:
-    """
-    New Algorithm: Vector Space Model for Trending Analysis (VSMTA)
-    Uses multi-dimensional vectors to represent content features
-    """
+    """Vector Space Model for Trending Analysis (VSMTA)"""
     
     def __init__(self):
         self.dimension = 8
@@ -729,7 +673,6 @@ class VectorSpaceModel:
         self.cluster_centers = self._initialize_cluster_centers()
         
     def _initialize_cluster_centers(self) -> Dict[str, np.ndarray]:
-        """Initialize cluster centers for different trending categories"""
         return {
             'blockbuster': np.array([0.95, 0.9, 0.88, 0.92, 0.85, 0.9, 0.93, 0.91]),
             'viral': np.array([0.7, 0.95, 0.98, 0.85, 0.9, 0.88, 0.8, 0.92]),
@@ -739,7 +682,6 @@ class VectorSpaceModel:
         }
     
     def create_content_vector(self, metrics: ContentMetrics) -> np.ndarray:
-        """Create 8D vector representation of content"""
         vector = np.array([
             metrics.tmdb_score / 100,
             metrics.box_office_score / 100,
@@ -753,13 +695,11 @@ class VectorSpaceModel:
         return vector
     
     def calculate_vector_similarity(self, v1: np.ndarray, v2: np.ndarray) -> float:
-        """Calculate cosine similarity between vectors"""
         if np.linalg.norm(v1) == 0 or np.linalg.norm(v2) == 0:
             return 0.0
         return 1 - cosine(v1, v2)
     
     def find_nearest_cluster(self, content_vector: np.ndarray) -> Tuple[str, float]:
-        """Find nearest trending cluster for content"""
         max_similarity = 0
         nearest_cluster = 'regional'
         
@@ -774,23 +714,18 @@ class VectorSpaceModel:
     def calculate_vector_momentum(self, current_vector: np.ndarray, 
                                  previous_vector: np.ndarray,
                                  time_delta: float = 1.0) -> float:
-        """Calculate momentum in vector space"""
         vector_change = current_vector - previous_vector
         magnitude = np.linalg.norm(vector_change)
         return magnitude / time_delta
 
 class LanguagePriorityEngine:
-    """
-    New Algorithm: Language Priority Optimization Engine (LPOE)
-    Ensures priority languages get 100% perfect visibility
-    """
+    """Language Priority Optimization Engine (LPOE)"""
     
     def __init__(self):
         self.priority_queue = defaultdict(list)
         self.language_quotas = self._initialize_quotas()
         
     def _initialize_quotas(self) -> Dict[str, int]:
-        """Initialize minimum quotas for priority languages"""
         base_quotas = {
             'telugu': 25,
             'english': 20,
@@ -803,7 +738,6 @@ class LanguagePriorityEngine:
     
     def enforce_priority_distribution(self, content_list: List[TrendingContent],
                                      target_size: int = 20) -> List[TrendingContent]:
-        """Enforce priority language distribution in results"""
         by_language = defaultdict(list)
         for content in content_list:
             by_language[content.metrics.language].append(content)
@@ -842,7 +776,6 @@ class LanguagePriorityEngine:
         return result[:target_size]
     
     def boost_priority_language_content(self, metrics: ContentMetrics) -> ContentMetrics:
-        """Apply priority language boost to metrics"""
         if metrics.language in PRIORITY_LANGUAGES:
             boost = LANGUAGE_PRIORITY_MULTIPLIERS[metrics.language]
             metrics.priority_language_boost = boost
@@ -854,17 +787,13 @@ class LanguagePriorityEngine:
         return metrics
 
 class NeuralTrendingPredictor:
-    """
-    New Algorithm: Neural-Inspired Trending Predictor (NITP)
-    Uses neural network-like activation functions for trending detection
-    """
+    """Neural-Inspired Trending Predictor (NITP)"""
     
     def __init__(self):
         self.weights = self._initialize_weights()
         self.bias = 0.1
         
     def _initialize_weights(self) -> np.ndarray:
-        """Initialize weight matrix for neural computation"""
         return np.array([
             [0.3, 0.25, 0.2, 0.15, 0.1],
             [0.35, 0.3, 0.2, 0.1, 0.05],
@@ -872,19 +801,15 @@ class NeuralTrendingPredictor:
         ])
     
     def sigmoid(self, x: float) -> float:
-        """Sigmoid activation function"""
         return 1 / (1 + math.exp(-x))
     
     def relu(self, x: float) -> float:
-        """ReLU activation function"""
         return max(0, x)
     
     def tanh(self, x: float) -> float:
-        """Tanh activation function"""
         return math.tanh(x)
     
     def forward_pass(self, input_vector: np.ndarray) -> float:
-        """Perform forward pass through neural layers"""
         layer1 = np.dot(self.weights[0], input_vector) + self.bias
         layer1_activated = self.sigmoid(layer1)
         
@@ -901,7 +826,6 @@ class NeuralTrendingPredictor:
         return min(1.0, max(0.0, final_score))
     
     def predict_trending_probability(self, metrics: ContentMetrics) -> float:
-        """Predict probability of content trending"""
         input_vector = np.array([
             metrics.tmdb_score / 100,
             metrics.velocity / 50,
@@ -919,16 +843,12 @@ class NeuralTrendingPredictor:
         return probability
 
 class QuantumInspiredTrending:
-    """
-    New Algorithm: Quantum-Inspired Superposition Trending (QIST)
-    Uses quantum-inspired superposition for multi-state trending analysis
-    """
+    """Quantum-Inspired Superposition Trending (QIST)"""
     
     def __init__(self):
         self.quantum_states = self._initialize_quantum_states()
         
     def _initialize_quantum_states(self) -> Dict[str, complex]:
-        """Initialize quantum-like states for trending categories"""
         return {
             'trending': complex(1, 0),
             'not_trending': complex(0, 1),
@@ -936,13 +856,11 @@ class QuantumInspiredTrending:
         }
     
     def calculate_amplitude(self, metrics: ContentMetrics) -> complex:
-        """Calculate quantum amplitude for content"""
         real = (metrics.tmdb_score + metrics.box_office_score) / 200
         imag = (metrics.velocity + metrics.momentum) / 200
         return complex(real, imag)
     
     def measure_trending_state(self, amplitude: complex) -> Tuple[str, float]:
-        """Collapse quantum state to determine trending"""
         probability = abs(amplitude) ** 2
         
         if probability > 0.7:
@@ -955,7 +873,6 @@ class QuantumInspiredTrending:
         return state, probability
     
     def apply_quantum_boost(self, metrics: ContentMetrics) -> float:
-        """Apply quantum-inspired boost to trending score"""
         amplitude = self.calculate_amplitude(metrics)
         state, probability = self.measure_trending_state(amplitude)
         
@@ -970,8 +887,7 @@ class QuantumInspiredTrending:
         
         return min(3.0, boost)
 
-# Continue with EnhancedUnifiedTrendingScoreEngine and rest of the file...
-# [The rest of the code remains the same but I'll add the missing imports fix]
+# ================== Enhanced Main Algorithms ==================
 
 class EnhancedUnifiedTrendingScoreEngine:
     """Enhanced Unified Trending Score Algorithm with Priority Language Support"""
@@ -1012,7 +928,6 @@ class EnhancedUnifiedTrendingScoreEngine:
         }
     
     def _create_http_session(self):
-        """Create HTTP session with retry logic"""
         from requests.adapters import HTTPAdapter
         from urllib3.util.retry import Retry
         
@@ -1031,7 +946,6 @@ class EnhancedUnifiedTrendingScoreEngine:
     
     def calculate_unified_score(self, content_id: int, language: str,
                                additional_data: Dict = None) -> TrendingContent:
-        """Enhanced unified score calculation with vector algorithms"""
         config = LANGUAGE_CONFIGS[language]
         
         metrics = self.mrtsa.aggregate_scores(content_id, language)
@@ -1127,7 +1041,6 @@ class EnhancedUnifiedTrendingScoreEngine:
     
     def _determine_category(self, score: float, metrics: ContentMetrics,
                            config: LanguageConfig, cluster_name: str) -> TrendingCategory:
-        """Enhanced category determination with priority language support"""
         if metrics.language in PRIORITY_LANGUAGES[:3]:
             if score > 70:
                 return TrendingCategory.PRIORITY_LANGUAGE_TRENDING
@@ -1151,7 +1064,6 @@ class EnhancedUnifiedTrendingScoreEngine:
             return TrendingCategory.MODERATE_TRENDING
     
     def _calculate_confidence(self, component_scores: Dict[str, float]) -> float:
-        """Calculate confidence score based on component agreement"""
         scores = [s for s in component_scores.values() if s > 0]
         if not scores:
             return 0.5
@@ -1169,7 +1081,6 @@ class EnhancedUnifiedTrendingScoreEngine:
     def _generate_reasons(self, metrics: ContentMetrics, 
                          component_scores: Dict[str, float],
                          cluster_name: str) -> List[str]:
-        """Generate human-readable trending reasons"""
         reasons = []
         
         if metrics.language in PRIORITY_LANGUAGES:
@@ -1202,10 +1113,11 @@ class EnhancedUnifiedTrendingScoreEngine:
 class AdvancedTrendingService:
     """Enhanced Trending Service with 100% Priority Language Support"""
     
-    def __init__(self, db, cache, tmdb_api_key):
+    def __init__(self, db, cache, tmdb_api_key, app=None):
         self.db = db
         self.cache = cache
         self.tmdb_api_key = tmdb_api_key
+        self.app = app  # Store Flask app instance
         self.unified_engine = EnhancedUnifiedTrendingScoreEngine(db, cache, tmdb_api_key)
         self.priority_engine = LanguagePriorityEngine()
         self.session = self._create_http_session()
@@ -1218,7 +1130,6 @@ class AdvancedTrendingService:
         self.cache_lock = threading.Lock()
     
     def _create_http_session(self):
-        """Create HTTP session with retry logic"""
         from requests.adapters import HTTPAdapter
         from urllib3.util.retry import Retry
         
@@ -1235,8 +1146,31 @@ class AdvancedTrendingService:
         session.mount('https://', adapter)
         return session
     
+    def _get_app_context(self):
+        """Get or create Flask app context"""
+        try:
+            # Try to get current app
+            if current_app:
+                return current_app._get_current_object()
+        except:
+            pass
+        
+        # Fall back to stored app
+        if self.app:
+            return self.app
+        
+        # Last resort - try to import app
+        try:
+            import sys
+            import os
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            from app import app
+            return app
+        except:
+            logger.error("Could not get Flask app instance")
+            return None
+    
     def start_background_updates(self):
-        """Start background thread for continuous trending updates"""
         if not self.update_thread:
             self.stop_updates = False
             self.update_thread = threading.Thread(target=self._update_loop)
@@ -1245,7 +1179,6 @@ class AdvancedTrendingService:
             logger.info("Started background trending updates with priority language support")
     
     def stop_background_updates(self):
-        """Stop background updates"""
         self.stop_updates = True
         if self.update_thread:
             self.update_thread.join(timeout=5)
@@ -1253,11 +1186,15 @@ class AdvancedTrendingService:
             logger.info("Stopped background trending updates")
     
     def _update_loop(self):
-        """Enhanced background update loop with priority languages"""
         while not self.stop_updates:
             try:
-                for language in PRIORITY_LANGUAGES:
-                    self._update_language_trending(language, is_priority=True)
+                app = self._get_app_context()
+                if app:
+                    with app.app_context():
+                        for language in PRIORITY_LANGUAGES:
+                            self._update_language_trending(language, is_priority=True)
+                else:
+                    logger.warning("No app context available for background updates")
                 
                 time.sleep(180)
                 
@@ -1266,7 +1203,7 @@ class AdvancedTrendingService:
                 time.sleep(60)
     
     def _update_language_trending(self, language: str, is_priority: bool = False):
-        """Update trending data for specific language with priority handling"""
+        """Update trending data for specific language"""
         try:
             cache_key = f"trending:{language}:latest"
             
@@ -1323,7 +1260,7 @@ class AdvancedTrendingService:
     def get_trending(self, languages: List[str] = None, 
                     categories: List[str] = None,
                     limit: int = 20) -> Dict[str, List[Dict]]:
-        """Enhanced trending with guaranteed priority language visibility"""
+        """Get trending content with guaranteed priority language visibility"""
         if not languages:
             languages = PRIORITY_LANGUAGES
         else:
@@ -1382,9 +1319,6 @@ class AdvancedTrendingService:
         
         return results
     
-    # [Continue with the rest of the methods from the previous implementation...]
-    # All the _get_* methods remain the same
-
     def _get_priority_trending(self, languages: List[str], limit: int) -> List[Dict]:
         """Get trending content specifically for priority languages"""
         priority_trending = []
@@ -1437,6 +1371,70 @@ class AdvancedTrendingService:
         
         return priority_trending[:limit]
     
+    def _save_content(self, tmdb_data: Dict, content_type: str, language: str):
+        """Save content to database with proper app context"""
+        try:
+            app = self._get_app_context()
+            if not app:
+                logger.error("No app context available for saving content")
+                return None
+            
+            with app.app_context():
+                # Import Content model inside app context
+                from app import Content
+                
+                # Check if exists
+                existing = self.db.session.query(Content).filter_by(
+                    tmdb_id=tmdb_data['id']
+                ).first()
+                
+                if existing:
+                    # Update existing
+                    existing.popularity = tmdb_data.get('popularity', existing.popularity)
+                    existing.vote_count = tmdb_data.get('vote_count', existing.vote_count)
+                    existing.rating = tmdb_data.get('vote_average', existing.rating)
+                    existing.is_trending = True
+                    existing.updated_at = datetime.utcnow()
+                    
+                    # Add language if not present
+                    languages = json.loads(existing.languages or '[]')
+                    if language not in languages:
+                        languages.append(language)
+                        existing.languages = json.dumps(languages)
+                    
+                    self.db.session.commit()
+                    return existing
+                
+                # Create new
+                new_content = Content(
+                    tmdb_id=tmdb_data['id'],
+                    title=tmdb_data.get('title') or tmdb_data.get('name'),
+                    original_title=tmdb_data.get('original_title'),
+                    content_type=content_type,
+                    genres=json.dumps([]),
+                    languages=json.dumps([language]),
+                    release_date=None,
+                    rating=tmdb_data.get('vote_average'),
+                    vote_count=tmdb_data.get('vote_count'),
+                    popularity=tmdb_data.get('popularity'),
+                    overview=tmdb_data.get('overview'),
+                    poster_path=tmdb_data.get('poster_path'),
+                    backdrop_path=tmdb_data.get('backdrop_path'),
+                    is_trending=True
+                )
+                
+                self.db.session.add(new_content)
+                self.db.session.commit()
+                return new_content
+                
+        except Exception as e:
+            logger.error(f"Error saving content: {e}")
+            try:
+                self.db.session.rollback()
+            except:
+                pass
+            return None
+    
     def _ensure_priority_distribution(self, content_list: List[Dict], 
                                      limit: int) -> List[Dict]:
         """Ensure priority language distribution in results"""
@@ -1468,7 +1466,7 @@ class AdvancedTrendingService:
         return result[:limit]
     
     def _get_trending_movies(self, languages: List[str], limit: int) -> List[Dict]:
-        """Enhanced trending movies with priority language support"""
+        """Get trending movies with priority language support"""
         all_trending = []
         
         for language in PRIORITY_LANGUAGES:
@@ -1700,55 +1698,6 @@ class AdvancedTrendingService:
         regional = self._ensure_priority_distribution(regional, limit)
         return regional
     
-    def _save_content(self, tmdb_data: Dict, content_type: str, language: str):
-        """Save content to database"""
-        try:
-            from app import Content, db
-            
-            existing = db.session.query(Content).filter_by(
-                tmdb_id=tmdb_data['id']
-            ).first()
-            
-            if existing:
-                existing.popularity = tmdb_data.get('popularity', existing.popularity)
-                existing.vote_count = tmdb_data.get('vote_count', existing.vote_count)
-                existing.rating = tmdb_data.get('vote_average', existing.rating)
-                existing.is_trending = True
-                existing.updated_at = datetime.utcnow()
-                
-                languages = json.loads(existing.languages or '[]')
-                if language not in languages:
-                    languages.append(language)
-                    existing.languages = json.dumps(languages)
-                
-                db.session.commit()
-                return existing
-            
-            new_content = Content(
-                tmdb_id=tmdb_data['id'],
-                title=tmdb_data.get('title') or tmdb_data.get('name'),
-                original_title=tmdb_data.get('original_title'),
-                content_type=content_type,
-                genres=json.dumps([]),
-                languages=json.dumps([language]),
-                release_date=None,
-                rating=tmdb_data.get('vote_average'),
-                vote_count=tmdb_data.get('vote_count'),
-                popularity=tmdb_data.get('popularity'),
-                overview=tmdb_data.get('overview'),
-                poster_path=tmdb_data.get('poster_path'),
-                backdrop_path=tmdb_data.get('backdrop_path'),
-                is_trending=True
-            )
-            
-            db.session.add(new_content)
-            db.session.commit()
-            return new_content
-            
-        except Exception as e:
-            logger.error(f"Error saving content: {e}")
-            return None
-    
     def _format_trending_content(self, content, trending: TrendingContent) -> Dict:
         """Format content for API response"""
         poster_url = None
@@ -1810,9 +1759,9 @@ class AdvancedTrendingService:
 
 # ================== Service Initialization ==================
 
-def init_advanced_trending_service(db, cache, tmdb_api_key):
+def init_advanced_trending_service(db, cache, tmdb_api_key, app=None):
     """Initialize the advanced trending service with priority language support"""
-    service = AdvancedTrendingService(db, cache, tmdb_api_key)
+    service = AdvancedTrendingService(db, cache, tmdb_api_key, app)
     service.start_background_updates()
     logger.info(f"Initialized trending service with priority languages: {PRIORITY_LANGUAGES}")
     return service
