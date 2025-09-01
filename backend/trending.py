@@ -1236,7 +1236,7 @@ class AdvancedTrendingService:
         
         try:
             with current_app.app_context():
-                from backend.app import Content, db
+                from app import Content, db
                 
                 # Check if exists
                 existing = db.session.query(Content).filter_by(

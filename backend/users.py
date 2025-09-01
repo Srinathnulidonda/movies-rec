@@ -103,7 +103,7 @@ def require_auth(f):
             data = jwt.decode(token, app_instance.secret_key, algorithms=['HS256'])
             
             # Import User model dynamically to avoid circular imports
-            from backend.app import User
+            from app import User
             current_user = User.query.get(data['user_id'])
             
             if not current_user:
@@ -166,7 +166,7 @@ class InteractionService:
     @staticmethod
     def record_anonymous_interaction(session_id, content_id, interaction_type, ip_address):
         """Record interaction for anonymous users"""
-        from backend.app import AnonymousInteraction
+        from app import AnonymousInteraction
         
         try:
             interaction = AnonymousInteraction(
@@ -187,7 +187,7 @@ class InteractionService:
     @staticmethod
     def get_user_interaction_stats(user_id):
         """Get user interaction statistics"""
-        from backend.app import UserInteraction, Content
+        from app import UserInteraction, Content
         
         try:
             interactions = UserInteraction.query.filter_by(user_id=user_id).all()
@@ -249,7 +249,7 @@ class RecommendationService:
     @staticmethod
     def get_personalized_recommendations(user, limit=20):
         """Get personalized recommendations for user"""
-        from backend.app import UserInteraction, Content, MLServiceClient, RecommendationEngine
+        from app import UserInteraction, Content, MLServiceClient, RecommendationEngine
         
         try:
             interactions = UserInteraction.query.filter_by(user_id=user.id).all()
@@ -306,7 +306,7 @@ class RecommendationService:
     @staticmethod
     def get_content_based_recommendations(user, limit=20):
         """Get content-based recommendations based on user preferences"""
-        from backend.app import Content, UserInteraction, RecommendationEngine
+        from app import Content, UserInteraction, RecommendationEngine
         
         try:
             # Get user's interaction history
@@ -364,7 +364,7 @@ class RecommendationService:
     @staticmethod
     def get_anonymous_recommendations(session_id, ip_address, limit=20):
         """Get recommendations for anonymous users"""
-        from backend.app import AnonymousInteraction, Content, RecommendationEngine
+        from app import AnonymousInteraction, Content, RecommendationEngine
         
         try:
             location = get_user_location(ip_address)
@@ -422,7 +422,7 @@ class RecommendationService:
 def register():
     """User registration"""
     try:
-        from backend.app import User
+        from app import User
         
         data = request.get_json()
         
@@ -481,7 +481,7 @@ def register():
 def login():
     """User login"""
     try:
-        from backend.app import User
+        from app import User
         
         data = request.get_json()
         
@@ -548,7 +548,7 @@ def update_user_profile(current_user):
         # Update allowed fields
         if 'email' in data:
             # Check if email is already taken
-            from backend.app import User
+            from app import User
             existing = User.query.filter_by(email=data['email']).first()
             if existing and existing.id != current_user.id:
                 return jsonify({'error': 'Email already in use'}), 400
@@ -615,7 +615,7 @@ def change_password(current_user):
 def record_interaction(current_user):
     """Record user interaction with content"""
     try:
-        from backend.app import UserInteraction, Content
+        from app import UserInteraction, Content
         
         data = request.get_json()
         
@@ -667,7 +667,7 @@ def record_interaction(current_user):
 def get_watchlist(current_user):
     """Get user's watchlist"""
     try:
-        from backend.app import UserInteraction, Content
+        from app import UserInteraction, Content
         
         watchlist_interactions = UserInteraction.query.filter_by(
             user_id=current_user.id,
@@ -713,7 +713,7 @@ def get_watchlist(current_user):
 def remove_from_watchlist(current_user, content_id):
     """Remove content from watchlist"""
     try:
-        from backend.app import UserInteraction
+        from app import UserInteraction
         
         interaction = UserInteraction.query.filter_by(
             user_id=current_user.id,
@@ -739,7 +739,7 @@ def remove_from_watchlist(current_user, content_id):
 def get_favorites(current_user):
     """Get user's favorite content"""
     try:
-        from backend.app import UserInteraction, Content
+        from app import UserInteraction, Content
         
         favorite_interactions = UserInteraction.query.filter_by(
             user_id=current_user.id,
@@ -786,7 +786,7 @@ def get_favorites(current_user):
 def remove_from_favorites(current_user, content_id):
     """Remove content from favorites"""
     try:
-        from backend.app import UserInteraction
+        from app import UserInteraction
         
         interaction = UserInteraction.query.filter_by(
             user_id=current_user.id,
@@ -812,7 +812,7 @@ def remove_from_favorites(current_user, content_id):
 def get_watch_history(current_user):
     """Get user's watch history"""
     try:
-        from backend.app import UserInteraction, Content
+        from app import UserInteraction, Content
         
         page = int(request.args.get('page', 1))
         per_page = int(request.args.get('per_page', 20))
@@ -945,7 +945,7 @@ def get_anonymous_recommendations():
 def delete_account(current_user):
     """Delete user account and all associated data"""
     try:
-        from backend.app import UserInteraction
+        from app import UserInteraction
         
         # Verify password for security
         data = request.get_json()
@@ -981,7 +981,7 @@ def verify_token():
         
         token_data = UserService.verify_token(token)
         if token_data:
-            from backend.app import User
+            from app import User
             user = User.query.get(token_data['user_id'])
             
             if user:

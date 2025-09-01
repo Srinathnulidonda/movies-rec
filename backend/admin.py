@@ -94,7 +94,7 @@ def require_admin(f):
             data = jwt.decode(token, app_instance.secret_key, algorithms=['HS256'])
             
             # Import User model dynamically to avoid circular imports
-            from backend.app import User
+            from app import User
             current_user = User.query.get(data['user_id'])
             
             if not current_user or not current_user.is_admin:
@@ -222,7 +222,7 @@ class TelegramService:
 def admin_search(current_user):
     """Admin search for content from various sources"""
     try:
-        from backend.app import TMDBService, JikanService
+        from app import TMDBService, JikanService
         
         query = request.args.get('query', '')
         source = request.args.get('source', 'tmdb')
@@ -274,7 +274,7 @@ def admin_search(current_user):
 def save_external_content(current_user):
     """Save content from external sources"""
     try:
-        from backend.app import Content, ContentService
+        from app import Content, ContentService
         
         data = request.get_json()
         
@@ -359,7 +359,7 @@ def save_external_content(current_user):
 def create_admin_recommendation(current_user):
     """Create admin recommendation and send to Telegram"""
     try:
-        from backend.app import Content, AdminRecommendation
+        from app import Content, AdminRecommendation
         
         data = request.get_json()
         
@@ -407,7 +407,7 @@ def create_admin_recommendation(current_user):
 def get_admin_recommendations(current_user):
     """Get all admin recommendations"""
     try:
-        from backend.app import Content, AdminRecommendation, User
+        from app import Content, AdminRecommendation, User
         
         page = int(request.args.get('page', 1))
         per_page = int(request.args.get('per_page', 20))
@@ -452,7 +452,7 @@ def get_admin_recommendations(current_user):
 def get_analytics(current_user):
     """Get analytics data and optionally send to Telegram"""
     try:
-        from backend.app import User, Content, UserInteraction
+        from app import User, Content, UserInteraction
         
         send_telegram = request.args.get('send_telegram', 'false').lower() == 'true'
         
@@ -509,7 +509,7 @@ def get_analytics(current_user):
 def ml_service_comprehensive_check(current_user):
     """Check ML service health and status"""
     try:
-        from backend.app import User, Content, UserInteraction
+        from app import User, Content, UserInteraction
         
         ml_url = ML_SERVICE_URL
         if not ml_url:
@@ -672,7 +672,7 @@ def ml_service_force_update(current_user):
 def get_ml_service_stats(current_user):
     """Get ML service statistics"""
     try:
-        from backend.app import User, Content, UserInteraction, MLServiceClient
+        from app import User, Content, UserInteraction, MLServiceClient
         
         if not ML_SERVICE_URL:
             return jsonify({'error': 'ML service not configured'}), 400
@@ -709,7 +709,7 @@ def get_ml_service_stats(current_user):
 def clear_cache(current_user):
     """Clear application cache"""
     try:
-        from backend.app import TMDBService, JikanService, RecommendationEngine
+        from app import TMDBService, JikanService, RecommendationEngine
         
         cache_type = request.args.get('type', 'all')
         
