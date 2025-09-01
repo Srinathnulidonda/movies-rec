@@ -10,7 +10,7 @@ import os
 import json
 import logging
 from functools import wraps
-from collections import defaultdict, Counter
+from collections import defaultdict
 import random
 from sqlalchemy import func, desc
 import threading
@@ -91,45 +91,6 @@ def create_http_session():
 
 http_session = create_http_session()
 executor = ThreadPoolExecutor(max_workers=5)
-
-# Language Priority Configuration for New Releases
-LANGUAGE_PRIORITY = {
-    'telugu': {
-        'code': 'te',
-        'priority': 1,
-        'min_items': 5,
-        'regions': ['IN'],
-        'keywords': ['telugu', 'tollywood', 'tfi', 'telugu cinema']
-    },
-    'hindi': {
-        'code': 'hi',
-        'priority': 2,
-        'min_items': 5,
-        'regions': ['IN'],
-        'keywords': ['hindi', 'bollywood', 'hindi cinema', 'hindi film']
-    },
-    'english': {
-        'code': 'en',
-        'priority': 3,
-        'min_items': 3,
-        'regions': ['US', 'GB', 'IN'],
-        'keywords': ['hollywood', 'english', 'blockbuster']
-    },
-    'tamil': {
-        'code': 'ta',
-        'priority': 4,
-        'min_items': 4,
-        'regions': ['IN'],
-        'keywords': ['tamil', 'kollywood', 'tamil cinema', 'tamil film']
-    },
-    'malayalam': {
-        'code': 'ml',
-        'priority': 5,
-        'min_items': 3,
-        'regions': ['IN'],
-        'keywords': ['malayalam', 'mollywood', 'malayalam cinema']
-    }
-}
 
 # Language and Genre configurations
 REGIONAL_LANGUAGES = {
@@ -643,10 +604,7 @@ class ContentService:
             if 'spoken_languages' in tmdb_data:
                 languages = [lang['name'] for lang in tmdb_data['spoken_languages']]
             elif 'original_language' in tmdb_data:
-                # Map language code to language name
-                lang_code = tmdb_data['original_language']
-                lang_map = {'te': 'telugu', 'hi': 'hindi', 'ta': 'tamil', 'ml': 'malayalam', 'en': 'english'}
-                languages = [lang_map.get(lang_code, lang_code)]
+                languages = [tmdb_data['original_language']]
             
             is_new_release = False
             release_date = None
@@ -654,7 +612,7 @@ class ContentService:
                 date_str = tmdb_data.get('release_date') or tmdb_data.get('first_air_date')
                 try:
                     release_date = datetime.strptime(date_str, '%Y-%m-%d').date()
-                    if release_date >= (datetime.now() - timedelta(days=90)).date():
+                    if release_date >= (datetime.now() - timedelta(days=60)).date():
                         is_new_release = True
                 except:
                     pass
@@ -862,221 +820,21 @@ class RecommendationEngine:
     @staticmethod
     @cache.memoize(timeout=1800)
     def get_new_releases(limit=20, language=None, content_type='movie'):
-        """
-        Get new releases with language priority:
-        Priority Order: Telugu > Hindi > English > Tamil > Malayalam
-        """
         try:
-            # If specific language requested
-            if language and language.lower() in LANGUAGE_PRIORITY:
-                return RecommendationEngine._get_language_new_releases(
-                    language.lower(), limit, content_type
-                )
+            ml_params = {
+                'limit': limit,
+                'language': language,
+                'content_type': content_type
+            }
             
-            # Get new releases for all priority languages
-            all_new_releases = []
-            remaining_limit = limit
+            ml_response = MLServiceClient.call_ml_service('/api/new-releases', ml_params)
+            if ml_response:
+                ml_recommendations = MLServiceClient.process_ml_recommendations(ml_response, limit)
+                if ml_recommendations:
+                    logger.info(f"Using ML service for new releases: {len(ml_recommendations)} items")
+                    return [rec['content'] for rec in ml_recommendations]
             
-            # Sort languages by priority
-            sorted_languages = sorted(
-                LANGUAGE_PRIORITY.items(), 
-                key=lambda x: x[1]['priority']
-            )
-            
-            for lang_name, lang_config in sorted_languages:
-                if remaining_limit <= 0:
-                    break
-                
-                # Calculate how many items to fetch for this language
-                lang_limit = min(lang_config['min_items'], remaining_limit)
-                
-                # Fetch new releases for this language
-                lang_releases = RecommendationEngine._get_language_new_releases(
-                    lang_name, lang_limit, content_type
-                )
-                
-                if lang_releases:
-                    all_new_releases.extend(lang_releases)
-                    remaining_limit -= len(lang_releases)
-                    logger.info(f"Added {len(lang_releases)} new releases for {lang_name}")
-            
-            # If we still need more items, add more from priority languages
-            if len(all_new_releases) < limit:
-                for lang_name, lang_config in sorted_languages:
-                    if len(all_new_releases) >= limit:
-                        break
-                    
-                    additional_limit = limit - len(all_new_releases)
-                    additional_releases = RecommendationEngine._get_language_new_releases(
-                        lang_name, additional_limit, content_type, offset=lang_config['min_items']
-                    )
-                    
-                    if additional_releases:
-                        # Filter out duplicates
-                        existing_ids = {r.id for r in all_new_releases}
-                        for release in additional_releases:
-                            if release.id not in existing_ids:
-                                all_new_releases.append(release)
-                                if len(all_new_releases) >= limit:
-                                    break
-            
-            return all_new_releases[:limit]
-            
-        except Exception as e:
-            logger.error(f"Error getting new releases: {e}")
-            return RecommendationEngine._get_new_releases_fallback(limit, language, content_type)
-    
-    @staticmethod
-    def _get_language_new_releases(language, limit, content_type='movie', offset=0):
-        """Get new releases for a specific language with high accuracy"""
-        try:
-            if language not in LANGUAGE_PRIORITY:
-                return []
-            
-            lang_config = LANGUAGE_PRIORITY[language]
-            lang_code = lang_config['code']
-            
-            all_releases = []
-            
-            # Method 1: Get by original language with region filter
-            end_date = datetime.now().strftime('%Y-%m-%d')
-            start_date = (datetime.now() - timedelta(days=90)).strftime('%Y-%m-%d')
-            
-            for region in lang_config['regions']:
-                if len(all_releases) >= limit:
-                    break
-                
-                url = f"{TMDBService.BASE_URL}/discover/{content_type}"
-                params = {
-                    'api_key': TMDB_API_KEY,
-                    'with_original_language': lang_code,
-                    'sort_by': 'release_date.desc' if content_type == 'movie' else 'first_air_date.desc',
-                    'page': 1 + (offset // 20),
-                    'region': region
-                }
-                
-                # Add date filters based on content type
-                if content_type == 'movie':
-                    params['primary_release_date.gte'] = start_date
-                    params['primary_release_date.lte'] = end_date
-                else:  # TV shows
-                    params['first_air_date.gte'] = start_date
-                    params['first_air_date.lte'] = end_date
-                
-                try:
-                    response = http_session.get(url, params=params, timeout=10)
-                    if response.status_code == 200:
-                        data = response.json()
-                        
-                        # Process results
-                        for item in data.get('results', []):
-                            if len(all_releases) >= limit:
-                                break
-                            
-                            # Skip items for offset
-                            if offset > 0:
-                                offset -= 1
-                                continue
-                            
-                            # Verify language match and it's a new release
-                            if 'original_language' in item and item['original_language'] == lang_code:
-                                content = ContentService.save_content_from_tmdb(item, content_type)
-                                if content:
-                                    # Ensure language is set correctly
-                                    content.languages = json.dumps([language])
-                                    content.is_new_release = True
-                                    db.session.commit()
-                                    
-                                    # Check for duplicates
-                                    if content not in all_releases:
-                                        all_releases.append(content)
-                                        logger.debug(f"Added {content.title} to {language} new releases")
-                                        
-                except Exception as e:
-                    logger.error(f"Error fetching {language} releases from region {region}: {e}")
-            
-            # Method 2: Search with language-specific keywords for recent releases
-            if len(all_releases) < limit:
-                for keyword in lang_config['keywords']:
-                    if len(all_releases) >= limit:
-                        break
-                    
-                    search_url = f"{TMDBService.BASE_URL}/search/{content_type}"
-                    search_params = {
-                        'api_key': TMDB_API_KEY,
-                        'query': keyword,
-                        'year': datetime.now().year,
-                        'page': 1,
-                        'language': 'en-US',
-                        'include_adult': False
-                    }
-                    
-                    try:
-                        response = http_session.get(search_url, params=search_params, timeout=10)
-                        if response.status_code == 200:
-                            search_data = response.json()
-                            
-                            for item in search_data.get('results', []):
-                                if len(all_releases) >= limit:
-                                    break
-                                
-                                # Check if it's a new release
-                                release_date_field = 'release_date' if content_type == 'movie' else 'first_air_date'
-                                if release_date_field in item and item[release_date_field]:
-                                    try:
-                                        release_date = datetime.strptime(item[release_date_field], '%Y-%m-%d')
-                                        days_old = (datetime.now() - release_date).days
-                                        
-                                        if days_old <= 90:  # New release within 90 days
-                                            # Check if not already added
-                                            existing_ids = {r.tmdb_id for r in all_releases if r.tmdb_id}
-                                            if item['id'] not in existing_ids:
-                                                content = ContentService.save_content_from_tmdb(item, content_type)
-                                                if content:
-                                                    content.languages = json.dumps([language])
-                                                    content.is_new_release = True
-                                                    db.session.commit()
-                                                    all_releases.append(content)
-                                                    logger.debug(f"Added {content.title} from keyword search")
-                                    except:
-                                        pass
-                    except Exception as e:
-                        logger.error(f"Error searching {keyword}: {e}")
-            
-            # Method 3: Get from ML service if available
-            if len(all_releases) < limit and ML_SERVICE_URL:
-                ml_params = {
-                    'limit': limit - len(all_releases),
-                    'language': language,
-                    'content_type': content_type
-                }
-                
-                ml_response = MLServiceClient.call_ml_service('/api/new-releases', ml_params)
-                if ml_response:
-                    ml_recommendations = MLServiceClient.process_ml_recommendations(
-                        ml_response, limit - len(all_releases)
-                    )
-                    if ml_recommendations:
-                        for rec in ml_recommendations:
-                            if rec['content'] not in all_releases:
-                                content = rec['content']
-                                content.languages = json.dumps([language])
-                                content.is_new_release = True
-                                db.session.commit()
-                                all_releases.append(content)
-            
-            logger.info(f"Found {len(all_releases)} new releases for {language}")
-            return all_releases
-            
-        except Exception as e:
-            logger.error(f"Error getting {language} new releases: {e}")
-            return []
-    
-    @staticmethod
-    def _get_new_releases_fallback(limit, language, content_type):
-        """Fallback method for new releases"""
-        try:
-            logger.info("Using fallback method for new releases")
+            logger.info("Falling back to TMDB for new releases")
             
             language_code = None
             if language:
@@ -1099,7 +857,7 @@ class RecommendationEngine:
             
             return recommendations
         except Exception as e:
-            logger.error(f"Fallback new releases error: {e}")
+            logger.error(f"Error getting new releases: {e}")
             return []
     
     @staticmethod
@@ -1660,26 +1418,12 @@ def get_trending_categories():
 @app.route('/api/recommendations/new-releases', methods=['GET'])
 @cache.cached(timeout=300, key_prefix=make_cache_key)
 def get_new_releases():
-    """
-    Get new releases with language priority
-    Priority: Telugu > Hindi > English > Tamil > Malayalam
-    """
     try:
-        language = request.args.get('language')  # Specific language filter
+        language = request.args.get('language')
         content_type = request.args.get('type', 'movie')
         limit = int(request.args.get('limit', 20))
-        include_all_languages = request.args.get('all_languages', 'true').lower() == 'true'
         
-        # Get new releases
-        if language:
-            # Get for specific language only
-            recommendations = RecommendationEngine.get_new_releases(limit, language, content_type)
-        elif include_all_languages:
-            # Get with language priority (default behavior)
-            recommendations = RecommendationEngine.get_new_releases(limit, None, content_type)
-        else:
-            # Get only English releases
-            recommendations = RecommendationEngine.get_new_releases(limit, 'english', content_type)
+        recommendations = RecommendationEngine.get_new_releases(limit, language, content_type)
         
         result = []
         for content in recommendations:
@@ -1687,17 +1431,11 @@ def get_new_releases():
             if content.youtube_trailer_id:
                 youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
             
-            # Determine the primary language
-            languages = json.loads(content.languages or '[]')
-            primary_language = languages[0] if languages else 'unknown'
-            
             result.append({
                 'id': content.id,
                 'title': content.title,
                 'content_type': content.content_type,
                 'genres': json.loads(content.genres or '[]'),
-                'languages': languages,
-                'primary_language': primary_language,
                 'rating': content.rating,
                 'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
                 'overview': content.overview[:150] + '...' if content.overview else '',
@@ -1706,78 +1444,11 @@ def get_new_releases():
                 'is_new_release': content.is_new_release
             })
         
-        # Sort by language priority and then by release date
-        def sort_key(item):
-            lang = item['primary_language'].lower()
-            priority = LANGUAGE_PRIORITY.get(lang, {}).get('priority', 999)
-            release_date = item['release_date'] or '1900-01-01'
-            return (priority, release_date)
-        
-        result.sort(key=sort_key)
-        
-        # Calculate language distribution
-        language_distribution = Counter([r['primary_language'] for r in result])
-        
-        return jsonify({
-            'recommendations': result,
-            'total': len(result),
-            'language_distribution': dict(language_distribution),
-            'priority_order': ['telugu', 'hindi', 'english', 'tamil', 'malayalam']
-        }), 200
+        return jsonify({'recommendations': result}), 200
         
     except Exception as e:
         logger.error(f"New releases error: {e}")
         return jsonify({'error': 'Failed to get new releases'}), 500
-
-@app.route('/api/recommendations/new-releases/<language>', methods=['GET'])
-@cache.cached(timeout=300, key_prefix=make_cache_key)
-def get_language_new_releases(language):
-    """Get new releases for a specific language"""
-    try:
-        content_type = request.args.get('type', 'movie')
-        limit = int(request.args.get('limit', 20))
-        days = int(request.args.get('days', 90))  # How many days back to look
-        
-        if language.lower() not in LANGUAGE_PRIORITY:
-            return jsonify({'error': f'Language {language} not supported'}), 400
-        
-        # Get language-specific new releases
-        recommendations = RecommendationEngine._get_language_new_releases(
-            language.lower(), limit, content_type
-        )
-        
-        result = []
-        for content in recommendations:
-            youtube_url = None
-            if content.youtube_trailer_id:
-                youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
-            
-            result.append({
-                'id': content.id,
-                'title': content.title,
-                'content_type': content.content_type,
-                'genres': json.loads(content.genres or '[]'),
-                'languages': json.loads(content.languages or '[]'),
-                'rating': content.rating,
-                'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
-                'overview': content.overview[:150] + '...' if content.overview else '',
-                'release_date': content.release_date.isoformat() if content.release_date else None,
-                'youtube_trailer': youtube_url,
-                'is_new_release': True
-            })
-        
-        # Sort by release date (newest first)
-        result.sort(key=lambda x: x['release_date'] or '1900-01-01', reverse=True)
-        
-        return jsonify({
-            'language': language,
-            'recommendations': result,
-            'total': len(result)
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"Language new releases error: {e}")
-        return jsonify({'error': f'Failed to get {language} new releases'}), 500
 
 @app.route('/api/recommendations/critics-choice', methods=['GET'])
 @cache.cached(timeout=600, key_prefix=make_cache_key)
