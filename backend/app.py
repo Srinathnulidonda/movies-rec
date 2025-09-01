@@ -113,6 +113,36 @@ ANIME_GENRES = {
     'kodomomuke': ['Kids', 'Family', 'Adventure', 'Comedy']
 }
 
+# Helper functions for URL formatting
+def format_poster_url(poster_path):
+    """Helper function to format poster URLs correctly"""
+    if not poster_path:
+        return None
+    
+    # Check if it's already a full URL
+    if poster_path.startswith(('http://', 'https://')):
+        return poster_path
+    
+    # Check if it's a TMDB path
+    if poster_path.startswith('/'):
+        return f"https://image.tmdb.org/t/p/w500{poster_path}"
+    
+    # Assume it needs a leading slash
+    return f"https://image.tmdb.org/t/p/w500/{poster_path}"
+
+def format_backdrop_url(backdrop_path):
+    """Helper function to format backdrop URLs correctly"""
+    if not backdrop_path:
+        return None
+    
+    if backdrop_path.startswith(('http://', 'https://')):
+        return backdrop_path
+    
+    if backdrop_path.startswith('/'):
+        return f"https://image.tmdb.org/t/p/w1280{backdrop_path}"
+    
+    return f"https://image.tmdb.org/t/p/w1280/{backdrop_path}"
+
 # Cache key helpers
 def make_cache_key(*args, **kwargs):
     path = request.path
@@ -246,6 +276,7 @@ class MLServiceClient:
     
     @staticmethod
     def process_ml_recommendations(ml_response, limit=20):
+        """Process ML recommendations and return list of dictionaries with content"""
         try:
             if not ml_response or 'recommendations' not in ml_response:
                 return []
@@ -271,8 +302,9 @@ class MLServiceClient:
                 content = content_dict.get(content_id)
                 
                 if content:
+                    # Convert Content object to dictionary
                     content_data = {
-                        'content': content,
+                        'content': ContentService._content_to_dict(content),  # Convert to dict here
                         'ml_score': rec.get('score', 0) if isinstance(rec, dict) else 0,
                         'ml_reason': rec.get('reason', '') if isinstance(rec, dict) else '',
                         'ml_rank': i + 1
@@ -797,6 +829,7 @@ class ContentService:
             'is_critics_choice': content.is_critics_choice,
             'critics_score': content.critics_score
         }
+
 class RecommendationEngine:
     @staticmethod
     @cache.memoize(timeout=1800)
@@ -884,8 +917,8 @@ class RecommendationEngine:
                 ml_recommendations = MLServiceClient.process_ml_recommendations(ml_response, limit)
                 if ml_recommendations:
                     logger.info(f"Using ML service for new releases: {len(ml_recommendations)} items")
-                    # Convert Content objects to dictionaries
-                    return [ContentService._content_to_dict(rec['content']) for rec in ml_recommendations]
+                    # The 'content' is already a dictionary now
+                    return [rec['content'] for rec in ml_recommendations]
             
             logger.info("Falling back to TMDB for new releases")
             
@@ -931,7 +964,7 @@ class RecommendationEngine:
                 ml_recommendations = MLServiceClient.process_ml_recommendations(ml_response, limit)
                 if ml_recommendations:
                     logger.info(f"Using ML service for critics choice: {len(ml_recommendations)} items")
-                    return [ContentService._content_to_dict(rec['content']) for rec in ml_recommendations]
+                    return [rec['content'] for rec in ml_recommendations]
             
             logger.info("Falling back to TMDB for critics choice")
             
@@ -966,7 +999,7 @@ class RecommendationEngine:
                 ml_recommendations = MLServiceClient.process_ml_recommendations(ml_response, limit)
                 if ml_recommendations:
                     logger.info(f"Using ML service for genre {genre}: {len(ml_recommendations)} items")
-                    return [ContentService._content_to_dict(rec['content']) for rec in ml_recommendations]
+                    return [rec['content'] for rec in ml_recommendations]
             
             logger.info(f"Falling back to TMDB for genre {genre}")
             
@@ -1019,7 +1052,7 @@ class RecommendationEngine:
                 ml_recommendations = MLServiceClient.process_ml_recommendations(ml_response, limit)
                 if ml_recommendations:
                     logger.info(f"Using ML service for regional {language}: {len(ml_recommendations)} items")
-                    return [ContentService._content_to_dict(rec['content']) for rec in ml_recommendations]
+                    return [rec['content'] for rec in ml_recommendations]
             
             logger.info(f"Falling back to TMDB for regional {language}")
             
@@ -1077,7 +1110,7 @@ class RecommendationEngine:
                 ml_recommendations = MLServiceClient.process_ml_recommendations(ml_response, limit)
                 if ml_recommendations:
                     logger.info(f"Using ML service for anime recommendations: {len(ml_recommendations)} items")
-                    return [ContentService._content_to_dict(rec['content']) for rec in ml_recommendations]
+                    return [rec['content'] for rec in ml_recommendations]
             
             logger.info("Falling back to Jikan API for anime recommendations")
             
@@ -1133,7 +1166,7 @@ class RecommendationEngine:
                 ml_recommendations = MLServiceClient.process_ml_recommendations(ml_response, limit)
                 if ml_recommendations:
                     logger.info(f"Using ML service for similar recommendations: {len(ml_recommendations)} items")
-                    result = [ContentService._content_to_dict(rec['content']) for rec in ml_recommendations]
+                    result = [rec['content'] for rec in ml_recommendations]
                     cache.set(cache_key, result, timeout=3600)
                     return result
             
@@ -1233,52 +1266,52 @@ def search_content():
         if tmdb_results:
             for item in tmdb_results.get('results', []):
                 content_type_detected = 'movie' if 'title' in item else 'tv'
-                content = ContentService.save_content_from_tmdb(item, content_type_detected)
-                if content:
+                content_dict = ContentService.save_content_from_tmdb(item, content_type_detected)
+                if content_dict:
                     interaction = AnonymousInteraction(
                         session_id=session_id,
-                        content_id=content.id,
+                        content_id=content_dict['id'],
                         interaction_type='search',
                         ip_address=request.remote_addr
                     )
                     db.session.add(interaction)
                     
                     youtube_url = None
-                    if content.youtube_trailer_id:
-                        youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
+                    if content_dict.get('youtube_trailer_id'):
+                        youtube_url = f"https://www.youtube.com/watch?v={content_dict['youtube_trailer_id']}"
                     
                     results.append({
-                        'id': content.id,
-                        'tmdb_id': content.tmdb_id,
-                        'title': content.title,
-                        'content_type': content.content_type,
-                        'genres': json.loads(content.genres or '[]'),
-                        'rating': content.rating,
-                        'release_date': content.release_date.isoformat() if content.release_date else None,
-                        'poster_path': f"https://image.tmdb.org/t/p/w500{content.poster_path}" if content.poster_path else None,
-                        'overview': content.overview,
+                        'id': content_dict.get('id'),
+                        'tmdb_id': content_dict.get('tmdb_id'),
+                        'title': content_dict.get('title'),
+                        'content_type': content_dict.get('content_type'),
+                        'genres': json.loads(content_dict.get('genres', '[]')) if isinstance(content_dict.get('genres'), str) else content_dict.get('genres', []),
+                        'rating': content_dict.get('rating'),
+                        'release_date': content_dict.get('release_date'),
+                        'poster_path': format_poster_url(content_dict.get('poster_path')),
+                        'overview': content_dict.get('overview'),
                         'youtube_trailer': youtube_url
                     })
         
         if anime_results:
             for anime in anime_results.get('data', []):
-                content = ContentService.save_anime_content(anime)
-                if content:
+                content_dict = ContentService.save_anime_content(anime)
+                if content_dict:
                     youtube_url = None
-                    if content.youtube_trailer_id:
-                        youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
+                    if content_dict.get('youtube_trailer_id'):
+                        youtube_url = f"https://www.youtube.com/watch?v={content_dict['youtube_trailer_id']}"
                     
                     results.append({
-                        'id': content.id,
-                        'mal_id': content.mal_id,
-                        'title': content.title,
+                        'id': content_dict.get('id'),
+                        'mal_id': content_dict.get('mal_id'),
+                        'title': content_dict.get('title'),
                         'content_type': 'anime',
-                        'genres': json.loads(content.genres or '[]'),
-                        'anime_genres': json.loads(content.anime_genres or '[]'),
-                        'rating': content.rating,
-                        'release_date': content.release_date.isoformat() if content.release_date else None,
-                        'poster_path': content.poster_path,
-                        'overview': content.overview,
+                        'genres': json.loads(content_dict.get('genres', '[]')) if isinstance(content_dict.get('genres'), str) else content_dict.get('genres', []),
+                        'anime_genres': json.loads(content_dict.get('anime_genres', '[]')) if isinstance(content_dict.get('anime_genres'), str) else content_dict.get('anime_genres', []),
+                        'rating': content_dict.get('rating'),
+                        'release_date': content_dict.get('release_date'),
+                        'poster_path': format_poster_url(content_dict.get('poster_path')),
+                        'overview': content_dict.get('overview'),
                         'youtube_trailer': youtube_url
                     })
         
@@ -1339,17 +1372,17 @@ def get_content_details(content_id):
         similar_content = RecommendationEngine.get_similar_recommendations(content.id, limit=10)
         
         similar_formatted = []
-        for similar in similar_content:
+        for similar_dict in similar_content:
             youtube_url = None
-            if similar.youtube_trailer_id:
-                youtube_url = f"https://www.youtube.com/watch?v={similar.youtube_trailer_id}"
+            if similar_dict.get('youtube_trailer_id'):
+                youtube_url = f"https://www.youtube.com/watch?v={similar_dict['youtube_trailer_id']}"
             
             similar_formatted.append({
-                'id': similar.id,
-                'title': similar.title,
-                'poster_path': f"https://image.tmdb.org/t/p/w300{similar.poster_path}" if similar.poster_path and not similar.poster_path.startswith('http') else similar.poster_path,
-                'rating': similar.rating,
-                'content_type': similar.content_type,
+                'id': similar_dict.get('id'),
+                'title': similar_dict.get('title'),
+                'poster_path': format_poster_url(similar_dict.get('poster_path')),
+                'rating': similar_dict.get('rating'),
+                'content_type': similar_dict.get('content_type'),
                 'youtube_trailer': youtube_url
             })
         
@@ -1373,8 +1406,8 @@ def get_content_details(content_id):
             'rating': content.rating,
             'vote_count': content.vote_count,
             'overview': content.overview,
-            'poster_path': f"https://image.tmdb.org/t/p/w500{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
-            'backdrop_path': f"https://image.tmdb.org/t/p/w1280{content.backdrop_path}" if content.backdrop_path and not content.backdrop_path.startswith('http') else content.backdrop_path,
+            'poster_path': format_poster_url(content.poster_path),
+            'backdrop_path': format_backdrop_url(content.backdrop_path),
             'youtube_trailer': youtube_trailer_url,
             'similar_content': similar_formatted,
             'cast': cast,
@@ -1510,11 +1543,6 @@ def get_new_releases():
         
         result = []
         for content_dict in recommendations:
-            # Now content_dict is already a dictionary
-            youtube_url = None
-            if content_dict.get('youtube_trailer_id'):
-                youtube_url = f"https://www.youtube.com/watch?v={content_dict['youtube_trailer_id']}"
-            
             # Parse JSON fields if needed
             genres = content_dict.get('genres', '[]')
             if isinstance(genres, str):
@@ -1523,15 +1551,30 @@ def get_new_releases():
                 except:
                     genres = []
             
+            # Handle YouTube URL
+            youtube_url = None
+            if content_dict.get('youtube_trailer_id'):
+                youtube_url = f"https://www.youtube.com/watch?v={content_dict['youtube_trailer_id']}"
+            
+            # Handle release date
+            release_date = content_dict.get('release_date')
+            if release_date:
+                if isinstance(release_date, str):
+                    release_date = release_date
+                elif hasattr(release_date, 'isoformat'):
+                    release_date = release_date.isoformat()
+                else:
+                    release_date = str(release_date)
+            
             result.append({
                 'id': content_dict.get('id'),
                 'title': content_dict.get('title'),
                 'content_type': content_dict.get('content_type'),
                 'genres': genres,
                 'rating': content_dict.get('rating'),
-                'poster_path': f"https://image.tmdb.org/t/p/w300{content_dict.get('poster_path')}" if content_dict.get('poster_path') and not content_dict.get('poster_path', '').startswith('http') else content_dict.get('poster_path'),
+                'poster_path': format_poster_url(content_dict.get('poster_path')),
                 'overview': content_dict.get('overview', '')[:150] + '...' if content_dict.get('overview') else '',
-                'release_date': content_dict.get('release_date').isoformat() if content_dict.get('release_date') and hasattr(content_dict.get('release_date'), 'isoformat') else content_dict.get('release_date'),
+                'release_date': release_date,
                 'youtube_trailer': youtube_url,
                 'is_new_release': content_dict.get('is_new_release', False)
             })
@@ -1552,22 +1595,31 @@ def get_critics_choice():
         recommendations = RecommendationEngine.get_critics_choice(limit, content_type)
         
         result = []
-        for content in recommendations:
+        for content_dict in recommendations:
+            # Parse genres
+            genres = content_dict.get('genres', '[]')
+            if isinstance(genres, str):
+                try:
+                    genres = json.loads(genres)
+                except:
+                    genres = []
+            
+            # YouTube URL
             youtube_url = None
-            if content.youtube_trailer_id:
-                youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
+            if content_dict.get('youtube_trailer_id'):
+                youtube_url = f"https://www.youtube.com/watch?v={content_dict['youtube_trailer_id']}"
             
             result.append({
-                'id': content.id,
-                'title': content.title,
-                'content_type': content.content_type,
-                'genres': json.loads(content.genres or '[]'),
-                'rating': content.rating,
-                'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
-                'overview': content.overview[:150] + '...' if content.overview else '',
+                'id': content_dict.get('id'),
+                'title': content_dict.get('title'),
+                'content_type': content_dict.get('content_type'),
+                'genres': genres,
+                'rating': content_dict.get('rating'),
+                'poster_path': format_poster_url(content_dict.get('poster_path')),
+                'overview': content_dict.get('overview', '')[:150] + '...' if content_dict.get('overview') else '',
                 'youtube_trailer': youtube_url,
-                'is_critics_choice': content.is_critics_choice,
-                'critics_score': content.critics_score
+                'is_critics_choice': content_dict.get('is_critics_choice', False),
+                'critics_score': content_dict.get('critics_score')
             })
         
         return jsonify({'recommendations': result}), 200
@@ -1587,19 +1639,28 @@ def get_genre_recommendations(genre):
         recommendations = RecommendationEngine.get_genre_recommendations(genre, limit, content_type, region)
         
         result = []
-        for content in recommendations:
+        for content_dict in recommendations:
+            # Parse genres
+            genres = content_dict.get('genres', '[]')
+            if isinstance(genres, str):
+                try:
+                    genres = json.loads(genres)
+                except:
+                    genres = []
+            
+            # YouTube URL
             youtube_url = None
-            if content.youtube_trailer_id:
-                youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
+            if content_dict.get('youtube_trailer_id'):
+                youtube_url = f"https://www.youtube.com/watch?v={content_dict['youtube_trailer_id']}"
             
             result.append({
-                'id': content.id,
-                'title': content.title,
-                'content_type': content.content_type,
-                'genres': json.loads(content.genres or '[]'),
-                'rating': content.rating,
-                'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
-                'overview': content.overview[:150] + '...' if content.overview else '',
+                'id': content_dict.get('id'),
+                'title': content_dict.get('title'),
+                'content_type': content_dict.get('content_type'),
+                'genres': genres,
+                'rating': content_dict.get('rating'),
+                'poster_path': format_poster_url(content_dict.get('poster_path')),
+                'overview': content_dict.get('overview', '')[:150] + '...' if content_dict.get('overview') else '',
                 'youtube_trailer': youtube_url
             })
         
@@ -1619,19 +1680,28 @@ def get_regional(language):
         recommendations = RecommendationEngine.get_regional_recommendations(language, limit, content_type)
         
         result = []
-        for content in recommendations:
+        for content_dict in recommendations:
+            # Parse genres
+            genres = content_dict.get('genres', '[]')
+            if isinstance(genres, str):
+                try:
+                    genres = json.loads(genres)
+                except:
+                    genres = []
+            
+            # YouTube URL
             youtube_url = None
-            if content.youtube_trailer_id:
-                youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
+            if content_dict.get('youtube_trailer_id'):
+                youtube_url = f"https://www.youtube.com/watch?v={content_dict['youtube_trailer_id']}"
             
             result.append({
-                'id': content.id,
-                'title': content.title,
-                'content_type': content.content_type,
-                'genres': json.loads(content.genres or '[]'),
-                'rating': content.rating,
-                'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
-                'overview': content.overview[:150] + '...' if content.overview else '',
+                'id': content_dict.get('id'),
+                'title': content_dict.get('title'),
+                'content_type': content_dict.get('content_type'),
+                'genres': genres,
+                'rating': content_dict.get('rating'),
+                'poster_path': format_poster_url(content_dict.get('poster_path')),
+                'overview': content_dict.get('overview', '')[:150] + '...' if content_dict.get('overview') else '',
                 'youtube_trailer': youtube_url
             })
         
@@ -1651,22 +1721,38 @@ def get_anime():
         recommendations = RecommendationEngine.get_anime_recommendations(limit, genre)
         
         result = []
-        for content in recommendations:
+        for content_dict in recommendations:
+            # Parse genres
+            genres = content_dict.get('genres', '[]')
+            if isinstance(genres, str):
+                try:
+                    genres = json.loads(genres)
+                except:
+                    genres = []
+            
+            anime_genres = content_dict.get('anime_genres', '[]')
+            if isinstance(anime_genres, str):
+                try:
+                    anime_genres = json.loads(anime_genres)
+                except:
+                    anime_genres = []
+            
+            # YouTube URL
             youtube_url = None
-            if content.youtube_trailer_id:
-                youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
+            if content_dict.get('youtube_trailer_id'):
+                youtube_url = f"https://www.youtube.com/watch?v={content_dict['youtube_trailer_id']}"
             
             result.append({
-                'id': content.id,
-                'mal_id': content.mal_id,
-                'title': content.title,
-                'original_title': content.original_title,
-                'content_type': content.content_type,
-                'genres': json.loads(content.genres or '[]'),
-                'anime_genres': json.loads(content.anime_genres or '[]'),
-                'rating': content.rating,
-                'poster_path': content.poster_path,
-                'overview': content.overview[:150] + '...' if content.overview else '',
+                'id': content_dict.get('id'),
+                'mal_id': content_dict.get('mal_id'),
+                'title': content_dict.get('title'),
+                'original_title': content_dict.get('original_title'),
+                'content_type': content_dict.get('content_type'),
+                'genres': genres,
+                'anime_genres': anime_genres,
+                'rating': content_dict.get('rating'),
+                'poster_path': format_poster_url(content_dict.get('poster_path')),
+                'overview': content_dict.get('overview', '')[:150] + '...' if content_dict.get('overview') else '',
                 'youtube_trailer': youtube_url
             })
         
@@ -1684,19 +1770,28 @@ def get_similar_recommendations(content_id):
         recommendations = RecommendationEngine.get_similar_recommendations(content_id, limit)
         
         result = []
-        for content in recommendations:
+        for content_dict in recommendations:
+            # Parse genres
+            genres = content_dict.get('genres', '[]')
+            if isinstance(genres, str):
+                try:
+                    genres = json.loads(genres)
+                except:
+                    genres = []
+            
+            # YouTube URL
             youtube_url = None
-            if content.youtube_trailer_id:
-                youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
+            if content_dict.get('youtube_trailer_id'):
+                youtube_url = f"https://www.youtube.com/watch?v={content_dict['youtube_trailer_id']}"
             
             result.append({
-                'id': content.id,
-                'title': content.title,
-                'content_type': content.content_type,
-                'genres': json.loads(content.genres or '[]'),
-                'rating': content.rating,
-                'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
-                'overview': content.overview[:150] + '...' if content.overview else '',
+                'id': content_dict.get('id'),
+                'title': content_dict.get('title'),
+                'content_type': content_dict.get('content_type'),
+                'genres': genres,
+                'rating': content_dict.get('rating'),
+                'poster_path': format_poster_url(content_dict.get('poster_path')),
+                'overview': content_dict.get('overview', '')[:150] + '...' if content_dict.get('overview') else '',
                 'youtube_trailer': youtube_url
             })
         
