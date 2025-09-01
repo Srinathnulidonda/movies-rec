@@ -1197,7 +1197,7 @@ def auth_health():
 def after_request(response):
     """Add CORS headers to responses"""
     origin = request.headers.get('Origin')
-    allowed_origins = [FRONTEND_URL, 'http://localhost:3000', 'http://localhost:5173']
+    allowed_origins = [FRONTEND_URL, 'http://127.0.0.1:5500', 'http://127.0.0.1:5501']
     
     if origin in allowed_origins:
         response.headers['Access-Control-Allow-Origin'] = origin
