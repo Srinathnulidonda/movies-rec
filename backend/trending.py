@@ -1372,7 +1372,7 @@ class AdvancedTrendingService:
         return priority_trending[:limit]
     
     def _save_content(self, tmdb_data: Dict, content_type: str, language: str):
-        """Save content to database with proper app context"""
+        """Save content to database and return a dictionary representation"""
         try:
             app = self._get_app_context()
             if not app:
@@ -1403,7 +1403,22 @@ class AdvancedTrendingService:
                         existing.languages = json.dumps(languages)
                     
                     self.db.session.commit()
-                    return existing
+                    
+                    # Return a dictionary representation instead of the ORM object
+                    return {
+                        'id': existing.id,
+                        'tmdb_id': existing.tmdb_id,
+                        'title': existing.title,
+                        'content_type': existing.content_type,
+                        'genres': existing.genres,
+                        'languages': existing.languages,
+                        'rating': existing.rating,
+                        'poster_path': existing.poster_path,
+                        'overview': existing.overview,
+                        'popularity': existing.popularity,
+                        'vote_count': existing.vote_count,
+                        'is_trending': existing.is_trending
+                    }
                 
                 # Create new
                 new_content = Content(
@@ -1425,7 +1440,22 @@ class AdvancedTrendingService:
                 
                 self.db.session.add(new_content)
                 self.db.session.commit()
-                return new_content
+                
+                # Return a dictionary representation
+                return {
+                    'id': new_content.id,
+                    'tmdb_id': new_content.tmdb_id,
+                    'title': new_content.title,
+                    'content_type': new_content.content_type,
+                    'genres': new_content.genres,
+                    'languages': new_content.languages,
+                    'rating': new_content.rating,
+                    'poster_path': new_content.poster_path,
+                    'overview': new_content.overview,
+                    'popularity': new_content.popularity,
+                    'vote_count': new_content.vote_count,
+                    'is_trending': new_content.is_trending
+                }
                 
         except Exception as e:
             logger.error(f"Error saving content: {e}")
@@ -1434,6 +1464,77 @@ class AdvancedTrendingService:
             except:
                 pass
             return None
+
+    def _format_trending_content(self, content, trending: TrendingContent) -> Dict:
+        """Format content for API response - now accepts dict or object"""
+        # Handle both dictionary and object inputs
+        if isinstance(content, dict):
+            content_dict = content
+        else:
+            # Convert object to dictionary if needed
+            content_dict = {
+                'id': getattr(content, 'id', random.randint(1000, 9999)),
+                'tmdb_id': getattr(content, 'tmdb_id', None),
+                'title': getattr(content, 'title', 'Unknown'),
+                'content_type': getattr(content, 'content_type', 'movie'),
+                'genres': getattr(content, 'genres', '[]'),
+                'languages': getattr(content, 'languages', '[]'),
+                'rating': getattr(content, 'rating', 0),
+                'poster_path': getattr(content, 'poster_path', None),
+                'overview': getattr(content, 'overview', '')
+            }
+        
+        # Process poster URL
+        poster_url = None
+        if content_dict.get('poster_path'):
+            if content_dict['poster_path'].startswith('http'):
+                poster_url = content_dict['poster_path']
+            else:
+                poster_url = f"https://image.tmdb.org/t/p/w500{content_dict['poster_path']}"
+        
+        # Parse JSON fields
+        genres = content_dict.get('genres', '[]')
+        if isinstance(genres, str):
+            try:
+                genres = json.loads(genres)
+            except:
+                genres = []
+        
+        languages = content_dict.get('languages', '[]')
+        if isinstance(languages, str):
+            try:
+                languages = json.loads(languages)
+            except:
+                languages = []
+        
+        result = {
+            'id': content_dict.get('id', random.randint(1000, 9999)),
+            'tmdb_id': content_dict.get('tmdb_id'),
+            'title': content_dict.get('title', 'Unknown'),
+            'content_type': content_dict.get('content_type', 'movie'),
+            'genres': genres,
+            'languages': languages,
+            'rating': content_dict.get('rating', 0),
+            'poster_path': poster_url,
+            'overview': content_dict.get('overview', ''),
+            'unified_score': trending.unified_score,
+            'confidence': trending.confidence,
+            'category': trending.category.value,
+            'trending_reasons': trending.trending_reasons,
+            'velocity': trending.metrics.velocity,
+            'momentum': trending.metrics.momentum,
+            'is_viral': trending.metrics.viral_score > 0,
+            'is_trending': True,
+            'is_priority_language': trending.metrics.language in PRIORITY_LANGUAGES,
+            'language': trending.metrics.language,
+            'priority_boost': LANGUAGE_PRIORITY_MULTIPLIERS.get(trending.metrics.language, 1.0)
+        }
+        
+        if trending.metrics.vector_metrics:
+            result['vector_score'] = trending.metrics.vector_metrics.similarity_score
+            result['cluster_confidence'] = trending.metrics.vector_metrics.cluster_confidence
+        
+        return result
     
     def _ensure_priority_distribution(self, content_list: List[Dict], 
                                      limit: int) -> List[Dict]:
@@ -1698,46 +1799,16 @@ class AdvancedTrendingService:
         regional = self._ensure_priority_distribution(regional, limit)
         return regional
     
-    def _format_trending_content(self, content, trending: TrendingContent) -> Dict:
-        """Format content for API response"""
-        poster_url = None
-        if hasattr(content, 'poster_path') and content.poster_path:
-            if content.poster_path.startswith('http'):
-                poster_url = content.poster_path
-            else:
-                poster_url = f"https://image.tmdb.org/t/p/w500{content.poster_path}"
-        
-        result = {
-            'id': content.id if hasattr(content, 'id') else random.randint(1000, 9999),
-            'tmdb_id': content.tmdb_id if hasattr(content, 'tmdb_id') else None,
-            'title': content.title if hasattr(content, 'title') else 'Unknown',
-            'content_type': content.content_type if hasattr(content, 'content_type') else 'movie',
-            'genres': json.loads(content.genres) if hasattr(content, 'genres') else [],
-            'languages': json.loads(content.languages) if hasattr(content, 'languages') else [],
-            'rating': content.rating if hasattr(content, 'rating') else 0,
-            'poster_path': poster_url,
-            'overview': content.overview if hasattr(content, 'overview') else '',
-            'unified_score': trending.unified_score,
-            'confidence': trending.confidence,
-            'category': trending.category.value,
-            'trending_reasons': trending.trending_reasons,
-            'velocity': trending.metrics.velocity,
-            'momentum': trending.metrics.momentum,
-            'is_viral': trending.metrics.viral_score > 0,
-            'is_trending': True,
-            'is_priority_language': trending.metrics.language in PRIORITY_LANGUAGES,
-            'language': trending.metrics.language,
-            'priority_boost': LANGUAGE_PRIORITY_MULTIPLIERS.get(trending.metrics.language, 1.0)
-        }
-        
-        if trending.metrics.vector_metrics:
-            result['vector_score'] = trending.metrics.vector_metrics.similarity_score
-            result['cluster_confidence'] = trending.metrics.vector_metrics.cluster_confidence
-        
-        return result
-    
     def _dict_to_trending_content(self, data: Dict) -> TrendingContent:
         """Convert dictionary back to TrendingContent object"""
+        # Parse genres if it's a JSON string
+        genres = data.get('genres', [])
+        if isinstance(genres, str):
+            try:
+                genres = json.loads(genres)
+            except:
+                genres = []
+        
         metrics = ContentMetrics(
             tmdb_id=data.get('tmdb_id', 0),
             title=data.get('title', ''),
@@ -1756,7 +1827,6 @@ class AdvancedTrendingService:
             confidence=data.get('confidence', 0.5),
             trending_reasons=data.get('trending_reasons', [])
         )
-
 # ================== Service Initialization ==================
 
 def init_advanced_trending_service(db, cache, tmdb_api_key, app=None):
