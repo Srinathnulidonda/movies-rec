@@ -44,7 +44,7 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 # Cache configuration with Redis
 # Add your actual Redis URL here (must start with redis:// or rediss://)
-REDIS_URL = os.environ.get('REDIS_URL', 'redis://red-d1l75ap5pdvs73bk295g:rE0xu32o3U2bNUQKz6mG7KIybWzle9xf@red-d1l75ap5pdvs73bk295g:6379')  # Replace with your actual Redis URL
+REDIS_URL = os.environ.get('REDIS_URL', 'redis://red-d2qlbuje5dus73c71qog:xp7inVzgblGCbo9I4taSGLdKUg0xY91I@red-d2qlbuje5dus73c71qog:6379')  # Replace with your actual Redis URL
 
 if REDIS_URL and REDIS_URL.startswith(('redis://', 'rediss://')):
     # Production - Redis
@@ -158,9 +158,10 @@ class User(db.Model):
     last_active = db.Column(db.DateTime, default=datetime.utcnow)
 
 # Initialize auth module AFTER User model is defined
-import auth
-auth.init_auth(app, db, User)
-app.register_blueprint(auth.auth_bp)
+from auth import init_auth, auth_bp
+
+app.register_blueprint(auth_bp)
+init_auth(app, db, User)
 
 class Content(db.Model):
     id = db.Column(db.Integer, primary_key=True)
