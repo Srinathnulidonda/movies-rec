@@ -28,6 +28,7 @@ from flask_mail import Mail
 import auth
 from auth import init_auth, auth_bp
 from admin import admin_bp, init_admin
+from search import create_search_engine, create_suggestion_engine
 from users import users_bp, init_users
 from algorithms import (
     RecommendationOrchestrator,
@@ -231,6 +232,7 @@ app.register_blueprint(auth_bp)
 app.register_blueprint(admin_bp)
 app.register_blueprint(users_bp)
 init_auth(app, db, User)
+
 
 # Helper Functions
 def get_session_id():
@@ -916,108 +918,134 @@ init_admin(app, db, models, services)
 init_users(app, db, models, services)
 
 # API Routes
-
+search_engine = create_search_engine(db, cache, services)
+suggestion_engine = create_suggestion_engine(cache)
 # Enhanced Content Discovery Routes with caching
 @app.route('/api/search', methods=['GET'])
-@cache.cached(timeout=300, key_prefix=make_cache_key)
 def search_content():
+    """Enhanced search with instant results"""
     try:
-        query = request.args.get('query', '')
-        content_type = request.args.get('type', 'multi')
+        query = request.args.get('query', '').strip()
+        search_type = request.args.get('type', 'multi')
         page = int(request.args.get('page', 1))
         
         if not query:
             return jsonify({'error': 'Query parameter required'}), 400
         
-        # Record search interaction
+        # Parse filters
+        filters = {}
+        if request.args.get('genre'):
+            filters['genre'] = request.args.get('genre')
+        if request.args.get('language'):
+            filters['language'] = request.args.get('language')
+        if request.args.get('year'):
+            filters['year'] = int(request.args.get('year'))
+        if request.args.get('min_rating'):
+            filters['min_rating'] = float(request.args.get('min_rating'))
+        if request.args.get('content_type'):
+            filters['content_type'] = request.args.get('content_type')
+        
+        # Perform search
+        results = search_engine.search(
+            query=query,
+            search_type=search_type,
+            page=page,
+            filters=filters
+        )
+        
+        # Record search for analytics
+        user_id = session.get('user_id')
+        suggestion_engine.record_search(query, user_id)
+        
+        # Record anonymous interaction
         session_id = get_session_id()
+        if results['results']:
+            for result in results['results'][:5]:  # Record top 5 results
+                interaction = AnonymousInteraction(
+                    session_id=session_id,
+                    content_id=result['id'],
+                    interaction_type='search',
+                    ip_address=request.remote_addr
+                )
+                db.session.add(interaction)
+            db.session.commit()
         
-        # Use concurrent requests for multiple sources
-        futures = []
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            # Search TMDB
-            futures.append(executor.submit(TMDBService.search_content, query, content_type, page=page))
-            
-            # Search anime if content_type is anime or multi
-            if content_type in ['anime', 'multi']:
-                futures.append(executor.submit(JikanService.search_anime, query, page=page))
-        
-        # Get results
-        tmdb_results = futures[0].result()
-        anime_results = futures[1].result() if len(futures) > 1 else None
-        
-        # Process and save results
-        results = []
-        
-        if tmdb_results:
-            for item in tmdb_results.get('results', []):
-                content_type_detected = 'movie' if 'title' in item else 'tv'
-                content = ContentService.save_content_from_tmdb(item, content_type_detected)
-                if content:
-                    # Record anonymous interaction
-                    interaction = AnonymousInteraction(
-                        session_id=session_id,
-                        content_id=content.id,
-                        interaction_type='search',
-                        ip_address=request.remote_addr
-                    )
-                    db.session.add(interaction)
-                    
-                    # Get YouTube trailer URL
-                    youtube_url = None
-                    if content.youtube_trailer_id:
-                        youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
-                    
-                    results.append({
-                        'id': content.id,
-                        'tmdb_id': content.tmdb_id,
-                        'title': content.title,
-                        'content_type': content.content_type,
-                        'genres': json.loads(content.genres or '[]'),
-                        'rating': content.rating,
-                        'release_date': content.release_date.isoformat() if content.release_date else None,
-                        'poster_path': f"https://image.tmdb.org/t/p/w500{content.poster_path}" if content.poster_path else None,
-                        'overview': content.overview,
-                        'youtube_trailer': youtube_url
-                    })
-        
-        # Add anime results
-        if anime_results:
-            for anime in anime_results.get('data', []):
-                # Save anime content
-                content = ContentService.save_anime_content(anime)
-                if content:
-                    # Get YouTube trailer URL
-                    youtube_url = None
-                    if content.youtube_trailer_id:
-                        youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
-                    
-                    results.append({
-                        'id': content.id,
-                        'mal_id': content.mal_id,
-                        'title': content.title,
-                        'content_type': 'anime',
-                        'genres': json.loads(content.genres or '[]'),
-                        'anime_genres': json.loads(content.anime_genres or '[]'),
-                        'rating': content.rating,
-                        'release_date': content.release_date.isoformat() if content.release_date else None,
-                        'poster_path': content.poster_path,
-                        'overview': content.overview,
-                        'youtube_trailer': youtube_url
-                    })
-        
-        db.session.commit()
-        
-        return jsonify({
-            'results': results,
-            'total_results': tmdb_results.get('total_results', 0) if tmdb_results else 0,
-            'total_pages': tmdb_results.get('total_pages', 0) if tmdb_results else 0,
-            'current_page': page
-        }), 200
+        return jsonify(results), 200
         
     except Exception as e:
         logger.error(f"Search error: {e}")
-        return jsonify({'error': 'Search failed'}), 500
+        return jsonify({'error': 'Search failed', 'message': str(e)}), 500
+
+@app.route('/api/search/autocomplete', methods=['GET'])
+def autocomplete():
+    """Instant autocomplete suggestions"""
+    try:
+        prefix = request.args.get('q', '').strip()
+        limit = int(request.args.get('limit', 10))
+        
+        if len(prefix) < 2:
+            return jsonify({'suggestions': []}), 200
+        
+        suggestions = search_engine.autocomplete(prefix, limit)
+        
+        return jsonify({'suggestions': suggestions}), 200
+        
+    except Exception as e:
+        logger.error(f"Autocomplete error: {e}")
+        return jsonify({'suggestions': []}), 200
+
+@app.route('/api/search/suggestions', methods=['GET'])
+def get_search_suggestions():
+    """Get search suggestions (trending or personalized)"""
+    try:
+        user_id = session.get('user_id')
+        limit = int(request.args.get('limit', 10))
+        
+        suggestions = {
+            'trending': suggestion_engine.get_trending_searches(limit),
+            'personalized': []
+        }
+        
+        if user_id:
+            suggestions['personalized'] = suggestion_engine.get_personalized_suggestions(user_id, limit)
+        
+        return jsonify(suggestions), 200
+        
+    except Exception as e:
+        logger.error(f"Suggestions error: {e}")
+        return jsonify({'trending': [], 'personalized': []}), 200
+
+@app.route('/api/search/instant', methods=['GET'])
+def instant_search():
+    """Ultra-fast instant search for live search experiences"""
+    try:
+        query = request.args.get('q', '').strip()
+        
+        if len(query) < 2:
+            return jsonify({'results': []}), 200
+        
+        # Use only the in-memory index for instant results
+        results = search_engine.indexer.search(query, limit=5)
+        
+        # Format quick results
+        instant_results = []
+        for content_id in results:
+            content_data = search_engine.indexer.index['content_map'].get(content_id)
+            if content_data:
+                instant_results.append({
+                    'id': content_id,
+                    'title': content_data['title'],
+                    'type': content_data['content_type'],
+                    'poster': f"https://image.tmdb.org/t/p/w92{content_data['poster_path']}" if content_data['poster_path'] else None,
+                    'year': content_data['release_date'].year if content_data['release_date'] else None,
+                    'rating': content_data['rating']
+                })
+        
+        return jsonify({'results': instant_results}), 200
+        
+    except Exception as e:
+        logger.error(f"Instant search error: {e}")
+        return jsonify({'results': []}), 200
 
 @app.route('/api/content/<int:content_id>', methods=['GET'])
 def get_content_details(content_id):
