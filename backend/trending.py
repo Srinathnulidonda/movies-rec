@@ -1043,6 +1043,7 @@ class AdvancedTrendingService:
             cached = self.cache.get(cache_key)
             
             if cached:
+                # Cache stores only data dictionaries, not objects
                 all_trending.extend(cached)
             else:
                 # Fetch and calculate trending
@@ -1059,6 +1060,7 @@ class AdvancedTrendingService:
                 
                 if response.status_code == 200:
                     data = response.json()
+                    language_trending = []
                     
                     for movie in data.get('results', [])[:10]:
                         try:
@@ -1068,18 +1070,20 @@ class AdvancedTrendingService:
                             )
                             
                             if trending.unified_score > config.trending_threshold:
-                                # Save to database
-                                content = self._save_content(movie, 'movie', language)
-                                if content:
-                                    formatted = self._format_trending_content(
-                                        content, trending
+                                # Save to database and get ID
+                                content_id = self._save_content(movie, 'movie', language)
+                                if content_id:
+                                    # Format as dictionary (not object)
+                                    formatted = self._format_trending_for_cache(
+                                        content_id, movie, trending, language
                                     )
+                                    language_trending.append(formatted)
                                     all_trending.append(formatted)
                         except Exception as e:
                             logger.error(f"Error processing movie {movie['id']}: {e}")
-                
-                # Cache results
-                self.cache.set(cache_key, all_trending[-10:], timeout=1800)
+                    
+                    # Cache results as dictionaries
+                    self.cache.set(cache_key, language_trending, timeout=1800)
         
         # Sort by unified score and return top results
         all_trending.sort(key=lambda x: x['unified_score'], reverse=True)
@@ -1089,7 +1093,6 @@ class AdvancedTrendingService:
         """Get trending TV shows"""
         all_trending = []
         
-        # Create app context if needed
         def process_tv_shows():
             for language in languages:
                 config = LANGUAGE_CONFIGS[language]
@@ -1113,9 +1116,11 @@ class AdvancedTrendingService:
                             )
                             
                             if trending.unified_score > config.trending_threshold * 0.9:
-                                content = self._save_content(show, 'tv', language)
-                                if content:
-                                    formatted = self._format_trending_content(content, trending)
+                                content_id = self._save_content(show, 'tv', language)
+                                if content_id:
+                                    formatted = self._format_trending_for_cache(
+                                        content_id, show, trending, language
+                                    )
                                     all_trending.append(formatted)
                         except Exception as e:
                             logger.error(f"Error processing TV show: {e}")
@@ -1207,9 +1212,11 @@ class AdvancedTrendingService:
                             
                             # Check velocity for "rising fast"
                             if trending.metrics.velocity > 5:
-                                content = self._save_content(movie, 'movie', language)
-                                if content:
-                                    formatted = self._format_trending_content(content, trending)
+                                content_id = self._save_content(movie, 'movie', language)
+                                if content_id:
+                                    formatted = self._format_trending_for_cache(
+                                        content_id, movie, trending, language
+                                    )
                                     formatted['category'] = 'rising_fast'
                                     rising.append(formatted)
                         except Exception as e:
@@ -1257,9 +1264,11 @@ class AdvancedTrendingService:
                                 # Boost regional score
                                 trending.metrics.geographic_score *= 1.5
                                 
-                                content = self._save_content(movie, 'movie', language)
-                                if content:
-                                    formatted = self._format_trending_content(content, trending)
+                                content_id = self._save_content(movie, 'movie', language)
+                                if content_id:
+                                    formatted = self._format_trending_for_cache(
+                                        content_id, movie, trending, language
+                                    )
                                     formatted['category'] = 'popular_regional'
                                     formatted['region'] = config.primary_regions[0]
                                     regional.append(formatted)
@@ -1276,83 +1285,107 @@ class AdvancedTrendingService:
             return process_regional()
     
     def _save_content(self, tmdb_data: Dict, content_type: str, language: str):
-        """Save content to database with proper context handling"""
+        """Save content to database and return ID only"""
         try:
             if not self.Content:
                 logger.warning("Content model not set")
                 return None
             
-            # Check if we need app context
-            def save_content_inner():
-                # Check if exists
-                existing = self.db.session.query(self.Content).filter_by(
-                    tmdb_id=tmdb_data['id']
-                ).first()
-                
-                if existing:
-                    # Update existing
-                    existing.popularity = tmdb_data.get('popularity', existing.popularity)
-                    existing.vote_count = tmdb_data.get('vote_count', existing.vote_count)
-                    existing.rating = tmdb_data.get('vote_average', existing.rating)
-                    existing.is_trending = True
-                    existing.updated_at = datetime.utcnow()
-                    
-                    self.db.session.commit()
-                    return existing
-                
-                # Create new
-                new_content = self.Content(
-                    tmdb_id=tmdb_data['id'],
-                    title=tmdb_data.get('title') or tmdb_data.get('name'),
-                    original_title=tmdb_data.get('original_title'),
-                    content_type=content_type,
-                    genres=json.dumps([]),  # Fetch genres separately if needed
-                    languages=json.dumps([language]),
-                    release_date=None,  # Parse date if needed
-                    rating=tmdb_data.get('vote_average'),
-                    vote_count=tmdb_data.get('vote_count'),
-                    popularity=tmdb_data.get('popularity'),
-                    overview=tmdb_data.get('overview'),
-                    poster_path=tmdb_data.get('poster_path'),
-                    backdrop_path=tmdb_data.get('backdrop_path'),
-                    is_trending=True
-                )
-                
-                self.db.session.add(new_content)
-                self.db.session.commit()
-                return new_content
+            # Check if exists
+            existing = self.db.session.query(self.Content).filter_by(
+                tmdb_id=tmdb_data['id']
+            ).first()
             
-            # Execute with proper context
-            if self.app:
-                with self.app.app_context():
-                    return save_content_inner()
-            else:
-                return save_content_inner()
+            if existing:
+                # Update existing
+                existing.popularity = tmdb_data.get('popularity', existing.popularity)
+                existing.vote_count = tmdb_data.get('vote_count', existing.vote_count)
+                existing.rating = tmdb_data.get('vote_average', existing.rating)
+                existing.is_trending = True
+                existing.updated_at = datetime.utcnow()
+                
+                self.db.session.commit()
+                return existing.id  # Return only ID
+            
+            # Create new
+            new_content = self.Content(
+                tmdb_id=tmdb_data['id'],
+                title=tmdb_data.get('title') or tmdb_data.get('name'),
+                original_title=tmdb_data.get('original_title'),
+                content_type=content_type,
+                genres=json.dumps([]),  # Fetch genres separately if needed
+                languages=json.dumps([language]),
+                release_date=None,  # Parse date if needed
+                rating=tmdb_data.get('vote_average'),
+                vote_count=tmdb_data.get('vote_count'),
+                popularity=tmdb_data.get('popularity'),
+                overview=tmdb_data.get('overview'),
+                poster_path=tmdb_data.get('poster_path'),
+                backdrop_path=tmdb_data.get('backdrop_path'),
+                is_trending=True
+            )
+            
+            self.db.session.add(new_content)
+            self.db.session.commit()
+            return new_content.id  # Return only ID
                 
         except Exception as e:
             logger.error(f"Error saving content: {e}")
             self.db.session.rollback()
             return None
     
-    def _format_trending_content(self, content, trending: TrendingContent) -> Dict:
-        """Format content for API response"""
+    def _format_trending_for_cache(self, content_id: int, tmdb_data: Dict, 
+                                   trending: TrendingContent, language: str) -> Dict:
+        """Format trending data as dictionary for caching"""
         poster_url = None
-        if content.poster_path:
+        poster_path = tmdb_data.get('poster_path')
+        if poster_path:
+            if poster_path.startswith('http'):
+                poster_url = poster_path
+            else:
+                poster_url = f"https://image.tmdb.org/t/p/w500{poster_path}"
+        
+        return {
+            'id': content_id,
+            'tmdb_id': tmdb_data['id'],
+            'title': tmdb_data.get('title') or tmdb_data.get('name'),
+            'content_type': 'movie' if 'title' in tmdb_data else 'tv',
+            'genres': [],  # Would need separate API call
+            'languages': [language],
+            'rating': tmdb_data.get('vote_average'),
+            'poster_path': poster_url,
+            'overview': tmdb_data.get('overview'),
+            'unified_score': trending.unified_score,
+            'confidence': trending.confidence,
+            'category': trending.category.value,
+            'trending_reasons': trending.trending_reasons,
+            'velocity': trending.metrics.velocity,
+            'momentum': trending.metrics.momentum,
+            'is_viral': trending.metrics.viral_score > 0,
+            'is_trending': True
+        }
+    
+    def _format_trending_content(self, content, trending: TrendingContent) -> Dict:
+        """Format content object for API response (deprecated - use _format_trending_for_cache)"""
+        # This is kept for backward compatibility but shouldn't be used
+        # with SQLAlchemy objects across sessions
+        poster_url = None
+        if hasattr(content, 'poster_path') and content.poster_path:
             if content.poster_path.startswith('http'):
                 poster_url = content.poster_path
             else:
                 poster_url = f"https://image.tmdb.org/t/p/w500{content.poster_path}"
         
         return {
-            'id': content.id,
-            'tmdb_id': content.tmdb_id,
-            'title': content.title,
-            'content_type': content.content_type,
-            'genres': json.loads(content.genres or '[]'),
-            'languages': json.loads(content.languages or '[]'),
-            'rating': content.rating,
+            'id': content.id if hasattr(content, 'id') else None,
+            'tmdb_id': content.tmdb_id if hasattr(content, 'tmdb_id') else None,
+            'title': content.title if hasattr(content, 'title') else '',
+            'content_type': content.content_type if hasattr(content, 'content_type') else '',
+            'genres': json.loads(content.genres or '[]') if hasattr(content, 'genres') else [],
+            'languages': json.loads(content.languages or '[]') if hasattr(content, 'languages') else [],
+            'rating': content.rating if hasattr(content, 'rating') else None,
             'poster_path': poster_url,
-            'overview': content.overview,
+            'overview': content.overview if hasattr(content, 'overview') else '',
             'unified_score': trending.unified_score,
             'confidence': trending.confidence,
             'category': trending.category.value,
