@@ -14,7 +14,6 @@ from dataclasses import dataclass, field
 from enum import Enum
 import threading
 import re
-from bs4 import BeautifulSoup
 import random
 
 logger = logging.getLogger(__name__)
@@ -695,7 +694,7 @@ class UnifiedTrendingScoreEngine:
     def _create_http_session(self):
         """Create HTTP session with retry logic"""
         from requests.adapters import HTTPAdapter
-        from requests.packages.urllib3.util.retry import Retry
+        from urllib3.util.retry import Retry
         
         session = requests.Session()
         retry = Retry(
@@ -856,6 +855,9 @@ class AdvancedTrendingService:
         self.session = self._create_http_session()
         self.base_url = 'https://api.themoviedb.org/3'
         
+        # Store Content model reference
+        self.Content = None
+        
         # Background thread for continuous updates
         self.update_thread = None
         self.stop_updates = False
@@ -863,7 +865,7 @@ class AdvancedTrendingService:
     def _create_http_session(self):
         """Create HTTP session with retry logic"""
         from requests.adapters import HTTPAdapter
-        from requests.packages.urllib3.util.retry import Retry
+        from urllib3.util.retry import Retry
         
         session = requests.Session()
         retry = Retry(
@@ -877,6 +879,10 @@ class AdvancedTrendingService:
         session.mount('http://', adapter)
         session.mount('https://', adapter)
         return session
+    
+    def set_content_model(self, content_model):
+        """Set the Content model reference"""
+        self.Content = content_model
     
     def start_background_updates(self):
         """Start background thread for continuous trending updates"""
@@ -1218,7 +1224,7 @@ class AdvancedTrendingService:
                             # Boost regional score
                             trending.metrics.geographic_score *= 1.5
                             
-                            content = self._save_content(movie, 'movie', language)
+                            content = self._save_content(movie, 'tv', language)
                             if content:
                                 formatted = self._format_trending_content(content, trending)
                                 formatted['category'] = 'popular_regional'
@@ -1231,55 +1237,53 @@ class AdvancedTrendingService:
         return regional[:limit]
     
     def _save_content(self, tmdb_data: Dict, content_type: str, language: str):
-        """Save content to database with proper session handling"""
-        from flask import current_app
-        
+        """Save content to database"""
         try:
-            with current_app.app_context():
-                from app import Content, db
+            if not self.Content:
+                logger.warning("Content model not set")
+                return None
+            
+            # Check if exists
+            existing = self.db.session.query(self.Content).filter_by(
+                tmdb_id=tmdb_data['id']
+            ).first()
+            
+            if existing:
+                # Update existing
+                existing.popularity = tmdb_data.get('popularity', existing.popularity)
+                existing.vote_count = tmdb_data.get('vote_count', existing.vote_count)
+                existing.rating = tmdb_data.get('vote_average', existing.rating)
+                existing.is_trending = True
+                existing.updated_at = datetime.utcnow()
                 
-                # Check if exists
-                existing = db.session.query(Content).filter_by(
-                    tmdb_id=tmdb_data['id']
-                ).first()
-                
-                if existing:
-                    # Update existing
-                    existing.popularity = tmdb_data.get('popularity', existing.popularity)
-                    existing.vote_count = tmdb_data.get('vote_count', existing.vote_count)
-                    existing.rating = tmdb_data.get('vote_average', existing.rating)
-                    existing.is_trending = True
-                    existing.updated_at = datetime.utcnow()
-                    
-                    db.session.commit()
-                    db.session.refresh(existing)
-                    return existing
-                
-                # Create new
-                new_content = Content(
-                    tmdb_id=tmdb_data['id'],
-                    title=tmdb_data.get('title') or tmdb_data.get('name'),
-                    original_title=tmdb_data.get('original_title'),
-                    content_type=content_type,
-                    genres=json.dumps([]),  # Fetch genres separately if needed
-                    languages=json.dumps([language]),
-                    release_date=None,  # Parse date if needed
-                    rating=tmdb_data.get('vote_average'),
-                    vote_count=tmdb_data.get('vote_count'),
-                    popularity=tmdb_data.get('popularity'),
-                    overview=tmdb_data.get('overview'),
-                    poster_path=tmdb_data.get('poster_path'),
-                    backdrop_path=tmdb_data.get('backdrop_path'),
-                    is_trending=True
-                )
-                
-                db.session.add(new_content)
-                db.session.commit()
-                db.session.refresh(new_content)
-                return new_content
-                
+                self.db.session.commit()
+                return existing
+            
+            # Create new
+            new_content = self.Content(
+                tmdb_id=tmdb_data['id'],
+                title=tmdb_data.get('title') or tmdb_data.get('name'),
+                original_title=tmdb_data.get('original_title'),
+                content_type=content_type,
+                genres=json.dumps([]),  # Fetch genres separately if needed
+                languages=json.dumps([language]),
+                release_date=None,  # Parse date if needed
+                rating=tmdb_data.get('vote_average'),
+                vote_count=tmdb_data.get('vote_count'),
+                popularity=tmdb_data.get('popularity'),
+                overview=tmdb_data.get('overview'),
+                poster_path=tmdb_data.get('poster_path'),
+                backdrop_path=tmdb_data.get('backdrop_path'),
+                is_trending=True
+            )
+            
+            self.db.session.add(new_content)
+            self.db.session.commit()
+            return new_content
+            
         except Exception as e:
             logger.error(f"Error saving content: {e}")
+            self.db.session.rollback()
             return None
     
     def _format_trending_content(self, content, trending: TrendingContent) -> Dict:
@@ -1316,6 +1320,18 @@ class AdvancedTrendingService:
 def init_advanced_trending_service(db, cache, tmdb_api_key):
     """Initialize the advanced trending service"""
     service = AdvancedTrendingService(db, cache, tmdb_api_key)
+    
+    # Get Content model from app context
+    try:
+        from flask import current_app
+        if current_app:
+            # Import the Content model from the app module
+            import sys
+            app_module = sys.modules.get('app')
+            if app_module and hasattr(app_module, 'Content'):
+                service.set_content_model(app_module.Content)
+    except Exception as e:
+        logger.warning(f"Could not set Content model: {e}")
     
     # Start background updates
     service.start_background_updates()
