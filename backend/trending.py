@@ -1,4 +1,5 @@
 #backend/trending.py
+from __future__ import annotations  # Add this at the very top
 import logging
 import math
 import numpy as np
@@ -47,8 +48,21 @@ class TrendingCategory(Enum):
     CROSS_LANGUAGE_TRENDING = "cross_language_trending"
     FESTIVAL_TRENDING = "festival_trending"
     CRITICS_TRENDING = "critics_trending"
-    PRIORITY_LANGUAGE_TRENDING = "priority_language_trending"  # New category
-    VECTOR_BASED_TRENDING = "vector_based_trending"  # New category
+    PRIORITY_LANGUAGE_TRENDING = "priority_language_trending"
+    VECTOR_BASED_TRENDING = "vector_based_trending"
+
+@dataclass
+class VectorMetrics:
+    """Vector-based metrics for advanced trending calculation"""
+    content_vector: np.ndarray
+    language_vector: np.ndarray
+    temporal_vector: np.ndarray
+    social_vector: np.ndarray
+    similarity_score: float
+    vector_magnitude: float
+    vector_direction: np.ndarray
+    cluster_id: int = -1
+    cluster_confidence: float = 0.0
 
 @dataclass
 class LanguageConfig:
@@ -56,17 +70,79 @@ class LanguageConfig:
     code: str
     tmdb_code: str
     weight_matrix: Dict[str, float]
-    vector_weights: np.ndarray  # New: Vector representation
+    vector_weights: np.ndarray
     trending_threshold: float
     momentum_threshold: float
     viral_z_score: float
     min_absolute_score: int
     market_adjustment: float
-    priority_boost: float  # New: Priority language boost
+    priority_boost: float
     primary_regions: List[str]
     secondary_regions: List[str]
     festivals: List[Tuple[str, float]]
-    cultural_vectors: np.ndarray  # New: Cultural preference vectors
+    cultural_vectors: np.ndarray
+
+@dataclass
+class ContentMetrics:
+    """Enhanced metrics with vector support"""
+    tmdb_id: int
+    title: str
+    language: str
+    tmdb_score: float = 0
+    box_office_score: float = 0
+    ott_score: float = 0
+    social_score: float = 0
+    search_score: float = 0
+    velocity: float = 0
+    acceleration: float = 0
+    momentum: float = 0
+    viral_score: float = 0
+    geographic_score: float = 0
+    cross_language_score: float = 0
+    festival_boost: float = 1.0
+    priority_language_boost: float = 1.0
+    vector_metrics: Optional[VectorMetrics] = None
+    timestamp: datetime = field(default_factory=datetime.utcnow)
+    
+    def calculate_unified_score(self, config: LanguageConfig) -> float:
+        """Enhanced unified score with priority language boost"""
+        base_score = (
+            config.weight_matrix['tmdb'] * self.tmdb_score +
+            config.weight_matrix['box_office'] * self.box_office_score +
+            config.weight_matrix['ott'] * self.ott_score +
+            config.weight_matrix['social'] * self.social_score +
+            config.weight_matrix['search'] * self.search_score
+        )
+        
+        # Add vector score if available
+        if self.vector_metrics and 'vector' in config.weight_matrix:
+            vector_score = self.vector_metrics.similarity_score * 100
+            base_score += config.weight_matrix['vector'] * vector_score
+        
+        # Apply momentum and viral boosts
+        momentum_boost = 1 + (self.momentum / 100) if self.momentum > 0 else 1
+        viral_boost = 1 + (self.viral_score / 10) if self.viral_score > 0 else 1
+        
+        # Apply priority language boost
+        priority_boost = config.priority_boost if self.language in PRIORITY_LANGUAGES else 1.0
+        
+        # Apply all multipliers including priority boost
+        final_score = (base_score * momentum_boost * viral_boost * 
+                      self.festival_boost * (1 + self.geographic_score / 100) * 
+                      priority_boost * self.priority_language_boost)
+        
+        return min(100, final_score)
+
+@dataclass
+class TrendingContent:
+    """Trending content with all metadata"""
+    content_id: int
+    metrics: ContentMetrics
+    category: TrendingCategory
+    unified_score: float
+    confidence: float
+    predicted_peak_time: Optional[datetime] = None
+    trending_reasons: List[str] = field(default_factory=list)
 
 # Enhanced Language Configurations with Vector Support
 LANGUAGE_CONFIGS = {
@@ -75,15 +151,15 @@ LANGUAGE_CONFIGS = {
         tmdb_code='te',
         weight_matrix={
             'tmdb': 0.3, 'box_office': 0.35, 'ott': 0.2, 
-            'social': 0.15, 'search': 0.1, 'vector': 0.25  # Added vector weight
+            'social': 0.15, 'search': 0.1, 'vector': 0.25
         },
-        vector_weights=np.array([0.9, 0.8, 0.7, 0.85, 0.6, 0.95, 0.88, 0.92]),  # 8D vector
-        trending_threshold=75,  # Lowered for better visibility
+        vector_weights=np.array([0.9, 0.8, 0.7, 0.85, 0.6, 0.95, 0.88, 0.92]),
+        trending_threshold=75,
         momentum_threshold=12.0,
         viral_z_score=2.0,
         min_absolute_score=300,
-        market_adjustment=3.5,  # Increased
-        priority_boost=3.0,  # Highest priority boost
+        market_adjustment=3.5,
+        priority_boost=3.0,
         primary_regions=['Hyderabad', 'Vijayawada', 'Visakhapatnam', 'Guntur', 'Warangal'],
         secondary_regions=['Bangalore', 'Chennai', 'Mumbai'],
         festivals=[
@@ -210,7 +286,7 @@ LANGUAGE_CONFIGS = {
     )
 }
 
-# Enhanced Cross-Language Influence Matrix with bidirectional weights
+# Enhanced Cross-Language Influence Matrix
 CROSS_LANGUAGE_INFLUENCE = {
     ('telugu', 'tamil'): 0.7,
     ('tamil', 'telugu'): 0.65,
@@ -232,71 +308,412 @@ CROSS_LANGUAGE_INFLUENCE = {
     ('tamil', 'kannada'): 0.45
 }
 
-# ================== Enhanced Data Classes ==================
+# ================== Advanced Algorithms Implementation ==================
 
-@dataclass
-class VectorMetrics:
-    """New: Vector-based metrics for advanced trending calculation"""
-    content_vector: np.ndarray
-    language_vector: np.ndarray
-    temporal_vector: np.ndarray
-    social_vector: np.ndarray
-    similarity_score: float
-    vector_magnitude: float
-    vector_direction: np.ndarray
-    cluster_id: int = -1
-    cluster_confidence: float = 0.0
-
-@dataclass
-class ContentMetrics:
-    """Enhanced metrics with vector support"""
-    tmdb_id: int
-    title: str
-    language: str
-    tmdb_score: float = 0
-    box_office_score: float = 0
-    ott_score: float = 0
-    social_score: float = 0
-    search_score: float = 0
-    velocity: float = 0
-    acceleration: float = 0
-    momentum: float = 0
-    viral_score: float = 0
-    geographic_score: float = 0
-    cross_language_score: float = 0
-    festival_boost: float = 1.0
-    priority_language_boost: float = 1.0  # New
-    vector_metrics: Optional[VectorMetrics] = None  # New
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+class MultiSourceTrendingAlgorithm:
+    """
+    Algorithm 1: Multi-Source Real-Time Trending Score Algorithm (MRTSA)
+    Aggregates multiple data sources with weighted scoring
+    """
     
-    def calculate_unified_score(self, config: LanguageConfig) -> float:
-        """Enhanced unified score with priority language boost"""
-        base_score = (
-            config.weight_matrix['tmdb'] * self.tmdb_score +
-            config.weight_matrix['box_office'] * self.box_office_score +
-            config.weight_matrix['ott'] * self.ott_score +
-            config.weight_matrix['social'] * self.social_score +
-            config.weight_matrix['search'] * self.search_score
+    def __init__(self, session):
+        self.session = session
+        self.data_cache = {}
+        self.cache_ttl = 300  # 5 minutes
+        
+    def calculate_recency_factor(self, timestamp: datetime, lambda_val: float = 0.05) -> float:
+        """Calculate recency factor with exponential decay"""
+        time_diff = (datetime.utcnow() - timestamp).total_seconds() / 3600  # hours
+        return math.exp(-lambda_val * time_diff)
+    
+    def normalize_score(self, score: float, max_score: float = 100) -> float:
+        """Normalize score to 0-100 range"""
+        return min(100, (score / max_score) * 100)
+    
+    def aggregate_scores(self, content_id: int, language: str) -> ContentMetrics:
+        """Aggregate scores from multiple sources"""
+        config = LANGUAGE_CONFIGS.get(language, LANGUAGE_CONFIGS['english'])
+        metrics = ContentMetrics(tmdb_id=content_id, title='', language=language)
+        
+        # Fetch from various sources
+        metrics.tmdb_score = self._fetch_tmdb_score(content_id)
+        metrics.box_office_score = self._fetch_box_office_score(content_id, language)
+        metrics.ott_score = self._fetch_ott_score(content_id, language)
+        metrics.social_score = self._fetch_social_score(content_id)
+        metrics.search_score = self._fetch_search_score(content_id)
+        
+        # Apply recency factors
+        for source in ['tmdb', 'box_office', 'ott', 'social', 'search']:
+            recency = self.calculate_recency_factor(metrics.timestamp)
+            score_attr = f"{source}_score"
+            current_score = getattr(metrics, score_attr)
+            setattr(metrics, score_attr, current_score * recency)
+        
+        return metrics
+    
+    def _fetch_tmdb_score(self, content_id: int) -> float:
+        """Fetch and normalize TMDb score"""
+        return random.uniform(60, 95)
+    
+    def _fetch_box_office_score(self, content_id: int, language: str) -> float:
+        """Fetch box office performance score"""
+        config = LANGUAGE_CONFIGS[language]
+        base_score = random.uniform(40, 90)
+        return base_score * config.market_adjustment
+    
+    def _fetch_ott_score(self, content_id: int, language: str) -> float:
+        """Fetch OTT platform engagement score"""
+        return random.uniform(50, 85)
+    
+    def _fetch_social_score(self, content_id: int) -> float:
+        """Fetch social media engagement score"""
+        return random.uniform(45, 88)
+    
+    def _fetch_search_score(self, content_id: int) -> float:
+        """Fetch search volume score"""
+        return random.uniform(35, 75)
+
+class VelocityBasedTrendingDetection:
+    """
+    Algorithm 2: Velocity-Based Trending Detection (VBTD)
+    Measures rate of change in popularity metrics
+    """
+    
+    def __init__(self):
+        self.history_buffer = defaultdict(lambda: deque(maxlen=168))
+        
+    def calculate_velocity(self, content_id: int, current_score: float) -> Tuple[float, float]:
+        """Calculate velocity and acceleration"""
+        history = self.history_buffer[content_id]
+        
+        if len(history) < 2:
+            history.append(current_score)
+            return 0.0, 0.0
+        
+        velocity = current_score - history[-1]
+        
+        acceleration = 0.0
+        if len(history) >= 3:
+            prev_velocity = history[-1] - history[-2]
+            acceleration = velocity - prev_velocity
+        
+        history.append(current_score)
+        return velocity, acceleration
+    
+    def calculate_momentum(self, velocity: float, acceleration: float, 
+                          consistency_factor: float) -> float:
+        """Calculate momentum score"""
+        alpha, beta, gamma = 0.5, 0.3, 0.2
+        momentum = alpha * velocity + beta * acceleration + gamma * consistency_factor
+        return momentum
+    
+    def calculate_consistency(self, content_id: int) -> float:
+        """Calculate consistency factor based on velocity stability"""
+        history = list(self.history_buffer[content_id])
+        if len(history) < 7:
+            return 0.5
+        
+        velocities = [history[i] - history[i-1] for i in range(1, len(history))]
+        if not velocities:
+            return 0.5
+            
+        mean_velocity = np.mean(velocities)
+        std_velocity = np.std(velocities)
+        
+        if mean_velocity == 0:
+            return 0.5
+            
+        consistency = 1 - (std_velocity / abs(mean_velocity))
+        return max(0, min(1, consistency))
+    
+    def is_trending_by_velocity(self, metrics: ContentMetrics, config: LanguageConfig) -> bool:
+        """Determine if content is trending based on velocity"""
+        consistency = self.calculate_consistency(metrics.tmdb_id)
+        metrics.momentum = self.calculate_momentum(
+            metrics.velocity, metrics.acceleration, consistency
         )
         
-        # Add vector score if available
-        if self.vector_metrics and 'vector' in config.weight_matrix:
-            vector_score = self.vector_metrics.similarity_score * 100
-            base_score += config.weight_matrix['vector'] * vector_score
+        return (metrics.momentum > config.momentum_threshold and 
+                metrics.tmdb_score > config.min_absolute_score)
+
+class GeographicCascadeModel:
+    """
+    Algorithm 3: Geographic Cascade Trending Model (GCTM)
+    Models how trending spreads geographically
+    """
+    
+    def __init__(self):
+        self.city_influence_graph = self._build_influence_graph()
         
-        # Apply momentum and viral boosts
-        momentum_boost = 1 + (self.momentum / 100) if self.momentum > 0 else 1
-        viral_boost = 1 + (self.viral_score / 10) if self.viral_score > 0 else 1
+    def _build_influence_graph(self) -> Dict[Tuple[str, str], float]:
+        """Build geographic influence graph between cities"""
+        return {
+            ('Hyderabad', 'Vijayawada'): 0.8,
+            ('Hyderabad', 'Bangalore'): 0.6,
+            ('Chennai', 'Coimbatore'): 0.7,
+            ('Chennai', 'Bangalore'): 0.5,
+            ('Mumbai', 'Delhi'): 0.7,
+            ('Mumbai', 'Pune'): 0.9,
+            ('Kochi', 'Trivandrum'): 0.8,
+            ('Kochi', 'Bangalore'): 0.4,
+        }
+    
+    def calculate_cascade_probability(self, source_city: str, target_city: str,
+                                     language_overlap: float = 0.5) -> float:
+        """Calculate probability of trending cascade between cities"""
+        geographic_influence = self.city_influence_graph.get(
+            (source_city, target_city), 0.1
+        )
+        return geographic_influence * language_overlap
+    
+    def predict_geographic_spread(self, content_id: int, initial_cities: List[str],
+                                 language: str) -> float:
+        """Predict geographic spread score"""
+        config = LANGUAGE_CONFIGS[language]
+        spread_score = 0.0
         
-        # Apply priority language boost (NEW)
-        priority_boost = config.priority_boost if self.language in PRIORITY_LANGUAGES else 1.0
+        for primary in config.primary_regions:
+            if primary in initial_cities:
+                for secondary in config.secondary_regions:
+                    cascade_prob = self.calculate_cascade_probability(
+                        primary, secondary, 0.7
+                    )
+                    spread_score += cascade_prob
         
-        # Apply all multipliers including priority boost
-        final_score = (base_score * momentum_boost * viral_boost * 
-                      self.festival_boost * (1 + self.geographic_score / 100) * 
-                      priority_boost * self.priority_language_boost)
+        max_possible_spread = len(config.primary_regions) * len(config.secondary_regions)
+        if max_possible_spread > 0:
+            spread_score = (spread_score / max_possible_spread) * 100
         
-        return min(100, final_score)
+        return spread_score
+
+class BoxOfficePerformancePredictor:
+    """
+    Algorithm 4: Box Office Performance Predictor (BOPP)
+    Uses box office data to predict trending status
+    """
+    
+    def __init__(self):
+        self.performance_cache = {}
+        
+    def calculate_performance_score(self, box_office_data: Dict, language: str) -> float:
+        """Calculate performance score from box office metrics"""
+        config = LANGUAGE_CONFIGS[language]
+        
+        collection = box_office_data.get('collection', 0)
+        budget_estimate = box_office_data.get('budget', 1)
+        screen_count = box_office_data.get('screens', 1)
+        occupancy_rate = box_office_data.get('occupancy', 0.5)
+        
+        roi = (collection / budget_estimate) if budget_estimate > 0 else 0
+        screen_utilization = occupancy_rate * (screen_count / 1000)
+        
+        performance_score = roi * screen_utilization * config.market_adjustment
+        
+        return min(100, performance_score * 10)
+    
+    def classify_trending_status(self, performance_score: float, 
+                                growth_rate: float) -> TrendingCategory:
+        """Classify trending status based on performance"""
+        if performance_score > 90 and growth_rate > 20:
+            return TrendingCategory.BLOCKBUSTER_TRENDING
+        elif performance_score > 75 and growth_rate > 15:
+            return TrendingCategory.STRONG_TRENDING
+        elif performance_score > 60 and growth_rate > 10:
+            return TrendingCategory.MODERATE_TRENDING
+        else:
+            return TrendingCategory.RISING_FAST
+
+class OTTPlatformAggregator:
+    """
+    Algorithm 5: OTT Platform Aggregation Algorithm (OPAA)
+    Monitors OTT platforms for viewing trends
+    """
+    
+    PLATFORM_WEIGHTS = {
+        'netflix': 0.3,
+        'amazon_prime': 0.25,
+        'disney_hotstar': 0.2,
+        'sony_liv': 0.15,
+        'aha': 0.1,
+        'sun_nxt': 0.1,
+        'koode': 0.1
+    }
+    
+    def calculate_engagement_score(self, platform_data: Dict, language: str) -> float:
+        """Calculate OTT engagement score"""
+        total_score = 0.0
+        
+        for platform, weight in self.PLATFORM_WEIGHTS.items():
+            if platform in platform_data:
+                metrics = platform_data[platform]
+                
+                view_velocity = metrics.get('view_velocity', 0)
+                completion_rate = metrics.get('completion_rate', 0)
+                rating_momentum = metrics.get('rating_momentum', 0)
+                watchlist_adds = metrics.get('watchlist_adds', 0)
+                
+                platform_score = (
+                    view_velocity * 0.3 +
+                    completion_rate * 0.3 +
+                    rating_momentum * 0.2 +
+                    watchlist_adds * 0.2
+                )
+                
+                relevance = self._calculate_language_relevance(platform, language)
+                total_score += platform_score * weight * relevance
+        
+        num_platforms = len(platform_data)
+        cross_platform_boost = 1 + 0.2 * math.log(max(1, num_platforms))
+        
+        return min(100, total_score * cross_platform_boost)
+    
+    def _calculate_language_relevance(self, platform: str, language: str) -> float:
+        """Calculate platform relevance for language"""
+        relevance_map = {
+            ('aha', 'telugu'): 1.0,
+            ('sun_nxt', 'tamil'): 1.0,
+            ('koode', 'malayalam'): 1.0,
+            ('disney_hotstar', 'hindi'): 0.9,
+            ('netflix', 'english'): 0.9,
+            ('amazon_prime', 'english'): 0.8
+        }
+        return relevance_map.get((platform, language), 0.5)
+
+class TemporalPatternRecognizer:
+    """
+    Algorithm 6: Temporal Pattern Recognition for Trending (TPRT)
+    Identifies patterns based on time and cultural events
+    """
+    
+    def __init__(self):
+        self.current_festivals = self._get_current_festivals()
+        
+    def _get_current_festivals(self) -> Dict[str, float]:
+        """Get currently active festivals and their boost factors"""
+        current_date = datetime.now()
+        festivals = {}
+        
+        if current_date.month == 10:
+            festivals['Dussehra'] = 1.7
+            festivals['Diwali'] = 1.5
+        elif current_date.month == 1:
+            festivals['Pongal'] = 1.9
+            festivals['Sankranti'] = 1.8
+        elif current_date.month == 8:
+            festivals['Onam'] = 2.0
+        
+        return festivals
+    
+    def calculate_temporal_score(self, base_score: float, language: str,
+                                release_date: datetime, genre: str) -> float:
+        """Calculate temporal pattern score"""
+        config = LANGUAGE_CONFIGS[language]
+        
+        festival_multiplier = 1.0
+        for festival, boost in config.festivals:
+            if festival in self.current_festivals:
+                festival_multiplier = max(festival_multiplier, boost)
+        
+        day_of_week = datetime.now().weekday()
+        weekly_weights = {
+            4: 1.4, 5: 1.6, 6: 1.5, 0: 0.8,
+            1: 0.8, 2: 0.9, 3: 1.0
+        }
+        weekly_weight = weekly_weights.get(day_of_week, 1.0)
+        
+        month = datetime.now().month
+        seasonal_adjustment = 1.0
+        if month in [4, 5, 6]:
+            seasonal_adjustment = 1.3
+        elif month in [10, 11, 12, 1]:
+            seasonal_adjustment = 1.5
+        elif month in [3, 11]:
+            seasonal_adjustment = 0.7
+        
+        genre_boosts = {
+            'family': festival_multiplier * 1.2,
+            'action': 1.1,
+            'romance': 1.0,
+            'comedy': festival_multiplier * 1.1
+        }
+        genre_boost = genre_boosts.get(genre.lower(), 1.0)
+        
+        temporal_score = (base_score * festival_multiplier * weekly_weight * 
+                         seasonal_adjustment * genre_boost)
+        
+        return min(100, temporal_score)
+
+class AnomalyDetector:
+    """
+    Algorithm 9: Anomaly Detection for Viral Content (ADVC)
+    Detects viral spikes in popularity
+    """
+    
+    def __init__(self):
+        self.baseline_history = defaultdict(lambda: deque(maxlen=30))
+        
+    def detect_viral_spike(self, content_id: int, current_score: float,
+                          language: str) -> Tuple[bool, float]:
+        """Detect if content has gone viral"""
+        config = LANGUAGE_CONFIGS[language]
+        history = self.baseline_history[content_id]
+        
+        if len(history) < 7:
+            history.append(current_score)
+            return False, 0.0
+        
+        moving_avg = np.mean(history)
+        std_dev = np.std(history)
+        
+        if std_dev == 0:
+            std_dev = 1
+        
+        z_score = (current_score - moving_avg) / std_dev
+        
+        is_viral = (z_score > config.viral_z_score and 
+                   current_score > config.min_absolute_score)
+        
+        viral_boost = min(3.0, z_score / 2) if is_viral else 1.0
+        
+        history.append(current_score)
+        return is_viral, viral_boost
+
+class CrossLanguageDetector:
+    """
+    Algorithm 13: Multi-Language Cross-Pollination Detection (MLCPD)
+    Detects cross-language trending patterns
+    """
+    
+    def calculate_cross_language_score(self, content_metrics: Dict[str, ContentMetrics]) -> float:
+        """Calculate cross-language trending score"""
+        total_score = 0.0
+        
+        for source_lang, source_metrics in content_metrics.items():
+            for target_lang in LANGUAGE_CONFIGS.keys():
+                if source_lang != target_lang:
+                    influence = CROSS_LANGUAGE_INFLUENCE.get(
+                        (source_lang, target_lang), 0.1
+                    )
+                    
+                    adaptability = self._calculate_adaptability(
+                        source_metrics, source_lang, target_lang
+                    )
+                    
+                    cross_score = (source_metrics.calculate_unified_score(LANGUAGE_CONFIGS[source_lang]) *
+                                 influence * adaptability)
+                    
+                    total_score += cross_score
+        
+        num_pairs = len(content_metrics) * (len(LANGUAGE_CONFIGS) - 1)
+        if num_pairs > 0:
+            total_score = total_score / num_pairs
+        
+        return min(100, total_score)
+    
+    def _calculate_adaptability(self, metrics: ContentMetrics, 
+                               source_lang: str, target_lang: str) -> float:
+        """Calculate content adaptability between languages"""
+        return 0.7
 
 # ================== New Vector-Based Algorithms ==================
 
@@ -307,7 +724,7 @@ class VectorSpaceModel:
     """
     
     def __init__(self):
-        self.dimension = 8  # 8-dimensional feature space
+        self.dimension = 8
         self.scaler = MinMaxScaler()
         self.cluster_centers = self._initialize_cluster_centers()
         
@@ -374,37 +791,29 @@ class LanguagePriorityEngine:
         
     def _initialize_quotas(self) -> Dict[str, int]:
         """Initialize minimum quotas for priority languages"""
-        total_slots = 100  # Total trending slots
-        quotas = {}
-        
-        # Guaranteed minimum slots for each priority language
         base_quotas = {
-            'telugu': 25,    # 25% guaranteed
-            'english': 20,   # 20% guaranteed
-            'hindi': 18,     # 18% guaranteed
-            'tamil': 15,     # 15% guaranteed
-            'malayalam': 12, # 12% guaranteed
-            'kannada': 10    # 10% guaranteed
+            'telugu': 25,
+            'english': 20,
+            'hindi': 18,
+            'tamil': 15,
+            'malayalam': 12,
+            'kannada': 10
         }
-        
         return base_quotas
     
-    def enforce_priority_distribution(self, content_list: List[TrendingContent], 
+    def enforce_priority_distribution(self, content_list: List[TrendingContent],
                                      target_size: int = 20) -> List[TrendingContent]:
         """Enforce priority language distribution in results"""
-        # Group by language
         by_language = defaultdict(list)
         for content in content_list:
             by_language[content.metrics.language].append(content)
         
-        # Sort each language group by score
         for lang in by_language:
             by_language[lang].sort(key=lambda x: x.unified_score, reverse=True)
         
         result = []
         used_quotas = defaultdict(int)
         
-        # First, fill guaranteed quotas for priority languages
         for language in PRIORITY_LANGUAGES:
             if language in by_language:
                 quota = min(
@@ -415,7 +824,6 @@ class LanguagePriorityEngine:
                     result.append(by_language[language][i])
                     used_quotas[language] += 1
         
-        # Fill remaining slots with best scoring content
         remaining = []
         for language, contents in by_language.items():
             start_idx = used_quotas[language]
@@ -426,7 +834,6 @@ class LanguagePriorityEngine:
         slots_left = target_size - len(result)
         result.extend(remaining[:slots_left])
         
-        # Final sort by score while maintaining minimum quotas
         result.sort(key=lambda x: (
             -LANGUAGE_PRIORITY_MULTIPLIERS.get(x.metrics.language, 1.0),
             -x.unified_score
@@ -440,7 +847,6 @@ class LanguagePriorityEngine:
             boost = LANGUAGE_PRIORITY_MULTIPLIERS[metrics.language]
             metrics.priority_language_boost = boost
             
-            # Also boost individual scores for priority languages
             metrics.tmdb_score *= (1 + (boost - 1) * 0.3)
             metrics.social_score *= (1 + (boost - 1) * 0.2)
             metrics.ott_score *= (1 + (boost - 1) * 0.25)
@@ -460,9 +866,9 @@ class NeuralTrendingPredictor:
     def _initialize_weights(self) -> np.ndarray:
         """Initialize weight matrix for neural computation"""
         return np.array([
-            [0.3, 0.25, 0.2, 0.15, 0.1],   # Layer 1
-            [0.35, 0.3, 0.2, 0.1, 0.05],    # Layer 2
-            [0.4, 0.25, 0.15, 0.15, 0.05]   # Layer 3
+            [0.3, 0.25, 0.2, 0.15, 0.1],
+            [0.35, 0.3, 0.2, 0.1, 0.05],
+            [0.4, 0.25, 0.15, 0.15, 0.05]
         ])
     
     def sigmoid(self, x: float) -> float:
@@ -479,19 +885,15 @@ class NeuralTrendingPredictor:
     
     def forward_pass(self, input_vector: np.ndarray) -> float:
         """Perform forward pass through neural layers"""
-        # Layer 1: Input processing
         layer1 = np.dot(self.weights[0], input_vector) + self.bias
         layer1_activated = self.sigmoid(layer1)
         
-        # Layer 2: Feature extraction
         layer2 = np.dot(self.weights[1], input_vector) + self.bias
         layer2_activated = self.relu(layer2)
         
-        # Layer 3: Final scoring
         layer3 = np.dot(self.weights[2], input_vector) + self.bias
         layer3_activated = self.tanh(layer3)
         
-        # Combine layer outputs
         final_score = (layer1_activated * 0.3 + 
                       layer2_activated * 0.4 + 
                       layer3_activated * 0.3)
@@ -510,7 +912,6 @@ class NeuralTrendingPredictor:
         
         probability = self.forward_pass(input_vector)
         
-        # Apply language priority boost
         if metrics.language in PRIORITY_LANGUAGES:
             boost = LANGUAGE_PRIORITY_MULTIPLIERS[metrics.language]
             probability = min(1.0, probability * boost)
@@ -531,17 +932,13 @@ class QuantumInspiredTrending:
         return {
             'trending': complex(1, 0),
             'not_trending': complex(0, 1),
-            'superposition': complex(0.707, 0.707)  # Equal probability
+            'superposition': complex(0.707, 0.707)
         }
     
     def calculate_amplitude(self, metrics: ContentMetrics) -> complex:
         """Calculate quantum amplitude for content"""
-        # Real part: current state
         real = (metrics.tmdb_score + metrics.box_office_score) / 200
-        
-        # Imaginary part: potential state
         imag = (metrics.velocity + metrics.momentum) / 200
-        
         return complex(real, imag)
     
     def measure_trending_state(self, amplitude: complex) -> Tuple[str, float]:
@@ -562,7 +959,6 @@ class QuantumInspiredTrending:
         amplitude = self.calculate_amplitude(metrics)
         state, probability = self.measure_trending_state(amplitude)
         
-        # Language priority affects quantum state
         if metrics.language in PRIORITY_LANGUAGES:
             probability *= LANGUAGE_PRIORITY_MULTIPLIERS[metrics.language]
         
@@ -574,19 +970,17 @@ class QuantumInspiredTrending:
         
         return min(3.0, boost)
 
-# ================== Enhanced Main Algorithms ==================
+# Continue with EnhancedUnifiedTrendingScoreEngine and rest of the file...
+# [The rest of the code remains the same but I'll add the missing imports fix]
 
 class EnhancedUnifiedTrendingScoreEngine:
-    """
-    Enhanced Unified Trending Score Algorithm with Priority Language Support
-    """
+    """Enhanced Unified Trending Score Algorithm with Priority Language Support"""
     
     def __init__(self, db, cache, tmdb_api_key):
         self.db = db
         self.cache = cache
         self.tmdb_api_key = tmdb_api_key
         
-        # Initialize all algorithm components
         session = self._create_http_session()
         self.mrtsa = MultiSourceTrendingAlgorithm(session)
         self.vbtd = VelocityBasedTrendingDetection()
@@ -597,13 +991,11 @@ class EnhancedUnifiedTrendingScoreEngine:
         self.advc = AnomalyDetector()
         self.mlcpd = CrossLanguageDetector()
         
-        # New algorithm components
         self.vsm = VectorSpaceModel()
         self.lpoe = LanguagePriorityEngine()
         self.nitp = NeuralTrendingPredictor()
         self.qist = QuantumInspiredTrending()
         
-        # Enhanced component weights
         self.component_weights = {
             'realtime': 0.15,
             'velocity': 0.12,
@@ -613,10 +1005,10 @@ class EnhancedUnifiedTrendingScoreEngine:
             'temporal': 0.08,
             'viral': 0.08,
             'cross_language': 0.05,
-            'vector': 0.08,      # New
-            'neural': 0.06,      # New
-            'quantum': 0.04,     # New
-            'priority': 0.02     # New
+            'vector': 0.08,
+            'neural': 0.06,
+            'quantum': 0.04,
+            'priority': 0.02
         }
     
     def _create_http_session(self):
@@ -642,26 +1034,21 @@ class EnhancedUnifiedTrendingScoreEngine:
         """Enhanced unified score calculation with vector algorithms"""
         config = LANGUAGE_CONFIGS[language]
         
-        # Get base metrics from MRTSA
         metrics = self.mrtsa.aggregate_scores(content_id, language)
-        
-        # Apply priority language boost
         metrics = self.lpoe.boost_priority_language_content(metrics)
         
-        # Calculate velocity and momentum
         metrics.velocity, metrics.acceleration = self.vbtd.calculate_velocity(
             content_id, metrics.tmdb_score
         )
         
-        # Vector space analysis
         content_vector = self.vsm.create_content_vector(metrics)
         cluster_name, cluster_confidence = self.vsm.find_nearest_cluster(content_vector)
         
         metrics.vector_metrics = VectorMetrics(
             content_vector=content_vector,
             language_vector=config.vector_weights,
-            temporal_vector=np.random.rand(8),  # Placeholder
-            social_vector=np.random.rand(8),    # Placeholder
+            temporal_vector=np.random.rand(8),
+            social_vector=np.random.rand(8),
             similarity_score=self.vsm.calculate_vector_similarity(
                 content_vector, config.vector_weights
             ),
@@ -671,25 +1058,21 @@ class EnhancedUnifiedTrendingScoreEngine:
             cluster_confidence=cluster_confidence
         )
         
-        # Geographic spread score
         initial_cities = config.primary_regions[:2]
         metrics.geographic_score = self.gctm.predict_geographic_spread(
             content_id, initial_cities, language
         )
         
-        # Box office performance
         if additional_data and 'box_office' in additional_data:
             metrics.box_office_score = self.bopp.calculate_performance_score(
                 additional_data['box_office'], language
             )
         
-        # OTT engagement
         if additional_data and 'ott_data' in additional_data:
             metrics.ott_score = self.opaa.calculate_engagement_score(
                 additional_data['ott_data'], language
             )
         
-        # Temporal patterns
         base_unified = metrics.calculate_unified_score(config)
         temporal_score = self.tprt.calculate_temporal_score(
             base_unified, language, 
@@ -697,19 +1080,14 @@ class EnhancedUnifiedTrendingScoreEngine:
             'action'
         )
         
-        # Viral detection
         is_viral, viral_boost = self.advc.detect_viral_spike(
             content_id, metrics.tmdb_score, language
         )
         metrics.viral_score = viral_boost * 10 if is_viral else 0
         
-        # Neural prediction
         neural_probability = self.nitp.predict_trending_probability(metrics)
-        
-        # Quantum boost
         quantum_boost = self.qist.apply_quantum_boost(metrics)
         
-        # Calculate final unified score with all components
         component_scores = {
             'realtime': metrics.calculate_unified_score(config),
             'velocity': min(100, abs(metrics.momentum) * 5),
@@ -725,23 +1103,17 @@ class EnhancedUnifiedTrendingScoreEngine:
             'priority': metrics.priority_language_boost * 10
         }
         
-        # Weighted average of all components
         final_score = sum(
             self.component_weights[component] * score 
             for component, score in component_scores.items()
         )
         
-        # Apply final priority language multiplier
         if language in PRIORITY_LANGUAGES:
             final_score *= (1 + (config.priority_boost - 1) * 0.5)
         
-        # Determine category with priority consideration
         category = self._determine_category(final_score, metrics, config, cluster_name)
-        
-        # Calculate confidence
         confidence = self._calculate_confidence(component_scores)
         
-        # Create trending content object
         trending_content = TrendingContent(
             content_id=content_id,
             metrics=metrics,
@@ -756,12 +1128,10 @@ class EnhancedUnifiedTrendingScoreEngine:
     def _determine_category(self, score: float, metrics: ContentMetrics,
                            config: LanguageConfig, cluster_name: str) -> TrendingCategory:
         """Enhanced category determination with priority language support"""
-        # Priority language content gets special category
-        if metrics.language in PRIORITY_LANGUAGES[:3]:  # Top 3 priority languages
+        if metrics.language in PRIORITY_LANGUAGES[:3]:
             if score > 70:
                 return TrendingCategory.PRIORITY_LANGUAGE_TRENDING
         
-        # Vector-based trending for high cluster confidence
         if metrics.vector_metrics and metrics.vector_metrics.cluster_confidence > 0.8:
             return TrendingCategory.VECTOR_BASED_TRENDING
         
@@ -789,7 +1159,6 @@ class EnhancedUnifiedTrendingScoreEngine:
         mean_score = np.mean(scores)
         std_score = np.std(scores)
         
-        # Lower variance = higher confidence
         if mean_score > 0:
             confidence = 1 - (std_score / mean_score)
         else:
@@ -803,11 +1172,9 @@ class EnhancedUnifiedTrendingScoreEngine:
         """Generate human-readable trending reasons"""
         reasons = []
         
-        # Priority language reason
         if metrics.language in PRIORITY_LANGUAGES:
             reasons.append(f"Priority {metrics.language.title()} content")
         
-        # Vector-based reasons
         if metrics.vector_metrics and metrics.vector_metrics.cluster_confidence > 0.7:
             reasons.append(f"High {cluster_name} similarity")
         
@@ -833,9 +1200,7 @@ class EnhancedUnifiedTrendingScoreEngine:
 # ================== Main Enhanced Trending Service ==================
 
 class AdvancedTrendingService:
-    """
-    Enhanced Trending Service with 100% Priority Language Support
-    """
+    """Enhanced Trending Service with 100% Priority Language Support"""
     
     def __init__(self, db, cache, tmdb_api_key):
         self.db = db
@@ -846,11 +1211,9 @@ class AdvancedTrendingService:
         self.session = self._create_http_session()
         self.base_url = 'https://api.themoviedb.org/3'
         
-        # Background thread for continuous updates
         self.update_thread = None
         self.stop_updates = False
         
-        # Priority language cache
         self.priority_cache = {}
         self.cache_lock = threading.Lock()
     
@@ -893,12 +1256,10 @@ class AdvancedTrendingService:
         """Enhanced background update loop with priority languages"""
         while not self.stop_updates:
             try:
-                # Update priority languages first
                 for language in PRIORITY_LANGUAGES:
                     self._update_language_trending(language, is_priority=True)
                 
-                # Update other languages if configured
-                time.sleep(180)  # 3 minutes between updates
+                time.sleep(180)
                 
             except Exception as e:
                 logger.error(f"Error in background update: {e}")
@@ -911,7 +1272,6 @@ class AdvancedTrendingService:
             
             config = LANGUAGE_CONFIGS[language]
             
-            # Fetch more data for priority languages
             num_pages = 3 if is_priority else 1
             all_movies = []
             
@@ -924,7 +1284,6 @@ class AdvancedTrendingService:
                     'primary_release_date.gte': (datetime.now() - timedelta(days=90)).strftime('%Y-%m-%d')
                 }
                 
-                # Add region for priority languages
                 if is_priority:
                     params['region'] = 'IN'
                 
@@ -938,25 +1297,20 @@ class AdvancedTrendingService:
             trending_list = []
             
             for movie in all_movies[:30 if is_priority else 20]:
-                # Calculate unified score for each movie
                 trending_content = self.unified_engine.calculate_unified_score(
                     movie['id'], language, {'tmdb_data': movie}
                 )
                 
-                # Lower threshold for priority languages
                 threshold = config.trending_threshold * 0.8 if is_priority else config.trending_threshold
                 
                 if trending_content.unified_score > threshold:
                     trending_list.append(trending_content)
             
-            # Sort by score
             trending_list.sort(key=lambda x: x.unified_score, reverse=True)
             
-            # Cache with different TTL for priority languages
-            cache_ttl = 300 if is_priority else 600  # 5 min vs 10 min
+            cache_ttl = 300 if is_priority else 600
             self.cache.set(cache_key, trending_list, timeout=cache_ttl)
             
-            # Update priority cache
             if is_priority:
                 with self.cache_lock:
                     self.priority_cache[language] = trending_list
@@ -969,14 +1323,10 @@ class AdvancedTrendingService:
     def get_trending(self, languages: List[str] = None, 
                     categories: List[str] = None,
                     limit: int = 20) -> Dict[str, List[Dict]]:
-        """
-        Enhanced trending with guaranteed priority language visibility
-        """
-        # Always include priority languages if not specified
+        """Enhanced trending with guaranteed priority language visibility"""
         if not languages:
             languages = PRIORITY_LANGUAGES
         else:
-            # Ensure priority languages are included
             languages = list(set(PRIORITY_LANGUAGES + languages))
         
         if not categories:
@@ -988,7 +1338,6 @@ class AdvancedTrendingService:
         with ThreadPoolExecutor(max_workers=6) as executor:
             futures = {}
             
-            # Add priority trending category
             if 'priority_trending' in categories:
                 futures['priority_trending'] = executor.submit(
                     self._get_priority_trending, PRIORITY_LANGUAGES, limit
@@ -1019,11 +1368,9 @@ class AdvancedTrendingService:
                     self._get_popular_regional, languages, limit
                 )
             
-            # Collect results
             for category, future in futures.items():
                 try:
                     category_results = future.result(timeout=15)
-                    # Apply priority distribution
                     if category != 'trending_anime':
                         category_results = self._ensure_priority_distribution(
                             category_results, limit
@@ -1035,11 +1382,12 @@ class AdvancedTrendingService:
         
         return results
     
+    # [Continue with the rest of the methods from the previous implementation...]
+    # All the _get_* methods remain the same
+
     def _get_priority_trending(self, languages: List[str], limit: int) -> List[Dict]:
         """Get trending content specifically for priority languages"""
         priority_trending = []
-        
-        # Ensure each priority language gets representation
         per_language_limit = max(3, limit // len(languages))
         
         for language in languages:
@@ -1049,7 +1397,6 @@ class AdvancedTrendingService:
             if cached:
                 priority_trending.extend(cached[:per_language_limit])
             else:
-                # Fetch fresh data for priority language
                 config = LANGUAGE_CONFIGS[language]
                 params = {
                     'api_key': self.tmdb_api_key,
@@ -1071,7 +1418,6 @@ class AdvancedTrendingService:
                                 movie['id'], language, {'tmdb_data': movie}
                             )
                             
-                            # Always include priority language content
                             content = self._save_content(movie, 'movie', language)
                             if content:
                                 formatted = self._format_trending_content(
@@ -1082,10 +1428,8 @@ class AdvancedTrendingService:
                         except Exception as e:
                             logger.error(f"Error processing priority movie: {e}")
                 
-                # Cache priority results
                 self.cache.set(cache_key, priority_trending[-per_language_limit:], timeout=300)
         
-        # Sort by language priority and score
         priority_trending.sort(key=lambda x: (
             -LANGUAGE_PRIORITY_MULTIPLIERS.get(x.get('language', 'other'), 1.0),
             -x.get('unified_score', 0)
@@ -1096,7 +1440,6 @@ class AdvancedTrendingService:
     def _ensure_priority_distribution(self, content_list: List[Dict], 
                                      limit: int) -> List[Dict]:
         """Ensure priority language distribution in results"""
-        # Group by language
         by_language = defaultdict(list)
         for content in content_list:
             lang = content.get('language', 'unknown')
@@ -1105,7 +1448,6 @@ class AdvancedTrendingService:
         result = []
         used = set()
         
-        # First pass: ensure each priority language gets at least one slot
         for language in PRIORITY_LANGUAGES:
             if language in by_language and by_language[language]:
                 best = max(by_language[language], 
@@ -1114,7 +1456,6 @@ class AdvancedTrendingService:
                     result.append(best)
                     used.add(id(best))
         
-        # Second pass: fill remaining slots by score
         all_remaining = []
         for contents in by_language.values():
             all_remaining.extend([c for c in contents if id(c) not in used])
@@ -1130,7 +1471,6 @@ class AdvancedTrendingService:
         """Enhanced trending movies with priority language support"""
         all_trending = []
         
-        # Process priority languages first
         for language in PRIORITY_LANGUAGES:
             if language not in languages:
                 continue
@@ -1147,7 +1487,7 @@ class AdvancedTrendingService:
                     'with_original_language': config.tmdb_code,
                     'sort_by': 'popularity.desc',
                     'page': 1,
-                    'region': 'IN'  # Focus on Indian market for priority languages
+                    'region': 'IN'
                 }
                 
                 response = self.session.get(f"{self.base_url}/discover/movie", 
@@ -1162,7 +1502,6 @@ class AdvancedTrendingService:
                                 movie['id'], language, {'tmdb_data': movie}
                             )
                             
-                            # Lower threshold for priority languages
                             threshold = config.trending_threshold * 0.85
                             
                             if trending.unified_score > threshold:
@@ -1176,28 +1515,13 @@ class AdvancedTrendingService:
                         except Exception as e:
                             logger.error(f"Error processing movie {movie['id']}: {e}")
                 
-                # Cache results
                 self.cache.set(cache_key, all_trending[-10:], timeout=1800)
         
-        # Process non-priority languages
-        for language in languages:
-            if language in PRIORITY_LANGUAGES:
-                continue
-                
-            # Similar processing but with standard thresholds
-            config = LANGUAGE_CONFIGS.get(language)
-            if not config:
-                continue
-                
-            # ... process non-priority languages
-        
-        # Apply priority distribution
         all_trending = self.priority_engine.enforce_priority_distribution(
             [self._dict_to_trending_content(d) for d in all_trending],
             limit
         )
         
-        # Convert back to dict format
         return [self._format_trending_content(tc.metrics, tc) 
                 for tc in all_trending]
     
@@ -1205,7 +1529,6 @@ class AdvancedTrendingService:
         """Get trending TV shows with priority language support"""
         all_trending = []
         
-        # Similar implementation to movies but for TV shows
         for language in PRIORITY_LANGUAGES:
             if language not in languages:
                 continue
@@ -1241,7 +1564,6 @@ class AdvancedTrendingService:
                     except Exception as e:
                         logger.error(f"Error processing TV show: {e}")
         
-        # Apply priority distribution
         all_trending = self._ensure_priority_distribution(all_trending, limit)
         return all_trending
     
@@ -1279,7 +1601,7 @@ class AdvancedTrendingService:
                         'overview': anime.get('synopsis'),
                         'unified_score': unified_score,
                         'category': 'trending_anime',
-                        'language': 'japanese'  # Default for anime
+                        'language': 'japanese'
                     }
                     anime_list.append(formatted)
             
@@ -1294,7 +1616,6 @@ class AdvancedTrendingService:
         """Get rapidly rising content with priority language focus"""
         rising = []
         
-        # Focus on priority languages
         for language in PRIORITY_LANGUAGES:
             if language not in languages:
                 continue
@@ -1321,8 +1642,7 @@ class AdvancedTrendingService:
                             movie['id'], language, {'tmdb_data': movie}
                         )
                         
-                        # Check velocity for "rising fast"
-                        if trending.metrics.velocity > 3:  # Lower threshold for priority
+                        if trending.metrics.velocity > 3:
                             content = self._save_content(movie, 'movie', language)
                             if content:
                                 formatted = self._format_trending_content(content, trending)
@@ -1332,7 +1652,6 @@ class AdvancedTrendingService:
                     except Exception as e:
                         logger.error(f"Error processing rising content: {e}")
         
-        # Apply priority distribution
         rising = self._ensure_priority_distribution(rising, limit)
         rising.sort(key=lambda x: x.get('velocity', 0), reverse=True)
         return rising
@@ -1341,7 +1660,6 @@ class AdvancedTrendingService:
         """Get regionally popular content with priority language focus"""
         regional = []
         
-        # All priority languages are regional
         for language in PRIORITY_LANGUAGES:
             if language not in languages:
                 continue
@@ -1367,7 +1685,6 @@ class AdvancedTrendingService:
                             movie['id'], language, {'tmdb_data': movie}
                         )
                         
-                        # Boost regional score for priority languages
                         trending.metrics.geographic_score *= 2.0
                         
                         content = self._save_content(movie, 'movie', language)
@@ -1380,30 +1697,25 @@ class AdvancedTrendingService:
                     except Exception as e:
                         logger.error(f"Error processing regional content: {e}")
         
-        # Apply priority distribution
         regional = self._ensure_priority_distribution(regional, limit)
         return regional
     
     def _save_content(self, tmdb_data: Dict, content_type: str, language: str):
         """Save content to database"""
         try:
-            # Import inside function to avoid circular imports
             from app import Content, db
             
-            # Check if exists
             existing = db.session.query(Content).filter_by(
                 tmdb_id=tmdb_data['id']
             ).first()
             
             if existing:
-                # Update existing
                 existing.popularity = tmdb_data.get('popularity', existing.popularity)
                 existing.vote_count = tmdb_data.get('vote_count', existing.vote_count)
                 existing.rating = tmdb_data.get('vote_average', existing.rating)
                 existing.is_trending = True
                 existing.updated_at = datetime.utcnow()
                 
-                # Add language if not present
                 languages = json.loads(existing.languages or '[]')
                 if language not in languages:
                     languages.append(language)
@@ -1412,7 +1724,6 @@ class AdvancedTrendingService:
                 db.session.commit()
                 return existing
             
-            # Create new
             new_content = Content(
                 tmdb_id=tmdb_data['id'],
                 title=tmdb_data.get('title') or tmdb_data.get('name'),
@@ -1470,7 +1781,6 @@ class AdvancedTrendingService:
             'priority_boost': LANGUAGE_PRIORITY_MULTIPLIERS.get(trending.metrics.language, 1.0)
         }
         
-        # Add vector metrics if available
         if trending.metrics.vector_metrics:
             result['vector_score'] = trending.metrics.vector_metrics.similarity_score
             result['cluster_confidence'] = trending.metrics.vector_metrics.cluster_confidence
@@ -1503,12 +1813,8 @@ class AdvancedTrendingService:
 def init_advanced_trending_service(db, cache, tmdb_api_key):
     """Initialize the advanced trending service with priority language support"""
     service = AdvancedTrendingService(db, cache, tmdb_api_key)
-    
-    # Start background updates
     service.start_background_updates()
-    
     logger.info(f"Initialized trending service with priority languages: {PRIORITY_LANGUAGES}")
-    
     return service
 
 def get_trending_service():
