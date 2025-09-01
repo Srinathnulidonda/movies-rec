@@ -570,25 +570,30 @@ class YouTubeService:
 class ContentService:
     @staticmethod
     def save_content_from_tmdb(tmdb_data, content_type):
+        """Save content from TMDB and return dictionary representation"""
         try:
             existing = Content.query.filter_by(tmdb_id=tmdb_data['id']).first()
             if existing:
                 if existing.updated_at < datetime.utcnow() - timedelta(hours=24):
                     ContentService.update_content_from_tmdb(existing, tmdb_data)
-                return existing
+                # Return a dictionary representation
+                return ContentService._content_to_dict(existing)
             
+            # Process genres
             genres = []
             if 'genres' in tmdb_data:
                 genres = [genre['name'] for genre in tmdb_data['genres']]
             elif 'genre_ids' in tmdb_data:
                 genres = ContentService.map_genre_ids(tmdb_data['genre_ids'])
             
+            # Process languages
             languages = []
             if 'spoken_languages' in tmdb_data:
                 languages = [lang['name'] for lang in tmdb_data['spoken_languages']]
             elif 'original_language' in tmdb_data:
                 languages = [tmdb_data['original_language']]
             
+            # Process release date
             is_new_release = False
             release_date = None
             if tmdb_data.get('release_date') or tmdb_data.get('first_air_date'):
@@ -600,14 +605,19 @@ class ContentService:
                 except:
                     pass
             
+            # Check critics choice
             is_critics_choice = False
             critics_score = tmdb_data.get('vote_average', 0)
             vote_count = tmdb_data.get('vote_count', 0)
             if critics_score >= 7.5 and vote_count >= 100:
                 is_critics_choice = True
             
-            youtube_trailer_id = ContentService.get_youtube_trailer(tmdb_data.get('title') or tmdb_data.get('name'))
+            # Get YouTube trailer
+            youtube_trailer_id = ContentService.get_youtube_trailer(
+                tmdb_data.get('title') or tmdb_data.get('name')
+            )
             
+            # Create new content
             content = Content(
                 tmdb_id=tmdb_data['id'],
                 title=tmdb_data.get('title') or tmdb_data.get('name'),
@@ -632,9 +642,11 @@ class ContentService:
             db.session.add(content)
             db.session.commit()
             
+            # Cache the actual object for internal use
             cache.set(content_cache_key(content.id), content, timeout=7200)
             
-            return content
+            # Return dictionary representation
+            return ContentService._content_to_dict(content)
             
         except Exception as e:
             logger.error(f"Error saving content: {e}")
@@ -643,6 +655,7 @@ class ContentService:
     
     @staticmethod
     def update_content_from_tmdb(content, tmdb_data):
+        """Update existing content from TMDB data"""
         try:
             content.rating = tmdb_data.get('vote_average', content.rating)
             content.vote_count = tmdb_data.get('vote_count', content.vote_count)
@@ -651,6 +664,7 @@ class ContentService:
             
             db.session.commit()
             
+            # Clear cache
             cache.delete(content_cache_key(content.id))
             
         except Exception as e:
@@ -659,13 +673,16 @@ class ContentService:
     
     @staticmethod
     def save_anime_content(anime_data):
+        """Save anime content and return dictionary representation"""
         try:
             existing = Content.query.filter_by(mal_id=anime_data['mal_id']).first()
             if existing:
-                return existing
+                return ContentService._content_to_dict(existing)
             
+            # Process genres
             genres = [genre['name'] for genre in anime_data.get('genres', [])]
             
+            # Process anime genre categories
             anime_genre_categories = []
             for genre in genres:
                 for category, category_genres in ANIME_GENRES.items():
@@ -674,6 +691,7 @@ class ContentService:
             
             anime_genre_categories = list(set(anime_genre_categories))
             
+            # Process release date
             release_date = None
             if anime_data.get('aired', {}).get('from'):
                 try:
@@ -681,8 +699,10 @@ class ContentService:
                 except:
                     pass
             
+            # Get YouTube trailer
             youtube_trailer_id = ContentService.get_youtube_trailer(anime_data.get('title'), 'anime')
             
+            # Create new content
             content = Content(
                 mal_id=anime_data['mal_id'],
                 title=anime_data.get('title'),
@@ -703,9 +723,11 @@ class ContentService:
             db.session.add(content)
             db.session.commit()
             
+            # Cache the actual object
             cache.set(content_cache_key(content.id), content, timeout=7200)
             
-            return content
+            # Return dictionary representation
+            return ContentService._content_to_dict(content)
             
         except Exception as e:
             logger.error(f"Error saving anime content: {e}")
@@ -714,6 +736,7 @@ class ContentService:
     
     @staticmethod
     def get_youtube_trailer(title, content_type='movie'):
+        """Get YouTube trailer ID for content"""
         try:
             youtube_results = YouTubeService.search_trailers(title, content_type)
             if youtube_results and youtube_results.get('items'):
@@ -724,6 +747,7 @@ class ContentService:
     
     @staticmethod
     def map_genre_ids(genre_ids):
+        """Map TMDB genre IDs to genre names"""
         genre_map = {
             28: 'Action', 12: 'Adventure', 16: 'Animation', 35: 'Comedy',
             80: 'Crime', 99: 'Documentary', 18: 'Drama', 10751: 'Family',
@@ -732,7 +756,47 @@ class ContentService:
             10770: 'TV Movie', 53: 'Thriller', 10752: 'War', 37: 'Western'
         }
         return [genre_map.get(gid, 'Unknown') for gid in genre_ids if gid in genre_map]
-
+    
+    @staticmethod
+    def _content_to_dict(content):
+        """Convert Content object to dictionary"""
+        if not content:
+            return None
+        
+        # Handle date serialization
+        release_date = None
+        if content.release_date:
+            if hasattr(content.release_date, 'isoformat'):
+                release_date = content.release_date.isoformat()
+            else:
+                release_date = str(content.release_date)
+        
+        return {
+            'id': content.id,
+            'tmdb_id': content.tmdb_id,
+            'imdb_id': content.imdb_id,
+            'mal_id': content.mal_id,
+            'title': content.title,
+            'original_title': content.original_title,
+            'content_type': content.content_type,
+            'genres': content.genres,
+            'anime_genres': content.anime_genres,
+            'languages': content.languages,
+            'release_date': release_date,
+            'runtime': content.runtime,
+            'rating': content.rating,
+            'vote_count': content.vote_count,
+            'popularity': content.popularity,
+            'overview': content.overview,
+            'poster_path': content.poster_path,
+            'backdrop_path': content.backdrop_path,
+            'trailer_url': content.trailer_url,
+            'youtube_trailer_id': content.youtube_trailer_id,
+            'is_trending': content.is_trending,
+            'is_new_release': content.is_new_release,
+            'is_critics_choice': content.is_critics_choice,
+            'critics_score': content.critics_score
+        }
 class RecommendationEngine:
     @staticmethod
     @cache.memoize(timeout=1800)
@@ -766,15 +830,20 @@ class RecommendationEngine:
             for category, items in results.items():
                 all_trending.extend(items[:limit])
             
-            content_objects = []
-            
+            # Convert to content dictionaries
+            content_dicts = []
             for item in all_trending[:limit]:
-                if 'tmdb_id' in item:
+                if isinstance(item, dict) and 'tmdb_id' in item:
+                    # Fetch from database and convert to dict
                     content = Content.query.filter_by(tmdb_id=item['tmdb_id']).first()
                     if content:
-                        content_objects.append(content)
+                        content_dicts.append(ContentService._content_to_dict(content))
+                    else:
+                        content_dicts.append(item)
+                else:
+                    content_dicts.append(item)
             
-            return content_objects if content_objects else all_trending[:limit]
+            return content_dicts if content_dicts else all_trending[:limit]
             
         except Exception as e:
             logger.error(f"Error in trending recommendations: {e}")
@@ -790,9 +859,9 @@ class RecommendationEngine:
             if trending_day and 'results' in trending_day:
                 for item in trending_day['results'][:limit]:
                     content_type_detected = 'movie' if 'title' in item else 'tv'
-                    content = ContentService.save_content_from_tmdb(item, content_type_detected)
-                    if content:
-                        recommendations.append(content)
+                    content_dict = ContentService.save_content_from_tmdb(item, content_type_detected)
+                    if content_dict:
+                        recommendations.append(content_dict)
             
             return recommendations
         except:
@@ -801,7 +870,9 @@ class RecommendationEngine:
     @staticmethod
     @cache.memoize(timeout=1800)
     def get_new_releases(limit=20, language=None, content_type='movie'):
+        """Get new releases - returns list of dictionaries"""
         try:
+            # Try ML service first
             ml_params = {
                 'limit': limit,
                 'language': language,
@@ -813,10 +884,12 @@ class RecommendationEngine:
                 ml_recommendations = MLServiceClient.process_ml_recommendations(ml_response, limit)
                 if ml_recommendations:
                     logger.info(f"Using ML service for new releases: {len(ml_recommendations)} items")
-                    return [rec['content'] for rec in ml_recommendations]
+                    # Convert Content objects to dictionaries
+                    return [ContentService._content_to_dict(rec['content']) for rec in ml_recommendations]
             
             logger.info("Falling back to TMDB for new releases")
             
+            # Language mapping
             language_code = None
             if language:
                 lang_mapping = {'hindi': 'hi', 'telugu': 'te', 'tamil': 'ta', 
@@ -825,6 +898,7 @@ class RecommendationEngine:
             
             recommendations = []
             
+            # Fetch from TMDB
             if language_code:
                 new_releases = TMDBService.get_language_specific(language_code, content_type)
             else:
@@ -832,9 +906,9 @@ class RecommendationEngine:
             
             if new_releases:
                 for item in new_releases.get('results', [])[:limit]:
-                    content = ContentService.save_content_from_tmdb(item, content_type)
-                    if content:
-                        recommendations.append(content)
+                    content_dict = ContentService.save_content_from_tmdb(item, content_type)
+                    if content_dict:
+                        recommendations.append(content_dict)
             
             return recommendations
         except Exception as e:
@@ -844,7 +918,9 @@ class RecommendationEngine:
     @staticmethod
     @cache.memoize(timeout=3600)
     def get_critics_choice(limit=20, content_type='movie'):
+        """Get critics choice - returns list of dictionaries"""
         try:
+            # Try ML service first
             ml_params = {
                 'limit': limit,
                 'content_type': content_type
@@ -855,7 +931,7 @@ class RecommendationEngine:
                 ml_recommendations = MLServiceClient.process_ml_recommendations(ml_response, limit)
                 if ml_recommendations:
                     logger.info(f"Using ML service for critics choice: {len(ml_recommendations)} items")
-                    return [rec['content'] for rec in ml_recommendations]
+                    return [ContentService._content_to_dict(rec['content']) for rec in ml_recommendations]
             
             logger.info("Falling back to TMDB for critics choice")
             
@@ -864,9 +940,9 @@ class RecommendationEngine:
             recommendations = []
             if critics_choice:
                 for item in critics_choice.get('results', [])[:limit]:
-                    content = ContentService.save_content_from_tmdb(item, content_type)
-                    if content:
-                        recommendations.append(content)
+                    content_dict = ContentService.save_content_from_tmdb(item, content_type)
+                    if content_dict:
+                        recommendations.append(content_dict)
             
             return recommendations
         except Exception as e:
@@ -876,7 +952,9 @@ class RecommendationEngine:
     @staticmethod
     @cache.memoize(timeout=3600)
     def get_genre_recommendations(genre, limit=20, content_type='movie', region=None):
+        """Get genre recommendations - returns list of dictionaries"""
         try:
+            # Try ML service first
             ml_params = {
                 'limit': limit,
                 'content_type': content_type,
@@ -888,10 +966,11 @@ class RecommendationEngine:
                 ml_recommendations = MLServiceClient.process_ml_recommendations(ml_response, limit)
                 if ml_recommendations:
                     logger.info(f"Using ML service for genre {genre}: {len(ml_recommendations)} items")
-                    return [rec['content'] for rec in ml_recommendations]
+                    return [ContentService._content_to_dict(rec['content']) for rec in ml_recommendations]
             
             logger.info(f"Falling back to TMDB for genre {genre}")
             
+            # Genre ID mapping
             genre_ids = {
                 'action': 28, 'adventure': 12, 'animation': 16, 'biography': -1,
                 'comedy': 35, 'crime': 80, 'documentary': 99, 'drama': 18,
@@ -905,9 +984,9 @@ class RecommendationEngine:
                 recommendations = []
                 if search_results:
                     for item in search_results.get('results', [])[:limit]:
-                        content = ContentService.save_content_from_tmdb(item, content_type)
-                        if content:
-                            recommendations.append(content)
+                        content_dict = ContentService.save_content_from_tmdb(item, content_type)
+                        if content_dict:
+                            recommendations.append(content_dict)
                 return recommendations
             
             genre_content = TMDBService.get_by_genre(genre_id, content_type, region=region)
@@ -915,9 +994,9 @@ class RecommendationEngine:
             recommendations = []
             if genre_content:
                 for item in genre_content.get('results', [])[:limit]:
-                    content = ContentService.save_content_from_tmdb(item, content_type)
-                    if content:
-                        recommendations.append(content)
+                    content_dict = ContentService.save_content_from_tmdb(item, content_type)
+                    if content_dict:
+                        recommendations.append(content_dict)
             
             return recommendations
         except Exception as e:
@@ -927,7 +1006,9 @@ class RecommendationEngine:
     @staticmethod
     @cache.memoize(timeout=3600)
     def get_regional_recommendations(language, limit=20, content_type='movie'):
+        """Get regional recommendations - returns list of dictionaries"""
         try:
+            # Try ML service first
             ml_params = {
                 'limit': limit,
                 'content_type': content_type
@@ -938,10 +1019,11 @@ class RecommendationEngine:
                 ml_recommendations = MLServiceClient.process_ml_recommendations(ml_response, limit)
                 if ml_recommendations:
                     logger.info(f"Using ML service for regional {language}: {len(ml_recommendations)} items")
-                    return [rec['content'] for rec in ml_recommendations]
+                    return [ContentService._content_to_dict(rec['content']) for rec in ml_recommendations]
             
             logger.info(f"Falling back to TMDB for regional {language}")
             
+            # Language code mapping
             lang_mapping = {
                 'hindi': 'hi', 'telugu': 'te', 'tamil': 'ta', 
                 'kannada': 'kn', 'malayalam': 'ml', 'english': 'en'
@@ -954,10 +1036,11 @@ class RecommendationEngine:
                 lang_content = TMDBService.get_language_specific(language_code, content_type)
                 if lang_content:
                     for item in lang_content.get('results', [])[:limit]:
-                        content = ContentService.save_content_from_tmdb(item, content_type)
-                        if content:
-                            recommendations.append(content)
+                        content_dict = ContentService.save_content_from_tmdb(item, content_type)
+                        if content_dict:
+                            recommendations.append(content_dict)
             
+            # Fill with search results if needed
             if len(recommendations) < limit:
                 search_queries = REGIONAL_LANGUAGES.get(language.lower(), [language])
                 for query in search_queries:
@@ -969,9 +1052,9 @@ class RecommendationEngine:
                         for item in search_results.get('results', []):
                             if len(recommendations) >= limit:
                                 break
-                            content = ContentService.save_content_from_tmdb(item, content_type)
-                            if content:
-                                recommendations.append(content)
+                            content_dict = ContentService.save_content_from_tmdb(item, content_type)
+                            if content_dict and content_dict not in recommendations:
+                                recommendations.append(content_dict)
             
             return recommendations[:limit]
         except Exception as e:
@@ -981,7 +1064,9 @@ class RecommendationEngine:
     @staticmethod
     @cache.memoize(timeout=3600)
     def get_anime_recommendations(limit=20, genre=None):
+        """Get anime recommendations - returns list of dictionaries"""
         try:
+            # Try ML service first
             ml_params = {
                 'limit': limit,
                 'genre': genre
@@ -992,7 +1077,7 @@ class RecommendationEngine:
                 ml_recommendations = MLServiceClient.process_ml_recommendations(ml_response, limit)
                 if ml_recommendations:
                     logger.info(f"Using ML service for anime recommendations: {len(ml_recommendations)} items")
-                    return [rec['content'] for rec in ml_recommendations]
+                    return [ContentService._content_to_dict(rec['content']) for rec in ml_recommendations]
             
             logger.info("Falling back to Jikan API for anime recommendations")
             
@@ -1006,18 +1091,18 @@ class RecommendationEngine:
                         for anime in anime_results.get('data', []):
                             if len(recommendations) >= limit:
                                 break
-                            content = ContentService.save_anime_content(anime)
-                            if content:
-                                recommendations.append(content)
+                            content_dict = ContentService.save_anime_content(anime)
+                            if content_dict:
+                                recommendations.append(content_dict)
                     if len(recommendations) >= limit:
                         break
             else:
                 top_anime = JikanService.get_top_anime()
                 if top_anime:
                     for anime in top_anime.get('data', [])[:limit]:
-                        content = ContentService.save_anime_content(anime)
-                        if content:
-                            recommendations.append(content)
+                        content_dict = ContentService.save_anime_content(anime)
+                        if content_dict:
+                            recommendations.append(content_dict)
             
             return recommendations[:limit]
         except Exception as e:
@@ -1026,12 +1111,19 @@ class RecommendationEngine:
     
     @staticmethod
     def get_similar_recommendations(content_id, limit=20):
+        """Get similar recommendations - returns list of dictionaries"""
         try:
             cache_key = f"similar:{content_id}:{limit}"
             cached_result = cache.get(cache_key)
             if cached_result:
-                return cached_result
+                # Ensure cached result is list of dicts
+                if cached_result and isinstance(cached_result[0], dict):
+                    return cached_result
+                else:
+                    # Convert to dicts if needed
+                    return [ContentService._content_to_dict(c) for c in cached_result]
             
+            # Try ML service
             ml_params = {
                 'limit': limit
             }
@@ -1041,7 +1133,7 @@ class RecommendationEngine:
                 ml_recommendations = MLServiceClient.process_ml_recommendations(ml_response, limit)
                 if ml_recommendations:
                     logger.info(f"Using ML service for similar recommendations: {len(ml_recommendations)} items")
-                    result = [rec['content'] for rec in ml_recommendations]
+                    result = [ContentService._content_to_dict(rec['content']) for rec in ml_recommendations]
                     cache.set(cache_key, result, timeout=3600)
                     return result
             
@@ -1053,21 +1145,23 @@ class RecommendationEngine:
             
             similar_content = []
             
+            # Get TMDB similar/recommendations
             if base_content.tmdb_id and base_content.content_type != 'anime':
                 tmdb_details = TMDBService.get_content_details(base_content.tmdb_id, base_content.content_type)
                 if tmdb_details:
                     if 'similar' in tmdb_details:
                         for item in tmdb_details['similar']['results'][:10]:
-                            content = ContentService.save_content_from_tmdb(item, base_content.content_type)
-                            if content:
-                                similar_content.append(content)
+                            content_dict = ContentService.save_content_from_tmdb(item, base_content.content_type)
+                            if content_dict:
+                                similar_content.append(content_dict)
                     
                     if 'recommendations' in tmdb_details:
                         for item in tmdb_details['recommendations']['results'][:10]:
-                            content = ContentService.save_content_from_tmdb(item, base_content.content_type)
-                            if content:
-                                similar_content.append(content)
+                            content_dict = ContentService.save_content_from_tmdb(item, base_content.content_type)
+                            if content_dict and content_dict not in similar_content:
+                                similar_content.append(content_dict)
             
+            # Get genre-based similar content
             if base_content.genres:
                 genres = json.loads(base_content.genres)
                 if genres:
@@ -1086,15 +1180,17 @@ class RecommendationEngine:
                     
                     scored_content.sort(key=lambda x: x[1], reverse=True)
                     for content, score in scored_content[:10]:
-                        if content not in similar_content:
-                            similar_content.append(content)
+                        content_dict = ContentService._content_to_dict(content)
+                        if content_dict and content_dict not in similar_content:
+                            similar_content.append(content_dict)
             
+            # Remove duplicates and limit
             seen_ids = set()
             unique_similar = []
-            for content in similar_content:
-                if content.id not in seen_ids:
-                    seen_ids.add(content.id)
-                    unique_similar.append(content)
+            for content_dict in similar_content:
+                if content_dict['id'] not in seen_ids:
+                    seen_ids.add(content_dict['id'])
+                    unique_similar.append(content_dict)
                     if len(unique_similar) >= limit:
                         break
             
@@ -1413,22 +1509,31 @@ def get_new_releases():
         recommendations = RecommendationEngine.get_new_releases(limit, language, content_type)
         
         result = []
-        for content in recommendations:
+        for content_dict in recommendations:
+            # Now content_dict is already a dictionary
             youtube_url = None
-            if content.youtube_trailer_id:
-                youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
+            if content_dict.get('youtube_trailer_id'):
+                youtube_url = f"https://www.youtube.com/watch?v={content_dict['youtube_trailer_id']}"
+            
+            # Parse JSON fields if needed
+            genres = content_dict.get('genres', '[]')
+            if isinstance(genres, str):
+                try:
+                    genres = json.loads(genres)
+                except:
+                    genres = []
             
             result.append({
-                'id': content.id,
-                'title': content.title,
-                'content_type': content.content_type,
-                'genres': json.loads(content.genres or '[]'),
-                'rating': content.rating,
-                'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
-                'overview': content.overview[:150] + '...' if content.overview else '',
-                'release_date': content.release_date.isoformat() if content.release_date else None,
+                'id': content_dict.get('id'),
+                'title': content_dict.get('title'),
+                'content_type': content_dict.get('content_type'),
+                'genres': genres,
+                'rating': content_dict.get('rating'),
+                'poster_path': f"https://image.tmdb.org/t/p/w300{content_dict.get('poster_path')}" if content_dict.get('poster_path') and not content_dict.get('poster_path', '').startswith('http') else content_dict.get('poster_path'),
+                'overview': content_dict.get('overview', '')[:150] + '...' if content_dict.get('overview') else '',
+                'release_date': content_dict.get('release_date').isoformat() if content_dict.get('release_date') and hasattr(content_dict.get('release_date'), 'isoformat') else content_dict.get('release_date'),
                 'youtube_trailer': youtube_url,
-                'is_new_release': content.is_new_release
+                'is_new_release': content_dict.get('is_new_release', False)
             })
         
         return jsonify({'recommendations': result}), 200

@@ -1537,27 +1537,34 @@ class AdvancedTrendingService:
         return result
     
     def _ensure_priority_distribution(self, content_list: List[Dict], 
-                                     limit: int) -> List[Dict]:
+                                    limit: int) -> List[Dict]:
         """Ensure priority language distribution in results"""
+        # Group by language
         by_language = defaultdict(list)
         for content in content_list:
             lang = content.get('language', 'unknown')
             by_language[lang].append(content)
         
         result = []
-        used = set()
+        used_ids = set()  # Use a set of IDs instead of objects
         
+        # First pass: ensure each priority language gets at least one slot
         for language in PRIORITY_LANGUAGES:
             if language in by_language and by_language[language]:
                 best = max(by_language[language], 
-                          key=lambda x: x.get('unified_score', 0))
-                if best not in used:
+                        key=lambda x: x.get('unified_score', 0))
+                content_id = best.get('id') or best.get('tmdb_id')  # Get unique identifier
+                if content_id and content_id not in used_ids:
                     result.append(best)
-                    used.add(id(best))
+                    used_ids.add(content_id)
         
+        # Second pass: fill remaining slots by score
         all_remaining = []
         for contents in by_language.values():
-            all_remaining.extend([c for c in contents if id(c) not in used])
+            for c in contents:
+                content_id = c.get('id') or c.get('tmdb_id')
+                if content_id and content_id not in used_ids:
+                    all_remaining.append(c)
         
         all_remaining.sort(key=lambda x: x.get('unified_score', 0), reverse=True)
         
