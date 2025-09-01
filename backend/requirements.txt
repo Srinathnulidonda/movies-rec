@@ -19,5 +19,3 @@ geopy
 gunicorn
 python-dotenv
 python-dateutil
-simplejson
-hashlib
