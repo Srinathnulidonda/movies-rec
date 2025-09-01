@@ -1,3 +1,4 @@
+#backend/auth.py
 from flask import Blueprint, request, jsonify
 from flask_mail import Mail, Message
 from itsdangerous import URLSafeTimedSerializer, SignatureExpired, BadTimeSignature
@@ -47,7 +48,7 @@ def init_auth(flask_app, database, user_model):
     app.config['MAIL_USE_SSL'] = False
     app.config['MAIL_USERNAME'] = os.environ.get('GMAIL_USERNAME', 'projects.srinath@gmail.com')
     app.config['MAIL_PASSWORD'] = os.environ.get('GMAIL_APP_PASSWORD', 'wuus nsow nbee xewv')
-    app.config['MAIL_DEFAULT_SENDER'] = os.environ.get('GMAIL_USERNAME', 'mail@cinebrain.com')
+    app.config['MAIL_DEFAULT_SENDER'] = os.environ.get('GMAIL_USERNAME', 'projects.srinath@gmail.com')
     
     # Initialize Flask-Mail
     mail = Mail(app)
