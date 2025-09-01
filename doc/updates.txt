@@ -1,7 +1,3 @@
-Update the recommendation system to fetch and return accurate content across all types (movies, TV shows, anime) using the following APIs: Jikan (anime), TMDB (movies & TV shows), and OMDB (movies & TV shows). Implement and optimize the following endpoints:
-use my 
-REDIS_URL ='redis://red-d1l75ap5pdvs73bk295g:rE0xu32o3U2bNUQKz6mG7KIybWzle9xf@red-d1l75ap5pdvs73bk295g:6379'
-DATABASE_URL='postgresql://movies_rec_user:G7P007g7laXlvv6POBqaPFs5KVaHmj2r@dpg-d1km8qre5dus73eovgs0-a/movies_rec'
 
 Endpoints
 1. /recommendations/trending
