@@ -1129,7 +1129,6 @@ def get_content_details(content_id):
         logger.error(f"Content details error: {e}")
         return jsonify({'error': 'Failed to get content details'}), 500
 
-# Enhanced Recommendation Routes with Algorithms
 @app.route('/api/recommendations/trending', methods=['GET'])
 @cache.cached(timeout=300, key_prefix=make_cache_key)
 def get_trending():
@@ -1227,27 +1226,39 @@ def get_trending():
                 }
             }
         
-        # Calculate and add metrics
-        if category != 'all' and categories.get(selected_category):
-            content_items = [item for cat_items in categories.values() for item in cat_items]
-            if content_items:
-                # Get content objects for diversity calculation
-                content_ids = [item['id'] for item in content_items]
-                contents = Content.query.filter(Content.id.in_(content_ids)).all()
-                
-                response['metadata']['metrics'] = {
-                    'diversity_score': round(EvaluationMetrics.diversity_score(contents), 3),
-                    'coverage_score': round(EvaluationMetrics.coverage_score(
-                        content_ids,
-                        Content.query.count()
-                    ), 5)
-                }
+        # Calculate and add metrics - Fixed this section
+        if category != 'all' and selected_category in categories and categories[selected_category]:
+            try:
+                # Get all content items from the selected category
+                content_items = categories[selected_category]
+                if content_items and len(content_items) > 0:
+                    # Extract content IDs properly
+                    content_ids = []
+                    for item in content_items:
+                        if isinstance(item, dict) and 'id' in item:
+                            content_ids.append(item['id'])
+                    
+                    if content_ids:
+                        # Get content objects for diversity calculation
+                        contents = Content.query.filter(Content.id.in_(content_ids)).all()
+                        
+                        response['metadata']['metrics'] = {
+                            'diversity_score': round(EvaluationMetrics.diversity_score(contents), 3) if contents else 0,
+                            'coverage_score': round(EvaluationMetrics.coverage_score(
+                                content_ids,
+                                Content.query.count()
+                            ), 5) if Content.query.count() > 0 else 0
+                        }
+            except Exception as metric_error:
+                logger.warning(f"Metrics calculation error: {metric_error}")
+                # Continue without metrics rather than failing the whole request
         
         db.session.commit()
         return jsonify(response), 200
         
     except Exception as e:
         logger.error(f"Trending recommendations error: {e}")
+        logger.exception(e)  # This will log the full traceback
         return jsonify({'error': 'Failed to get trending recommendations'}), 500
 
 @app.route('/api/recommendations/new-releases', methods=['GET'])

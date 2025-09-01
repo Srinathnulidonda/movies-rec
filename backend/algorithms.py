@@ -592,14 +592,19 @@ class RecommendationOrchestrator:
                 final_score = (popularity_score * 0.7) + (language_score * 0.3)
                 trending_scores.append((content, final_score))
             
-            # Sort and apply language priority if enabled
+            # Sort by score
             trending_scores.sort(key=lambda x: x[1], reverse=True)
             
             if apply_language_priority:
+                # Create a mapping of content to scores
+                score_map = {c.id: s for c, s in trending_scores}
+                
                 # Reorder by language groups while maintaining score order within groups
                 trending_content = [item[0] for item in trending_scores]
                 trending_content = LanguagePriorityFilter.filter_by_language_priority(trending_content)
-                trending_scores = [(c, s) for c in trending_content for _, s in trending_scores if _[0].id == c.id]
+                
+                # Rebuild the scores list with new order
+                trending_scores = [(c, score_map.get(c.id, 0)) for c in trending_content]
             
             # Assign to categories
             if content_type == 'movie':
