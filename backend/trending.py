@@ -855,7 +855,8 @@ class AdvancedTrendingService:
         self.session = self._create_http_session()
         self.base_url = 'https://api.themoviedb.org/3'
         
-        # Store Content model reference
+        # Store Flask app and Content model references
+        self.app = None
         self.Content = None
         
         # Background thread for continuous updates
@@ -880,8 +881,9 @@ class AdvancedTrendingService:
         session.mount('https://', adapter)
         return session
     
-    def set_content_model(self, content_model):
-        """Set the Content model reference"""
+    def set_app_context(self, app, content_model):
+        """Set the Flask app and Content model references"""
+        self.app = app
         self.Content = content_model
     
     def start_background_updates(self):
@@ -905,9 +907,11 @@ class AdvancedTrendingService:
         """Background update loop"""
         while not self.stop_updates:
             try:
-                # Update trending for each language
-                for language in LANGUAGE_CONFIGS.keys():
-                    self._update_language_trending(language)
+                if self.app:
+                    with self.app.app_context():
+                        # Update trending for each language
+                        for language in LANGUAGE_CONFIGS.keys():
+                            self._update_language_trending(language)
                 
                 # Sleep for 5 minutes before next update
                 time.sleep(300)
@@ -977,6 +981,19 @@ class AdvancedTrendingService:
             categories = ['trending_movies', 'trending_tv', 'trending_anime', 
                         'rising_fast', 'popular_regional']
         
+        results = {}
+        
+        # Handle Flask app context
+        if self.app:
+            with self.app.app_context():
+                results = self._get_trending_with_context(languages, categories, limit)
+        else:
+            results = self._get_trending_with_context(languages, categories, limit)
+        
+        return results
+    
+    def _get_trending_with_context(self, languages, categories, limit):
+        """Get trending with proper context"""
         results = {}
         
         with ThreadPoolExecutor(max_workers=5) as executor:
@@ -1070,40 +1087,48 @@ class AdvancedTrendingService:
     
     def _get_trending_tv(self, languages: List[str], limit: int) -> List[Dict]:
         """Get trending TV shows"""
-        # Similar implementation to movies but for TV shows
         all_trending = []
         
-        for language in languages:
-            config = LANGUAGE_CONFIGS[language]
-            params = {
-                'api_key': self.tmdb_api_key,
-                'with_original_language': config.tmdb_code,
-                'sort_by': 'popularity.desc',
-                'page': 1
-            }
-            
-            response = self.session.get(f"{self.base_url}/discover/tv", 
-                                      params=params, timeout=10)
-            
-            if response.status_code == 200:
-                data = response.json()
+        # Create app context if needed
+        def process_tv_shows():
+            for language in languages:
+                config = LANGUAGE_CONFIGS[language]
+                params = {
+                    'api_key': self.tmdb_api_key,
+                    'with_original_language': config.tmdb_code,
+                    'sort_by': 'popularity.desc',
+                    'page': 1
+                }
                 
-                for show in data.get('results', [])[:5]:
-                    try:
-                        trending = self.unified_engine.calculate_unified_score(
-                            show['id'], language, {'tmdb_data': show}
-                        )
-                        
-                        if trending.unified_score > config.trending_threshold * 0.9:
-                            content = self._save_content(show, 'tv', language)
-                            if content:
-                                formatted = self._format_trending_content(content, trending)
-                                all_trending.append(formatted)
-                    except Exception as e:
-                        logger.error(f"Error processing TV show: {e}")
+                response = self.session.get(f"{self.base_url}/discover/tv", 
+                                          params=params, timeout=10)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    
+                    for show in data.get('results', [])[:5]:
+                        try:
+                            trending = self.unified_engine.calculate_unified_score(
+                                show['id'], language, {'tmdb_data': show}
+                            )
+                            
+                            if trending.unified_score > config.trending_threshold * 0.9:
+                                content = self._save_content(show, 'tv', language)
+                                if content:
+                                    formatted = self._format_trending_content(content, trending)
+                                    all_trending.append(formatted)
+                        except Exception as e:
+                            logger.error(f"Error processing TV show: {e}")
+            
+            all_trending.sort(key=lambda x: x['unified_score'], reverse=True)
+            return all_trending[:limit]
         
-        all_trending.sort(key=lambda x: x['unified_score'], reverse=True)
-        return all_trending[:limit]
+        # Execute with app context if available
+        if self.app:
+            with self.app.app_context():
+                return process_tv_shows()
+        else:
+            return process_tv_shows()
     
     def _get_trending_anime(self, limit: int) -> List[Dict]:
         """Get trending anime"""
@@ -1154,57 +1179,16 @@ class AdvancedTrendingService:
     
     def _get_rising_fast(self, languages: List[str], limit: int) -> List[Dict]:
         """Get rapidly rising content"""
-        rising = []
-        
-        # Get recent releases with high velocity
-        for language in languages:
-            config = LANGUAGE_CONFIGS[language]
-            params = {
-                'api_key': self.tmdb_api_key,
-                'with_original_language': config.tmdb_code,
-                'primary_release_date.gte': (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d'),
-                'sort_by': 'popularity.desc',
-                'page': 1
-            }
+        def process_rising():
+            rising = []
             
-            response = self.session.get(f"{self.base_url}/discover/movie", 
-                                      params=params, timeout=10)
-            
-            if response.status_code == 200:
-                data = response.json()
-                
-                for movie in data.get('results', [])[:5]:
-                    try:
-                        trending = self.unified_engine.calculate_unified_score(
-                            movie['id'], language, {'tmdb_data': movie}
-                        )
-                        
-                        # Check velocity for "rising fast"
-                        if trending.metrics.velocity > 5:
-                            content = self._save_content(movie, 'movie', language)
-                            if content:
-                                formatted = self._format_trending_content(content, trending)
-                                formatted['category'] = 'rising_fast'
-                                rising.append(formatted)
-                    except Exception as e:
-                        logger.error(f"Error processing rising content: {e}")
-        
-        rising.sort(key=lambda x: x.get('velocity', 0), reverse=True)
-        return rising[:limit]
-    
-    def _get_popular_regional(self, languages: List[str], limit: int) -> List[Dict]:
-        """Get regionally popular content"""
-        regional = []
-        
-        for language in languages:
-            config = LANGUAGE_CONFIGS[language]
-            
-            # Focus on regional content
-            if language in ['telugu', 'tamil', 'malayalam', 'kannada']:
+            # Get recent releases with high velocity
+            for language in languages:
+                config = LANGUAGE_CONFIGS[language]
                 params = {
                     'api_key': self.tmdb_api_key,
                     'with_original_language': config.tmdb_code,
-                    'region': 'IN',
+                    'primary_release_date.gte': (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d'),
                     'sort_by': 'popularity.desc',
                     'page': 1
                 }
@@ -1221,66 +1205,130 @@ class AdvancedTrendingService:
                                 movie['id'], language, {'tmdb_data': movie}
                             )
                             
-                            # Boost regional score
-                            trending.metrics.geographic_score *= 1.5
-                            
-                            content = self._save_content(movie, 'tv', language)
-                            if content:
-                                formatted = self._format_trending_content(content, trending)
-                                formatted['category'] = 'popular_regional'
-                                formatted['region'] = config.primary_regions[0]
-                                regional.append(formatted)
+                            # Check velocity for "rising fast"
+                            if trending.metrics.velocity > 5:
+                                content = self._save_content(movie, 'movie', language)
+                                if content:
+                                    formatted = self._format_trending_content(content, trending)
+                                    formatted['category'] = 'rising_fast'
+                                    rising.append(formatted)
                         except Exception as e:
-                            logger.error(f"Error processing regional content: {e}")
+                            logger.error(f"Error processing rising content: {e}")
+            
+            rising.sort(key=lambda x: x.get('velocity', 0), reverse=True)
+            return rising[:limit]
         
-        regional.sort(key=lambda x: x['unified_score'], reverse=True)
-        return regional[:limit]
+        if self.app:
+            with self.app.app_context():
+                return process_rising()
+        else:
+            return process_rising()
+    
+    def _get_popular_regional(self, languages: List[str], limit: int) -> List[Dict]:
+        """Get regionally popular content"""
+        def process_regional():
+            regional = []
+            
+            for language in languages:
+                config = LANGUAGE_CONFIGS[language]
+                
+                # Focus on regional content
+                if language in ['telugu', 'tamil', 'malayalam', 'kannada']:
+                    params = {
+                        'api_key': self.tmdb_api_key,
+                        'with_original_language': config.tmdb_code,
+                        'region': 'IN',
+                        'sort_by': 'popularity.desc',
+                        'page': 1
+                    }
+                    
+                    response = self.session.get(f"{self.base_url}/discover/movie", 
+                                              params=params, timeout=10)
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        
+                        for movie in data.get('results', [])[:5]:
+                            try:
+                                trending = self.unified_engine.calculate_unified_score(
+                                    movie['id'], language, {'tmdb_data': movie}
+                                )
+                                
+                                # Boost regional score
+                                trending.metrics.geographic_score *= 1.5
+                                
+                                content = self._save_content(movie, 'movie', language)
+                                if content:
+                                    formatted = self._format_trending_content(content, trending)
+                                    formatted['category'] = 'popular_regional'
+                                    formatted['region'] = config.primary_regions[0]
+                                    regional.append(formatted)
+                            except Exception as e:
+                                logger.error(f"Error processing regional content: {e}")
+            
+            regional.sort(key=lambda x: x['unified_score'], reverse=True)
+            return regional[:limit]
+        
+        if self.app:
+            with self.app.app_context():
+                return process_regional()
+        else:
+            return process_regional()
     
     def _save_content(self, tmdb_data: Dict, content_type: str, language: str):
-        """Save content to database"""
+        """Save content to database with proper context handling"""
         try:
             if not self.Content:
                 logger.warning("Content model not set")
                 return None
             
-            # Check if exists
-            existing = self.db.session.query(self.Content).filter_by(
-                tmdb_id=tmdb_data['id']
-            ).first()
-            
-            if existing:
-                # Update existing
-                existing.popularity = tmdb_data.get('popularity', existing.popularity)
-                existing.vote_count = tmdb_data.get('vote_count', existing.vote_count)
-                existing.rating = tmdb_data.get('vote_average', existing.rating)
-                existing.is_trending = True
-                existing.updated_at = datetime.utcnow()
+            # Check if we need app context
+            def save_content_inner():
+                # Check if exists
+                existing = self.db.session.query(self.Content).filter_by(
+                    tmdb_id=tmdb_data['id']
+                ).first()
                 
+                if existing:
+                    # Update existing
+                    existing.popularity = tmdb_data.get('popularity', existing.popularity)
+                    existing.vote_count = tmdb_data.get('vote_count', existing.vote_count)
+                    existing.rating = tmdb_data.get('vote_average', existing.rating)
+                    existing.is_trending = True
+                    existing.updated_at = datetime.utcnow()
+                    
+                    self.db.session.commit()
+                    return existing
+                
+                # Create new
+                new_content = self.Content(
+                    tmdb_id=tmdb_data['id'],
+                    title=tmdb_data.get('title') or tmdb_data.get('name'),
+                    original_title=tmdb_data.get('original_title'),
+                    content_type=content_type,
+                    genres=json.dumps([]),  # Fetch genres separately if needed
+                    languages=json.dumps([language]),
+                    release_date=None,  # Parse date if needed
+                    rating=tmdb_data.get('vote_average'),
+                    vote_count=tmdb_data.get('vote_count'),
+                    popularity=tmdb_data.get('popularity'),
+                    overview=tmdb_data.get('overview'),
+                    poster_path=tmdb_data.get('poster_path'),
+                    backdrop_path=tmdb_data.get('backdrop_path'),
+                    is_trending=True
+                )
+                
+                self.db.session.add(new_content)
                 self.db.session.commit()
-                return existing
+                return new_content
             
-            # Create new
-            new_content = self.Content(
-                tmdb_id=tmdb_data['id'],
-                title=tmdb_data.get('title') or tmdb_data.get('name'),
-                original_title=tmdb_data.get('original_title'),
-                content_type=content_type,
-                genres=json.dumps([]),  # Fetch genres separately if needed
-                languages=json.dumps([language]),
-                release_date=None,  # Parse date if needed
-                rating=tmdb_data.get('vote_average'),
-                vote_count=tmdb_data.get('vote_count'),
-                popularity=tmdb_data.get('popularity'),
-                overview=tmdb_data.get('overview'),
-                poster_path=tmdb_data.get('poster_path'),
-                backdrop_path=tmdb_data.get('backdrop_path'),
-                is_trending=True
-            )
-            
-            self.db.session.add(new_content)
-            self.db.session.commit()
-            return new_content
-            
+            # Execute with proper context
+            if self.app:
+                with self.app.app_context():
+                    return save_content_inner()
+            else:
+                return save_content_inner()
+                
         except Exception as e:
             logger.error(f"Error saving content: {e}")
             self.db.session.rollback()
@@ -1321,17 +1369,25 @@ def init_advanced_trending_service(db, cache, tmdb_api_key):
     """Initialize the advanced trending service"""
     service = AdvancedTrendingService(db, cache, tmdb_api_key)
     
-    # Get Content model from app context
+    # Get Flask app and Content model from app context
     try:
         from flask import current_app
-        if current_app:
-            # Import the Content model from the app module
-            import sys
-            app_module = sys.modules.get('app')
-            if app_module and hasattr(app_module, 'Content'):
-                service.set_content_model(app_module.Content)
+        import sys
+        
+        # Get the app module
+        app_module = sys.modules.get('app')
+        if app_module:
+            # Set Flask app if available
+            if hasattr(app_module, 'app'):
+                flask_app = getattr(app_module, 'app')
+                
+                # Set Content model if available
+                if hasattr(app_module, 'Content'):
+                    content_model = getattr(app_module, 'Content')
+                    service.set_app_context(flask_app, content_model)
+                    logger.info("Set Flask app and Content model in trending service")
     except Exception as e:
-        logger.warning(f"Could not set Content model: {e}")
+        logger.warning(f"Could not set app context: {e}")
     
     # Start background updates
     service.start_background_updates()
