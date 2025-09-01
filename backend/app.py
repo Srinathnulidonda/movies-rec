@@ -68,6 +68,9 @@ app.config['TELEGRAM_CHANNEL_ID'] = TELEGRAM_CHANNEL_ID
 app.config['ML_SERVICE_URL'] = ML_SERVICE_URL
 app.config['TMDB_API_KEY'] = TMDB_API_KEY
 
+# Priority Languages Configuration
+PRIORITY_LANGUAGES = ['telugu', 'english', 'hindi', 'tamil', 'malayalam', 'kannada']
+
 # Initialize services (will be done after database is ready)
 trending_service = None
 
@@ -207,26 +210,6 @@ app.register_blueprint(admin_bp)
 # Initialize users module
 init_users(app, db, cache)
 app.register_blueprint(users_bp)
-
-def init_services():
-    """Initialize all services after app context is ready"""
-    global trending_service
-    trending_service = init_advanced_trending_service(db, cache, TMDB_API_KEY)
-    logger.info("All services initialized")
-    return trending_service
-
-def cleanup_services():
-    """Cleanup services on shutdown"""
-    global trending_service
-    if trending_service:
-        try:
-            trending_service.stop_background_updates()
-            logger.info("Stopped trending service background updates")
-        except:
-            pass
-
-# Register cleanup
-atexit.register(cleanup_services)
 
 # ================== Service Classes ==================
 
@@ -754,26 +737,24 @@ class RecommendationEngine:
     @staticmethod
     @cache.memoize(timeout=1800)
     def get_trending_recommendations(limit=20, content_type='all', region=None):
-        """Get trending recommendations using advanced algorithms"""
+        """Get trending recommendations using advanced algorithms with priority languages"""
         try:
             global trending_service
             if not trending_service:
                 logger.warning("Trending service not initialized, using fallback")
                 return RecommendationEngine._get_trending_fallback(limit, content_type, region)
             
-            if region and region.upper() == 'IN':
-                languages = ['telugu', 'hindi', 'tamil', 'malayalam', 'english']
-            else:
-                languages = ['english']
+            # Always use priority languages
+            languages = PRIORITY_LANGUAGES
             
             categories_map = {
-                'all': ['trending_movies', 'trending_tv', 'trending_anime'],
-                'movie': ['trending_movies'],
+                'all': ['trending_movies', 'trending_tv', 'trending_anime', 'priority_trending'],
+                'movie': ['trending_movies', 'priority_trending'],
                 'tv': ['trending_tv'],
                 'anime': ['trending_anime']
             }
             
-            categories = categories_map.get(content_type, ['trending_movies'])
+            categories = categories_map.get(content_type, ['trending_movies', 'priority_trending'])
             
             results = trending_service.get_trending(
                 languages=languages,
@@ -1320,19 +1301,23 @@ def get_content_details(content_id):
 
 @app.route('/api/recommendations/trending', methods=['GET'])
 def get_trending():
-    """Get trending content using advanced algorithms"""
+    """Get trending content using advanced algorithms with priority languages"""
     try:
         content_type = request.args.get('type', 'all')
         limit = int(request.args.get('limit', 20))
         languages = request.args.getlist('languages')
         categories = request.args.getlist('categories')
         
+        # Always include priority languages
         if not languages:
-            languages = ['telugu', 'english', 'hindi', 'tamil', 'malayalam']
+            languages = PRIORITY_LANGUAGES
+        else:
+            # Ensure priority languages are included
+            languages = list(set(PRIORITY_LANGUAGES + languages))
         
         if not categories:
             categories = ['trending_movies', 'trending_tv', 'trending_anime', 
-                        'rising_fast', 'popular_regional']
+                        'rising_fast', 'popular_regional', 'priority_trending']
         
         global trending_service
         if not trending_service:
@@ -1349,6 +1334,7 @@ def get_trending():
         elif content_type == 'movie':
             return jsonify({
                 'recommendations': results.get('trending_movies', []),
+                'priority_trending': results.get('priority_trending', []),
                 'type': 'movie'
             }), 200
         elif content_type == 'tv':
@@ -1384,7 +1370,7 @@ def get_trending_categories():
     try:
         languages = request.args.getlist('languages')
         if not languages:
-            languages = ['telugu', 'english', 'hindi', 'tamil', 'malayalam']
+            languages = PRIORITY_LANGUAGES
         
         global trending_service
         if not trending_service:
@@ -1393,13 +1379,14 @@ def get_trending_categories():
         results = trending_service.get_trending(
             languages=languages,
             categories=['trending_movies', 'trending_tv', 'trending_anime', 
-                       'rising_fast', 'popular_regional'],
+                       'rising_fast', 'popular_regional', 'priority_trending'],
             limit=20
         )
         
         response = {
             'timestamp': datetime.utcnow().isoformat(),
             'languages': languages,
+            'priority_languages': PRIORITY_LANGUAGES,
             'categories': {}
         }
         
@@ -1664,7 +1651,8 @@ def health_check():
         health_info = {
             'status': 'healthy',
             'timestamp': datetime.utcnow().isoformat(),
-            'version': '3.0.0'  # Updated version
+            'version': '4.0.0',  # Updated version with priority languages
+            'priority_languages': PRIORITY_LANGUAGES
         }
         
         # Database check
@@ -1694,12 +1682,23 @@ def health_check():
                 health_info['trending_service'] = 'active'
                 health_info['trending_algorithms'] = [
                     'MRTSA', 'VBTD', 'GCTM', 'BOPP', 
-                    'OPAA', 'TPRT', 'ADVC', 'MLCPD', 'UTSA'
+                    'OPAA', 'TPRT', 'ADVC', 'MLCPD', 'UTSA',
+                    'VSMTA', 'LPOE', 'NITP', 'QIST'  # New algorithms
                 ]
+                # Test trending service
+                test_result = trending_service.get_trending(
+                    languages=['telugu'],
+                    categories=['priority_trending'],
+                    limit=1
+                )
+                if test_result:
+                    health_info['trending_test'] = 'passed'
             else:
                 health_info['trending_service'] = 'not_initialized'
-        except:
-            health_info['trending_service'] = 'error'
+                health_info['status'] = 'degraded'
+        except Exception as e:
+            health_info['trending_service'] = f'error: {str(e)}'
+            health_info['status'] = 'degraded'
         
         # Services check
         health_info['services'] = {
@@ -1725,12 +1724,46 @@ def health_check():
             'timestamp': datetime.utcnow().isoformat()
         }), 500
 
-# ================== Database Initialization ==================
+# ================== Service and Database Initialization ==================
 
-def create_tables():
+def init_services():
+    """Initialize all services after app context is ready"""
+    global trending_service
     try:
-        with app.app_context():
+        # Pass database, cache, and TMDB API key to trending service
+        trending_service = init_advanced_trending_service(db, cache, TMDB_API_KEY)
+        logger.info(f"Trending service initialized with priority languages: {PRIORITY_LANGUAGES}")
+        
+        # Start background updates
+        if trending_service:
+            trending_service.start_background_updates()
+            logger.info("Background trending updates started")
+        
+        return trending_service
+    except Exception as e:
+        logger.error(f"Failed to initialize services: {e}")
+        return None
+
+def cleanup_services():
+    """Cleanup services on shutdown"""
+    global trending_service
+    if trending_service:
+        try:
+            trending_service.stop_background_updates()
+            logger.info("Stopped trending service background updates")
+        except Exception as e:
+            logger.error(f"Error during cleanup: {e}")
+
+# Register cleanup
+atexit.register(cleanup_services)
+
+def init_app():
+    """Initialize application, database, and services"""
+    with app.app_context():
+        try:
+            # Create all database tables
             db.create_all()
+            logger.info("Database tables created")
             
             # Create default admin user if not exists
             admin = User.query.filter_by(username='admin').first()
@@ -1739,21 +1772,34 @@ def create_tables():
                     username='admin',
                     email='admin@example.com',
                     password_hash=generate_password_hash('admin123'),
-                    is_admin=True
+                    is_admin=True,
+                    preferred_languages=json.dumps(PRIORITY_LANGUAGES[:3]),  # Top 3 priority languages
+                    location='India'
                 )
                 db.session.add(admin)
                 db.session.commit()
                 logger.info("Admin user created with username: admin, password: admin123")
             
-            # Initialize services after database is ready
-            init_services()
-            logger.info("All services initialized successfully")
+            # Initialize trending service
+            global trending_service
+            trending_service = init_services()
             
-    except Exception as e:
-        logger.error(f"Database initialization error: {e}")
+            if trending_service:
+                logger.info("All services initialized successfully")
+                return True
+            else:
+                logger.warning("Trending service initialization failed - some features may not work")
+                return False
+            
+        except Exception as e:
+            logger.error(f"Application initialization failed: {e}")
+            return False
 
-# Initialize database
-create_tables()
+# Initialize the application
+init_success = init_app()
+
+if not init_success:
+    logger.warning("Application initialization incomplete - some features may not work")
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
