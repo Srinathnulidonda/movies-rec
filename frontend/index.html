@@ -1,0 +1,1000 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Movie Search - Advanced Search Engine</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --primary-color: #e50914;
+            --secondary-color: #221f1f;
+            --text-light: #ffffff;
+            --text-gray: #b3b3b3;
+            --bg-dark: #141414;
+            --bg-card: #181818;
+            --border-color: #404040;
+            --hover-color: #353535;
+            --success-color: #46d369;
+            --warning-color: #ffa500;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #141414 0%, #221f1f 100%);
+            min-height: 100vh;
+            color: var(--text-light);
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        /* Header */
+        .header {
+            text-align: center;
+            margin-bottom: 50px;
+            animation: fadeInDown 0.5s ease;
+        }
+
+        .header h1 {
+            font-size: 3em;
+            margin-bottom: 10px;
+            background: linear-gradient(45deg, var(--primary-color), #ff6b6b);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .header p {
+            color: var(--text-gray);
+            font-size: 1.1em;
+        }
+
+        /* Search Container */
+        .search-container {
+            position: relative;
+            max-width: 700px;
+            margin: 0 auto 40px;
+            animation: fadeInUp 0.6s ease;
+        }
+
+        .search-wrapper {
+            position: relative;
+            background: var(--bg-card);
+            border-radius: 50px;
+            padding: 5px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
+            transition: all 0.3s ease;
+        }
+
+        .search-wrapper:focus-within {
+            box-shadow: 0 10px 50px rgba(229, 9, 20, 0.3);
+            transform: translateY(-2px);
+        }
+
+        .search-input-group {
+            display: flex;
+            align-items: center;
+            position: relative;
+        }
+
+        #searchInput {
+            flex: 1;
+            padding: 15px 25px;
+            font-size: 1.1em;
+            border: none;
+            background: transparent;
+            color: var(--text-light);
+            outline: none;
+        }
+
+        #searchInput::placeholder {
+            color: var(--text-gray);
+        }
+
+        .search-icon {
+            position: absolute;
+            right: 60px;
+            color: var(--text-gray);
+            pointer-events: none;
+        }
+
+        #searchButton {
+            background: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 45px;
+            font-size: 1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-right: 5px;
+        }
+
+        #searchButton:hover {
+            background: #ff0a16;
+            transform: scale(1.05);
+        }
+
+        #searchButton:active {
+            transform: scale(0.95);
+        }
+
+        /* Autocomplete Dropdown */
+        .autocomplete-dropdown {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: var(--bg-card);
+            border-radius: 15px;
+            margin-top: 10px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            display: none;
+            max-height: 400px;
+            overflow-y: auto;
+            animation: slideDown 0.3s ease;
+        }
+
+        .autocomplete-dropdown.active {
+            display: block;
+        }
+
+        .autocomplete-item {
+            display: flex;
+            align-items: center;
+            padding: 12px 20px;
+            cursor: pointer;
+            transition: background 0.2s ease;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .autocomplete-item:last-child {
+            border-bottom: none;
+        }
+
+        .autocomplete-item:hover {
+            background: var(--hover-color);
+        }
+
+        .autocomplete-item img {
+            width: 40px;
+            height: 60px;
+            object-fit: cover;
+            border-radius: 5px;
+            margin-right: 15px;
+        }
+
+        .autocomplete-content {
+            flex: 1;
+        }
+
+        .autocomplete-title {
+            font-weight: 600;
+            margin-bottom: 3px;
+        }
+
+        .autocomplete-meta {
+            display: flex;
+            gap: 10px;
+            font-size: 0.85em;
+            color: var(--text-gray);
+        }
+
+        /* Filters */
+        .filters {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+            animation: fadeIn 0.7s ease;
+        }
+
+        .filter-select {
+            padding: 10px 20px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            color: var(--text-light);
+            border-radius: 25px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-size: 0.95em;
+        }
+
+        .filter-select:hover {
+            border-color: var(--primary-color);
+        }
+
+        .filter-select:focus {
+            outline: none;
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 2px rgba(229, 9, 20, 0.2);
+        }
+
+        /* Search Stats */
+        .search-stats {
+            text-align: center;
+            margin-bottom: 20px;
+            color: var(--text-gray);
+            animation: fadeIn 0.5s ease;
+        }
+
+        .search-stats span {
+            display: inline-block;
+            margin: 0 15px;
+            padding: 5px 15px;
+            background: var(--bg-card);
+            border-radius: 20px;
+            font-size: 0.9em;
+        }
+
+        .search-stats .highlight {
+            color: var(--primary-color);
+            font-weight: 600;
+        }
+
+        /* Results Grid */
+        .results-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 25px;
+            animation: fadeIn 0.8s ease;
+        }
+
+        .movie-card {
+            background: var(--bg-card);
+            border-radius: 10px;
+            overflow: hidden;
+            transition: all 0.3s ease;
+            cursor: pointer;
+            position: relative;
+            animation: slideUp 0.5s ease;
+        }
+
+        .movie-card:hover {
+            transform: translateY(-5px) scale(1.02);
+            box-shadow: 0 15px 40px rgba(0, 0, 0, 0.4);
+        }
+
+        .movie-poster {
+            width: 100%;
+            height: 300px;
+            object-fit: cover;
+            background: var(--hover-color);
+        }
+
+        .movie-info {
+            padding: 15px;
+        }
+
+        .movie-title {
+            font-weight: 600;
+            margin-bottom: 8px;
+            font-size: 1.1em;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .movie-meta {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .movie-year {
+            color: var(--text-gray);
+            font-size: 0.9em;
+        }
+
+        .movie-rating {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            background: rgba(255, 215, 0, 0.1);
+            padding: 3px 8px;
+            border-radius: 12px;
+            font-size: 0.85em;
+        }
+
+        .movie-rating::before {
+            content: "⭐";
+        }
+
+        .movie-type {
+            display: inline-block;
+            padding: 4px 10px;
+            background: var(--primary-color);
+            color: white;
+            border-radius: 15px;
+            font-size: 0.75em;
+            text-transform: uppercase;
+            font-weight: 600;
+        }
+
+        .match-quality {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            padding: 5px 10px;
+            border-radius: 20px;
+            font-size: 0.75em;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .match-quality.excellent {
+            background: var(--success-color);
+        }
+
+        .match-quality.good {
+            background: var(--warning-color);
+        }
+
+        .match-quality.fair {
+            background: var(--text-gray);
+        }
+
+        /* Loading Spinner */
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 40px;
+        }
+
+        .loading.active {
+            display: block;
+        }
+
+        .spinner {
+            border: 3px solid var(--border-color);
+            border-top: 3px solid var(--primary-color);
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--text-gray);
+        }
+
+        .empty-state-icon {
+            font-size: 4em;
+            margin-bottom: 20px;
+            opacity: 0.5;
+        }
+
+        .empty-state h3 {
+            font-size: 1.5em;
+            margin-bottom: 10px;
+            color: var(--text-light);
+        }
+
+        /* Error State */
+        .error-message {
+            background: rgba(229, 9, 20, 0.1);
+            border: 1px solid var(--primary-color);
+            color: var(--text-light);
+            padding: 15px 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            text-align: center;
+            animation: shake 0.5s ease;
+        }
+
+        /* Pagination */
+        .pagination {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 10px;
+            margin-top: 40px;
+            animation: fadeIn 0.5s ease;
+        }
+
+        .pagination button {
+            padding: 8px 16px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            color: var(--text-light);
+            border-radius: 5px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .pagination button:hover:not(:disabled) {
+            background: var(--primary-color);
+            border-color: var(--primary-color);
+        }
+
+        .pagination button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .pagination .page-info {
+            color: var(--text-gray);
+            margin: 0 10px;
+        }
+
+        /* Animations */
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+            }
+
+            to {
+                opacity: 1;
+            }
+        }
+
+        @keyframes fadeInDown {
+            from {
+                opacity: 0;
+                transform: translateY(-20px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes slideDown {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+
+        @keyframes shake {
+
+            0%,
+            100% {
+                transform: translateX(0);
+            }
+
+            25% {
+                transform: translateX(-10px);
+            }
+
+            75% {
+                transform: translateX(10px);
+            }
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .header h1 {
+                font-size: 2em;
+            }
+
+            .results-grid {
+                grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+                gap: 15px;
+            }
+
+            .filters {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .filter-select {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>🎬 Advanced Movie Search</h1>
+            <p>Experience lightning-fast search with fuzzy matching, typo tolerance, and intelligent ranking</p>
+        </div>
+
+        <!-- Search Container -->
+        <div class="search-container">
+            <div class="search-wrapper">
+                <div class="search-input-group">
+                    <input type="text" id="searchInput" placeholder="Search movies, TV shows, anime..."
+                        autocomplete="off">
+                    <span class="search-icon">🔍</span>
+                    <button id="searchButton">Search</button>
+                </div>
+            </div>
+
+            <!-- Autocomplete Dropdown -->
+            <div id="autocompleteDropdown" class="autocomplete-dropdown"></div>
+        </div>
+
+        <!-- Filters -->
+        <div class="filters">
+            <select id="contentTypeFilter" class="filter-select">
+                <option value="">All Types</option>
+                <option value="movie">Movies</option>
+                <option value="tv">TV Shows</option>
+                <option value="anime">Anime</option>
+            </select>
+
+            <select id="sortFilter" class="filter-select">
+                <option value="relevance">Relevance</option>
+                <option value="rating">Rating</option>
+                <option value="popularity">Popularity</option>
+                <option value="date">Release Date</option>
+                <option value="trending">Trending</option>
+            </select>
+
+            <select id="ratingFilter" class="filter-select">
+                <option value="">All Ratings</option>
+                <option value="9">9+ ⭐</option>
+                <option value="8">8+ ⭐</option>
+                <option value="7">7+ ⭐</option>
+                <option value="6">6+ ⭐</option>
+            </select>
+
+            <select id="genreFilter" class="filter-select">
+                <option value="">All Genres</option>
+                <option value="Action">Action</option>
+                <option value="Comedy">Comedy</option>
+                <option value="Drama">Drama</option>
+                <option value="Horror">Horror</option>
+                <option value="Romance">Romance</option>
+                <option value="Sci-Fi">Sci-Fi</option>
+                <option value="Thriller">Thriller</option>
+                <option value="Animation">Animation</option>
+            </select>
+        </div>
+
+        <!-- Search Stats -->
+        <div id="searchStats" class="search-stats" style="display: none;">
+            <span>Found <span class="highlight" id="totalResults">0</span> results</span>
+            <span>Search time: <span class="highlight" id="searchTime">0ms</span></span>
+            <span>Match quality: <span class="highlight" id="matchQuality">-</span></span>
+        </div>
+
+        <!-- Loading State -->
+        <div id="loading" class="loading">
+            <div class="spinner"></div>
+            <p>Searching...</p>
+        </div>
+
+        <!-- Error Message -->
+        <div id="errorMessage" class="error-message" style="display: none;"></div>
+
+        <!-- Results Grid -->
+        <div id="resultsGrid" class="results-grid"></div>
+
+        <!-- Empty State -->
+        <div id="emptyState" class="empty-state" style="display: none;">
+            <div class="empty-state-icon">🔍</div>
+            <h3>No results found</h3>
+            <p>Try adjusting your search terms or filters</p>
+        </div>
+
+        <!-- Pagination -->
+        <div id="pagination" class="pagination" style="display: none;">
+            <button id="prevPage">Previous</button>
+            <span class="page-info">
+                Page <span id="currentPage">1</span> of <span id="totalPages">1</span>
+            </span>
+            <button id="nextPage">Next</button>
+        </div>
+    </div>
+
+    <script>
+        // Configuration
+        const API_BASE_URL = 'https://backend-app-970m.onrender.com/api';
+        // For local testing:
+        // const API_BASE_URL = 'http://localhost:5000/api';
+
+        // State
+        let currentPage = 1;
+        let currentQuery = '';
+        let totalPages = 0;
+        let searchTimeout = null;
+        let autocompleteTimeout = null;
+
+        // DOM Elements
+        const searchInput = document.getElementById('searchInput');
+        const searchButton = document.getElementById('searchButton');
+        const autocompleteDropdown = document.getElementById('autocompleteDropdown');
+        const resultsGrid = document.getElementById('resultsGrid');
+        const loading = document.getElementById('loading');
+        const errorMessage = document.getElementById('errorMessage');
+        const emptyState = document.getElementById('emptyState');
+        const searchStats = document.getElementById('searchStats');
+        const pagination = document.getElementById('pagination');
+
+        // Filter Elements
+        const contentTypeFilter = document.getElementById('contentTypeFilter');
+        const sortFilter = document.getElementById('sortFilter');
+        const ratingFilter = document.getElementById('ratingFilter');
+        const genreFilter = document.getElementById('genreFilter');
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            setupEventListeners();
+            // Optionally load trending on page load
+            // searchMovies('', 1);
+        });
+
+        // Event Listeners
+        function setupEventListeners() {
+            // Search input events
+            searchInput.addEventListener('input', handleSearchInput);
+            searchInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    performSearch();
+                }
+            });
+
+            // Search button
+            searchButton.addEventListener('click', performSearch);
+
+            // Filter changes
+            [contentTypeFilter, sortFilter, ratingFilter, genreFilter].forEach(filter => {
+                filter.addEventListener('change', () => {
+                    if (currentQuery) {
+                        currentPage = 1;
+                        performSearch();
+                    }
+                });
+            });
+
+            // Pagination
+            document.getElementById('prevPage').addEventListener('click', () => {
+                if (currentPage > 1) {
+                    currentPage--;
+                    performSearch();
+                }
+            });
+
+            document.getElementById('nextPage').addEventListener('click', () => {
+                if (currentPage < totalPages) {
+                    currentPage++;
+                    performSearch();
+                }
+            });
+
+            // Click outside to close autocomplete
+            document.addEventListener('click', (e) => {
+                if (!e.target.closest('.search-container')) {
+                    hideAutocomplete();
+                }
+            });
+        }
+
+        // Search Input Handler
+        function handleSearchInput(e) {
+            const query = e.target.value.trim();
+
+            // Clear existing timeouts
+            clearTimeout(autocompleteTimeout);
+
+            if (query.length >= 2) {
+                // Debounce autocomplete
+                autocompleteTimeout = setTimeout(() => {
+                    fetchAutocomplete(query);
+                }, 300);
+            } else {
+                hideAutocomplete();
+            }
+        }
+
+        // Fetch Autocomplete Suggestions
+        async function fetchAutocomplete(query) {
+            try {
+                const response = await fetch(`${API_BASE_URL}/autocomplete?query=${encodeURIComponent(query)}&limit=8`);
+                const suggestions = await response.json();
+
+                if (suggestions && suggestions.length > 0) {
+                    showAutocomplete(suggestions);
+                } else {
+                    hideAutocomplete();
+                }
+            } catch (error) {
+                console.error('Autocomplete error:', error);
+                hideAutocomplete();
+            }
+        }
+
+        // Show Autocomplete Dropdown
+        function showAutocomplete(suggestions) {
+            autocompleteDropdown.innerHTML = suggestions.map(item => `
+                <div class="autocomplete-item" onclick="selectAutocomplete('${item.title.replace(/'/g, "\\'")}')">
+                    ${item.poster_path ?
+                    `<img src="${item.poster_path}" alt="${item.title}" onerror="this.src='https://via.placeholder.com/40x60/333/999?text=No+Image'">` :
+                    `<img src="https://via.placeholder.com/40x60/333/999?text=No+Image" alt="${item.title}">`
+                }
+                    <div class="autocomplete-content">
+                        <div class="autocomplete-title">${highlightMatch(item.title, searchInput.value)}</div>
+                        <div class="autocomplete-meta">
+                            <span>${item.content_type}</span>
+                            ${item.year ? `<span>${item.year}</span>` : ''}
+                            ${item.rating ? `<span>⭐ ${item.rating.toFixed(1)}</span>` : ''}
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+
+            autocompleteDropdown.classList.add('active');
+        }
+
+        // Hide Autocomplete
+        function hideAutocomplete() {
+            autocompleteDropdown.classList.remove('active');
+        }
+
+        // Select Autocomplete Item
+        function selectAutocomplete(title) {
+            searchInput.value = title;
+            hideAutocomplete();
+            performSearch();
+        }
+
+        // Highlight Match in Autocomplete
+        function highlightMatch(text, query) {
+            const regex = new RegExp(`(${query})`, 'gi');
+            return text.replace(regex, '<strong>$1</strong>');
+        }
+
+        // Perform Search
+        function performSearch() {
+            const query = searchInput.value.trim();
+
+            if (!query) {
+                showError('Please enter a search term');
+                return;
+            }
+
+            currentQuery = query;
+            hideAutocomplete();
+            searchMovies(query, currentPage);
+        }
+
+        // Search Movies API Call
+        async function searchMovies(query, page = 1) {
+            // Show loading state
+            showLoading();
+            hideError();
+            hideEmptyState();
+            hideSearchStats();
+
+            // Build query parameters
+            const params = new URLSearchParams({
+                query: query,
+                page: page,
+                per_page: 20,
+                sort_by: sortFilter.value || 'relevance'
+            });
+
+            // Add filters
+            if (contentTypeFilter.value) {
+                params.append('type', contentTypeFilter.value);
+            }
+
+            if (genreFilter.value) {
+                params.append('genres', genreFilter.value);
+            }
+
+            if (ratingFilter.value) {
+                params.append('min_rating', ratingFilter.value);
+            }
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/search?${params}`);
+                const data = await response.json();
+
+                if (response.ok) {
+                    displayResults(data);
+                } else {
+                    showError(data.error || 'Search failed');
+                }
+            } catch (error) {
+                console.error('Search error:', error);
+                showError('Failed to connect to search service');
+            } finally {
+                hideLoading();
+            }
+        }
+
+        // Display Search Results
+        function displayResults(data) {
+            const { results, total_results, page, total_pages, search_time, search_metadata } = data;
+
+            // Update state
+            currentPage = page;
+            totalPages = total_pages;
+
+            // Show search stats
+            if (search_metadata) {
+                showSearchStats(total_results, search_time, search_metadata);
+            }
+
+            if (results && results.length > 0) {
+                // Display results grid
+                resultsGrid.innerHTML = results.map(movie => createMovieCard(movie)).join('');
+                resultsGrid.style.display = 'grid';
+
+                // Show pagination if needed
+                if (total_pages > 1) {
+                    updatePagination(page, total_pages);
+                    pagination.style.display = 'flex';
+                } else {
+                    pagination.style.display = 'none';
+                }
+            } else {
+                // Show empty state
+                resultsGrid.style.display = 'none';
+                showEmptyState();
+                pagination.style.display = 'none';
+            }
+        }
+
+        // Create Movie Card HTML
+        function createMovieCard(movie) {
+            const posterUrl = movie.poster_path || 'https://via.placeholder.com/200x300/333/999?text=No+Poster';
+            const year = movie.release_date ? new Date(movie.release_date).getFullYear() : 'N/A';
+            const rating = movie.rating ? movie.rating.toFixed(1) : 'N/A';
+
+            // Determine match quality badge
+            let matchBadge = '';
+            if (movie.match_quality) {
+                matchBadge = `<span class="match-quality ${movie.match_quality}">${movie.match_quality}</span>`;
+            }
+
+            return `
+                <div class="movie-card" onclick="viewMovieDetails(${movie.id})">
+                    ${matchBadge}
+                    <img src="${posterUrl}" alt="${movie.title}" class="movie-poster" 
+                         onerror="this.src='https://via.placeholder.com/200x300/333/999?text=No+Poster'">
+                    <div class="movie-info">
+                        <div class="movie-title" title="${movie.title}">${movie.title}</div>
+                        <div class="movie-meta">
+                            <span class="movie-year">${year}</span>
+                            <span class="movie-rating">${rating}</span>
+                        </div>
+                        <span class="movie-type">${movie.content_type}</span>
+                    </div>
+                </div>
+            `;
+        }
+
+        // View Movie Details (placeholder function)
+        function viewMovieDetails(movieId) {
+            console.log('View details for movie:', movieId);
+            // You can implement a modal or redirect to details page
+            alert(`Movie ID: ${movieId}\nDetails page coming soon!`);
+        }
+
+        // Show Search Stats
+        function showSearchStats(totalResults, searchTime, metadata) {
+            document.getElementById('totalResults').textContent = totalResults;
+            document.getElementById('searchTime').textContent = searchTime;
+
+            // Determine overall match quality
+            let quality = 'Good';
+            if (metadata.exact_matches > 0) {
+                quality = 'Excellent';
+            } else if (metadata.fuzzy_matches > 0) {
+                quality = 'Fair';
+            }
+
+            document.getElementById('matchQuality').textContent = quality;
+            searchStats.style.display = 'block';
+        }
+
+        // Update Pagination
+        function updatePagination(current, total) {
+            document.getElementById('currentPage').textContent = current;
+            document.getElementById('totalPages').textContent = total;
+
+            document.getElementById('prevPage').disabled = current <= 1;
+            document.getElementById('nextPage').disabled = current >= total;
+        }
+
+        // UI State Management
+        function showLoading() {
+            loading.classList.add('active');
+            resultsGrid.style.display = 'none';
+        }
+
+        function hideLoading() {
+            loading.classList.remove('active');
+        }
+
+        function showError(message) {
+            errorMessage.textContent = message;
+            errorMessage.style.display = 'block';
+            resultsGrid.style.display = 'none';
+        }
+
+        function hideError() {
+            errorMessage.style.display = 'none';
+        }
+
+        function showEmptyState() {
+            emptyState.style.display = 'block';
+        }
+
+        function hideEmptyState() {
+            emptyState.style.display = 'none';
+        }
+
+        function hideSearchStats() {
+            searchStats.style.display = 'none';
+        }
+
+        // Example searches for testing
+        function performExampleSearch(query) {
+            searchInput.value = query;
+            performSearch();
+        }
+
+        // Add some example search buttons (optional)
+        console.log('Search Engine Ready!');
+        console.log('Try searching for: "Avatar", "Avengers", "Star Wars", "Saaho"');
+        console.log('The search supports typos, try: "Avatr", "Avengrs", "Star Wrs"');
+    </script>
+</body>
+
+</html>
