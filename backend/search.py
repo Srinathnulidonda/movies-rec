@@ -1,4 +1,9 @@
 # backend/search.py
+"""
+Advanced Search Engine for Movie Recommendation System
+Implements N-gram analysis, fuzzy matching, field boosting, and optimized queries
+"""
+
 import json
 import re
 import time
@@ -194,6 +199,7 @@ class SearchIndex:
         self.content_data = {}  # content ID -> content data
         self.ngram_index = defaultdict(set)  # n-gram -> set of content IDs
         self.field_index = defaultdict(lambda: defaultdict(set))  # field -> term -> set of content IDs
+        self.exact_title_index = {}  # lowercase title -> content ID for exact matches
         self.ngram_analyzer = NGramAnalyzer()
         self.last_update = None
     
@@ -206,6 +212,7 @@ class SearchIndex:
         self.content_data.clear()
         self.ngram_index.clear()
         self.field_index.clear()
+        self.exact_title_index.clear()
         
         for content in contents:
             content_id = content.id
@@ -233,6 +240,16 @@ class SearchIndex:
                 'mal_id': content.mal_id
             }
             
+            # Build exact title index for 100% matches
+            if content.title:
+                normalized_title = content.title.lower().strip()
+                self.exact_title_index[normalized_title] = content_id
+                
+                # Also index without special characters for better matching
+                clean_title = re.sub(r'[^\w\s]', '', normalized_title)
+                if clean_title != normalized_title:
+                    self.exact_title_index[clean_title] = content_id
+            
             # Index title with high priority
             if content.title:
                 self._index_text(content.title, content_id, 'title')
@@ -240,6 +257,9 @@ class SearchIndex:
             # Index original title
             if content.original_title:
                 self._index_text(content.original_title, content_id, 'original_title')
+                # Also add to exact title index
+                normalized_orig = content.original_title.lower().strip()
+                self.exact_title_index[normalized_orig] = content_id
             
             # Index genres
             try:
@@ -373,27 +393,84 @@ class SearchEngine:
         self._ensure_index_updated()
         
         # Normalize and prepare query
-        query = query.strip().lower()
+        query = query.strip()
         if not query:
             return self._empty_result()
         
-        # Get candidate content IDs
-        candidate_ids = self._get_candidates(query)
+        query_lower = query.lower()
         
-        # Score and rank candidates
-        scored_results = self._score_candidates(query, candidate_ids)
+        # First, check for exact title matches (100% accurate)
+        exact_matches = []
+        exact_match_ids = set()
         
-        # Apply filters
+        # Check exact title index
+        if query_lower in self.search_index.exact_title_index:
+            exact_match_id = self.search_index.exact_title_index[query_lower]
+            exact_matches.append((exact_match_id, 1000.0))  # Very high score for exact match
+            exact_match_ids.add(exact_match_id)
+        
+        # Also check without special characters
+        clean_query = re.sub(r'[^\w\s]', '', query_lower)
+        if clean_query != query_lower and clean_query in self.search_index.exact_title_index:
+            exact_match_id = self.search_index.exact_title_index[clean_query]
+            if exact_match_id not in exact_match_ids:
+                exact_matches.append((exact_match_id, 999.0))
+                exact_match_ids.add(exact_match_id)
+        
+        # Check for exact word sequence matches in titles
+        for content_id, content_data in self.search_index.content_data.items():
+            if content_id in exact_match_ids:
+                continue
+                
+            title = content_data.get('title', '').lower()
+            original_title = content_data.get('original_title', '').lower()
+            
+            # Check if query matches exactly as a phrase in title
+            if query_lower in title:
+                # Calculate position-based score (earlier = better)
+                position_score = 1 - (title.index(query_lower) / len(title))
+                exact_matches.append((content_id, 900 + position_score * 50))
+                exact_match_ids.add(content_id)
+            elif original_title and query_lower in original_title:
+                position_score = 1 - (original_title.index(query_lower) / len(original_title))
+                exact_matches.append((content_id, 850 + position_score * 50))
+                exact_match_ids.add(content_id)
+        
+        # Get other candidates for fuzzy/partial matching
+        candidate_ids = self._get_candidates(query_lower)
+        
+        # Remove exact matches from candidates to avoid duplication
+        candidate_ids = candidate_ids - exact_match_ids
+        
+        # Score and rank non-exact candidates
+        scored_results = self._score_candidates(query_lower, candidate_ids)
+        
+        # Combine exact matches (first) with other results
+        all_results = exact_matches + scored_results
+        
+        # Apply filters to all results
         filtered_results = self._apply_filters(
-            scored_results, 
+            all_results, 
             content_type, 
             genres, 
             languages, 
             min_rating
         )
         
-        # Sort results
-        sorted_results = self._sort_results(filtered_results, sort_by)
+        # Sort results (exact matches will naturally be first due to high scores)
+        if sort_by == 'relevance':
+            # Already sorted by score
+            sorted_results = filtered_results
+        else:
+            # For other sort methods, keep exact matches first
+            exact_filtered = [r for r in filtered_results if r[1] >= 850]
+            other_filtered = [r for r in filtered_results if r[1] < 850]
+            
+            # Sort non-exact matches by requested method
+            other_sorted = self._sort_results(other_filtered, sort_by)
+            
+            # Combine: exact matches first, then sorted others
+            sorted_results = exact_filtered + other_sorted
         
         # Paginate
         total_results = len(sorted_results)
@@ -444,67 +521,92 @@ class SearchEngine:
         suggestions = []
         seen_titles = set()
         
-        # Get n-grams for the query
-        query_ngrams = self.ngram_analyzer.analyze(query)
+        # First, add exact prefix matches
+        exact_prefix_matches = []
+        for title, content_id in self.search_index.exact_title_index.items():
+            if title.startswith(query):
+                content_data = self.search_index.content_data.get(content_id)
+                if content_data and content_data['title'].lower() not in seen_titles:
+                    exact_prefix_matches.append({
+                        'title': content_data['title'],
+                        'content_type': content_data.get('content_type', 'unknown'),
+                        'poster_path': content_data.get('poster_path', ''),
+                        'score': 2.0,  # Highest score for exact prefix
+                        'popularity': content_data.get('popularity', 0) or 0
+                    })
+                    seen_titles.add(content_data['title'].lower())
         
-        # Find content with matching n-grams
-        candidate_ids = set()
-        for ngram in query_ngrams:
-            if ngram in self.search_index.ngram_index:
-                candidate_ids.update(self.search_index.ngram_index[ngram])
+        # Sort exact matches by popularity
+        exact_prefix_matches.sort(key=lambda x: x['popularity'], reverse=True)
         
-        # Score candidates based on title match
-        scored_candidates = []
-        for content_id in candidate_ids:
-            content_data = self.search_index.content_data.get(content_id)
-            if not content_data:
-                continue
-            
-            title = content_data.get('title', '')
-            if not title or title.lower() in seen_titles:
-                continue
-            
-            # Calculate match score
-            title_lower = title.lower()
-            score = 0
-            
-            # Prefix match gets highest score
-            if title_lower.startswith(query):
-                score = 1.0
-            # Word prefix match
-            elif any(word.startswith(query) for word in title_lower.split()):
-                score = 0.8
-            # Contains query
-            elif query in title_lower:
-                score = 0.6
-            # Fuzzy match
-            else:
-                score = self.fuzzy_matcher.fuzzy_score(query, title_lower) * 0.5
-            
-            if score > 0.3:  # Threshold for inclusion
-                popularity = content_data.get('popularity', 0)
-                if popularity is None:
-                    popularity = 0
-                    
-                scored_candidates.append({
-                    'title': title,
-                    'content_type': content_data.get('content_type', 'unknown'),
-                    'poster_path': content_data.get('poster_path', ''),
-                    'score': score,
-                    'popularity': popularity
-                })
-                seen_titles.add(title.lower())
-        
-        # Sort by score and popularity
-        scored_candidates.sort(key=lambda x: (x['score'], x['popularity']), reverse=True)
-        
-        # Format suggestions
-        for candidate in scored_candidates[:limit]:
+        # Add to suggestions
+        for match in exact_prefix_matches[:limit]:
             suggestions.append({
-                'title': candidate['title'],
-                'content_type': candidate['content_type'],
-                'poster_path': self._format_poster_path(candidate['poster_path'])
+                'title': match['title'],
+                'content_type': match['content_type'],
+                'poster_path': self._format_poster_path(match['poster_path'])
             })
+        
+        # If we need more suggestions, add fuzzy matches
+        if len(suggestions) < limit:
+            # Get n-grams for the query
+            query_ngrams = self.ngram_analyzer.analyze(query)
+            
+            # Find content with matching n-grams
+            candidate_ids = set()
+            for ngram in query_ngrams:
+                if ngram in self.search_index.ngram_index:
+                    candidate_ids.update(self.search_index.ngram_index[ngram])
+            
+            # Score candidates based on title match
+            scored_candidates = []
+            for content_id in candidate_ids:
+                content_data = self.search_index.content_data.get(content_id)
+                if not content_data:
+                    continue
+                
+                title = content_data.get('title', '')
+                if not title or title.lower() in seen_titles:
+                    continue
+                
+                # Calculate match score
+                title_lower = title.lower()
+                score = 0
+                
+                # Word prefix match
+                if any(word.startswith(query) for word in title_lower.split()):
+                    score = 0.8
+                # Contains query
+                elif query in title_lower:
+                    score = 0.6
+                # Fuzzy match
+                else:
+                    score = self.fuzzy_matcher.fuzzy_score(query, title_lower) * 0.5
+                
+                if score > 0.3:  # Threshold for inclusion
+                    popularity = content_data.get('popularity', 0)
+                    if popularity is None:
+                        popularity = 0
+                        
+                    scored_candidates.append({
+                        'title': title,
+                        'content_type': content_data.get('content_type', 'unknown'),
+                        'poster_path': content_data.get('poster_path', ''),
+                        'score': score,
+                        'popularity': popularity
+                    })
+                    seen_titles.add(title.lower())
+            
+            # Sort by score and popularity
+            scored_candidates.sort(key=lambda x: (x['score'], x['popularity']), reverse=True)
+            
+            # Add remaining suggestions
+            for candidate in scored_candidates[:limit - len(suggestions)]:
+                suggestions.append({
+                    'title': candidate['title'],
+                    'content_type': candidate['content_type'],
+                    'poster_path': self._format_poster_path(candidate['poster_path'])
+                })
         
         return suggestions
     
@@ -633,30 +735,30 @@ class SearchEngine:
         field_lower = field_value.lower()
         query_lower = query.lower()
         
-        # Exact match
+        # Exact match (but not as high as title exact match)
         if query_lower == field_lower:
-            return boost * 1.0
+            return boost * 5.0  # High but not as high as exact title match
         
         # Prefix match
         if field_lower.startswith(query_lower):
-            return boost * 0.9
+            return boost * 4.0
         
         # Contains exact query
         if query_lower in field_lower:
             position_factor = 1 - (field_lower.index(query_lower) / len(field_lower))
-            return boost * 0.7 * position_factor
+            return boost * 3.0 * position_factor
         
         # Word match
         query_words = query_lower.split()
         field_words = field_lower.split()
         matched_words = sum(1 for word in query_words if word in field_words)
         if matched_words > 0:
-            return boost * 0.5 * (matched_words / len(query_words))
+            return boost * 2.0 * (matched_words / len(query_words))
         
         # Fuzzy match
         fuzzy_score = self.fuzzy_matcher.fuzzy_score(query_lower, field_lower)
         if fuzzy_score > self.fuzzy_matcher.threshold:
-            return boost * 0.3 * fuzzy_score
+            return boost * 1.0 * fuzzy_score
         
         return 0.0
     
@@ -778,6 +880,15 @@ class SearchEngine:
             if popularity is None:
                 popularity = 0
             
+            # Add match type indicator
+            match_type = 'fuzzy'
+            if score >= 1000:
+                match_type = 'exact'
+            elif score >= 850:
+                match_type = 'phrase'
+            elif score >= 100:
+                match_type = 'partial'
+            
             formatted.append({
                 'id': content_data.get('id'),
                 'tmdb_id': content_data.get('tmdb_id'),
@@ -798,7 +909,8 @@ class SearchEngine:
                 'is_trending': content_data.get('is_trending', False),
                 'is_new_release': content_data.get('is_new_release', False),
                 'is_critics_choice': content_data.get('is_critics_choice', False),
-                'relevance_score': round(score, 3)
+                'relevance_score': round(score, 3),
+                'match_type': match_type  # Indicates how well it matched
             })
         
         return formatted
