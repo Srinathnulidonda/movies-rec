@@ -410,7 +410,7 @@ class HybridSearch:
     def _update_search_index(self):
         """Update the search index with latest content"""
         try:
-            from models import Content  # Import here to avoid circular imports
+            from app import Content  # Import here to avoid circular imports
             content_list = Content.query.limit(10000).all()  # Limit for memory
             self.indexer.build_index(content_list)
         except Exception as e:
@@ -420,7 +420,7 @@ class HybridSearch:
         """
         Perform database search with fuzzy matching
         """
-        from models import Content  # Import here to avoid circular imports
+        from app import Content  # Import here to avoid circular imports
         
         # Build search conditions
         search_conditions = []
@@ -671,7 +671,7 @@ class HybridSearch:
     
     def _get_content_by_ids(self, content_ids: List[int]) -> List[Any]:
         """Get content objects by IDs"""
-        from models import Content  # Import here to avoid circular imports
+        from app import Content  # Import here to avoid circular imports
         return Content.query.filter(Content.id.in_(content_ids)).all()
     
     def _generate_cache_key(self, query: str, search_type: str, page: int, filters: Dict) -> str:
