@@ -20,6 +20,6 @@ gunicorn
 python-dotenv
 python-dateutil
 rapidfuzz
+python-Levenshtein
 protobuf
 grpcio-tools
-search_pb2
