@@ -4,8 +4,7 @@ import logging
 import re
 import time
 import unicodedata
-import struct
-from typing import List, Dict, Any, Tuple, Optional, Set, Union
+from typing import List, Dict, Any, Tuple, Optional, Set
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import defaultdict, Counter, OrderedDict
@@ -14,7 +13,7 @@ from functools import lru_cache, wraps
 import threading
 
 import numpy as np
-from flask import current_app, request
+from flask import current_app
 from sqlalchemy import or_, and_, func, text, case
 from sqlalchemy.orm import Query
 from rapidfuzz import fuzz, process
@@ -22,14 +21,6 @@ from rapidfuzz.distance import Levenshtein
 import redis
 import pickle
 import Levenshtein as lev
-
-# Import protobuf generated classes
-try:
-    from . import search_pb2
-    PROTOBUF_AVAILABLE = True
-except ImportError:
-    PROTOBUF_AVAILABLE = False
-    logging.warning("Protobuf not available, falling back to JSON")
 
 logger = logging.getLogger(__name__)
 
@@ -49,127 +40,11 @@ TELUGU_TRANSLITERATIONS = {
     'pushpa': ['pushpa', 'పుష్ప'],
     'rrr': ['rrr', 'rajamouli', 'ఆర్ఆర్ఆర్'],
     'kgf': ['kgf', 'కేజీఎఫ్'],
+    # Add more common Telugu movie transliterations
 }
 
-class ProtobufSerializer:
-    """Handles serialization between Protobuf and Python objects"""
-    
-    @staticmethod
-    def content_to_protobuf(content_data: Dict) -> Any:
-        """Convert content dictionary to protobuf ContentItem"""
-        if not PROTOBUF_AVAILABLE:
-            return content_data
-        
-        item = search_pb2.ContentItem()
-        item.id = content_data.get('id', 0)
-        item.title = content_data.get('title', '')
-        item.original_title = content_data.get('original_title', '') or ''
-        
-        # Map content type
-        type_map = {
-            'movie': search_pb2.ContentItem.MOVIE,
-            'tv': search_pb2.ContentItem.TV,
-            'anime': search_pb2.ContentItem.ANIME
-        }
-        item.type = type_map.get(content_data.get('content_type', ''), search_pb2.ContentItem.UNKNOWN)
-        
-        # Set year
-        if content_data.get('release_date'):
-            try:
-                if isinstance(content_data['release_date'], str):
-                    year = int(content_data['release_date'][:4])
-                else:
-                    year = content_data['release_date'].year
-                item.year = year
-            except:
-                item.year = 0
-        
-        # Set arrays
-        for lang in content_data.get('languages', []):
-            item.languages.append(lang)
-        for genre in content_data.get('genres', []):
-            item.genres.append(genre)
-        
-        # Set URLs
-        item.poster_url = content_data.get('poster_path', '') or ''
-        item.backdrop_url = content_data.get('backdrop_path', '') or ''
-        item.description = content_data.get('overview', '') or ''
-        
-        # Set numeric fields
-        item.rating = float(content_data.get('rating', 0) or 0)
-        item.vote_count = int(content_data.get('vote_count', 0) or 0)
-        item.popularity = float(content_data.get('popularity', 0) or 0)
-        item.runtime = int(content_data.get('runtime', 0) or 0)
-        
-        # Set additional fields
-        if content_data.get('release_date'):
-            item.release_date = str(content_data['release_date'])
-        item.youtube_trailer_id = content_data.get('youtube_trailer_id', '') or ''
-        
-        # Set boolean flags
-        item.is_trending = bool(content_data.get('is_trending', False))
-        item.is_new_release = bool(content_data.get('is_new_release', False))
-        item.is_critics_choice = bool(content_data.get('is_critics_choice', False))
-        
-        # Add metadata
-        if content_data.get('metadata'):
-            for key, value in content_data['metadata'].items():
-                item.metadata[key] = str(value)
-        
-        return item
-    
-    @staticmethod
-    def search_response_to_protobuf(response_data: Dict) -> bytes:
-        """Convert search response to protobuf bytes"""
-        if not PROTOBUF_AVAILABLE:
-            return json.dumps(response_data).encode('utf-8')
-        
-        response = search_pb2.SearchResponse()
-        
-        # Add results
-        for result in response_data.get('results', []):
-            item = ProtobufSerializer.content_to_protobuf(result)
-            response.results.append(item)
-        
-        # Set metadata
-        response.total_results = response_data.get('total_results', 0)
-        response.page = response_data.get('page', 1)
-        response.query = response_data.get('query', '')
-        response.search_time_ms = response_data.get('search_time', 0) * 1000  # Convert to ms
-        response.instant = response_data.get('instant', False)
-        
-        # Add suggestions
-        for suggestion in response_data.get('suggestions', []):
-            response.suggestions.append(suggestion)
-        
-        # Add search metadata
-        if response_data.get('metadata'):
-            response.metadata.source = response_data['metadata'].get('source', 'backend')
-            
-        return response.SerializeToString()
-    
-    @staticmethod
-    def autocomplete_to_protobuf(suggestions: List[Dict]) -> bytes:
-        """Convert autocomplete suggestions to protobuf"""
-        if not PROTOBUF_AVAILABLE:
-            return json.dumps({'suggestions': suggestions}).encode('utf-8')
-        
-        response = search_pb2.AutocompleteResponse()
-        
-        for sugg in suggestions:
-            suggestion = response.suggestions.add()
-            suggestion.id = sugg.get('id', 0)
-            suggestion.title = sugg.get('title', '')
-            suggestion.type = sugg.get('type', '')
-            suggestion.year = sugg.get('year', 0) or 0
-            suggestion.poster_url = sugg.get('poster', '') or ''
-            suggestion.rating = float(sugg.get('rating', 0) or 0)
-            suggestion.is_telugu = sugg.get('is_telugu', False)
-        
-        return response.SerializeToString()
-
 class UltraFastSearchIndexer:
-    """Enhanced in-memory search index for ultra-fast, accurate searching with Protobuf support"""
+    """Enhanced in-memory search index for ultra-fast, accurate searching"""
     
     def __init__(self):
         self.index = {
@@ -183,9 +58,8 @@ class UltraFastSearchIndexer:
             'telugu_titles': defaultdict(set),  # telugu title variations -> content_ids
             'language_content': defaultdict(set),  # language -> content_ids
             
-            # Content metadata with protobuf cache
+            # Content metadata
             'content_map': {},  # content_id -> full content data
-            'content_protobuf': {},  # content_id -> serialized protobuf
             'content_vectors': {},  # content_id -> search vector
             
             # Autocomplete and suggestions
@@ -205,9 +79,6 @@ class UltraFastSearchIndexer:
             # Performance optimization
             'hot_cache': OrderedDict(),  # LRU cache for frequent searches
             'search_stats': defaultdict(int),  # query -> search count
-            
-            # Protobuf optimization
-            'batch_cache': {},  # batch_key -> serialized batch response
         }
         
         self.last_update = None
@@ -216,7 +87,7 @@ class UltraFastSearchIndexer:
         self.is_building = False
         
     def build_index(self, content_list: List[Any]) -> None:
-        """Build comprehensive search index with Telugu priority and Protobuf caching"""
+        """Build comprehensive search index with Telugu priority"""
         with self.lock:
             if self.is_building:
                 return
@@ -241,9 +112,6 @@ class UltraFastSearchIndexer:
             # Calculate content vectors for similarity
             self._calculate_content_vectors()
             
-            # Pre-serialize popular content to protobuf
-            self._preserialize_popular_content()
-            
             self.last_update = datetime.now()
             elapsed = time.time() - start_time
             logger.info(f"Search index built successfully in {elapsed:.2f} seconds")
@@ -251,25 +119,6 @@ class UltraFastSearchIndexer:
         finally:
             with self.lock:
                 self.is_building = False
-    
-    def _preserialize_popular_content(self):
-        """Pre-serialize popular content to Protobuf for instant serving"""
-        if not PROTOBUF_AVAILABLE:
-            return
-        
-        # Get top 100 most popular content
-        popular_content = sorted(
-            self.index['content_map'].items(),
-            key=lambda x: x[1].get('popularity', 0),
-            reverse=True
-        )[:100]
-        
-        for content_id, content_data in popular_content:
-            try:
-                protobuf_item = ProtobufSerializer.content_to_protobuf(content_data)
-                self.index['content_protobuf'][content_id] = protobuf_item.SerializeToString()
-            except Exception as e:
-                logger.error(f"Failed to pre-serialize content {content_id}: {e}")
     
     def _clear_index(self):
         """Clear index while preserving structure"""
@@ -308,8 +157,7 @@ class UltraFastSearchIndexer:
             'youtube_trailer_id': content.youtube_trailer_id,
             'is_trending': content.is_trending,
             'is_new_release': content.is_new_release,
-            'is_critics_choice': content.is_critics_choice,
-            'runtime': content.runtime
+            'is_critics_choice': content.is_critics_choice
         }
         self.index['content_map'][content_id] = content_data
         
@@ -535,17 +383,14 @@ class UltraFastSearchIndexer:
             }
             self.index['content_vectors'][content_id] = vector
     
-    def search(self, query: str, limit: int = 20, filters: Dict = None, use_protobuf: bool = True) -> Union[List[Tuple[int, float]], bytes]:
-        """Ultra-fast, accurate search with scoring and optional Protobuf response"""
+    def search(self, query: str, limit: int = 20, filters: Dict = None) -> List[Tuple[int, float]]:
+        """Ultra-fast, accurate search with scoring"""
         query_lower = query.lower().strip()
         
         # Check hot cache first
-        cache_key = f"{query_lower}:{json.dumps(filters, sort_keys=True)}:{use_protobuf}"
+        cache_key = f"{query_lower}:{json.dumps(filters, sort_keys=True)}"
         if cache_key in self.index['hot_cache']:
-            cached = self.index['hot_cache'][cache_key]
-            if use_protobuf and PROTOBUF_AVAILABLE:
-                return cached  # Already in protobuf format
-            return cached[:limit]
+            return self.index['hot_cache'][cache_key][:limit]
         
         results = defaultdict(float)
         
@@ -606,50 +451,15 @@ class UltraFastSearchIndexer:
         # Apply ranking algorithm
         ranked_results = self._rank_results(results, query_lower)
         
-        # Prepare response
-        if use_protobuf and PROTOBUF_AVAILABLE:
-            # Convert to protobuf format
-            response_data = self._prepare_protobuf_response(ranked_results[:limit], query)
-            # Cache the protobuf response
-            if len(self.index['hot_cache']) > 1000:
-                self.index['hot_cache'].popitem(last=False)
-            self.index['hot_cache'][cache_key] = response_data
-            return response_data
-        else:
-            # Cache regular results
-            if len(self.index['hot_cache']) > 1000:
-                self.index['hot_cache'].popitem(last=False)
-            self.index['hot_cache'][cache_key] = ranked_results
-            
+        # Cache hot searches
+        if len(self.index['hot_cache']) > 1000:
+            self.index['hot_cache'].popitem(last=False)
+        self.index['hot_cache'][cache_key] = ranked_results
+        
         # Update search stats
         self.index['search_stats'][query_lower] += 1
         
         return ranked_results[:limit]
-    
-    def _prepare_protobuf_response(self, ranked_results: List[Tuple[int, float]], query: str) -> bytes:
-        """Prepare protobuf search response"""
-        response = search_pb2.SearchResponse()
-        
-        for content_id, score in ranked_results:
-            content_data = self.index['content_map'].get(content_id)
-            if content_data:
-                # Check if we have pre-serialized protobuf
-                if content_id in self.index['content_protobuf']:
-                    # Parse the pre-serialized content
-                    item = search_pb2.ContentItem()
-                    item.ParseFromString(self.index['content_protobuf'][content_id])
-                    response.results.append(item)
-                else:
-                    # Serialize on the fly
-                    item = ProtobufSerializer.content_to_protobuf(content_data)
-                    response.results.append(item)
-        
-        response.total_results = len(ranked_results)
-        response.query = query
-        response.instant = True  # This is from the instant index
-        response.metadata.source = "instant_index"
-        
-        return response.SerializeToString()
     
     def _fuzzy_search(self, query: str, results: Dict[int, float], max_candidates: int):
         """Advanced fuzzy search using Levenshtein distance"""
@@ -807,29 +617,9 @@ class UltraFastSearchIndexer:
         ranked_ids.sort(key=lambda x: x[1], reverse=True)
         
         return [cid for cid, _ in ranked_ids[:limit]]
-    
-    def get_batch_content(self, content_ids: List[int], use_protobuf: bool = True) -> Union[Dict, bytes]:
-        """Get batch content for preloading"""
-        if use_protobuf and PROTOBUF_AVAILABLE:
-            response = search_pb2.BatchContentResponse()
-            
-            for content_id in content_ids:
-                content_data = self.index['content_map'].get(content_id)
-                if content_data:
-                    item = ProtobufSerializer.content_to_protobuf(content_data)
-                    response.contents[content_id].CopyFrom(item)
-            
-            return response.SerializeToString()
-        else:
-            result = {}
-            for content_id in content_ids:
-                content_data = self.index['content_map'].get(content_id)
-                if content_data:
-                    result[content_id] = content_data
-            return result
 
 class InstantHybridSearch:
-    """Enhanced hybrid search with instant results and Protobuf support"""
+    """Enhanced hybrid search with instant results"""
     
     def __init__(self, db, cache, services):
         self.db = db
@@ -860,61 +650,84 @@ class InstantHybridSearch:
             logger.error(f"Failed to build initial index: {e}")
     
     def search(self, query: str, search_type: str = 'multi', page: int = 1,
-               limit: int = 20, filters: Dict = None, use_protobuf: bool = None) -> Union[Dict[str, Any], bytes]:
+               limit: int = 20, filters: Dict = None) -> Dict[str, Any]:
         """
-        Ultra-fast search with instant results and Protobuf support
+        Ultra-fast search with instant results
         """
         start_time = time.time()
-        
-        # Detect client capability
-        if use_protobuf is None:
-            # Check Accept header
-            accept_header = request.headers.get('Accept', '')
-            use_protobuf = 'application/x-protobuf' in accept_header or 'application/protobuf' in accept_header
         
         # Validate and clean query
         query = query.strip()
         if not query:
-            if use_protobuf and PROTOBUF_AVAILABLE:
-                empty_response = search_pb2.SearchResponse()
-                empty_response.total_results = 0
-                empty_response.search_time_ms = 0
-                return empty_response.SerializeToString()
             return {'results': [], 'total_results': 0, 'search_time': 0}
         
         # Generate cache key
-        cache_key = self._generate_cache_key(query, search_type, page, filters, use_protobuf)
+        cache_key = self._generate_cache_key(query, search_type, page, filters)
         
         # Try cache first
         cached_result = self._get_cached_result(cache_key)
         if cached_result:
-            if use_protobuf and isinstance(cached_result, bytes):
-                return cached_result
-            elif not use_protobuf and isinstance(cached_result, dict):
-                cached_result['cached'] = True
-                cached_result['search_time'] = time.time() - start_time
-                return cached_result
+            cached_result['cached'] = True
+            cached_result['search_time'] = time.time() - start_time
+            return cached_result
         
         # Update index if needed
         if self.indexer.last_update is None or \
            (datetime.now() - self.indexer.last_update).seconds > self.indexer.update_interval:
             self._update_index_async()
         
-        # Perform instant in-memory search with protobuf support
-        instant_results = self._instant_search(query, search_type, filters, limit, use_protobuf)
+        # Perform instant in-memory search
+        instant_results = self._instant_search(query, search_type, filters, limit)
         
-        # If we have protobuf results, return them directly
-        if use_protobuf and isinstance(instant_results, bytes):
-            self._cache_result(cache_key, instant_results)
-            return instant_results
+        # If we have good instant results, return immediately
+        if len(instant_results) >= min(limit, 10):
+            response = self._prepare_response(instant_results, query, page, start_time, True)
+            self._cache_result(cache_key, response)
+            return response
         
-        # Otherwise prepare JSON response
-        response = self._prepare_response(instant_results, query, page, start_time, True)
+        # Otherwise, perform comprehensive search
+        all_results = {
+            'instant': instant_results,
+            'database': [],
+            'external': []
+        }
+        
+        # Parallel search operations
+        with self.executor as executor:
+            futures = []
+            
+            # Database search
+            futures.append(
+                executor.submit(self._database_search, query, search_type, filters, limit)
+            )
+            
+            # External API search (only if needed)
+            if len(instant_results) < 5:
+                futures.append(
+                    executor.submit(self._external_search_parallel, query, search_type, page)
+                )
+            
+            # Collect results
+            for future in as_completed(futures, timeout=5):
+                try:
+                    result = future.result()
+                    if isinstance(result, list):
+                        if result and hasattr(result[0], 'id'):
+                            all_results['database'] = result
+                        else:
+                            all_results['external'] = result
+                except Exception as e:
+                    logger.error(f"Search operation failed: {e}")
+        
+        # Merge and rank all results
+        final_results = self._merge_and_rank_all(all_results, query, limit)
+        
+        response = self._prepare_response(final_results, query, page, start_time, False)
         self._cache_result(cache_key, response)
         
         return response
     
-    def _instant_search(self, query: str, search_type: str, filters: Dict, limit: int, use_protobuf: bool) -> Union[List[Dict], bytes]:
+    def _instant_search(self, query: str, search_type: str, filters: Dict, limit: int) -> List[Dict]:
         """Perform instant in-memory search"""
         # Add content type to filters if specified
         if search_type != 'multi':
@@ -922,14 +735,10 @@ class InstantHybridSearch:
                 filters = {}
             filters['content_type'] = search_type
         
-        # Get results from indexer with protobuf support
-        search_results = self.indexer.search(query, limit * 2, filters, use_protobuf)
+        # Get results from indexer
+        search_results = self.indexer.search(query, limit * 2, filters)
         
-        # If protobuf response, return directly
-        if use_protobuf and isinstance(search_results, bytes):
-            return search_results
-        
-        # Format JSON results
+        # Format results
         formatted_results = []
         for content_id, score in search_results[:limit]:
             content_data = self.indexer.index['content_map'].get(content_id)
@@ -965,6 +774,267 @@ class InstantHybridSearch:
             'relevance_score': round(relevance_score, 2)
         }
     
+    def _database_search(self, query: str, search_type: str, filters: Dict, limit: int) -> List[Any]:
+        """Enhanced database search with Telugu priority"""
+        try:
+            Content = self.db.Model._decl_class_registry.get('Content')
+            if not Content:
+                return []
+            
+            # Build search query with Telugu priority
+            search_query = Content.query
+            
+            # Title search conditions
+            title_conditions = [
+                Content.title.ilike(f'{query}%'),  # Starts with
+                Content.title.ilike(f'%{query}%'),  # Contains
+                Content.original_title.ilike(f'%{query}%')
+            ]
+            
+            # Add overview search for longer queries
+            if len(query) > 4:
+                title_conditions.append(Content.overview.ilike(f'%{query}%'))
+            
+            search_query = search_query.filter(or_(*title_conditions))
+            
+            # Apply type filter
+            if search_type != 'multi':
+                search_query = search_query.filter(Content.content_type == search_type)
+            
+            # Apply additional filters
+            if filters:
+                search_query = self._apply_database_filters(search_query, filters, Content)
+            
+            # Order with Telugu content priority
+            search_query = search_query.order_by(
+                # Telugu content first
+                case(
+                    [(Content.languages.contains('telugu'), 0),
+                     (Content.languages.contains('te'), 0)],
+                    else_=1
+                ),
+                # Then by trending, new releases, critics choice
+                Content.is_trending.desc(),
+                Content.is_new_release.desc(),
+                Content.is_critics_choice.desc(),
+                # Then by popularity and rating
+                Content.popularity.desc(),
+                Content.rating.desc()
+            )
+            
+            return search_query.limit(limit).all()
+            
+        except Exception as e:
+            logger.error(f"Database search error: {e}")
+            return []
+    
+    def _apply_database_filters(self, query: Query, filters: Dict, Content: Any) -> Query:
+        """Apply filters to database query"""
+        if filters.get('genre'):
+            query = query.filter(Content.genres.contains(filters['genre']))
+        
+        if filters.get('language'):
+            lang = filters['language']
+            query = query.filter(
+                or_(
+                    Content.languages.contains(lang),
+                    Content.languages.contains(lang.lower()),
+                    Content.languages.contains(lang.title())
+                )
+            )
+        
+        if filters.get('year'):
+            year = filters['year']
+            query = query.filter(
+                func.extract('year', Content.release_date) == year
+            )
+        
+        if filters.get('min_rating'):
+            query = query.filter(Content.rating >= filters['min_rating'])
+        
+        if filters.get('new_releases'):
+            query = query.filter(Content.is_new_release == True)
+        
+        if filters.get('trending'):
+            query = query.filter(Content.is_trending == True)
+        
+        if filters.get('critics_choice'):
+            query = query.filter(Content.is_critics_choice == True)
+        
+        return query
+    
+    def _external_search_parallel(self, query: str, search_type: str, page: int) -> List[Dict]:
+        """Parallel external API search"""
+        external_results = []
+        futures = []
+        
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            # TMDB search
+            if search_type in ['multi', 'movie', 'tv']:
+                futures.append(
+                    executor.submit(
+                        self._search_tmdb,
+                        query, search_type, page
+                    )
+                )
+            
+            # Jikan anime search
+            if search_type in ['multi', 'anime']:
+                futures.append(
+                    executor.submit(
+                        self._search_jikan,
+                        query, page
+                    )
+                )
+            
+            # Collect results
+            for future in as_completed(futures, timeout=3):
+                try:
+                    results = future.result()
+                    if results:
+                        external_results.extend(results)
+                except Exception as e:
+                    logger.error(f"External search error: {e}")
+        
+        return external_results
+    
+    def _search_tmdb(self, query: str, search_type: str, page: int) -> List[Dict]:
+        """Search TMDB API"""
+        try:
+            results = []
+            tmdb_results = self.services['TMDBService'].search_content(query, search_type, page=page)
+            
+            if tmdb_results and 'results' in tmdb_results:
+                for item in tmdb_results['results'][:10]:
+                    content_type = 'movie' if 'title' in item else 'tv'
+                    content = self.services['ContentService'].save_content_from_tmdb(item, content_type)
+                    if content:
+                        results.append(self._format_content(content))
+            
+            return results
+        except Exception as e:
+            logger.error(f"TMDB search error: {e}")
+            return []
+    
+    def _search_jikan(self, query: str, page: int) -> List[Dict]:
+        """Search Jikan API for anime"""
+        try:
+            results = []
+            anime_results = self.services['JikanService'].search_anime(query, page)
+            
+            if anime_results and 'data' in anime_results:
+                for anime in anime_results['data'][:10]:
+                    content = self.services['ContentService'].save_anime_content(anime)
+                    if content:
+                        results.append(self._format_content(content))
+            
+            return results
+        except Exception as e:
+            logger.error(f"Jikan search error: {e}")
+            return []
+    
+    def _merge_and_rank_all(self, all_results: Dict, query: str, limit: int) -> List[Dict]:
+        """Merge and rank all search results"""
+        merged = []
+        seen_ids = set()
+        
+        # Priority: instant > database > external
+        for source in ['instant', 'database', 'external']:
+            results = all_results.get(source, [])
+            
+            for result in results:
+                # Handle different result types
+                if hasattr(result, 'id'):  # Database object
+                    result = self._format_content(result)
+                
+                if isinstance(result, dict) and 'id' in result:
+                    if result['id'] not in seen_ids:
+                        seen_ids.add(result['id'])
+                        result['source'] = source
+                        merged.append(result)
+        
+        # Re-rank merged results
+        query_lower = query.lower()
+        for result in merged:
+            score = result.get('relevance_score', 0)
+            
+            # Title matching
+            title_lower = (result.get('title') or '').lower()
+            if query_lower == title_lower:
+                score += 1000
+            elif query_lower in title_lower:
+                score += 500
+            else:
+                score += fuzz.ratio(query_lower, title_lower) * 2
+            
+            # Language priority (Telugu boost)
+            languages = result.get('languages', [])
+            for lang in languages:
+                if 'telugu' in lang.lower() or lang.lower() == 'te':
+                    score += 300
+                elif 'english' in lang.lower() or lang.lower() == 'en':
+                    score += 200
+                elif 'hindi' in lang.lower() or lang.lower() == 'hi':
+                    score += 150
+            
+            # Quality signals
+            score += (result.get('rating', 0) * 20)
+            score += min(result.get('popularity', 0), 100)
+            score += (result.get('vote_count', 0) / 100) if result.get('vote_count') else 0
+            
+            # Special flags
+            if result.get('is_trending'):
+                score += 200
+            if result.get('is_new_release'):
+                score += 150
+            if result.get('is_critics_choice'):
+                score += 100
+            
+            # Source bonus
+            if result.get('source') == 'instant':
+                score += 100
+            elif result.get('source') == 'database':
+                score += 50
+            
+            result['final_score'] = score
+        
+        # Sort by final score
+        merged.sort(key=lambda x: x.get('final_score', 0), reverse=True)
+        
+        # Clean up temporary fields
+        for result in merged:
+            result.pop('source', None)
+            result.pop('final_score', None)
+            result.pop('relevance_score', None)
+        
+        return merged[:limit]
+    
+    def _format_content(self, content: Any) -> Dict:
+        """Format content object for response"""
+        youtube_url = None
+        if hasattr(content, 'youtube_trailer_id') and content.youtube_trailer_id:
+            youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
+        
+        return {
+            'id': content.id,
+            'title': content.title,
+            'original_title': content.original_title,
+            'content_type': content.content_type,
+            'genres': json.loads(content.genres or '[]'),
+            'languages': json.loads(content.languages or '[]'),
+            'rating': content.rating or 0,
+            'popularity': content.popularity or 0,
+            'vote_count': content.vote_count or 0,
+            'release_date': content.release_date.isoformat() if content.release_date else None,
+            'poster_path': self._get_poster_url(content.poster_path),
+            'backdrop_path': self._get_backdrop_url(content.backdrop_path),
+            'overview': self._truncate_overview(content.overview),
+            'youtube_trailer': youtube_url,
+            'is_trending': content.is_trending,
+            'is_new_release': content.is_new_release,
+            'is_critics_choice': content.is_critics_choice
+        }
+    
     def _prepare_response(self, results: List[Dict], query: str, page: int, 
                          start_time: float, instant: bool) -> Dict:
         """Prepare final search response"""
@@ -988,73 +1058,6 @@ class InstantHybridSearch:
                 'types': self._get_available_types(results)
             }
         }
-    
-    def autocomplete(self, prefix: str, limit: int = 10, use_protobuf: bool = None) -> Union[List[Dict[str, Any]], bytes]:
-        """Ultra-fast autocomplete with Telugu priority and Protobuf support"""
-        if len(prefix) < 2:
-            if use_protobuf and PROTOBUF_AVAILABLE:
-                empty_response = search_pb2.AutocompleteResponse()
-                return empty_response.SerializeToString()
-            return []
-        
-        # Detect client capability
-        if use_protobuf is None:
-            accept_header = request.headers.get('Accept', '')
-            use_protobuf = 'application/x-protobuf' in accept_header
-        
-        # Check cache
-        cache_key = f"autocomplete:v2:{prefix.lower()}:{use_protobuf}"
-        cached = self.cache.get(cache_key)
-        if cached:
-            return cached
-        
-        # Get suggestions from indexer
-        content_ids = self.indexer.autocomplete(prefix, limit * 2)
-        
-        suggestions = []
-        for content_id in content_ids[:limit]:
-            content_data = self.indexer.index['content_map'].get(content_id)
-            if content_data:
-                # Prioritize Telugu content
-                is_telugu = any('telugu' in lang.lower() or lang.lower() == 'te' 
-                               for lang in content_data.get('languages', []))
-                
-                suggestions.append({
-                    'id': content_id,
-                    'title': content_data['title'],
-                    'type': content_data['content_type'],
-                    'year': content_data['release_date'].year if content_data.get('release_date') else None,
-                    'poster': self._get_poster_url(content_data.get('poster_path')),
-                    'rating': content_data.get('rating', 0),
-                    'is_telugu': is_telugu,
-                    'priority': 1 if is_telugu else 0
-                })
-        
-        # Sort with Telugu priority
-        suggestions.sort(key=lambda x: (-x['priority'], -x['rating']))
-        
-        # Remove priority field before returning
-        for s in suggestions:
-            s.pop('priority', None)
-        
-        # Convert to protobuf if requested
-        if use_protobuf and PROTOBUF_AVAILABLE:
-            result = ProtobufSerializer.autocomplete_to_protobuf(suggestions)
-        else:
-            result = suggestions
-        
-        # Cache for 30 minutes
-        self.cache.set(cache_key, result, timeout=1800)
-        
-        return result
-    
-    def get_batch_content(self, content_ids: List[int], use_protobuf: bool = None) -> Union[Dict, bytes]:
-        """Get batch content for preloading with Protobuf support"""
-        if use_protobuf is None:
-            accept_header = request.headers.get('Accept', '')
-            use_protobuf = 'application/x-protobuf' in accept_header
-        
-        return self.indexer.get_batch_content(content_ids, use_protobuf)
     
     def _generate_smart_suggestions(self, query: str, top_results: List[Dict]) -> List[str]:
         """Generate intelligent search suggestions"""
@@ -1159,38 +1162,30 @@ class InstantHybridSearch:
             return overview[:197] + "..."
         return overview
     
-    def _generate_cache_key(self, query: str, search_type: str, page: int, filters: Dict, use_protobuf: bool) -> str:
+    def _generate_cache_key(self, query: str, search_type: str, page: int, filters: Dict) -> str:
         """Generate cache key for search"""
         filter_str = json.dumps(filters, sort_keys=True) if filters else ''
-        key_data = f"search:v3:{query}:{search_type}:{page}:{filter_str}:{use_protobuf}"
+        key_data = f"search:v2:{query}:{search_type}:{page}:{filter_str}"
         return hashlib.md5(key_data.encode()).hexdigest()
     
-    def _get_cached_result(self, cache_key: str) -> Optional[Union[Dict, bytes]]:
+    def _get_cached_result(self, cache_key: str) -> Optional[Dict]:
         """Get cached search result"""
         try:
             cached = self.cache.get(cache_key)
             if cached:
-                if isinstance(cached, bytes):
-                    return cached  # Protobuf response
-                elif isinstance(cached, str):
+                if isinstance(cached, str):
                     return json.loads(cached)
                 return cached
         except Exception as e:
             logger.debug(f"Cache retrieval error: {e}")
         return None
     
-    def _cache_result(self, cache_key: str, result: Union[Dict, bytes]) -> None:
+    def _cache_result(self, cache_key: str, result: Dict) -> None:
         """Cache search result"""
         try:
             # Shorter cache time for instant results
-            timeout = 180  # 3 minutes for instant results
-            
-            if isinstance(result, bytes):
-                # Protobuf response
-                self.cache.set(cache_key, result, timeout=timeout)
-            else:
-                # JSON response
-                self.cache.set(cache_key, json.dumps(result), timeout=timeout)
+            timeout = 180 if result.get('instant') else 300
+            self.cache.set(cache_key, json.dumps(result), timeout=timeout)
         except Exception as e:
             logger.debug(f"Cache storage error: {e}")
     
@@ -1207,6 +1202,51 @@ class InstantHybridSearch:
                 logger.error(f"Index update error: {e}")
         
         threading.Thread(target=update, daemon=True).start()
+    
+    def autocomplete(self, prefix: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """Ultra-fast autocomplete with Telugu priority"""
+        if len(prefix) < 2:
+            return []
+        
+        # Check cache
+        cache_key = f"autocomplete:v2:{prefix.lower()}"
+        cached = self.cache.get(cache_key)
+        if cached:
+            return json.loads(cached) if isinstance(cached, str) else cached
+        
+        # Get suggestions from indexer
+        content_ids = self.indexer.autocomplete(prefix, limit * 2)
+        
+        suggestions = []
+        for content_id in content_ids[:limit]:
+            content_data = self.indexer.index['content_map'].get(content_id)
+            if content_data:
+                # Prioritize Telugu content
+                is_telugu = any('telugu' in lang.lower() or lang.lower() == 'te' 
+                               for lang in content_data.get('languages', []))
+                
+                suggestions.append({
+                    'id': content_id,
+                    'title': content_data['title'],
+                    'type': content_data['content_type'],
+                    'year': content_data['release_date'].year if content_data.get('release_date') else None,
+                    'poster': self._get_poster_url(content_data.get('poster_path')),
+                    'rating': content_data.get('rating', 0),
+                    'is_telugu': is_telugu,
+                    'priority': 1 if is_telugu else 0
+                })
+        
+        # Sort with Telugu priority
+        suggestions.sort(key=lambda x: (-x['priority'], -x['rating']))
+        
+        # Remove priority field before returning
+        for s in suggestions:
+            s.pop('priority', None)
+        
+        # Cache for 30 minutes
+        self.cache.set(cache_key, json.dumps(suggestions), timeout=1800)
+        
+        return suggestions[:limit]
 
 class IntelligentSuggestionEngine:
     """Advanced suggestion engine with personalization"""
@@ -1351,7 +1391,7 @@ class IntelligentSuggestionEngine:
 
 # Export factory functions
 def create_search_engine(db, cache, services):
-    """Create optimized search engine with Protobuf support"""
+    """Create optimized search engine"""
     return InstantHybridSearch(db, cache, services)
 
 def create_suggestion_engine(cache):

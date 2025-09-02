@@ -25,8 +25,6 @@ import redis
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
 from flask_mail import Mail
-from flask import make_response
-import search_pb2
 import auth
 from auth import init_auth, auth_bp
 from admin import admin_bp, init_admin
@@ -1048,185 +1046,87 @@ suggestion_engine = create_suggestion_engine(cache)
 # ===================== API ROUTES =====================
 
 # Enhanced Search Routes with Instant Results
-@app.route('/api/search', methods=['GET', 'POST'])
+@app.route('/api/search', methods=['GET'])
 def search_content():
-    """Ultra-fast search with instant results and Protobuf support"""
+    """Ultra-fast search with instant results"""
     try:
-        # Handle both GET and POST requests
-        if request.method == 'POST':
-            # Check if it's a protobuf request
-            if request.content_type == 'application/x-protobuf':
-                search_request = search_pb2.SearchRequest()
-                search_request.ParseFromString(request.data)
-                query = search_request.query
-                search_type = search_request.search_type or 'multi'
-                page = search_request.page or 1
-                filters = dict(search_request.filters) if search_request.filters else {}
-                use_protobuf = True
-            else:
-                data = request.get_json()
-                query = data.get('query', '').strip()
-                search_type = data.get('type', 'multi')
-                page = data.get('page', 1)
-                filters = data.get('filters', {})
-                use_protobuf = False
-        else:
-            query = request.args.get('query', '').strip()
-            search_type = request.args.get('type', 'multi')
-            page = int(request.args.get('page', 1))
-            filters = {}
-            
-            # Parse filters from query params
-            for key in ['genre', 'language', 'year', 'min_rating', 'content_type', 'new_releases', 'trending', 'critics_choice']:
-                if request.args.get(key):
-                    filters[key] = request.args.get(key)
-            
-            # Detect if client wants protobuf based on Accept header
-            accept_header = request.headers.get('Accept', '')
-            use_protobuf = 'application/x-protobuf' in accept_header or 'application/protobuf' in accept_header
+        query = request.args.get('query', '').strip()
+        search_type = request.args.get('type', 'multi')
+        page = int(request.args.get('page', 1))
         
         if not query:
-            if use_protobuf:
-                empty_response = search_pb2.SearchResponse()
-                empty_response.total_results = 0
-                response = make_response(empty_response.SerializeToString())
-                response.headers['Content-Type'] = 'application/x-protobuf'
-                return response
             return jsonify({'error': 'Query parameter required'}), 400
         
-        # Perform ultra-fast search with protobuf support
+        # Parse filters
+        filters = {}
+        if request.args.get('genre'):
+            filters['genre'] = request.args.get('genre')
+        if request.args.get('language'):
+            filters['language'] = request.args.get('language')
+        if request.args.get('year'):
+            filters['year'] = int(request.args.get('year'))
+        if request.args.get('min_rating'):
+            filters['min_rating'] = float(request.args.get('min_rating'))
+        if request.args.get('content_type'):
+            filters['content_type'] = request.args.get('content_type')
+        if request.args.get('new_releases'):
+            filters['new_releases'] = request.args.get('new_releases').lower() == 'true'
+        if request.args.get('trending'):
+            filters['trending'] = request.args.get('trending').lower() == 'true'
+        if request.args.get('critics_choice'):
+            filters['critics_choice'] = request.args.get('critics_choice').lower() == 'true'
+        
+        # Perform ultra-fast search
         results = search_engine.search(
             query=query,
             search_type=search_type,
             page=page,
-            filters=filters,
-            use_protobuf=use_protobuf
+            filters=filters
         )
         
         # Record search for analytics
         user_id = session.get('user_id')
         suggestion_engine.record_search(query, user_id)
         
-        # Return appropriate response format
-        if use_protobuf and isinstance(results, bytes):
-            response = make_response(results)
-            response.headers['Content-Type'] = 'application/x-protobuf'
-            return response
-        else:
-            # Record anonymous interactions for JSON response
-            if results.get('results'):
-                session_id = get_session_id()
-                for result in results['results'][:3]:
-                    try:
-                        interaction = AnonymousInteraction(
-                            session_id=session_id,
-                            content_id=result['id'],
-                            interaction_type='search',
-                            ip_address=request.remote_addr
-                        )
-                        db.session.add(interaction)
-                    except:
-                        pass
-                db.session.commit()
-            
-            return jsonify(results), 200
+        # Record anonymous interaction for top results
+        if results.get('results'):
+            session_id = get_session_id()
+            for result in results['results'][:3]:  # Record top 3 results
+                try:
+                    interaction = AnonymousInteraction(
+                        session_id=session_id,
+                        content_id=result['id'],
+                        interaction_type='search',
+                        ip_address=request.remote_addr
+                    )
+                    db.session.add(interaction)
+                except:
+                    pass
+            db.session.commit()
+        
+        return jsonify(results), 200
         
     except Exception as e:
         logger.error(f"Search error: {e}")
-        if use_protobuf:
-            error_response = search_pb2.SearchResponse()
-            error_response.total_results = 0
-            response = make_response(error_response.SerializeToString())
-            response.headers['Content-Type'] = 'application/x-protobuf'
-            return response
         return jsonify({'error': 'Search failed', 'message': str(e)}), 500
 
-
-@app.route('/api/search/autocomplete', methods=['GET', 'POST'])
+@app.route('/api/search/autocomplete', methods=['GET'])
 def autocomplete():
-    """Instant autocomplete suggestions with Telugu priority and Protobuf support"""
+    """Instant autocomplete suggestions with Telugu priority"""
     try:
-        # Check if client wants protobuf
-        accept_header = request.headers.get('Accept', '')
-        use_protobuf = 'application/x-protobuf' in accept_header
-        
-        if request.method == 'POST' and request.content_type == 'application/x-protobuf':
-            # Parse protobuf request
-            # (implement if needed)
-            use_protobuf = True
-            prefix = ''  # Parse from protobuf
-        else:
-            prefix = request.args.get('q', '').strip()
-        
+        prefix = request.args.get('q', '').strip()
         limit = int(request.args.get('limit', 10))
         
         if len(prefix) < 2:
-            if use_protobuf:
-                empty_response = search_pb2.AutocompleteResponse()
-                response = make_response(empty_response.SerializeToString())
-                response.headers['Content-Type'] = 'application/x-protobuf'
-                return response
             return jsonify({'suggestions': []}), 200
         
-        suggestions = search_engine.autocomplete(prefix, limit, use_protobuf)
-        
-        if use_protobuf and isinstance(suggestions, bytes):
-            response = make_response(suggestions)
-            response.headers['Content-Type'] = 'application/x-protobuf'
-            return response
+        suggestions = search_engine.autocomplete(prefix, limit)
         
         return jsonify({'suggestions': suggestions}), 200
         
     except Exception as e:
         logger.error(f"Autocomplete error: {e}")
-        if use_protobuf:
-            empty_response = search_pb2.AutocompleteResponse()
-            response = make_response(empty_response.SerializeToString())
-            response.headers['Content-Type'] = 'application/x-protobuf'
-            return response
         return jsonify({'suggestions': []}), 200
-
-@app.route('/api/content/batch', methods=['POST'])
-def get_batch_content():
-    """Get batch content for preloading with Protobuf support"""
-    try:
-        accept_header = request.headers.get('Accept', '')
-        use_protobuf = 'application/x-protobuf' in accept_header
-        
-        if request.content_type == 'application/x-protobuf':
-            batch_request = search_pb2.BatchContentRequest()
-            batch_request.ParseFromString(request.data)
-            content_ids = list(batch_request.content_ids)
-            use_protobuf = True
-        else:
-            data = request.get_json()
-            content_ids = data.get('content_ids', [])
-        
-        if not content_ids:
-            if use_protobuf:
-                empty_response = search_pb2.BatchContentResponse()
-                response = make_response(empty_response.SerializeToString())
-                response.headers['Content-Type'] = 'application/x-protobuf'
-                return response
-            return jsonify({'contents': {}}), 200
-        
-        results = search_engine.get_batch_content(content_ids, use_protobuf)
-        
-        if use_protobuf and isinstance(results, bytes):
-            response = make_response(results)
-            response.headers['Content-Type'] = 'application/x-protobuf'
-            return response
-        
-        return jsonify({'contents': results}), 200
-        
-    except Exception as e:
-        logger.error(f"Batch content error: {e}")
-        if use_protobuf:
-            empty_response = search_pb2.BatchContentResponse()
-            response = make_response(empty_response.SerializeToString())
-            response.headers['Content-Type'] = 'application/x-protobuf'
-            return response
-        return jsonify({'contents': {}}), 500
 
 @app.route('/api/search/suggestions', methods=['GET'])
 def get_search_suggestions():
@@ -1255,37 +1155,20 @@ def get_search_suggestions():
 
 @app.route('/api/search/instant', methods=['GET'])
 def instant_search():
-    """Ultra-fast instant search for live search experiences with Protobuf"""
+    """Ultra-fast instant search for live search experiences"""
     try:
         query = request.args.get('q', '').strip()
-        accept_header = request.headers.get('Accept', '')
-        use_protobuf = 'application/x-protobuf' in accept_header
         
         if len(query) < 2:
-            if use_protobuf:
-                empty_response = search_pb2.SearchResponse()
-                response = make_response(empty_response.SerializeToString())
-                response.headers['Content-Type'] = 'application/x-protobuf'
-                return response
             return jsonify({'results': []}), 200
         
-        # Use search engine's instant search with protobuf support
-        results = search_engine._instant_search(query, 'multi', {}, 5, use_protobuf)
-        
-        if use_protobuf and isinstance(results, bytes):
-            response = make_response(results)
-            response.headers['Content-Type'] = 'application/x-protobuf'
-            return response
+        # Use search engine's instant search
+        results = search_engine._instant_search(query, 'multi', {}, 5)
         
         return jsonify({'results': results}), 200
         
     except Exception as e:
         logger.error(f"Instant search error: {e}")
-        if use_protobuf:
-            empty_response = search_pb2.SearchResponse()
-            response = make_response(empty_response.SerializeToString())
-            response.headers['Content-Type'] = 'application/x-protobuf'
-            return response
         return jsonify({'results': []}), 200
 
 @app.route('/api/content/<int:content_id>', methods=['GET'])
