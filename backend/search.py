@@ -679,7 +679,7 @@ class ImprovedHybridSearch:
         """Update search index with latest content"""
         try:
             # Import Content model
-            from backend.app import Content
+            from app import Content
             
             # Get all content (with limit for memory management)
             content_query = Content.query.order_by(
@@ -702,7 +702,7 @@ class ImprovedHybridSearch:
         Enhanced database search with better ranking
         """
         try:
-            from backend.app import Content
+            from app import Content
             
             query_lower = query.lower()
             
@@ -845,7 +845,7 @@ class ImprovedHybridSearch:
         Simple fallback search when main search fails
         """
         try:
-            from backend.app import Content
+            from app import Content
             
             return Content.query.filter(
                 or_(
@@ -1020,7 +1020,7 @@ class ImprovedHybridSearch:
     def _get_content_by_id(self, content_id: int):
         """Get content object by ID"""
         try:
-            from backend.app import Content
+            from app import Content
             return Content.query.get(content_id)
         except Exception as e:
             logger.error(f"Error getting content by ID: {e}")
