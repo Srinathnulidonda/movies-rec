@@ -210,25 +210,25 @@ class SearchIndex:
         for content in contents:
             content_id = content.id
             
-            # Store content data
+            # Store content data with proper None handling
             self.content_data[content_id] = {
                 'id': content.id,
-                'title': content.title,
-                'original_title': content.original_title,
-                'content_type': content.content_type,
+                'title': content.title or '',
+                'original_title': content.original_title or '',
+                'content_type': content.content_type or 'unknown',
                 'genres': json.loads(content.genres or '[]'),
                 'languages': json.loads(content.languages or '[]'),
-                'overview': content.overview,
-                'rating': content.rating,
-                'vote_count': content.vote_count,
-                'popularity': content.popularity,
+                'overview': content.overview or '',
+                'rating': float(content.rating) if content.rating is not None else 0.0,
+                'vote_count': int(content.vote_count) if content.vote_count is not None else 0,
+                'popularity': float(content.popularity) if content.popularity is not None else 0.0,
                 'release_date': content.release_date,
-                'poster_path': content.poster_path,
-                'backdrop_path': content.backdrop_path,
-                'youtube_trailer_id': content.youtube_trailer_id,
-                'is_trending': content.is_trending,
-                'is_new_release': content.is_new_release,
-                'is_critics_choice': content.is_critics_choice,
+                'poster_path': content.poster_path or '',
+                'backdrop_path': content.backdrop_path or '',
+                'youtube_trailer_id': content.youtube_trailer_id or '',
+                'is_trending': bool(content.is_trending) if content.is_trending is not None else False,
+                'is_new_release': bool(content.is_new_release) if content.is_new_release is not None else False,
+                'is_critics_choice': bool(content.is_critics_choice) if content.is_critics_choice is not None else False,
                 'tmdb_id': content.tmdb_id,
                 'mal_id': content.mal_id
             }
@@ -242,19 +242,30 @@ class SearchIndex:
                 self._index_text(content.original_title, content_id, 'original_title')
             
             # Index genres
-            for genre in json.loads(content.genres or '[]'):
-                self._index_text(genre, content_id, 'genre')
+            try:
+                genres = json.loads(content.genres or '[]')
+                for genre in genres:
+                    if genre:
+                        self._index_text(genre, content_id, 'genre')
+            except:
+                pass
             
             # Index overview with lower priority
             if content.overview:
                 self._index_text(content.overview, content_id, 'overview')
             
             # Index content type
-            self._index_text(content.content_type, content_id, 'content_type')
+            if content.content_type:
+                self._index_text(content.content_type, content_id, 'content_type')
             
             # Index languages
-            for language in json.loads(content.languages or '[]'):
-                self._index_text(language, content_id, 'language')
+            try:
+                languages = json.loads(content.languages or '[]')
+                for language in languages:
+                    if language:
+                        self._index_text(language, content_id, 'language')
+            except:
+                pass
         
         self.last_update = datetime.utcnow()
         
@@ -402,7 +413,7 @@ class SearchEngine:
             'total_results': total_results,
             'page': page,
             'per_page': per_page,
-            'total_pages': (total_results + per_page - 1) // per_page,
+            'total_pages': (total_results + per_page - 1) // per_page if per_page > 0 else 0,
             'search_time': f"{search_time:.3f}s",
             'filters_applied': {
                 'content_type': content_type,
@@ -449,7 +460,7 @@ class SearchEngine:
             if not content_data:
                 continue
             
-            title = content_data['title']
+            title = content_data.get('title', '')
             if not title or title.lower() in seen_titles:
                 continue
             
@@ -471,12 +482,16 @@ class SearchEngine:
                 score = self.fuzzy_matcher.fuzzy_score(query, title_lower) * 0.5
             
             if score > 0.3:  # Threshold for inclusion
+                popularity = content_data.get('popularity', 0)
+                if popularity is None:
+                    popularity = 0
+                    
                 scored_candidates.append({
                     'title': title,
-                    'content_type': content_data['content_type'],
-                    'poster_path': content_data['poster_path'],
+                    'content_type': content_data.get('content_type', 'unknown'),
+                    'poster_path': content_data.get('poster_path', ''),
                     'score': score,
-                    'popularity': content_data.get('popularity', 0)
+                    'popularity': popularity
                 })
                 seen_titles.add(title.lower())
         
@@ -532,49 +547,61 @@ class SearchEngine:
             score = 0.0
             
             # Title matching with boost
-            if content_data['title']:
+            title = content_data.get('title', '')
+            if title:
                 title_score = self._calculate_field_score(
                     query, 
-                    content_data['title'], 
+                    title, 
                     self.field_boosts['title']
                 )
                 score += title_score
             
             # Original title matching
-            if content_data['original_title']:
+            original_title = content_data.get('original_title', '')
+            if original_title:
                 orig_title_score = self._calculate_field_score(
                     query, 
-                    content_data['original_title'], 
+                    original_title, 
                     self.field_boosts['original_title']
                 )
                 score += orig_title_score
             
             # Genre matching
-            for genre in content_data['genres']:
-                genre_score = self._calculate_field_score(
-                    query, 
-                    genre, 
-                    self.field_boosts['genre']
-                )
-                score += genre_score
+            genres = content_data.get('genres', [])
+            for genre in genres:
+                if genre:
+                    genre_score = self._calculate_field_score(
+                        query, 
+                        genre, 
+                        self.field_boosts['genre']
+                    )
+                    score += genre_score
             
             # Overview matching
-            if content_data['overview']:
+            overview = content_data.get('overview', '')
+            if overview:
                 overview_score = self._calculate_field_score(
                     query, 
-                    content_data['overview'], 
+                    overview, 
                     self.field_boosts['overview']
                 )
                 score += overview_score
             
-            # Popularity boost
+            # Popularity boost (handle None values)
             popularity = content_data.get('popularity', 0)
+            if popularity is None:
+                popularity = 0
             if popularity > 0:
                 score += log10(popularity + 1) * 0.1
             
-            # Rating boost
+            # Rating boost (handle None values)
             rating = content_data.get('rating', 0)
             vote_count = content_data.get('vote_count', 0)
+            if rating is None:
+                rating = 0
+            if vote_count is None:
+                vote_count = 0
+                
             if rating > 0 and vote_count > 10:
                 score += (rating / 10) * log10(vote_count + 1) * 0.05
             
@@ -650,24 +677,28 @@ class SearchEngine:
                 continue
             
             # Content type filter
-            if content_type and content_data['content_type'] != content_type:
+            if content_type and content_data.get('content_type') != content_type:
                 continue
             
             # Genre filter
             if genres:
-                content_genres = [g.lower() for g in content_data['genres']]
+                content_genres = [g.lower() for g in content_data.get('genres', [])]
                 if not any(genre.lower() in content_genres for genre in genres):
                     continue
             
             # Language filter
             if languages:
-                content_languages = [l.lower() for l in content_data['languages']]
+                content_languages = [l.lower() for l in content_data.get('languages', [])]
                 if not any(lang.lower() in content_languages for lang in languages):
                     continue
             
-            # Rating filter
-            if min_rating and content_data.get('rating', 0) < min_rating:
-                continue
+            # Rating filter (handle None values)
+            if min_rating:
+                rating = content_data.get('rating', 0)
+                if rating is None:
+                    rating = 0
+                if rating < min_rating:
+                    continue
             
             filtered.append((content_id, score))
         
@@ -681,14 +712,20 @@ class SearchEngine:
             return scored_results  # Already sorted by relevance
         
         elif sort_by == 'rating':
-            return sorted(scored_results, 
-                         key=lambda x: self.search_index.content_data.get(x[0], {}).get('rating', 0), 
-                         reverse=True)
+            def get_rating(item):
+                content = self.search_index.content_data.get(item[0], {})
+                rating = content.get('rating', 0)
+                return rating if rating is not None else 0
+            
+            return sorted(scored_results, key=get_rating, reverse=True)
         
         elif sort_by == 'popularity':
-            return sorted(scored_results, 
-                         key=lambda x: self.search_index.content_data.get(x[0], {}).get('popularity', 0), 
-                         reverse=True)
+            def get_popularity(item):
+                content = self.search_index.content_data.get(item[0], {})
+                popularity = content.get('popularity', 0)
+                return popularity if popularity is not None else 0
+            
+            return sorted(scored_results, key=get_popularity, reverse=True)
         
         elif sort_by == 'date':
             def get_date(item):
@@ -709,34 +746,51 @@ class SearchEngine:
                 continue
             
             # Format poster path
-            poster_path = self._format_poster_path(content_data['poster_path'])
+            poster_path = self._format_poster_path(content_data.get('poster_path', ''))
             
             # Format backdrop path
-            backdrop_path = self._format_backdrop_path(content_data['backdrop_path'])
+            backdrop_path = self._format_backdrop_path(content_data.get('backdrop_path', ''))
             
             # Format YouTube URL
             youtube_url = None
-            if content_data['youtube_trailer_id']:
-                youtube_url = f"https://www.youtube.com/watch?v={content_data['youtube_trailer_id']}"
+            youtube_trailer_id = content_data.get('youtube_trailer_id')
+            if youtube_trailer_id:
+                youtube_url = f"https://www.youtube.com/watch?v={youtube_trailer_id}"
             
             # Format release date
             release_date = None
-            if content_data['release_date']:
-                release_date = content_data['release_date'].isoformat()
+            if content_data.get('release_date'):
+                try:
+                    release_date = content_data['release_date'].isoformat()
+                except:
+                    release_date = None
+            
+            # Handle None values for numeric fields
+            rating = content_data.get('rating', 0)
+            if rating is None:
+                rating = 0
+                
+            vote_count = content_data.get('vote_count', 0)
+            if vote_count is None:
+                vote_count = 0
+                
+            popularity = content_data.get('popularity', 0)
+            if popularity is None:
+                popularity = 0
             
             formatted.append({
-                'id': content_data['id'],
+                'id': content_data.get('id'),
                 'tmdb_id': content_data.get('tmdb_id'),
                 'mal_id': content_data.get('mal_id'),
-                'title': content_data['title'],
-                'original_title': content_data['original_title'],
-                'content_type': content_data['content_type'],
-                'genres': content_data['genres'],
-                'languages': content_data['languages'],
-                'overview': content_data['overview'],
-                'rating': content_data['rating'],
-                'vote_count': content_data['vote_count'],
-                'popularity': content_data['popularity'],
+                'title': content_data.get('title', ''),
+                'original_title': content_data.get('original_title', ''),
+                'content_type': content_data.get('content_type', 'unknown'),
+                'genres': content_data.get('genres', []),
+                'languages': content_data.get('languages', []),
+                'overview': content_data.get('overview', ''),
+                'rating': rating,
+                'vote_count': vote_count,
+                'popularity': popularity,
                 'release_date': release_date,
                 'poster_path': poster_path,
                 'backdrop_path': backdrop_path,
@@ -806,8 +860,23 @@ def search_content(db_session, Content, query, **kwargs):
         from search import search_content
         results = search_content(db.session, Content, "avatar", content_type="movie", page=1)
     """
-    engine = get_search_engine(db_session, Content)
-    return engine.search(query, **kwargs)
+    try:
+        engine = get_search_engine(db_session, Content)
+        return engine.search(query, **kwargs)
+    except Exception as e:
+        logger.error(f"Search error: {e}")
+        # Return empty result on error
+        return {
+            'query': query,
+            'results': [],
+            'total_results': 0,
+            'page': kwargs.get('page', 1),
+            'per_page': kwargs.get('per_page', 20),
+            'total_pages': 0,
+            'search_time': '0.000s',
+            'filters_applied': kwargs,
+            'error': str(e)
+        }
 
 def get_autocomplete_suggestions(db_session, Content, query, limit=10):
     """
@@ -817,8 +886,12 @@ def get_autocomplete_suggestions(db_session, Content, query, limit=10):
         from search import get_autocomplete_suggestions
         suggestions = get_autocomplete_suggestions(db.session, Content, "ava", limit=5)
     """
-    engine = get_search_engine(db_session, Content)
-    return engine.autocomplete(query, limit)
+    try:
+        engine = get_search_engine(db_session, Content)
+        return engine.autocomplete(query, limit)
+    except Exception as e:
+        logger.error(f"Autocomplete error: {e}")
+        return []
 
 def rebuild_search_index(db_session, Content):
     """
@@ -828,8 +901,12 @@ def rebuild_search_index(db_session, Content):
         from search import rebuild_search_index
         rebuild_search_index(db.session, Content)
     """
-    engine = get_search_engine(db_session, Content)
-    contents = Content.query.all()
-    engine.search_index.build_index(contents)
-    engine._last_index_update = datetime.utcnow()
-    return len(contents)
+    try:
+        engine = get_search_engine(db_session, Content)
+        contents = Content.query.all()
+        engine.search_index.build_index(contents)
+        engine._last_index_update = datetime.utcnow()
+        return len(contents)
+    except Exception as e:
+        logger.error(f"Index rebuild error: {e}")
+        return 0
