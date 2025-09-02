@@ -11,128 +11,8 @@ import hashlib
 import unicodedata
 from math import log10, sqrt
 import logging
-import requests
 
 logger = logging.getLogger(__name__)
-
-# API Configuration
-TMDB_API_KEY = '1cf86635f20bb2aff8e70940e7c3ddd5'
-TMDB_BASE_URL = 'https://api.themoviedb.org/3'
-
-class TMDBFetcher:
-    """Fetches content from TMDB API when not found in database"""
-    
-    @staticmethod
-    def search_tmdb(query, content_type='multi'):
-        """Search TMDB for content"""
-        try:
-            url = f"{TMDB_BASE_URL}/search/{content_type}"
-            params = {
-                'api_key': TMDB_API_KEY,
-                'query': query,
-                'page': 1
-            }
-            
-            response = requests.get(url, params=params, timeout=10)
-            if response.status_code == 200:
-                return response.json()
-        except Exception as e:
-            logger.error(f"TMDB search error: {e}")
-        return None
-    
-    @staticmethod
-    def save_tmdb_results_to_db(tmdb_results, Content, db_session):
-        """Save TMDB results to database"""
-        saved_contents = []
-        
-        if not tmdb_results or 'results' not in tmdb_results:
-            return saved_contents
-        
-        for item in tmdb_results.get('results', []):
-            try:
-                # Check if already exists
-                existing = Content.query.filter_by(tmdb_id=item['id']).first()
-                if existing:
-                    saved_contents.append(existing)
-                    continue
-                
-                # Determine content type
-                if 'title' in item:
-                    content_type = 'movie'
-                    title = item.get('title')
-                    release_date_str = item.get('release_date')
-                elif 'name' in item:
-                    content_type = 'tv'
-                    title = item.get('name')
-                    release_date_str = item.get('first_air_date')
-                else:
-                    continue
-                
-                # Parse release date
-                release_date = None
-                if release_date_str:
-                    try:
-                        release_date = datetime.strptime(release_date_str, '%Y-%m-%d').date()
-                    except:
-                        pass
-                
-                # Extract genre names (we only have IDs in search results)
-                genre_ids = item.get('genre_ids', [])
-                genres = TMDBFetcher.map_genre_ids(genre_ids)
-                
-                # Determine if it's new/trending
-                is_new_release = False
-                if release_date:
-                    days_old = (datetime.now().date() - release_date).days
-                    is_new_release = days_old <= 60
-                
-                # Create content object
-                content = Content(
-                    tmdb_id=item['id'],
-                    title=title,
-                    original_title=item.get('original_title') or item.get('original_name'),
-                    content_type=content_type,
-                    genres=json.dumps(genres),
-                    languages=json.dumps([item.get('original_language', 'en')]),
-                    release_date=release_date,
-                    rating=item.get('vote_average'),
-                    vote_count=item.get('vote_count'),
-                    popularity=item.get('popularity'),
-                    overview=item.get('overview'),
-                    poster_path=item.get('poster_path'),
-                    backdrop_path=item.get('backdrop_path'),
-                    is_new_release=is_new_release,
-                    is_trending=item.get('popularity', 0) > 100,
-                    is_critics_choice=item.get('vote_average', 0) >= 7.5 and item.get('vote_count', 0) >= 100
-                )
-                
-                db_session.add(content)
-                saved_contents.append(content)
-                
-            except Exception as e:
-                logger.error(f"Error saving TMDB content: {e}")
-                continue
-        
-        try:
-            db_session.commit()
-            logger.info(f"Saved {len(saved_contents)} items from TMDB")
-        except Exception as e:
-            logger.error(f"Database commit error: {e}")
-            db_session.rollback()
-        
-        return saved_contents
-    
-    @staticmethod
-    def map_genre_ids(genre_ids):
-        """Map TMDB genre IDs to names"""
-        genre_map = {
-            28: 'Action', 12: 'Adventure', 16: 'Animation', 35: 'Comedy',
-            80: 'Crime', 99: 'Documentary', 18: 'Drama', 10751: 'Family',
-            14: 'Fantasy', 36: 'History', 27: 'Horror', 10402: 'Music',
-            9648: 'Mystery', 10749: 'Romance', 878: 'Science Fiction',
-            10770: 'TV Movie', 53: 'Thriller', 10752: 'War', 37: 'Western'
-        }
-        return [genre_map.get(gid, 'Unknown') for gid in genre_ids if gid in genre_map]
 
 class NGramAnalyzer:
     """N-gram analyzer for partial matching and auto-complete"""
@@ -443,7 +323,6 @@ class SearchEngine:
         self.search_index = SearchIndex()
         self.fuzzy_matcher = FuzzyMatcher()
         self.ngram_analyzer = NGramAnalyzer()
-        self.tmdb_fetcher = TMDBFetcher()
         self._index_lock = False
         self._last_index_update = None
         self._index_update_interval = 300  # 5 minutes
@@ -486,8 +365,7 @@ class SearchEngine:
                min_rating: Optional[float] = None,
                page: int = 1,
                per_page: int = 20,
-               sort_by: str = 'relevance',
-               fetch_external: bool = True) -> Dict[str, Any]:
+               sort_by: str = 'relevance') -> Dict[str, Any]:
         """
         Perform advanced search with all features
         
@@ -500,7 +378,6 @@ class SearchEngine:
             page: Page number for pagination
             per_page: Results per page
             sort_by: Sort method (relevance, rating, popularity, date)
-            fetch_external: Whether to fetch from TMDB if not found locally
         
         Returns:
             Dictionary with search results and metadata
@@ -565,39 +442,6 @@ class SearchEngine:
         
         # Combine exact matches (first) with other results
         all_results = exact_matches + scored_results
-        
-        # If no results found locally and fetch_external is True, try TMDB
-        if len(all_results) == 0 and fetch_external:
-            logger.info(f"No local results for '{query}', fetching from TMDB...")
-            
-            # Search TMDB
-            tmdb_results = self.tmdb_fetcher.search_tmdb(query, 'multi')
-            
-            if tmdb_results:
-                # Save to database
-                new_contents = self.tmdb_fetcher.save_tmdb_results_to_db(
-                    tmdb_results, 
-                    self.Content, 
-                    self.db
-                )
-                
-                if new_contents:
-                    # Rebuild index with new content
-                    all_contents = self.Content.query.all()
-                    self.search_index.build_index(all_contents)
-                    
-                    # Search again with the new content
-                    return self.search(
-                        query=query,
-                        content_type=content_type,
-                        genres=genres,
-                        languages=languages,
-                        min_rating=min_rating,
-                        page=page,
-                        per_page=per_page,
-                        sort_by=sort_by,
-                        fetch_external=False  # Don't fetch again
-                    )
         
         # Apply filters to all results
         filtered_results = self._apply_filters(
@@ -758,19 +602,6 @@ class SearchEngine:
                     'content_type': candidate['content_type'],
                     'poster_path': self._format_poster_path(candidate['poster_path'])
                 })
-        
-        # If still no suggestions and we have a query, fetch from TMDB
-        if len(suggestions) == 0:
-            tmdb_results = self.tmdb_fetcher.search_tmdb(query, 'multi')
-            if tmdb_results and 'results' in tmdb_results:
-                for item in tmdb_results['results'][:limit]:
-                    title = item.get('title') or item.get('name')
-                    if title:
-                        suggestions.append({
-                            'title': title,
-                            'content_type': 'movie' if 'title' in item else 'tv',
-                            'poster_path': self._format_poster_path(item.get('poster_path'))
-                        })
         
         return suggestions
     
