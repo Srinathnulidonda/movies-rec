@@ -984,6 +984,67 @@ def autocomplete():
     except Exception as e:
         logger.error(f"Autocomplete error: {e}")
         return jsonify({'error': 'Autocomplete failed'}), 500
+    
+def login_required(f):
+    """Decorator to require login for routes"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        token = request.headers.get('Authorization')
+        if not token:
+            # Check session for web requests
+            if 'user_id' not in session:
+                return jsonify({'error': 'Authentication required'}), 401
+            return f(*args, **kwargs)
+        
+        try:
+            # Remove 'Bearer ' prefix if present
+            if token.startswith('Bearer '):
+                token = token[7:]
+            
+            # Decode JWT token
+            payload = jwt.decode(token, app.secret_key, algorithms=['HS256'])
+            request.user_id = payload['user_id']
+            return f(*args, **kwargs)
+        except jwt.ExpiredSignatureError:
+            return jsonify({'error': 'Token expired'}), 401
+        except jwt.InvalidTokenError:
+            return jsonify({'error': 'Invalid token'}), 401
+    
+    return decorated_function
+
+def admin_required(f):
+    """Decorator to require admin privileges for routes"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        # First check if user is logged in
+        token = request.headers.get('Authorization')
+        user = None
+        
+        if token:
+            try:
+                # Remove 'Bearer ' prefix if present
+                if token.startswith('Bearer '):
+                    token = token[7:]
+                
+                # Decode JWT token
+                payload = jwt.decode(token, app.secret_key, algorithms=['HS256'])
+                user = User.query.get(payload['user_id'])
+            except:
+                pass
+        elif 'user_id' in session:
+            # Check session for web requests
+            user = User.query.get(session['user_id'])
+        
+        if not user:
+            return jsonify({'error': 'Authentication required'}), 401
+        
+        if not user.is_admin:
+            return jsonify({'error': 'Admin privileges required'}), 403
+        
+        request.current_user = user
+        return f(*args, **kwargs)
+    
+    return decorated_function
 
 # Add admin endpoint to rebuild search index
 @app.route('/api/admin/rebuild-search-index', methods=['POST'])
