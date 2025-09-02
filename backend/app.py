@@ -26,6 +26,7 @@ from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
 from flask_mail import Mail
 import auth
+from search import search_content, get_autocomplete_suggestions, rebuild_search_index
 from auth import init_auth, auth_bp
 from admin import admin_bp, init_admin
 from users import users_bp, init_users
@@ -919,105 +920,85 @@ init_users(app, db, models, services)
 
 # Enhanced Content Discovery Routes with caching
 @app.route('/api/search', methods=['GET'])
-@cache.cached(timeout=300, key_prefix=make_cache_key)
-def search_content():
+def search():
     try:
+        # Get search parameters
         query = request.args.get('query', '')
-        content_type = request.args.get('type', 'multi')
-        page = int(request.args.get('page', 1))
+        content_type = request.args.get('type')
+        genres = request.args.getlist('genres')
+        languages = request.args.getlist('languages')
+        min_rating = request.args.get('min_rating', type=float)
+        page = request.args.get('page', 1, type=int)
+        per_page = request.args.get('per_page', 20, type=int)
+        sort_by = request.args.get('sort_by', 'relevance')
         
-        if not query:
-            return jsonify({'error': 'Query parameter required'}), 400
+        # Perform search using the new search engine
+        results = search_content(
+            db.session,
+            Content,
+            query=query,
+            content_type=content_type,
+            genres=genres,
+            languages=languages,
+            min_rating=min_rating,
+            page=page,
+            per_page=per_page,
+            sort_by=sort_by
+        )
         
-        # Record search interaction
-        session_id = get_session_id()
+        # Record search interaction for anonymous users
+        if results['results']:
+            session_id = get_session_id()
+            for result in results['results'][:5]:  # Record top 5 results
+                interaction = AnonymousInteraction(
+                    session_id=session_id,
+                    content_id=result['id'],
+                    interaction_type='search',
+                    ip_address=request.remote_addr
+                )
+                db.session.add(interaction)
+            db.session.commit()
         
-        # Use concurrent requests for multiple sources
-        futures = []
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            # Search TMDB
-            futures.append(executor.submit(TMDBService.search_content, query, content_type, page=page))
-            
-            # Search anime if content_type is anime or multi
-            if content_type in ['anime', 'multi']:
-                futures.append(executor.submit(JikanService.search_anime, query, page=page))
-        
-        # Get results
-        tmdb_results = futures[0].result()
-        anime_results = futures[1].result() if len(futures) > 1 else None
-        
-        # Process and save results
-        results = []
-        
-        if tmdb_results:
-            for item in tmdb_results.get('results', []):
-                content_type_detected = 'movie' if 'title' in item else 'tv'
-                content = ContentService.save_content_from_tmdb(item, content_type_detected)
-                if content:
-                    # Record anonymous interaction
-                    interaction = AnonymousInteraction(
-                        session_id=session_id,
-                        content_id=content.id,
-                        interaction_type='search',
-                        ip_address=request.remote_addr
-                    )
-                    db.session.add(interaction)
-                    
-                    # Get YouTube trailer URL
-                    youtube_url = None
-                    if content.youtube_trailer_id:
-                        youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
-                    
-                    results.append({
-                        'id': content.id,
-                        'tmdb_id': content.tmdb_id,
-                        'title': content.title,
-                        'content_type': content.content_type,
-                        'genres': json.loads(content.genres or '[]'),
-                        'rating': content.rating,
-                        'release_date': content.release_date.isoformat() if content.release_date else None,
-                        'poster_path': f"https://image.tmdb.org/t/p/w500{content.poster_path}" if content.poster_path else None,
-                        'overview': content.overview,
-                        'youtube_trailer': youtube_url
-                    })
-        
-        # Add anime results
-        if anime_results:
-            for anime in anime_results.get('data', []):
-                # Save anime content
-                content = ContentService.save_anime_content(anime)
-                if content:
-                    # Get YouTube trailer URL
-                    youtube_url = None
-                    if content.youtube_trailer_id:
-                        youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
-                    
-                    results.append({
-                        'id': content.id,
-                        'mal_id': content.mal_id,
-                        'title': content.title,
-                        'content_type': 'anime',
-                        'genres': json.loads(content.genres or '[]'),
-                        'anime_genres': json.loads(content.anime_genres or '[]'),
-                        'rating': content.rating,
-                        'release_date': content.release_date.isoformat() if content.release_date else None,
-                        'poster_path': content.poster_path,
-                        'overview': content.overview,
-                        'youtube_trailer': youtube_url
-                    })
-        
-        db.session.commit()
-        
-        return jsonify({
-            'results': results,
-            'total_results': tmdb_results.get('total_results', 0) if tmdb_results else 0,
-            'total_pages': tmdb_results.get('total_pages', 0) if tmdb_results else 0,
-            'current_page': page
-        }), 200
+        return jsonify(results), 200
         
     except Exception as e:
         logger.error(f"Search error: {e}")
-        return jsonify({'error': 'Search failed'}), 500
+        return jsonify({'error': 'Search failed', 'message': str(e)}), 500
+
+# Add new autocomplete endpoint
+@app.route('/api/autocomplete', methods=['GET'])
+def autocomplete():
+    try:
+        query = request.args.get('query', '')
+        limit = request.args.get('limit', 10, type=int)
+        
+        suggestions = get_autocomplete_suggestions(
+            db.session,
+            Content,
+            query=query,
+            limit=limit
+        )
+        
+        return jsonify({'suggestions': suggestions}), 200
+        
+    except Exception as e:
+        logger.error(f"Autocomplete error: {e}")
+        return jsonify({'error': 'Autocomplete failed'}), 500
+
+# Add admin endpoint to rebuild search index
+@app.route('/api/admin/rebuild-search-index', methods=['POST'])
+@admin_required
+def rebuild_index():
+    try:
+        count = rebuild_search_index(db.session, Content)
+        return jsonify({
+            'message': 'Search index rebuilt successfully',
+            'indexed_items': count
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Index rebuild error: {e}")
+        return jsonify({'error': 'Failed to rebuild index'}), 500
 
 @app.route('/api/content/<int:content_id>', methods=['GET'])
 def get_content_details(content_id):

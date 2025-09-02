@@ -62,7 +62,7 @@ Comprehensive testing checklist
 
 
 
-Modify my search.py file to integrate with the backend/app.py and implement a powerful, super-fast search system using pure Python (no Elasticsearch). 
+separate search from my backend/app.py and provide this in backend/search.py and implement a powerful, super-fast search system using pure Python. 
 Ensure the search results are 100% accurate and instant by using:
 1. N-gram analyzer for partial matching and auto-complete.
 2. Fuzzy search to handle typos and misspellings.
