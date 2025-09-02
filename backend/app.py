@@ -932,11 +932,14 @@ def search():
         per_page = request.args.get('per_page', 20, type=int)
         sort_by = request.args.get('sort_by', 'relevance')
         
-        # Perform search using the new search engine
+        # Perform enhanced search with TMDB fetching
         results = search_content(
             db.session,
             Content,
             query=query,
+            tmdb_api_key=TMDB_API_KEY,  # Pass TMDB API key
+            ContentService=ContentService,  # Pass ContentService for saving
+            http_session=http_session,  # Pass HTTP session for requests
             content_type=content_type,
             genres=genres,
             languages=languages,

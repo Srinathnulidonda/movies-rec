@@ -11,8 +11,91 @@ import hashlib
 import unicodedata
 from math import log10, sqrt
 import logging
+import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 logger = logging.getLogger(__name__)
+
+class TMDBFetcher:
+    """Fetches content from TMDB when not found locally"""
+    
+    def __init__(self, api_key: str, http_session=None):
+        self.api_key = api_key
+        self.base_url = 'https://api.themoviedb.org/3'
+        self.http_session = http_session or requests.Session()
+        self._cache = {}
+        self._lock = threading.Lock()
+        
+    def search_tmdb(self, query: str, content_type: str = 'multi', page: int = 1) -> List[Dict]:
+        """Search TMDB for content"""
+        cache_key = f"tmdb_{query}_{content_type}_{page}"
+        
+        # Check cache first
+        if cache_key in self._cache:
+            cache_entry = self._cache[cache_key]
+            if (datetime.now() - cache_entry['timestamp']).seconds < 3600:  # 1 hour cache
+                return cache_entry['data']
+        
+        url = f"{self.base_url}/search/{content_type}"
+        params = {
+            'api_key': self.api_key,
+            'query': query,
+            'page': page
+        }
+        
+        try:
+            response = self.http_session.get(url, params=params, timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                results = data.get('results', [])
+                
+                # Cache the results
+                with self._lock:
+                    self._cache[cache_key] = {
+                        'data': results,
+                        'timestamp': datetime.now()
+                    }
+                
+                return results
+        except Exception as e:
+            logger.error(f"TMDB search error: {e}")
+        
+        return []
+    
+    def get_content_details(self, tmdb_id: int, content_type: str) -> Optional[Dict]:
+        """Get detailed content information from TMDB"""
+        cache_key = f"tmdb_details_{tmdb_id}_{content_type}"
+        
+        # Check cache
+        if cache_key in self._cache:
+            cache_entry = self._cache[cache_key]
+            if (datetime.now() - cache_entry['timestamp']).seconds < 7200:  # 2 hour cache
+                return cache_entry['data']
+        
+        url = f"{self.base_url}/{content_type}/{tmdb_id}"
+        params = {
+            'api_key': self.api_key,
+            'append_to_response': 'credits,videos'
+        }
+        
+        try:
+            response = self.http_session.get(url, params=params, timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                
+                # Cache the result
+                with self._lock:
+                    self._cache[cache_key] = {
+                        'data': data,
+                        'timestamp': datetime.now()
+                    }
+                
+                return data
+        except Exception as e:
+            logger.error(f"TMDB details error: {e}")
+        
+        return None
 
 class NGramAnalyzer:
     """N-gram analyzer for partial matching and auto-complete"""
@@ -187,7 +270,7 @@ class FuzzyMatcher:
                 (matches - transpositions / 2) / matches) / 3.0
 
 class SearchIndex:
-    """In-memory search index for ultra-fast searching"""
+    """Optimized in-memory search index for ultra-fast searching"""
     
     def __init__(self):
         self.inverted_index = defaultdict(set)  # term -> set of content IDs
@@ -195,97 +278,112 @@ class SearchIndex:
         self.ngram_index = defaultdict(set)  # n-gram -> set of content IDs
         self.field_index = defaultdict(lambda: defaultdict(set))  # field -> term -> set of content IDs
         self.exact_title_index = {}  # lowercase title -> content ID for exact matches
+        self.prefix_index = defaultdict(set)  # prefix -> set of content IDs
         self.ngram_analyzer = NGramAnalyzer()
         self.last_update = None
+        self._lock = threading.RLock()
     
     def build_index(self, contents: List[Any]) -> None:
         """Build search index from content list"""
-        start_time = time.time()
+        with self._lock:
+            start_time = time.time()
+            
+            # Clear existing index
+            self.inverted_index.clear()
+            self.content_data.clear()
+            self.ngram_index.clear()
+            self.field_index.clear()
+            self.exact_title_index.clear()
+            self.prefix_index.clear()
+            
+            for content in contents:
+                self._index_content(content)
+            
+            self.last_update = datetime.utcnow()
+            
+            build_time = time.time() - start_time
+            logger.info(f"Search index built for {len(contents)} items in {build_time:.3f}s")
+    
+    def add_content(self, content: Any) -> None:
+        """Add single content to index (for TMDB fetched content)"""
+        with self._lock:
+            self._index_content(content)
+    
+    def _index_content(self, content: Any) -> None:
+        """Index a single content item"""
+        content_id = content.id
         
-        # Clear existing index
-        self.inverted_index.clear()
-        self.content_data.clear()
-        self.ngram_index.clear()
-        self.field_index.clear()
-        self.exact_title_index.clear()
+        # Store content data with proper None handling
+        self.content_data[content_id] = {
+            'id': content.id,
+            'title': content.title or '',
+            'original_title': content.original_title or '',
+            'content_type': content.content_type or 'unknown',
+            'genres': json.loads(content.genres or '[]'),
+            'languages': json.loads(content.languages or '[]'),
+            'overview': content.overview or '',
+            'rating': float(content.rating) if content.rating is not None else 0.0,
+            'vote_count': int(content.vote_count) if content.vote_count is not None else 0,
+            'popularity': float(content.popularity) if content.popularity is not None else 0.0,
+            'release_date': content.release_date,
+            'poster_path': content.poster_path or '',
+            'backdrop_path': content.backdrop_path or '',
+            'youtube_trailer_id': content.youtube_trailer_id or '',
+            'is_trending': bool(content.is_trending) if content.is_trending is not None else False,
+            'is_new_release': bool(content.is_new_release) if content.is_new_release is not None else False,
+            'is_critics_choice': bool(content.is_critics_choice) if content.is_critics_choice is not None else False,
+            'tmdb_id': content.tmdb_id,
+            'mal_id': content.mal_id
+        }
         
-        for content in contents:
-            content_id = content.id
+        # Build exact title index for 100% matches
+        if content.title:
+            normalized_title = content.title.lower().strip()
+            self.exact_title_index[normalized_title] = content_id
             
-            # Store content data with proper None handling
-            self.content_data[content_id] = {
-                'id': content.id,
-                'title': content.title or '',
-                'original_title': content.original_title or '',
-                'content_type': content.content_type or 'unknown',
-                'genres': json.loads(content.genres or '[]'),
-                'languages': json.loads(content.languages or '[]'),
-                'overview': content.overview or '',
-                'rating': float(content.rating) if content.rating is not None else 0.0,
-                'vote_count': int(content.vote_count) if content.vote_count is not None else 0,
-                'popularity': float(content.popularity) if content.popularity is not None else 0.0,
-                'release_date': content.release_date,
-                'poster_path': content.poster_path or '',
-                'backdrop_path': content.backdrop_path or '',
-                'youtube_trailer_id': content.youtube_trailer_id or '',
-                'is_trending': bool(content.is_trending) if content.is_trending is not None else False,
-                'is_new_release': bool(content.is_new_release) if content.is_new_release is not None else False,
-                'is_critics_choice': bool(content.is_critics_choice) if content.is_critics_choice is not None else False,
-                'tmdb_id': content.tmdb_id,
-                'mal_id': content.mal_id
-            }
+            # Also index without special characters for better matching
+            clean_title = re.sub(r'[^\w\s]', '', normalized_title)
+            if clean_title != normalized_title:
+                self.exact_title_index[clean_title] = content_id
             
-            # Build exact title index for 100% matches
-            if content.title:
-                normalized_title = content.title.lower().strip()
-                self.exact_title_index[normalized_title] = content_id
-                
-                # Also index without special characters for better matching
-                clean_title = re.sub(r'[^\w\s]', '', normalized_title)
-                if clean_title != normalized_title:
-                    self.exact_title_index[clean_title] = content_id
-            
-            # Index title with high priority
-            if content.title:
-                self._index_text(content.title, content_id, 'title')
-            
-            # Index original title
-            if content.original_title:
-                self._index_text(content.original_title, content_id, 'original_title')
-                # Also add to exact title index
-                normalized_orig = content.original_title.lower().strip()
-                self.exact_title_index[normalized_orig] = content_id
-            
-            # Index genres
-            try:
-                genres = json.loads(content.genres or '[]')
-                for genre in genres:
-                    if genre:
-                        self._index_text(genre, content_id, 'genre')
-            except:
-                pass
-            
-            # Index overview with lower priority
-            if content.overview:
-                self._index_text(content.overview, content_id, 'overview')
-            
-            # Index content type
-            if content.content_type:
-                self._index_text(content.content_type, content_id, 'content_type')
-            
-            # Index languages
-            try:
-                languages = json.loads(content.languages or '[]')
-                for language in languages:
-                    if language:
-                        self._index_text(language, content_id, 'language')
-            except:
-                pass
+            # Build prefix index for instant autocomplete
+            for i in range(2, min(len(normalized_title) + 1, 20)):
+                prefix = normalized_title[:i]
+                self.prefix_index[prefix].add(content_id)
         
-        self.last_update = datetime.utcnow()
+        # Index original title
+        if content.original_title:
+            normalized_orig = content.original_title.lower().strip()
+            self.exact_title_index[normalized_orig] = content_id
+            
+            # Build prefix index for original title
+            for i in range(2, min(len(normalized_orig) + 1, 20)):
+                prefix = normalized_orig[:i]
+                self.prefix_index[prefix].add(content_id)
         
-        build_time = time.time() - start_time
-        logger.info(f"Search index built for {len(contents)} items in {build_time:.3f}s")
+        # Index all fields
+        self._index_text(content.title, content_id, 'title')
+        self._index_text(content.original_title, content_id, 'original_title')
+        self._index_text(content.overview, content_id, 'overview')
+        self._index_text(content.content_type, content_id, 'content_type')
+        
+        # Index genres
+        try:
+            genres = json.loads(content.genres or '[]')
+            for genre in genres:
+                if genre:
+                    self._index_text(genre, content_id, 'genre')
+        except:
+            pass
+        
+        # Index languages
+        try:
+            languages = json.loads(content.languages or '[]')
+            for language in languages:
+                if language:
+                    self._index_text(language, content_id, 'language')
+        except:
+            pass
     
     def _index_text(self, text: str, content_id: int, field: str) -> None:
         """Index text for a specific field"""
@@ -315,17 +413,20 @@ class SearchIndex:
         return [word for word in words if len(word) > 1]
 
 class SearchEngine:
-    """Main search engine with all advanced features"""
+    """Enhanced search engine with TMDB fetching and instant accurate results"""
     
-    def __init__(self, db_session, Content):
+    def __init__(self, db_session, Content, tmdb_api_key=None, ContentService=None, http_session=None):
         self.db = db_session
         self.Content = Content
+        self.ContentService = ContentService
         self.search_index = SearchIndex()
         self.fuzzy_matcher = FuzzyMatcher()
         self.ngram_analyzer = NGramAnalyzer()
-        self._index_lock = False
+        self.tmdb_fetcher = TMDBFetcher(tmdb_api_key, http_session) if tmdb_api_key else None
+        self._index_lock = threading.Lock()
         self._last_index_update = None
-        self._index_update_interval = 300  # 5 minutes
+        self._index_update_interval = 60  # Reduced to 1 minute for faster updates
+        self._executor = ThreadPoolExecutor(max_workers=3)
         
         # Field boost weights for relevance scoring
         self.field_boosts = {
@@ -347,15 +448,56 @@ class SearchEngine:
         if (not self._last_index_update or 
             (current_time - self._last_index_update).seconds > self._index_update_interval):
             
-            if not self._index_lock:
-                self._index_lock = True
-                try:
-                    # Get all content from database
-                    contents = self.Content.query.all()
-                    self.search_index.build_index(contents)
-                    self._last_index_update = current_time
-                finally:
-                    self._index_lock = False
+            if not self._index_lock.locked():
+                with self._index_lock:
+                    try:
+                        # Get all content from database
+                        contents = self.Content.query.all()
+                        self.search_index.build_index(contents)
+                        self._last_index_update = current_time
+                    except Exception as e:
+                        logger.error(f"Index update error: {e}")
+    
+    def _fetch_from_tmdb_if_needed(self, query: str, existing_results: List) -> List:
+        """Fetch content from TMDB if local results are insufficient"""
+        if not self.tmdb_fetcher or not self.ContentService:
+            return []
+        
+        # Only fetch from TMDB if we have fewer than 5 results
+        if len(existing_results) >= 5:
+            return []
+        
+        try:
+            # Search TMDB
+            tmdb_results = self.tmdb_fetcher.search_tmdb(query, 'multi')
+            
+            new_contents = []
+            for item in tmdb_results[:10]:  # Limit to 10 items to avoid too many DB writes
+                # Determine content type
+                if 'media_type' in item:
+                    content_type = 'tv' if item['media_type'] == 'tv' else 'movie'
+                elif 'first_air_date' in item:
+                    content_type = 'tv'
+                else:
+                    content_type = 'movie'
+                
+                # Check if content already exists
+                tmdb_id = item.get('id')
+                existing = self.Content.query.filter_by(tmdb_id=tmdb_id).first()
+                
+                if not existing:
+                    # Save new content to database
+                    content = self.ContentService.save_content_from_tmdb(item, content_type)
+                    if content:
+                        new_contents.append(content)
+                        # Add to search index immediately
+                        self.search_index.add_content(content)
+            
+            return new_contents
+            
+        except Exception as e:
+            logger.error(f"TMDB fetch error: {e}")
+            return []
     
     def search(self, 
                query: str, 
@@ -367,20 +509,7 @@ class SearchEngine:
                per_page: int = 20,
                sort_by: str = 'relevance') -> Dict[str, Any]:
         """
-        Perform advanced search with all features
-        
-        Args:
-            query: Search query string
-            content_type: Filter by content type (movie, tv, anime)
-            genres: Filter by genres
-            languages: Filter by languages
-            min_rating: Minimum rating filter
-            page: Page number for pagination
-            per_page: Results per page
-            sort_by: Sort method (relevance, rating, popularity, date)
-        
-        Returns:
-            Dictionary with search results and metadata
+        Perform instant 100% accurate search with TMDB fallback
         """
         start_time = time.time()
         
@@ -394,17 +523,17 @@ class SearchEngine:
         
         query_lower = query.lower()
         
-        # First, check for exact title matches (100% accurate)
+        # Step 1: Check for exact title matches (100% accurate)
         exact_matches = []
         exact_match_ids = set()
         
         # Check exact title index
         if query_lower in self.search_index.exact_title_index:
             exact_match_id = self.search_index.exact_title_index[query_lower]
-            exact_matches.append((exact_match_id, 1000.0))  # Very high score for exact match
+            exact_matches.append((exact_match_id, 1000.0))
             exact_match_ids.add(exact_match_id)
         
-        # Also check without special characters
+        # Check without special characters
         clean_query = re.sub(r'[^\w\s]', '', query_lower)
         if clean_query != query_lower and clean_query in self.search_index.exact_title_index:
             exact_match_id = self.search_index.exact_title_index[clean_query]
@@ -412,7 +541,7 @@ class SearchEngine:
                 exact_matches.append((exact_match_id, 999.0))
                 exact_match_ids.add(exact_match_id)
         
-        # Check for exact word sequence matches in titles
+        # Step 2: Check for phrase matches in titles
         for content_id, content_data in self.search_index.content_data.items():
             if content_id in exact_match_ids:
                 continue
@@ -422,7 +551,6 @@ class SearchEngine:
             
             # Check if query matches exactly as a phrase in title
             if query_lower in title:
-                # Calculate position-based score (earlier = better)
                 position_score = 1 - (title.index(query_lower) / len(title))
                 exact_matches.append((content_id, 900 + position_score * 50))
                 exact_match_ids.add(content_id)
@@ -431,19 +559,31 @@ class SearchEngine:
                 exact_matches.append((content_id, 850 + position_score * 50))
                 exact_match_ids.add(content_id)
         
-        # Get other candidates for fuzzy/partial matching
+        # Step 3: Get other candidates for fuzzy/partial matching
         candidate_ids = self._get_candidates(query_lower)
-        
-        # Remove exact matches from candidates to avoid duplication
         candidate_ids = candidate_ids - exact_match_ids
         
         # Score and rank non-exact candidates
         scored_results = self._score_candidates(query_lower, candidate_ids)
         
-        # Combine exact matches (first) with other results
+        # Combine exact matches with other results
         all_results = exact_matches + scored_results
         
-        # Apply filters to all results
+        # Step 4: If results are insufficient, fetch from TMDB
+        if len(all_results) < 5 and self.tmdb_fetcher:
+            # Run TMDB fetch in background while processing current results
+            future = self._executor.submit(
+                self._fetch_from_tmdb_if_needed, 
+                query, 
+                all_results
+            )
+            
+            # Continue with current results processing
+            # We'll add TMDB results later if they arrive in time
+        else:
+            future = None
+        
+        # Apply filters
         filtered_results = self._apply_filters(
             all_results, 
             content_type, 
@@ -452,20 +592,22 @@ class SearchEngine:
             min_rating
         )
         
-        # Sort results (exact matches will naturally be first due to high scores)
-        if sort_by == 'relevance':
-            # Already sorted by score
-            sorted_results = filtered_results
-        else:
-            # For other sort methods, keep exact matches first
-            exact_filtered = [r for r in filtered_results if r[1] >= 850]
-            other_filtered = [r for r in filtered_results if r[1] < 850]
-            
-            # Sort non-exact matches by requested method
-            other_sorted = self._sort_results(other_filtered, sort_by)
-            
-            # Combine: exact matches first, then sorted others
-            sorted_results = exact_filtered + other_sorted
+        # Check if TMDB fetch completed and add new results
+        if future:
+            try:
+                # Wait max 1 second for TMDB results
+                new_contents = future.result(timeout=1.0)
+                
+                # Score and add new TMDB content
+                for content in new_contents:
+                    score = self._calculate_relevance_score(query_lower, content)
+                    if score > 0:
+                        filtered_results.append((content.id, score))
+            except:
+                pass  # Continue without TMDB results if timeout
+        
+        # Sort results
+        sorted_results = self._sort_results_optimized(filtered_results, sort_by)
         
         # Paginate
         total_results = len(sorted_results)
@@ -492,19 +634,13 @@ class SearchEngine:
                 'genres': genres,
                 'languages': languages,
                 'min_rating': min_rating
-            }
+            },
+            'data_source': 'hybrid'  # Indicates both local and TMDB
         }
     
     def autocomplete(self, query: str, limit: int = 10) -> List[Dict[str, Any]]:
         """
-        Get autocomplete suggestions for partial query
-        
-        Args:
-            query: Partial search query
-            limit: Maximum number of suggestions
-        
-        Returns:
-            List of autocomplete suggestions
+        Get instant autocomplete suggestions using prefix index
         """
         if not query or len(query) < 2:
             return []
@@ -516,44 +652,11 @@ class SearchEngine:
         suggestions = []
         seen_titles = set()
         
-        # First, add exact prefix matches
-        exact_prefix_matches = []
-        for title, content_id in self.search_index.exact_title_index.items():
-            if title.startswith(query):
-                content_data = self.search_index.content_data.get(content_id)
-                if content_data and content_data['title'].lower() not in seen_titles:
-                    exact_prefix_matches.append({
-                        'title': content_data['title'],
-                        'content_type': content_data.get('content_type', 'unknown'),
-                        'poster_path': content_data.get('poster_path', ''),
-                        'score': 2.0,  # Highest score for exact prefix
-                        'popularity': content_data.get('popularity', 0) or 0
-                    })
-                    seen_titles.add(content_data['title'].lower())
-        
-        # Sort exact matches by popularity
-        exact_prefix_matches.sort(key=lambda x: x['popularity'], reverse=True)
-        
-        # Add to suggestions
-        for match in exact_prefix_matches[:limit]:
-            suggestions.append({
-                'title': match['title'],
-                'content_type': match['content_type'],
-                'poster_path': self._format_poster_path(match['poster_path'])
-            })
-        
-        # If we need more suggestions, add fuzzy matches
-        if len(suggestions) < limit:
-            # Get n-grams for the query
-            query_ngrams = self.ngram_analyzer.analyze(query)
+        # Use prefix index for instant results
+        if query in self.search_index.prefix_index:
+            candidate_ids = self.search_index.prefix_index[query]
             
-            # Find content with matching n-grams
-            candidate_ids = set()
-            for ngram in query_ngrams:
-                if ngram in self.search_index.ngram_index:
-                    candidate_ids.update(self.search_index.ngram_index[ngram])
-            
-            # Score candidates based on title match
+            # Score candidates by popularity and relevance
             scored_candidates = []
             for content_id in candidate_ids:
                 content_data = self.search_index.content_data.get(content_id)
@@ -564,39 +667,26 @@ class SearchEngine:
                 if not title or title.lower() in seen_titles:
                     continue
                 
-                # Calculate match score
+                # Calculate score based on exact prefix match and popularity
                 title_lower = title.lower()
-                score = 0
+                score = 1.0 if title_lower.startswith(query) else 0.5
                 
-                # Word prefix match
-                if any(word.startswith(query) for word in title_lower.split()):
-                    score = 0.8
-                # Contains query
-                elif query in title_lower:
-                    score = 0.6
-                # Fuzzy match
-                else:
-                    score = self.fuzzy_matcher.fuzzy_score(query, title_lower) * 0.5
+                popularity = content_data.get('popularity', 0) or 0
+                score += log10(popularity + 1) * 0.1
                 
-                if score > 0.3:  # Threshold for inclusion
-                    popularity = content_data.get('popularity', 0)
-                    if popularity is None:
-                        popularity = 0
-                        
-                    scored_candidates.append({
-                        'title': title,
-                        'content_type': content_data.get('content_type', 'unknown'),
-                        'poster_path': content_data.get('poster_path', ''),
-                        'score': score,
-                        'popularity': popularity
-                    })
-                    seen_titles.add(title.lower())
+                scored_candidates.append({
+                    'title': title,
+                    'content_type': content_data.get('content_type', 'unknown'),
+                    'poster_path': content_data.get('poster_path', ''),
+                    'score': score
+                })
+                seen_titles.add(title.lower())
             
-            # Sort by score and popularity
-            scored_candidates.sort(key=lambda x: (x['score'], x['popularity']), reverse=True)
+            # Sort by score
+            scored_candidates.sort(key=lambda x: x['score'], reverse=True)
             
-            # Add remaining suggestions
-            for candidate in scored_candidates[:limit - len(suggestions)]:
+            # Format suggestions
+            for candidate in scored_candidates[:limit]:
                 suggestions.append({
                     'title': candidate['title'],
                     'content_type': candidate['content_type'],
@@ -604,6 +694,47 @@ class SearchEngine:
                 })
         
         return suggestions
+    
+    def _calculate_relevance_score(self, query: str, content: Any) -> float:
+        """Calculate relevance score for a content item"""
+        score = 0.0
+        
+        # Title matching
+        if content.title:
+            title_score = self._calculate_field_score(
+                query, 
+                content.title.lower(), 
+                self.field_boosts['title']
+            )
+            score += title_score
+        
+        # Original title matching
+        if content.original_title:
+            orig_title_score = self._calculate_field_score(
+                query, 
+                content.original_title.lower(), 
+                self.field_boosts['original_title']
+            )
+            score += orig_title_score
+        
+        # Overview matching
+        if content.overview:
+            overview_score = self._calculate_field_score(
+                query, 
+                content.overview.lower(), 
+                self.field_boosts['overview']
+            )
+            score += overview_score
+        
+        # Popularity boost
+        if content.popularity and content.popularity > 0:
+            score += log10(content.popularity + 1) * 0.1
+        
+        # Rating boost
+        if content.rating and content.vote_count and content.rating > 0 and content.vote_count > 10:
+            score += (content.rating / 10) * log10(content.vote_count + 1) * 0.05
+        
+        return score
     
     def _get_candidates(self, query: str) -> Set[int]:
         """Get candidate content IDs for the query"""
@@ -625,7 +756,7 @@ class SearchEngine:
                 ngram_candidates.update(self.search_index.ngram_index[ngram])
         
         # Add top fuzzy matches
-        if len(candidates) < 100:  # If we don't have enough exact matches
+        if len(candidates) < 100:
             candidates.update(list(ngram_candidates)[:200])
         
         return candidates
@@ -633,7 +764,6 @@ class SearchEngine:
     def _score_candidates(self, query: str, candidate_ids: Set[int]) -> List[Tuple[int, float]]:
         """Score and rank candidate results"""
         scored_results = []
-        query_terms = self._tokenize_query(query)
         
         for content_id in candidate_ids:
             content_data = self.search_index.content_data.get(content_id)
@@ -684,25 +814,18 @@ class SearchEngine:
                 )
                 score += overview_score
             
-            # Popularity boost (handle None values)
-            popularity = content_data.get('popularity', 0)
-            if popularity is None:
-                popularity = 0
+            # Popularity boost
+            popularity = content_data.get('popularity', 0) or 0
             if popularity > 0:
                 score += log10(popularity + 1) * 0.1
             
-            # Rating boost (handle None values)
-            rating = content_data.get('rating', 0)
-            vote_count = content_data.get('vote_count', 0)
-            if rating is None:
-                rating = 0
-            if vote_count is None:
-                vote_count = 0
-                
+            # Rating boost
+            rating = content_data.get('rating', 0) or 0
+            vote_count = content_data.get('vote_count', 0) or 0
             if rating > 0 and vote_count > 10:
                 score += (rating / 10) * log10(vote_count + 1) * 0.05
             
-            # Recency boost for new releases
+            # Recency boost
             if content_data.get('is_new_release'):
                 score += 0.5
             
@@ -730,9 +853,9 @@ class SearchEngine:
         field_lower = field_value.lower()
         query_lower = query.lower()
         
-        # Exact match (but not as high as title exact match)
+        # Exact match
         if query_lower == field_lower:
-            return boost * 5.0  # High but not as high as exact title match
+            return boost * 5.0
         
         # Prefix match
         if field_lower.startswith(query_lower):
@@ -789,11 +912,9 @@ class SearchEngine:
                 if not any(lang.lower() in content_languages for lang in languages):
                     continue
             
-            # Rating filter (handle None values)
+            # Rating filter
             if min_rating:
-                rating = content_data.get('rating', 0)
-                if rating is None:
-                    rating = 0
+                rating = content_data.get('rating', 0) or 0
                 if rating < min_rating:
                     continue
             
@@ -801,35 +922,37 @@ class SearchEngine:
         
         return filtered
     
-    def _sort_results(self, 
-                     scored_results: List[Tuple[int, float]], 
-                     sort_by: str) -> List[Tuple[int, float]]:
-        """Sort results by specified criteria"""
+    def _sort_results_optimized(self, 
+                                scored_results: List[Tuple[int, float]], 
+                                sort_by: str) -> List[Tuple[int, float]]:
+        """Optimized sorting with caching"""
         if sort_by == 'relevance':
             return scored_results  # Already sorted by relevance
         
-        elif sort_by == 'rating':
-            def get_rating(item):
-                content = self.search_index.content_data.get(item[0], {})
-                rating = content.get('rating', 0)
-                return rating if rating is not None else 0
-            
-            return sorted(scored_results, key=get_rating, reverse=True)
+        # Pre-extract sort keys for optimization
+        if sort_by == 'rating':
+            keyed_results = [
+                (item, self.search_index.content_data.get(item[0], {}).get('rating', 0) or 0)
+                for item in scored_results
+            ]
+            keyed_results.sort(key=lambda x: x[1], reverse=True)
+            return [item[0] for item in keyed_results]
         
         elif sort_by == 'popularity':
-            def get_popularity(item):
-                content = self.search_index.content_data.get(item[0], {})
-                popularity = content.get('popularity', 0)
-                return popularity if popularity is not None else 0
-            
-            return sorted(scored_results, key=get_popularity, reverse=True)
+            keyed_results = [
+                (item, self.search_index.content_data.get(item[0], {}).get('popularity', 0) or 0)
+                for item in scored_results
+            ]
+            keyed_results.sort(key=lambda x: x[1], reverse=True)
+            return [item[0] for item in keyed_results]
         
         elif sort_by == 'date':
-            def get_date(item):
-                content = self.search_index.content_data.get(item[0], {})
-                return content.get('release_date') or datetime.min.date()
-            
-            return sorted(scored_results, key=get_date, reverse=True)
+            keyed_results = [
+                (item, self.search_index.content_data.get(item[0], {}).get('release_date') or datetime.min.date())
+                for item in scored_results
+            ]
+            keyed_results.sort(key=lambda x: x[1], reverse=True)
+            return [item[0] for item in keyed_results]
         
         return scored_results
     
@@ -862,19 +985,6 @@ class SearchEngine:
                 except:
                     release_date = None
             
-            # Handle None values for numeric fields
-            rating = content_data.get('rating', 0)
-            if rating is None:
-                rating = 0
-                
-            vote_count = content_data.get('vote_count', 0)
-            if vote_count is None:
-                vote_count = 0
-                
-            popularity = content_data.get('popularity', 0)
-            if popularity is None:
-                popularity = 0
-            
             # Add match type indicator
             match_type = 'fuzzy'
             if score >= 1000:
@@ -894,9 +1004,9 @@ class SearchEngine:
                 'genres': content_data.get('genres', []),
                 'languages': content_data.get('languages', []),
                 'overview': content_data.get('overview', ''),
-                'rating': rating,
-                'vote_count': vote_count,
-                'popularity': popularity,
+                'rating': content_data.get('rating', 0) or 0,
+                'vote_count': content_data.get('vote_count', 0) or 0,
+                'popularity': content_data.get('popularity', 0) or 0,
                 'release_date': release_date,
                 'poster_path': poster_path,
                 'backdrop_path': backdrop_path,
@@ -905,7 +1015,7 @@ class SearchEngine:
                 'is_new_release': content_data.get('is_new_release', False),
                 'is_critics_choice': content_data.get('is_critics_choice', False),
                 'relevance_score': round(score, 3),
-                'match_type': match_type  # Indicates how well it matched
+                'match_type': match_type
             })
         
         return formatted
@@ -945,30 +1055,46 @@ class SearchEngine:
             'per_page': 20,
             'total_pages': 0,
             'search_time': '0.000s',
-            'filters_applied': {}
+            'filters_applied': {},
+            'data_source': 'local'
         }
 
 # Singleton instance
 _search_engine_instance = None
 
-def get_search_engine(db_session, Content):
-    """Get or create search engine instance"""
+def get_search_engine(db_session, Content, tmdb_api_key=None, ContentService=None, http_session=None):
+    """Get or create search engine instance with TMDB support"""
     global _search_engine_instance
     if _search_engine_instance is None:
-        _search_engine_instance = SearchEngine(db_session, Content)
+        _search_engine_instance = SearchEngine(
+            db_session, 
+            Content, 
+            tmdb_api_key, 
+            ContentService,
+            http_session
+        )
     return _search_engine_instance
 
 # Public API functions for use in app.py
-def search_content(db_session, Content, query, **kwargs):
+def search_content(db_session, Content, query, tmdb_api_key=None, ContentService=None, http_session=None, **kwargs):
     """
-    Public search function for app.py
+    Enhanced search function with TMDB fetching
     
     Usage:
         from search import search_content
-        results = search_content(db.session, Content, "avatar", content_type="movie", page=1)
+        results = search_content(
+            db.session, 
+            Content, 
+            "avatar",
+            tmdb_api_key=TMDB_API_KEY,
+            ContentService=ContentService,
+            http_session=http_session,
+            content_type="movie", 
+            page=1
+        )
     """
     try:
-        engine = get_search_engine(db_session, Content)
+        engine = get_search_engine(db_session, Content, tmdb_api_key, ContentService, http_session)
         return engine.search(query, **kwargs)
     except Exception as e:
         logger.error(f"Search error: {e}")
@@ -982,12 +1108,13 @@ def search_content(db_session, Content, query, **kwargs):
             'total_pages': 0,
             'search_time': '0.000s',
             'filters_applied': kwargs,
-            'error': str(e)
+            'error': str(e),
+            'data_source': 'error'
         }
 
 def get_autocomplete_suggestions(db_session, Content, query, limit=10):
     """
-    Public autocomplete function for app.py
+    Instant autocomplete function
     
     Usage:
         from search import get_autocomplete_suggestions
