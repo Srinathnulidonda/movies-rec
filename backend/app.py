@@ -28,6 +28,7 @@ from flask_mail import Mail
 import auth
 from auth import init_auth, auth_bp
 from admin import admin_bp, init_admin
+from search import create_search_engine, create_suggestion_engine
 from users import users_bp, init_users
 from algorithms import (
     RecommendationOrchestrator,
@@ -73,7 +74,6 @@ CORS(app)
 cache = Cache(app)
 cache = Cache()
 cache.init_app(app) 
-
 # API Keys - Set these in your environment
 TMDB_API_KEY = os.environ.get('TMDB_API_KEY', '1cf86635f20bb2aff8e70940e7c3ddd5')
 OMDB_API_KEY = os.environ.get('OMDB_API_KEY', '52260795')
@@ -232,6 +232,7 @@ app.register_blueprint(auth_bp)
 app.register_blueprint(admin_bp)
 app.register_blueprint(users_bp)
 init_auth(app, db, User)
+
 
 # Helper Functions
 def get_session_id():
@@ -916,33 +917,17 @@ services = {
 init_admin(app, db, models, services)
 init_users(app, db, models, services)
 
-# Initialize Advanced Search System
-from search import create_search_engine, create_suggestion_engine, warm_up_search_index, get_search_statistics
-
-# Create search engines
+# API Routes
 search_engine = create_search_engine(db, cache, services)
 suggestion_engine = create_suggestion_engine(cache)
-
-# Make models available globally for search system
-import sys
-current_module = sys.modules[__name__]
-current_module.models = {
-    'Content': Content,
-    'User': User,
-    'UserInteraction': UserInteraction,
-    'AdminRecommendation': AdminRecommendation,
-    'AnonymousInteraction': AnonymousInteraction
-}
-
-# Enhanced Content Discovery Routes with Advanced Search
+# Enhanced Content Discovery Routes with caching
 @app.route('/api/search', methods=['GET'])
 def search_content():
-    """Advanced search with instant results and real-time data"""
+    """Enhanced search with instant results"""
     try:
         query = request.args.get('query', '').strip()
         search_type = request.args.get('type', 'multi')
         page = int(request.args.get('page', 1))
-        limit = int(request.args.get('limit', 20))
         
         if not query:
             return jsonify({'error': 'Query parameter required'}), 400
@@ -954,63 +939,46 @@ def search_content():
         if request.args.get('language'):
             filters['language'] = request.args.get('language')
         if request.args.get('year'):
-            try:
-                filters['year'] = int(request.args.get('year'))
-            except ValueError:
-                pass
+            filters['year'] = int(request.args.get('year'))
         if request.args.get('min_rating'):
-            try:
-                filters['min_rating'] = float(request.args.get('min_rating'))
-            except ValueError:
-                pass
+            filters['min_rating'] = float(request.args.get('min_rating'))
         if request.args.get('content_type'):
             filters['content_type'] = request.args.get('content_type')
         
-        # Perform advanced search
+        # Perform search
         results = search_engine.search(
             query=query,
             search_type=search_type,
             page=page,
-            limit=limit,
             filters=filters
         )
         
-        # Record search analytics
+        # Record search for analytics
         user_id = session.get('user_id')
         suggestion_engine.record_search(query, user_id)
         
-        # Record anonymous interaction for top results
+        # Record anonymous interaction
         session_id = get_session_id()
-        if results.get('results'):
-            try:
-                for result in results['results'][:3]:  # Record top 3 results
-                    interaction = AnonymousInteraction(
-                        session_id=session_id,
-                        content_id=result['id'],
-                        interaction_type='search',
-                        ip_address=request.remote_addr
-                    )
-                    db.session.add(interaction)
-                db.session.commit()
-            except Exception as e:
-                logger.error(f"Error recording search interactions: {e}")
-                db.session.rollback()
+        if results['results']:
+            for result in results['results'][:5]:  # Record top 5 results
+                interaction = AnonymousInteraction(
+                    session_id=session_id,
+                    content_id=result['id'],
+                    interaction_type='search',
+                    ip_address=request.remote_addr
+                )
+                db.session.add(interaction)
+            db.session.commit()
         
         return jsonify(results), 200
         
     except Exception as e:
         logger.error(f"Search error: {e}")
-        return jsonify({
-            'error': 'Search failed',
-            'message': str(e),
-            'results': [],
-            'total_results': 0,
-            'suggestions': []
-        }), 500
+        return jsonify({'error': 'Search failed', 'message': str(e)}), 500
 
 @app.route('/api/search/autocomplete', methods=['GET'])
 def autocomplete():
-    """Ultra-fast autocomplete with intelligent ranking"""
+    """Instant autocomplete suggestions"""
     try:
         prefix = request.args.get('q', '').strip()
         limit = int(request.args.get('limit', 10))
@@ -1028,95 +996,56 @@ def autocomplete():
 
 @app.route('/api/search/suggestions', methods=['GET'])
 def get_search_suggestions():
-    """Get comprehensive search suggestions"""
+    """Get search suggestions (trending or personalized)"""
     try:
         user_id = session.get('user_id')
         limit = int(request.args.get('limit', 10))
         
         suggestions = {
             'trending': suggestion_engine.get_trending_searches(limit),
-            'personalized': [],
-            'query_suggestions': []
+            'personalized': []
         }
         
         if user_id:
             suggestions['personalized'] = suggestion_engine.get_personalized_suggestions(user_id, limit)
         
-        # Add query completion suggestions if partial query provided
-        partial_query = request.args.get('q', '').strip()
-        if partial_query:
-            suggestions['query_suggestions'] = suggestion_engine.get_query_suggestions(partial_query, limit)
-        
         return jsonify(suggestions), 200
         
     except Exception as e:
         logger.error(f"Suggestions error: {e}")
-        return jsonify({'trending': [], 'personalized': [], 'query_suggestions': []}), 200
+        return jsonify({'trending': [], 'personalized': []}), 200
 
 @app.route('/api/search/instant', methods=['GET'])
 def instant_search():
     """Ultra-fast instant search for live search experiences"""
     try:
         query = request.args.get('q', '').strip()
-        limit = int(request.args.get('limit', 5))
         
         if len(query) < 2:
             return jsonify({'results': []}), 200
         
-        # Use advanced search with instant flag
-        results = search_engine.search(
-            query=query,
-            search_type='multi',
-            page=1,
-            limit=limit
-        )
+        # Use only the in-memory index for instant results
+        results = search_engine.indexer.search(query, limit=5)
         
-        # Return only essential data for instant results
+        # Format quick results
         instant_results = []
-        for result in results.get('results', []):
-            instant_results.append({
-                'id': result['id'],
-                'title': result['title'],
-                'type': result['content_type'],
-                'poster': result.get('poster_path'),
-                'year': result.get('release_date', '').split('-')[0] if result.get('release_date') else None,
-                'rating': result.get('rating')
-            })
+        for content_id in results:
+            content_data = search_engine.indexer.index['content_map'].get(content_id)
+            if content_data:
+                instant_results.append({
+                    'id': content_id,
+                    'title': content_data['title'],
+                    'type': content_data['content_type'],
+                    'poster': f"https://image.tmdb.org/t/p/w92{content_data['poster_path']}" if content_data['poster_path'] else None,
+                    'year': content_data['release_date'].year if content_data['release_date'] else None,
+                    'rating': content_data['rating']
+                })
         
-        return jsonify({
-            'results': instant_results,
-            'search_time': results.get('search_time', 0),
-            'cached': results.get('cached', False)
-        }), 200
+        return jsonify({'results': instant_results}), 200
         
     except Exception as e:
         logger.error(f"Instant search error: {e}")
         return jsonify({'results': []}), 200
-
-@app.route('/api/search/analytics', methods=['GET'])
-def search_analytics():
-    """Get search analytics and statistics (admin only)"""
-    try:
-        # Check if user is admin
-        user_id = session.get('user_id')
-        if not user_id:
-            return jsonify({'error': 'Authentication required'}), 401
-        
-        user = User.query.get(user_id)
-        if not user or not user.is_admin:
-            return jsonify({'error': 'Admin access required'}), 403
-        
-        # Get search statistics
-        stats = get_search_statistics(cache)
-        
-        return jsonify({
-            'analytics': stats,
-            'timestamp': datetime.utcnow().isoformat()
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"Search analytics error: {e}")
-        return jsonify({'error': 'Failed to get analytics'}), 500
 
 @app.route('/api/content/<int:content_id>', methods=['GET'])
 def get_content_details(content_id):
@@ -1164,37 +1093,27 @@ def get_content_details(content_id):
                 cast = additional_details.get('credits', {}).get('cast', [])[:10]
                 crew = additional_details.get('credits', {}).get('crew', [])[:5]
         
-        # Get similar content using search engine (faster than database queries)
-        similar_content = []
-        if content.genres:
-            try:
-                genres = json.loads(content.genres)
-                if genres:
-                    # Use the first genre to find similar content
-                    similar_results = search_engine.search(
-                        query=genres[0],
-                        search_type=content.content_type,
-                        limit=10,
-                        filters={'content_type': content.content_type}
-                    )
-                    
-                    # Format similar content and exclude current content
-                    for result in similar_results.get('results', []):
-                        if result['id'] != content_id:
-                            youtube_url = None
-                            if result.get('youtube_trailer'):
-                                youtube_url = result['youtube_trailer']
-                            
-                            similar_content.append({
-                                'id': result['id'],
-                                'title': result['title'],
-                                'poster_path': result.get('poster_path'),
-                                'rating': result.get('rating'),
-                                'content_type': result.get('content_type'),
-                                'youtube_trailer': youtube_url
-                            })
-            except Exception as e:
-                logger.error(f"Error getting similar content: {e}")
+        # Get similar content using algorithms
+        similar_content = Content.query.filter(
+            Content.id != content_id,
+            Content.content_type == content.content_type
+        ).limit(10).all()
+        
+        # Format similar content
+        similar_formatted = []
+        for similar in similar_content:
+            youtube_url = None
+            if similar.youtube_trailer_id:
+                youtube_url = f"https://www.youtube.com/watch?v={similar.youtube_trailer_id}"
+            
+            similar_formatted.append({
+                'id': similar.id,
+                'title': similar.title,
+                'poster_path': f"https://image.tmdb.org/t/p/w300{similar.poster_path}" if similar.poster_path and not similar.poster_path.startswith('http') else similar.poster_path,
+                'rating': similar.rating,
+                'content_type': similar.content_type,
+                'youtube_trailer': youtube_url
+            })
         
         db.session.commit()
         
@@ -1220,7 +1139,7 @@ def get_content_details(content_id):
             'poster_path': f"https://image.tmdb.org/t/p/w500{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
             'backdrop_path': f"https://image.tmdb.org/t/p/w1280{content.backdrop_path}" if content.backdrop_path and not content.backdrop_path.startswith('http') else content.backdrop_path,
             'youtube_trailer': youtube_trailer_url,
-            'similar_content': similar_content[:8],  # Limit to 8 similar items
+            'similar_content': similar_formatted,
             'cast': cast,
             'crew': crew,
             'is_trending': content.is_trending,
@@ -1335,17 +1254,20 @@ def get_trending():
                 }
             }
         
-        # Calculate and add metrics
+        # Calculate and add metrics - Fixed this section
         if category != 'all' and selected_category in categories and categories[selected_category]:
             try:
+                # Get all content items from the selected category
                 content_items = categories[selected_category]
                 if content_items and len(content_items) > 0:
+                    # Extract content IDs properly
                     content_ids = []
                     for item in content_items:
                         if isinstance(item, dict) and 'id' in item:
                             content_ids.append(item['id'])
                     
                     if content_ids:
+                        # Get content objects for diversity calculation
                         contents = Content.query.filter(Content.id.in_(content_ids)).all()
                         
                         response['metadata']['metrics'] = {
@@ -1357,13 +1279,14 @@ def get_trending():
                         }
             except Exception as metric_error:
                 logger.warning(f"Metrics calculation error: {metric_error}")
+                # Continue without metrics rather than failing the whole request
         
         db.session.commit()
         return jsonify(response), 200
         
     except Exception as e:
         logger.error(f"Trending recommendations error: {e}")
-        logger.exception(e)
+        logger.exception(e)  # This will log the full traceback
         return jsonify({'error': 'Failed to get trending recommendations'}), 500
 
 @app.route('/api/recommendations/new-releases', methods=['GET'])
@@ -1719,68 +1642,28 @@ def get_similar_recommendations(content_id):
         if not base_content:
             return jsonify({'error': 'Content not found'}), 404
         
-        # Use search engine to find similar content based on genres
+        # Get similar content using algorithms
+        similar_content = Content.query.filter(
+            Content.id != content_id,
+            Content.content_type == base_content.content_type
+        ).limit(limit).all()
+        
         recommendations = []
-        
-        if base_content.genres:
-            try:
-                genres = json.loads(base_content.genres)
-                if genres:
-                    # Search for content with similar genres
-                    search_query = ' '.join(genres[:2])  # Use first 2 genres
-                    
-                    similar_results = search_engine.search(
-                        query=search_query,
-                        search_type=base_content.content_type,
-                        limit=limit + 5,  # Get a few extra to filter out the original
-                        filters={'content_type': base_content.content_type}
-                    )
-                    
-                    # Format results and exclude the original content
-                    for result in similar_results.get('results', []):
-                        if result['id'] != content_id:
-                            youtube_url = None
-                            if result.get('youtube_trailer'):
-                                youtube_url = result['youtube_trailer']
-                            
-                            recommendations.append({
-                                'id': result['id'],
-                                'title': result['title'],
-                                'content_type': result['content_type'],
-                                'genres': result.get('genres', []),
-                                'rating': result.get('rating'),
-                                'poster_path': result.get('poster_path'),
-                                'overview': result.get('overview', '')[:150] + '...' if result.get('overview') else '',
-                                'youtube_trailer': youtube_url
-                            })
-                            
-                            if len(recommendations) >= limit:
-                                break
-            except Exception as e:
-                logger.error(f"Error finding similar content: {e}")
-        
-        # Fallback to database query if search engine fails
-        if not recommendations:
-            similar_content = Content.query.filter(
-                Content.id != content_id,
-                Content.content_type == base_content.content_type
-            ).limit(limit).all()
+        for content in similar_content:
+            youtube_url = None
+            if content.youtube_trailer_id:
+                youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
             
-            for content in similar_content:
-                youtube_url = None
-                if content.youtube_trailer_id:
-                    youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
-                
-                recommendations.append({
-                    'id': content.id,
-                    'title': content.title,
-                    'content_type': content.content_type,
-                    'genres': json.loads(content.genres or '[]'),
-                    'rating': content.rating,
-                    'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
-                    'overview': content.overview[:150] + '...' if content.overview else '',
-                    'youtube_trailer': youtube_url
-                })
+            recommendations.append({
+                'id': content.id,
+                'title': content.title,
+                'content_type': content.content_type,
+                'genres': json.loads(content.genres or '[]'),
+                'rating': content.rating,
+                'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
+                'overview': content.overview[:150] + '...' if content.overview else '',
+                'youtube_trailer': youtube_url
+            })
         
         return jsonify({'recommendations': recommendations}), 200
         
@@ -1867,13 +1750,13 @@ def get_public_admin_recommendations():
 # Health check endpoint
 @app.route('/api/health', methods=['GET'])
 def health_check():
-    """Enhanced health check with cache and search index status"""
+    """Enhanced health check with cache status"""
     try:
         # Basic health info
         health_info = {
             'status': 'healthy',
             'timestamp': datetime.utcnow().isoformat(),
-            'version': '4.0.0'  # Updated version with advanced search
+            'version': '3.0.0'  # Updated version with algorithms
         }
         
         # Check database connectivity
@@ -1896,47 +1779,14 @@ def health_check():
             health_info['cache'] = 'disconnected'
             health_info['status'] = 'degraded'
         
-        # Check search index status
-        try:
-            if search_engine.indexer.last_update:
-                index_age = (datetime.now() - search_engine.indexer.last_update).seconds
-                health_info['search_index'] = {
-                    'status': 'ready',
-                    'last_update': search_engine.indexer.last_update.isoformat(),
-                    'age_seconds': index_age,
-                    'needs_update': search_engine.indexer.needs_update()
-                }
-            else:
-                health_info['search_index'] = {
-                    'status': 'not_initialized',
-                    'needs_update': True
-                }
-        except Exception as e:
-            health_info['search_index'] = {
-                'status': 'error',
-                'error': str(e)
-            }
-        
         # Check external services
         health_info['services'] = {
             'tmdb': bool(TMDB_API_KEY),
             'omdb': bool(OMDB_API_KEY),
             'youtube': bool(YOUTUBE_API_KEY),
             'ml_service': bool(ML_SERVICE_URL),
-            'algorithms': 'enabled',
-            'advanced_search': 'enabled'
+            'algorithms': 'enabled'
         }
-        
-        # Add search statistics
-        try:
-            search_stats = get_search_statistics(cache)
-            health_info['search_analytics'] = {
-                'total_searches': search_stats.get('total_searches', 0),
-                'unique_queries': search_stats.get('unique_queries', 0),
-                'last_update': search_stats.get('last_update')
-            }
-        except:
-            health_info['search_analytics'] = 'unavailable'
         
         return jsonify(health_info), 200
         
@@ -1946,39 +1796,6 @@ def health_check():
             'error': str(e),
             'timestamp': datetime.utcnow().isoformat()
         }), 500
-
-# Search index warm-up endpoint (admin only)
-@app.route('/api/admin/search/warm-up', methods=['POST'])
-def warm_up_search():
-    """Warm up search index manually (admin only)"""
-    try:
-        # Check if user is admin
-        user_id = session.get('user_id')
-        if not user_id:
-            return jsonify({'error': 'Authentication required'}), 401
-        
-        user = User.query.get(user_id)
-        if not user or not user.is_admin:
-            return jsonify({'error': 'Admin access required'}), 403
-        
-        # Warm up search index in background
-        def warm_up():
-            warm_up_search_index(search_engine)
-        
-        # Run in thread to avoid blocking the request
-        import threading
-        thread = threading.Thread(target=warm_up)
-        thread.daemon = True
-        thread.start()
-        
-        return jsonify({
-            'message': 'Search index warm-up initiated',
-            'timestamp': datetime.utcnow().isoformat()
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"Search warm-up error: {e}")
-        return jsonify({'error': 'Failed to warm up search index'}), 500
 
 # Initialize database
 def create_tables():
@@ -2001,27 +1818,8 @@ def create_tables():
     except Exception as e:
         logger.error(f"Database initialization error: {e}")
 
-# Initialize database and search system when app starts
-def initialize_app():
-    """Initialize app components"""
-    create_tables()
-    
-    # Warm up search index in background
-    def background_warmup():
-        time.sleep(5)  # Wait for app to fully start
-        try:
-            warm_up_search_index(search_engine)
-            logger.info("Search index warmed up successfully")
-        except Exception as e:
-            logger.error(f"Search index warm-up failed: {e}")
-    
-    import threading
-    warmup_thread = threading.Thread(target=background_warmup)
-    warmup_thread.daemon = True
-    warmup_thread.start()
-
-# Initialize the app
-initialize_app()
+# Initialize database when app starts
+create_tables()
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))

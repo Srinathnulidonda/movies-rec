@@ -3,7 +3,6 @@ import json
 import logging
 import re
 import time
-import string
 from typing import List, Dict, Any, Tuple, Optional, Set
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -13,7 +12,7 @@ from functools import lru_cache
 
 import numpy as np
 from flask import current_app
-from sqlalchemy import or_, and_, func, text, desc
+from sqlalchemy import or_, and_, func, text
 from sqlalchemy.orm import Query
 from rapidfuzz import fuzz, process
 from rapidfuzz.distance import Levenshtein
@@ -22,172 +21,23 @@ import pickle
 
 logger = logging.getLogger(__name__)
 
-class NGramAnalyzer:
-    """Advanced N-gram analyzer for partial matching and auto-complete"""
-    
-    def __init__(self, min_gram=2, max_gram=4):
-        self.min_gram = min_gram
-        self.max_gram = max_gram
-        
-    def generate_ngrams(self, text: str) -> Set[str]:
-        """Generate n-grams from text"""
-        if not text:
-            return set()
-        
-        text = self._normalize_text(text)
-        ngrams = set()
-        
-        # Character-level n-grams for typo tolerance
-        for n in range(self.min_gram, min(len(text) + 1, self.max_gram + 1)):
-            for i in range(len(text) - n + 1):
-                ngrams.add(text[i:i+n])
-        
-        # Word-level n-grams
-        words = text.split()
-        for n in range(1, min(len(words) + 1, 4)):  # Up to 3-word phrases
-            for i in range(len(words) - n + 1):
-                ngrams.add(' '.join(words[i:i+n]))
-        
-        return ngrams
-    
-    def _normalize_text(self, text: str) -> str:
-        """Normalize text for n-gram generation"""
-        # Convert to lowercase and remove extra spaces
-        text = re.sub(r'\s+', ' ', text.lower().strip())
-        # Remove punctuation but keep spaces
-        text = re.sub(r'[^\w\s]', '', text)
-        return text
-    
-    def calculate_similarity(self, query_ngrams: Set[str], content_ngrams: Set[str]) -> float:
-        """Calculate similarity based on n-gram overlap"""
-        if not query_ngrams or not content_ngrams:
-            return 0.0
-        
-        intersection = len(query_ngrams & content_ngrams)
-        union = len(query_ngrams | content_ngrams)
-        
-        return intersection / union if union > 0 else 0.0
-
-class FuzzyMatcher:
-    """Advanced fuzzy matching for typos and misspellings"""
-    
-    def __init__(self):
-        self.algorithms = {
-            'ratio': fuzz.ratio,
-            'partial_ratio': fuzz.partial_ratio,
-            'token_sort_ratio': fuzz.token_sort_ratio,
-            'token_set_ratio': fuzz.token_set_ratio
-        }
-        
-    def get_best_match(self, query: str, candidates: List[str], threshold: float = 70.0) -> List[Tuple[str, float]]:
-        """Get best fuzzy matches with scores"""
-        matches = []
-        
-        for candidate in candidates:
-            scores = []
-            for name, algorithm in self.algorithms.items():
-                score = algorithm(query, candidate)
-                scores.append(score)
-            
-            # Use weighted average of all algorithms
-            final_score = (
-                scores[0] * 0.4 +  # ratio
-                scores[1] * 0.3 +  # partial_ratio
-                scores[2] * 0.2 +  # token_sort_ratio
-                scores[3] * 0.1    # token_set_ratio
-            )
-            
-            if final_score >= threshold:
-                matches.append((candidate, final_score))
-        
-        return sorted(matches, key=lambda x: x[1], reverse=True)
-    
-    def levenshtein_distance(self, s1: str, s2: str) -> int:
-        """Calculate Levenshtein distance for edit distance"""
-        return Levenshtein.distance(s1, s2)
-
-class FieldBooster:
-    """Field boosting system for prioritizing different content fields"""
-    
-    def __init__(self):
-        self.field_weights = {
-            'exact_title_match': 100.0,
-            'title_prefix': 80.0,
-            'title_contains': 60.0,
-            'original_title': 50.0,
-            'genre_match': 40.0,
-            'keyword_match': 30.0,
-            'overview_match': 20.0,
-            'language_match': 15.0,
-            'fuzzy_title': 25.0,
-            'ngram_match': 35.0,
-            'popularity_boost': 10.0,
-            'rating_boost': 8.0,
-            'recent_boost': 5.0
-        }
-    
-    def calculate_score(self, content: Dict, query: str, match_types: List[str]) -> float:
-        """Calculate weighted score for content based on match types"""
-        score = 0.0
-        
-        for match_type in match_types:
-            base_score = self.field_weights.get(match_type, 0.0)
-            
-            # Apply additional boosts
-            if match_type in ['exact_title_match', 'title_prefix']:
-                # Boost for exact matches
-                score += base_score
-            elif match_type == 'popularity_boost':
-                # Boost based on popularity (normalized 0-1)
-                popularity = content.get('popularity', 0)
-                normalized_popularity = min(popularity / 1000, 1.0)
-                score += base_score * normalized_popularity
-            elif match_type == 'rating_boost':
-                # Boost based on rating
-                rating = content.get('rating', 0)
-                if rating:
-                    normalized_rating = rating / 10.0
-                    score += base_score * normalized_rating
-            elif match_type == 'recent_boost':
-                # Boost for recent content
-                release_date = content.get('release_date')
-                if release_date:
-                    try:
-                        if isinstance(release_date, str):
-                            release_date = datetime.fromisoformat(release_date.replace('Z', '+00:00'))
-                        days_ago = (datetime.now() - release_date.replace(tzinfo=None)).days
-                        if days_ago <= 365:  # Within last year
-                            recency_factor = max(0, (365 - days_ago) / 365)
-                            score += base_score * recency_factor
-                    except:
-                        pass
-            else:
-                score += base_score
-        
-        return score
-
-class AdvancedSearchIndexer:
-    """Advanced in-memory search index with n-grams and fuzzy matching"""
+class SearchIndexer:
+    """In-memory search index for ultra-fast searching"""
     
     def __init__(self):
         self.index = {
-            'content_map': {},  # content_id -> content_data
-            'title_exact': {},  # exact_title -> content_id
-            'title_normalized': {},  # normalized_title -> content_id
-            'title_ngrams': defaultdict(set),  # ngram -> set of content_ids
+            'titles': {},  # title -> content_id mapping
+            'normalized_titles': {},  # normalized_title -> content_id mapping
             'keywords': defaultdict(set),  # keyword -> set of content_ids
             'genres': defaultdict(set),  # genre -> set of content_ids
             'languages': defaultdict(set),  # language -> set of content_ids
             'years': defaultdict(set),  # year -> set of content_ids
-            'autocomplete_trie': {},  # prefix -> suggestions
-            'fuzzy_titles': [],  # list of titles for fuzzy matching
-            'content_scores': {},  # content_id -> base_score
+            'content_map': {},  # content_id -> content_data
+            'autocomplete': {},  # prefix -> list of suggestions
+            'phonetic': defaultdict(set),  # soundex/metaphone -> content_ids
         }
-        self.ngram_analyzer = NGramAnalyzer()
-        self.fuzzy_matcher = FuzzyMatcher()
-        self.field_booster = FieldBooster()
         self.last_update = None
-        self.update_interval = 180  # 3 minutes for faster updates
+        self.update_interval = 300  # 5 minutes
         
     def needs_update(self) -> bool:
         """Check if index needs updating"""
@@ -196,552 +46,336 @@ class AdvancedSearchIndexer:
         return (datetime.now() - self.last_update).seconds > self.update_interval
     
     def build_index(self, content_list: List[Any]) -> None:
-        """Build comprehensive search index"""
-        logger.info(f"Building advanced search index with {len(content_list)} items")
+        """Build or rebuild the search index"""
+        logger.info(f"Building search index with {len(content_list)} items")
         start_time = time.time()
         
         # Clear existing index
         self.index = {
-            'content_map': {},
-            'title_exact': {},
-            'title_normalized': {},
-            'title_ngrams': defaultdict(set),
+            'titles': {},
+            'normalized_titles': {},
             'keywords': defaultdict(set),
             'genres': defaultdict(set),
             'languages': defaultdict(set),
             'years': defaultdict(set),
-            'autocomplete_trie': {},
-            'fuzzy_titles': [],
-            'content_scores': {},
+            'content_map': {},
+            'autocomplete': {},
+            'phonetic': defaultdict(set),
         }
         
         for content in content_list:
-            self._index_content(content)
-        
-        # Build autocomplete trie
-        self._build_autocomplete_trie()
+            # Store content mapping
+            self.index['content_map'][content.id] = {
+                'id': content.id,
+                'title': content.title,
+                'original_title': content.original_title,
+                'content_type': content.content_type,
+                'genres': json.loads(content.genres or '[]'),
+                'languages': json.loads(content.languages or '[]'),
+                'release_date': content.release_date,
+                'rating': content.rating,
+                'popularity': content.popularity,
+                'overview': content.overview,
+                'poster_path': content.poster_path,
+                'youtube_trailer_id': content.youtube_trailer_id
+            }
+            
+            # Index titles
+            if content.title:
+                self.index['titles'][content.title.lower()] = content.id
+                normalized = self._normalize_title(content.title)
+                self.index['normalized_titles'][normalized] = content.id
+                
+                # Build autocomplete index
+                self._build_autocomplete(content.title, content.id)
+                
+                # Phonetic indexing for typo tolerance
+                phonetic_key = self._get_phonetic_key(content.title)
+                if phonetic_key:
+                    self.index['phonetic'][phonetic_key].add(content.id)
+            
+            # Index original title
+            if content.original_title and content.original_title != content.title:
+                self.index['titles'][content.original_title.lower()] = content.id
+                self._build_autocomplete(content.original_title, content.id)
+            
+            # Index keywords from title and overview
+            keywords = self._extract_keywords(content.title, content.overview)
+            for keyword in keywords:
+                self.index['keywords'][keyword].add(content.id)
+            
+            # Index genres
+            genres = json.loads(content.genres or '[]')
+            for genre in genres:
+                self.index['genres'][genre.lower()].add(content.id)
+            
+            # Index languages
+            languages = json.loads(content.languages or '[]')
+            for language in languages:
+                self.index['languages'][language.lower()].add(content.id)
+            
+            # Index year
+            if content.release_date:
+                year = content.release_date.year
+                self.index['years'][year].add(content.id)
         
         self.last_update = datetime.now()
         elapsed = time.time() - start_time
-        logger.info(f"Advanced search index built in {elapsed:.2f} seconds")
-    
-    def _index_content(self, content: Any) -> None:
-        """Index a single content item"""
-        content_id = content.id
-        
-        # Store content data
-        content_data = {
-            'id': content_id,
-            'title': content.title,
-            'original_title': content.original_title,
-            'content_type': content.content_type,
-            'genres': json.loads(content.genres or '[]'),
-            'languages': json.loads(content.languages or '[]'),
-            'release_date': content.release_date,
-            'rating': content.rating,
-            'popularity': content.popularity,
-            'overview': content.overview,
-            'poster_path': content.poster_path,
-            'youtube_trailer_id': content.youtube_trailer_id,
-            'vote_count': getattr(content, 'vote_count', 0)
-        }
-        
-        self.index['content_map'][content_id] = content_data
-        
-        # Calculate base score for this content
-        base_score = self._calculate_base_score(content_data)
-        self.index['content_scores'][content_id] = base_score
-        
-        # Index titles
-        if content.title:
-            title_lower = content.title.lower()
-            self.index['title_exact'][title_lower] = content_id
-            self.index['title_normalized'][self._normalize_title(content.title)] = content_id
-            self.index['fuzzy_titles'].append(content.title)
-            
-            # Generate and index n-grams
-            title_ngrams = self.ngram_analyzer.generate_ngrams(content.title)
-            for ngram in title_ngrams:
-                self.index['title_ngrams'][ngram].add(content_id)
-        
-        # Index original title
-        if content.original_title and content.original_title != content.title:
-            orig_title_lower = content.original_title.lower()
-            self.index['title_exact'][orig_title_lower] = content_id
-            
-            # N-grams for original title
-            orig_ngrams = self.ngram_analyzer.generate_ngrams(content.original_title)
-            for ngram in orig_ngrams:
-                self.index['title_ngrams'][ngram].add(content_id)
-        
-        # Index keywords
-        keywords = self._extract_enhanced_keywords(content.title, content.overview)
-        for keyword in keywords:
-            self.index['keywords'][keyword].add(content_id)
-        
-        # Index genres
-        genres = json.loads(content.genres or '[]')
-        for genre in genres:
-            self.index['genres'][genre.lower()].add(content_id)
-            # Also index genre n-grams
-            genre_ngrams = self.ngram_analyzer.generate_ngrams(genre)
-            for ngram in genre_ngrams:
-                self.index['keywords'][ngram].add(content_id)
-        
-        # Index languages
-        languages = json.loads(content.languages or '[]')
-        for language in languages:
-            self.index['languages'][language.lower()].add(content_id)
-        
-        # Index year
-        if content.release_date:
-            year = content.release_date.year
-            self.index['years'][year].add(content_id)
-    
-    def _calculate_base_score(self, content_data: Dict) -> float:
-        """Calculate base score for content based on intrinsic quality"""
-        score = 0.0
-        
-        # Rating contribution (0-10 scale)
-        if content_data.get('rating'):
-            score += content_data['rating'] * 2  # Max 20 points
-        
-        # Popularity contribution (normalized)
-        if content_data.get('popularity'):
-            score += min(content_data['popularity'] / 100, 10)  # Max 10 points
-        
-        # Vote count contribution (normalized)
-        if content_data.get('vote_count'):
-            score += min(content_data['vote_count'] / 1000, 5)  # Max 5 points
-        
-        # Recency bonus
-        release_date = content_data.get('release_date')
-        if release_date:
-            try:
-                if isinstance(release_date, str):
-                    release_date = datetime.fromisoformat(release_date.replace('Z', '+00:00'))
-                days_ago = (datetime.now() - release_date.replace(tzinfo=None)).days
-                if days_ago <= 365:  # Within last year
-                    score += (365 - days_ago) / 365 * 5  # Max 5 points
-            except:
-                pass
-        
-        return score
+        logger.info(f"Search index built in {elapsed:.2f} seconds")
     
     def _normalize_title(self, title: str) -> str:
-        """Advanced title normalization"""
-        if not title:
-            return ""
-        
-        # Convert to lowercase
-        normalized = title.lower()
-        
-        # Remove articles and common words
-        articles = ['the', 'a', 'an']
-        words = normalized.split()
-        filtered_words = [w for w in words if w not in articles]
-        
-        # Remove special characters and normalize spaces
-        normalized = ' '.join(filtered_words)
-        normalized = re.sub(r'[^\w\s]', '', normalized)
+        """Normalize title for better matching"""
+        # Remove special characters and extra spaces
+        normalized = re.sub(r'[^\w\s]', '', title.lower())
         normalized = re.sub(r'\s+', ' ', normalized).strip()
-        
         return normalized
     
-    def _extract_enhanced_keywords(self, title: str, overview: str = None) -> Set[str]:
-        """Extract enhanced keywords with better filtering"""
+    def _extract_keywords(self, title: str, overview: str = None) -> Set[str]:
+        """Extract searchable keywords from text"""
         keywords = set()
         
-        # Process title
+        # Extract from title
         if title:
-            # Basic word extraction
-            title_words = re.findall(r'\w+', title.lower())
-            keywords.update(w for w in title_words if len(w) > 2)
+            # Split by spaces and common delimiters
+            words = re.findall(r'\w+', title.lower())
+            keywords.update(words)
             
-            # Add title n-grams
-            title_ngrams = self.ngram_analyzer.generate_ngrams(title)
-            keywords.update(ngram for ngram in title_ngrams if len(ngram) > 2)
+            # Add n-grams for compound words
+            if len(words) > 1:
+                for i in range(len(words) - 1):
+                    keywords.add(f"{words[i]}_{words[i+1]}")
         
-        # Process overview (limited and filtered)
+        # Extract from overview (limited)
         if overview:
-            # Get first 100 words from overview
-            overview_words = re.findall(r'\w+', overview.lower())[:100]
-            
-            # Filter out stop words and short words
-            stop_words = {
-                'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 
-                'of', 'with', 'is', 'was', 'are', 'were', 'be', 'been', 'have', 'has', 
-                'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 
-                'might', 'must', 'can', 'this', 'that', 'these', 'those', 'his', 'her',
-                'their', 'our', 'my', 'your', 'him', 'she', 'they', 'we', 'you', 'it'
-            }
-            
-            filtered_words = [
-                w for w in overview_words 
-                if w not in stop_words and len(w) > 3 and w.isalpha()
-            ]
-            
-            # Add most relevant overview words
-            word_freq = Counter(filtered_words)
-            top_words = [word for word, count in word_freq.most_common(20)]
-            keywords.update(top_words)
+            # Get first 50 words from overview
+            overview_words = re.findall(r'\w+', overview.lower())[:50]
+            # Filter out common stop words
+            stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'is', 'was', 'are', 'were'}
+            keywords.update(w for w in overview_words if w not in stop_words and len(w) > 2)
         
         return keywords
     
-    def _build_autocomplete_trie(self) -> None:
-        """Build trie structure for fast autocomplete"""
-        for title in self.index['fuzzy_titles']:
-            if not title:
-                continue
-                
-            title_lower = title.lower()
-            words = title_lower.split()
-            
-            # Index full title prefixes
-            for i in range(1, min(len(title_lower) + 1, 30)):
-                prefix = title_lower[:i]
-                if prefix not in self.index['autocomplete_trie']:
-                    self.index['autocomplete_trie'][prefix] = []
-                if title not in self.index['autocomplete_trie'][prefix]:
-                    self.index['autocomplete_trie'][prefix].append(title)
-            
-            # Index word prefixes
-            for word in words:
-                if len(word) > 2:
-                    for i in range(2, min(len(word) + 1, 15)):
-                        prefix = word[:i]
-                        if prefix not in self.index['autocomplete_trie']:
-                            self.index['autocomplete_trie'][prefix] = []
-                        if title not in self.index['autocomplete_trie'][prefix]:
-                            self.index['autocomplete_trie'][prefix].append(title)
+    def _build_autocomplete(self, title: str, content_id: int) -> None:
+        """Build autocomplete index for progressive search"""
+        if not title:
+            return
+        
+        title_lower = title.lower()
+        words = title_lower.split()
+        
+        # Index full title prefixes
+        for i in range(1, min(len(title_lower) + 1, 50)):  # Limit to 50 chars
+            prefix = title_lower[:i]
+            if prefix not in self.index['autocomplete']:
+                self.index['autocomplete'][prefix] = []
+            if content_id not in self.index['autocomplete'][prefix]:
+                self.index['autocomplete'][prefix].append(content_id)
+        
+        # Index word prefixes
+        for word in words:
+            for i in range(1, min(len(word) + 1, 20)):  # Limit to 20 chars per word
+                prefix = word[:i]
+                if prefix not in self.index['autocomplete']:
+                    self.index['autocomplete'][prefix] = []
+                if content_id not in self.index['autocomplete'][prefix]:
+                    self.index['autocomplete'][prefix].append(content_id)
     
-    def advanced_search(self, query: str, limit: int = 20, filters: Dict = None) -> List[Tuple[int, float]]:
-        """Perform advanced search with scoring"""
-        if not query.strip():
-            return []
+    def _get_phonetic_key(self, text: str) -> Optional[str]:
+        """Generate phonetic key for fuzzy matching (simplified Soundex)"""
+        if not text:
+            return None
         
+        text = text.upper()
+        # Remove non-letters
+        text = re.sub(r'[^A-Z]', '', text)
+        
+        if not text:
+            return None
+        
+        # Simplified Soundex algorithm
+        soundex = text[0]
+        
+        # Soundex mappings
+        mappings = {
+            'BFPV': '1', 'CGJKQSXZ': '2', 'DT': '3',
+            'L': '4', 'MN': '5', 'R': '6'
+        }
+        
+        for char in text[1:]:
+            for key, value in mappings.items():
+                if char in key:
+                    if len(soundex) == 1 or soundex[-1] != value:
+                        soundex += value
+                    break
+        
+        # Pad with zeros
+        soundex = (soundex + '000')[:4]
+        return soundex
+    
+    def search(self, query: str, limit: int = 20, filters: Dict = None) -> List[int]:
+        """Fast in-memory search"""
         query_lower = query.lower()
-        query_normalized = self._normalize_title(query)
-        query_ngrams = self.ngram_analyzer.generate_ngrams(query)
+        normalized_query = self._normalize_title(query)
+        results = defaultdict(float)
         
-        # Collect all potential matches with their scores
-        scored_results = defaultdict(float)
-        match_types = defaultdict(list)
+        # 1. Exact title match (highest weight)
+        if query_lower in self.index['titles']:
+            results[self.index['titles'][query_lower]] += 100
         
-        # 1. Exact title matches (highest priority)
-        if query_lower in self.index['title_exact']:
-            content_id = self.index['title_exact'][query_lower]
-            scored_results[content_id] += 100
-            match_types[content_id].append('exact_title_match')
+        # 2. Normalized title match
+        if normalized_query in self.index['normalized_titles']:
+            results[self.index['normalized_titles'][normalized_query]] += 90
         
-        # 2. Normalized title matches
-        if query_normalized in self.index['title_normalized']:
-            content_id = self.index['title_normalized'][query_normalized]
-            scored_results[content_id] += 90
-            match_types[content_id].append('title_prefix')
+        # 3. Prefix match (autocomplete)
+        if query_lower in self.index['autocomplete']:
+            for content_id in self.index['autocomplete'][query_lower]:
+                results[content_id] += 80
         
-        # 3. Title prefix matches
-        for title, content_id in self.index['title_exact'].items():
-            if title.startswith(query_lower):
-                scored_results[content_id] += 80
-                match_types[content_id].append('title_prefix')
-            elif query_lower in title:
-                scored_results[content_id] += 60
-                match_types[content_id].append('title_contains')
+        # 4. Fuzzy title match
+        for title, content_id in self.index['titles'].items():
+            similarity = fuzz.ratio(query_lower, title)
+            if similarity > 70:  # Threshold for fuzzy match
+                results[content_id] += similarity * 0.7
         
-        # 4. N-gram matching
-        for ngram in query_ngrams:
-            if ngram in self.index['title_ngrams']:
-                for content_id in self.index['title_ngrams'][ngram]:
-                    # Calculate n-gram similarity
-                    content_data = self.index['content_map'][content_id]
-                    content_title = content_data.get('title', '')
-                    content_ngrams = self.ngram_analyzer.generate_ngrams(content_title)
-                    similarity = self.ngram_analyzer.calculate_similarity(query_ngrams, content_ngrams)
-                    
-                    scored_results[content_id] += similarity * 50
-                    match_types[content_id].append('ngram_match')
-        
-        # 5. Keyword matching
-        query_keywords = self._extract_enhanced_keywords(query)
+        # 5. Keyword match
+        query_keywords = self._extract_keywords(query)
         for keyword in query_keywords:
             if keyword in self.index['keywords']:
                 for content_id in self.index['keywords'][keyword]:
-                    scored_results[content_id] += 30
-                    match_types[content_id].append('keyword_match')
+                    results[content_id] += 30
         
-        # 6. Genre matching
-        for genre, content_ids in self.index['genres'].items():
-            if query_lower in genre or any(word in genre for word in query_lower.split()):
-                for content_id in content_ids:
-                    scored_results[content_id] += 40
-                    match_types[content_id].append('genre_match')
+        # 6. Phonetic match (for typos)
+        phonetic_query = self._get_phonetic_key(query)
+        if phonetic_query and phonetic_query in self.index['phonetic']:
+            for content_id in self.index['phonetic'][phonetic_query]:
+                results[content_id] += 40
         
-        # 7. Fuzzy matching (for typos)
-        if len(scored_results) < limit * 2:  # Only if we don't have enough results
-            fuzzy_matches = self.fuzzy_matcher.get_best_match(
-                query, self.index['fuzzy_titles'][:500], threshold=70
-            )
-            
-            for matched_title, score in fuzzy_matches[:20]:
-                # Find content ID for this title
-                title_lower = matched_title.lower()
-                if title_lower in self.index['title_exact']:
-                    content_id = self.index['title_exact'][title_lower]
-                    fuzzy_score = (score / 100) * 40  # Normalize fuzzy score
-                    scored_results[content_id] += fuzzy_score
-                    match_types[content_id].append('fuzzy_title')
-        
-        # Apply field boosting and base scores
-        final_scores = {}
-        for content_id, search_score in scored_results.items():
-            content_data = self.index['content_map'][content_id]
-            
-            # Add base quality score
-            base_score = self.index['content_scores'].get(content_id, 0)
-            
-            # Apply field boosting
-            boosted_score = self.field_booster.calculate_score(
-                content_data, query, match_types[content_id]
-            )
-            
-            # Combine all scores
-            final_score = search_score + boosted_score + (base_score * 0.1)
-            final_scores[content_id] = final_score
-        
-        # Apply filters
+        # Apply filters if provided
         if filters:
-            final_scores = self._apply_advanced_filters(final_scores, filters)
+            results = self._apply_filters(results, filters)
         
         # Sort by score and return top results
-        sorted_results = sorted(final_scores.items(), key=lambda x: x[1], reverse=True)
-        return sorted_results[:limit]
+        sorted_results = sorted(results.items(), key=lambda x: x[1], reverse=True)
+        return [content_id for content_id, _ in sorted_results[:limit]]
     
-    def _apply_advanced_filters(self, scored_results: Dict[int, float], filters: Dict) -> Dict[int, float]:
-        """Apply advanced filters to search results"""
+    def _apply_filters(self, results: Dict[int, float], filters: Dict) -> Dict[int, float]:
+        """Apply filters to search results"""
         filtered = {}
         
-        for content_id, score in scored_results.items():
-            content_data = self.index['content_map'].get(content_id)
-            if not content_data:
+        for content_id, score in results.items():
+            content = self.index['content_map'].get(content_id)
+            if not content:
                 continue
             
             # Genre filter
             if filters.get('genre'):
-                content_genres = [g.lower() for g in content_data.get('genres', [])]
-                if filters['genre'].lower() not in content_genres:
+                if filters['genre'].lower() not in [g.lower() for g in content['genres']]:
                     continue
             
             # Language filter
             if filters.get('language'):
-                content_languages = [l.lower() for l in content_data.get('languages', [])]
-                if filters['language'].lower() not in content_languages:
+                if filters['language'].lower() not in [l.lower() for l in content['languages']]:
                     continue
             
             # Year filter
-            if filters.get('year') and content_data.get('release_date'):
-                try:
-                    content_year = content_data['release_date'].year
-                    if content_year != filters['year']:
-                        continue
-                except:
+            if filters.get('year') and content['release_date']:
+                if content['release_date'].year != filters['year']:
                     continue
             
             # Content type filter
             if filters.get('content_type'):
-                if content_data.get('content_type') != filters['content_type']:
+                if content['content_type'] != filters['content_type']:
                     continue
             
             # Rating filter
             if filters.get('min_rating'):
-                content_rating = content_data.get('rating', 0)
-                if not content_rating or content_rating < filters['min_rating']:
+                if not content['rating'] or content['rating'] < filters['min_rating']:
                     continue
             
             filtered[content_id] = score
         
         return filtered
-    
-    def get_autocomplete_suggestions(self, prefix: str, limit: int = 10) -> List[Dict]:
-        """Get ranked autocomplete suggestions"""
-        if len(prefix) < 2:
-            return []
-        
-        prefix_lower = prefix.lower()
-        suggestions = []
-        
-        # Get suggestions from trie
-        if prefix_lower in self.index['autocomplete_trie']:
-            titles = self.index['autocomplete_trie'][prefix_lower]
-            
-            # Score and rank suggestions
-            scored_suggestions = []
-            for title in titles[:50]:  # Limit for performance
-                title_lower = title.lower()
-                if title_lower in self.index['title_exact']:
-                    content_id = self.index['title_exact'][title_lower]
-                    content_data = self.index['content_map'].get(content_id)
-                    
-                    if content_data:
-                        # Calculate suggestion score
-                        score = 0
-                        
-                        # Prefix match score
-                        if title_lower.startswith(prefix_lower):
-                            score += 50
-                        else:
-                            score += 20
-                        
-                        # Add base quality score
-                        score += self.index['content_scores'].get(content_id, 0) * 0.1
-                        
-                        # Popularity boost
-                        popularity = content_data.get('popularity', 0)
-                        score += min(popularity / 100, 10)
-                        
-                        scored_suggestions.append((title, content_id, score, content_data))
-            
-            # Sort by score and format
-            scored_suggestions.sort(key=lambda x: x[2], reverse=True)
-            
-            for title, content_id, score, content_data in scored_suggestions[:limit]:
-                suggestions.append({
-                    'id': content_id,
-                    'title': title,
-                    'type': content_data.get('content_type'),
-                    'year': content_data.get('release_date').year if content_data.get('release_date') else None,
-                    'poster': self._format_poster_url(content_data.get('poster_path')),
-                    'rating': content_data.get('rating'),
-                    'score': round(score, 2)
-                })
-        
-        return suggestions
-    
-    def _format_poster_url(self, poster_path: str) -> Optional[str]:
-        """Format poster URL"""
-        if not poster_path:
-            return None
-        if poster_path.startswith('http'):
-            return poster_path
-        return f"https://image.tmdb.org/t/p/w92{poster_path}"
 
-class AdvancedHybridSearch:
-    """Advanced hybrid search system with real-time data and optimized performance"""
+class HybridSearch:
+    """Hybrid search combining multiple search strategies"""
     
     def __init__(self, db, cache, services):
         self.db = db
         self.cache = cache
         self.services = services
-        self.indexer = AdvancedSearchIndexer()
-        self.executor = ThreadPoolExecutor(max_workers=4)
-        
-        # Cache keys
-        self.INDEX_CACHE_KEY = "search_index_timestamp"
-        self.TRENDING_CACHE_KEY = "trending_searches"
+        self.indexer = SearchIndexer()
+        self.executor = ThreadPoolExecutor(max_workers=3)
         
     def search(self, query: str, search_type: str = 'multi', page: int = 1, 
                limit: int = 20, filters: Dict = None) -> Dict[str, Any]:
         """
-        Advanced hybrid search with instant results and real-time data
+        Perform hybrid search across multiple sources
+        Returns results with instant response using caching and indexing
         """
-        if not query or not query.strip():
-            return self._empty_response(query, page)
-        
-        # Normalize inputs
-        query = query.strip()
-        filters = filters or {}
-        
-        # Check cache for instant results
+        # Generate cache key
         cache_key = self._generate_cache_key(query, search_type, page, filters)
-        cached_result = self._get_cached_result(cache_key)
         
+        # Check cache first for instant results
+        cached_result = self._get_cached_result(cache_key)
         if cached_result:
-            logger.info(f"Cache hit for search: '{query}'")
-            cached_result['cached'] = True
+            logger.info(f"Cache hit for search: {query}")
             return cached_result
         
+        # Perform search
         start_time = time.time()
         
-        # Update index if needed with real-time data
-        self._ensure_fresh_index()
+        # Update index if needed
+        if self.indexer.needs_update():
+            self._update_search_index()
         
-        # Perform multi-strategy search
-        search_results = {
-            'primary': [],
-            'secondary': [],
+        # Execute parallel search strategies
+        results = {
+            'local': [],
             'external': [],
-            'suggestions': []
+            'suggestions': [],
+            'instant_results': []
         }
         
-        # 1. Primary search - Advanced in-memory index
-        try:
-            primary_results = self.indexer.advanced_search(query, limit * 2, filters)
-            if primary_results:
-                content_objects = self._get_content_by_ids([r[0] for r in primary_results])
-                content_dict = {c.id: c for c in content_objects}
-                
-                for content_id, score in primary_results:
-                    if content_id in content_dict:
-                        content = content_dict[content_id]
-                        formatted = self._format_content_with_score(content, score)
-                        search_results['primary'].append(formatted)
-        except Exception as e:
-            logger.error(f"Primary search error: {e}")
+        # 1. Instant results from in-memory index
+        instant_ids = self.indexer.search(query, limit * 2, filters)
+        if instant_ids:
+            instant_results = self._get_content_by_ids(instant_ids[:limit])
+            results['instant_results'] = self._format_results(instant_results)
         
-        # 2. Secondary search - Database fallback for comprehensive results
-        if len(search_results['primary']) < limit:
-            try:
-                db_results = self._database_search(query, search_type, filters, limit)
-                for content in db_results:
-                    # Avoid duplicates
-                    if not any(r['id'] == content.id for r in search_results['primary']):
-                        formatted = self._format_content_with_score(content, 50.0)
-                        search_results['secondary'].append(formatted)
-            except Exception as e:
-                logger.error(f"Database search error: {e}")
+        # 2. Database search (fuzzy + full-text)
+        db_results = self._database_search(query, search_type, filters, limit)
+        results['local'] = self._format_results(db_results)
         
-        # 3. External search - Only if insufficient results
-        total_results = len(search_results['primary']) + len(search_results['secondary'])
-        if total_results < 5:
-            try:
-                external_results = self._external_search(query, search_type, page)
-                search_results['external'] = external_results[:10]
-            except Exception as e:
-                logger.error(f"External search error: {e}")
+        # 3. External API search (async)
+        if not results['instant_results'] or len(results['instant_results']) < 5:
+            external_results = self._external_search(query, search_type, page)
+            results['external'] = external_results
         
-        # 4. Generate intelligent suggestions
-        search_results['suggestions'] = self._generate_smart_suggestions(
-            query, search_results['primary'][:3]
-        )
+        # 4. Generate suggestions
+        results['suggestions'] = self._generate_suggestions(query, results['instant_results'][:5])
         
-        # Merge and finalize results
-        final_results = self._merge_and_rank_results(search_results, query, limit, page)
+        # Merge and rank results
+        final_results = self._merge_and_rank_results(results, query, limit)
         
         # Prepare response
         response = {
             'results': final_results,
             'total_results': len(final_results),
             'page': page,
-            'per_page': limit,
             'query': query,
             'search_time': round(time.time() - start_time, 3),
-            'suggestions': search_results['suggestions'],
-            'has_more': len(final_results) >= limit,
-            'cached': False,
-            'algorithm': 'advanced_hybrid_v2'
+            'suggestions': results['suggestions'],
+            'instant': len(results['instant_results']) > 0
         }
         
-        # Cache the response
+        # Cache the result
         self._cache_result(cache_key, response)
-        
-        # Record search analytics
-        self._record_search_analytics(query, len(final_results))
         
         return response
     
     def autocomplete(self, prefix: str, limit: int = 10) -> List[Dict[str, Any]]:
         """
-        Ultra-fast autocomplete with intelligent ranking
+        Provide instant autocomplete suggestions
         """
         if len(prefix) < 2:
             return []
@@ -750,388 +384,264 @@ class AdvancedHybridSearch:
         cache_key = f"autocomplete:{prefix.lower()}"
         cached = self.cache.get(cache_key)
         if cached:
-            try:
-                return json.loads(cached)[:limit]
-            except:
-                pass
+            return json.loads(cached)
         
-        # Ensure fresh index
-        self._ensure_fresh_index()
+        suggestions = []
         
-        # Get suggestions from advanced indexer
-        suggestions = self.indexer.get_autocomplete_suggestions(prefix, limit)
+        # Get from index
+        if prefix.lower() in self.indexer.index['autocomplete']:
+            content_ids = self.indexer.index['autocomplete'][prefix.lower()][:limit]
+            for content_id in content_ids:
+                content_data = self.indexer.index['content_map'].get(content_id)
+                if content_data:
+                    suggestions.append({
+                        'id': content_id,
+                        'title': content_data['title'],
+                        'type': content_data['content_type'],
+                        'year': content_data['release_date'].year if content_data['release_date'] else None,
+                        'poster': self._get_poster_url(content_data['poster_path'])
+                    })
         
-        # Cache for 30 minutes
-        try:
-            self.cache.set(cache_key, json.dumps(suggestions), timeout=1800)
-        except Exception as e:
-            logger.error(f"Autocomplete cache error: {e}")
+        # Cache for 1 hour
+        self.cache.set(cache_key, json.dumps(suggestions), timeout=3600)
         
-        return suggestions
+        return suggestions[:limit]
     
-    def _ensure_fresh_index(self) -> None:
-        """Ensure search index is up-to-date with real-time data"""
+    def _update_search_index(self):
+        """Update the search index with latest content"""
         try:
-            # Check if index needs update
-            if not self.indexer.needs_update():
-                return
-            
-            # Check cache for last update timestamp
-            last_db_update = self.cache.get(self.INDEX_CACHE_KEY)
-            
-            # Get latest content from database
-            from models import Content  # Dynamic import to avoid circular dependency
-            
-            # Query for all content, ordered by update time
-            content_query = Content.query.order_by(Content.updated_at.desc())
-            
-            # If we have a last update timestamp, only get newer content
-            if last_db_update:
-                try:
-                    last_update_time = datetime.fromisoformat(last_db_update)
-                    content_query = content_query.filter(Content.updated_at > last_update_time)
-                except:
-                    pass
-            
-            # Limit to prevent memory issues
-            content_list = content_query.limit(20000).all()
-            
-            if content_list or not last_db_update:
-                # Get all content if it's first time or we have new content
-                if not last_db_update:
-                    all_content = Content.query.limit(20000).all()
-                    self.indexer.build_index(all_content)
-                else:
-                    # Incremental update for new content
-                    for content in content_list:
-                        self.indexer._index_content(content)
-                    self.indexer.last_update = datetime.now()
-                
-                # Update cache timestamp
-                self.cache.set(self.INDEX_CACHE_KEY, datetime.now().isoformat(), timeout=3600)
-                
-                logger.info(f"Search index updated with {len(content_list)} items")
-            
+            from models import Content  # Import here to avoid circular imports
+            content_list = Content.query.limit(10000).all()  # Limit for memory
+            self.indexer.build_index(content_list)
         except Exception as e:
-            logger.error(f"Index update error: {e}")
+            logger.error(f"Failed to update search index: {e}")
     
     def _database_search(self, query: str, search_type: str, filters: Dict, limit: int) -> List[Any]:
         """
-        Optimized database search with advanced PostgreSQL features
+        Perform database search with fuzzy matching
         """
-        from models import Content  # Dynamic import
+        from models import Content  # Import here to avoid circular imports
         
-        # Build search conditions with different strategies
+        # Build search conditions
         search_conditions = []
         
-        # 1. Full-text search on title and overview
-        search_conditions.append(
-            func.lower(Content.title).contains(query.lower())
-        )
+        # Title matching (exact, prefix, fuzzy)
+        search_conditions.append(Content.title.ilike(f'%{query}%'))
+        search_conditions.append(Content.original_title.ilike(f'%{query}%'))
         
-        if Content.original_title:
-            search_conditions.append(
-                func.lower(Content.original_title).contains(query.lower())
-            )
+        # Overview matching
+        if len(query) > 3:  # Only for longer queries
+            search_conditions.append(Content.overview.ilike(f'%{query}%'))
         
-        # 2. LIKE patterns for partial matches
-        query_pattern = f"%{query.lower()}%"
-        search_conditions.append(Content.title.ilike(query_pattern))
-        
-        # 3. Genre and keyword matching
-        words = query.lower().split()
-        for word in words:
-            if len(word) > 2:
-                search_conditions.append(Content.genres.ilike(f"%{word}%"))
-                if len(word) > 3:
-                    search_conditions.append(Content.overview.ilike(f"%{word}%"))
-        
-        # Build query with OR conditions
-        base_query = Content.query.filter(or_(*search_conditions))
+        # Build query
+        db_query = Content.query.filter(or_(*search_conditions))
         
         # Apply type filter
         if search_type != 'multi':
-            type_mapping = {
-                'movie': 'movie',
-                'tv': 'tv',
-                'anime': 'anime'
-            }
-            if search_type in type_mapping:
-                base_query = base_query.filter(Content.content_type == type_mapping[search_type])
+            if search_type == 'anime':
+                db_query = db_query.filter(Content.content_type == 'anime')
+            elif search_type == 'movie':
+                db_query = db_query.filter(Content.content_type == 'movie')
+            elif search_type == 'tv':
+                db_query = db_query.filter(Content.content_type == 'tv')
         
         # Apply additional filters
         if filters:
             if filters.get('genre'):
-                base_query = base_query.filter(Content.genres.contains(filters['genre']))
-            
+                db_query = db_query.filter(Content.genres.contains(filters['genre']))
             if filters.get('language'):
-                base_query = base_query.filter(Content.languages.contains(filters['language']))
-            
+                db_query = db_query.filter(Content.languages.contains(filters['language']))
             if filters.get('year'):
-                year_start = datetime(filters['year'], 1, 1).date()
-                year_end = datetime(filters['year'], 12, 31).date()
-                base_query = base_query.filter(Content.release_date.between(year_start, year_end))
-            
+                year_start = datetime(filters['year'], 1, 1)
+                year_end = datetime(filters['year'], 12, 31)
+                db_query = db_query.filter(Content.release_date.between(year_start, year_end))
             if filters.get('min_rating'):
-                base_query = base_query.filter(Content.rating >= filters['min_rating'])
-            
-            if filters.get('content_type'):
-                base_query = base_query.filter(Content.content_type == filters['content_type'])
+                db_query = db_query.filter(Content.rating >= filters['min_rating'])
         
-        # Advanced ordering for relevance
-        # PostgreSQL similarity and ranking
-        query_lower = query.lower()
+        # Order by relevance (simplified)
+        db_query = db_query.order_by(
+            Content.popularity.desc(),
+            Content.rating.desc()
+        )
         
-        # Custom relevance scoring using CASE WHEN
-        relevance_score = func.coalesce(
-            # Exact title match gets highest score
-            func.sum(
-                func.case(
-                    (func.lower(Content.title) == query_lower, 100),
-                    (func.lower(Content.title).like(f"{query_lower}%"), 80),
-                    (func.lower(Content.title).contains(query_lower), 60),
-                    else_=0
-                )
-            ), 0
-        ).label('relevance')
-        
-        # Execute query with ranking
-        try:
-            results = base_query.order_by(
-                desc(Content.popularity * 0.1 + Content.rating * 2),
-                desc(Content.vote_count),
-                desc(Content.release_date)
-            ).limit(limit).all()
-            
-            return results
-            
-        except Exception as e:
-            logger.error(f"Database search error: {e}")
-            # Fallback to simple search
-            return Content.query.filter(
-                Content.title.ilike(f"%{query}%")
-            ).order_by(desc(Content.popularity)).limit(limit).all()
+        return db_query.limit(limit).all()
     
     def _external_search(self, query: str, search_type: str, page: int) -> List[Dict]:
         """
-        Search external APIs with optimized concurrent requests
+        Search external APIs (TMDB, Jikan) with concurrent requests
         """
         external_results = []
+        futures = []
         
-        try:
-            with ThreadPoolExecutor(max_workers=2) as executor:
-                futures = []
-                
-                # Search TMDB for movies/TV
-                if search_type in ['multi', 'movie', 'tv']:
-                    futures.append(
-                        executor.submit(
-                            self._search_tmdb, query, search_type, page
-                        )
+        with self.executor as executor:
+            # Search TMDB
+            if search_type in ['multi', 'movie', 'tv']:
+                futures.append(
+                    executor.submit(
+                        self.services['TMDBService'].search_content,
+                        query, search_type, page=page
                     )
-                
-                # Search anime
-                if search_type in ['multi', 'anime']:
-                    futures.append(
-                        executor.submit(
-                            self._search_anime, query, page
-                        )
+                )
+            
+            # Search anime
+            if search_type in ['multi', 'anime']:
+                futures.append(
+                    executor.submit(
+                        self.services['JikanService'].search_anime,
+                        query, page
                     )
-                
-                # Process results with timeout
-                for future in as_completed(futures, timeout=8):
-                    try:
-                        results = future.result()
-                        if results:
-                            external_results.extend(results)
-                    except Exception as e:
-                        logger.error(f"External search future error: {e}")
-        
-        except Exception as e:
-            logger.error(f"External search error: {e}")
+                )
+            
+            # Process results
+            for future in as_completed(futures):
+                try:
+                    result = future.result(timeout=5)
+                    if result:
+                        if 'results' in result:  # TMDB format
+                            for item in result.get('results', [])[:10]:
+                                content_type = 'movie' if 'title' in item else 'tv'
+                                content = self.services['ContentService'].save_content_from_tmdb(item, content_type)
+                                if content:
+                                    external_results.append(self._format_content(content))
+                        elif 'data' in result:  # Jikan format
+                            for anime in result.get('data', [])[:10]:
+                                content = self.services['ContentService'].save_anime_content(anime)
+                                if content:
+                                    external_results.append(self._format_content(content))
+                except Exception as e:
+                    logger.error(f"External search error: {e}")
         
         return external_results
     
-    def _search_tmdb(self, query: str, search_type: str, page: int) -> List[Dict]:
-        """Search TMDB and save to database"""
-        results = []
-        try:
-            tmdb_response = self.services['TMDBService'].search_content(
-                query, search_type, page=page
-            )
-            
-            if tmdb_response and 'results' in tmdb_response:
-                for item in tmdb_response['results'][:10]:
-                    # Determine content type
-                    content_type = 'movie' if 'title' in item else 'tv'
-                    
-                    # Save to database
-                    content = self.services['ContentService'].save_content_from_tmdb(
-                        item, content_type
-                    )
-                    
-                    if content:
-                        results.append(self._format_content_with_score(content, 40.0))
-        
-        except Exception as e:
-            logger.error(f"TMDB search error: {e}")
-        
-        return results
-    
-    def _search_anime(self, query: str, page: int) -> List[Dict]:
-        """Search anime and save to database"""
-        results = []
-        try:
-            anime_response = self.services['JikanService'].search_anime(query, page)
-            
-            if anime_response and 'data' in anime_response:
-                for anime in anime_response['data'][:10]:
-                    # Save to database
-                    content = self.services['ContentService'].save_anime_content(anime)
-                    
-                    if content:
-                        results.append(self._format_content_with_score(content, 35.0))
-        
-        except Exception as e:
-            logger.error(f"Anime search error: {e}")
-        
-        return results
-    
-    def _merge_and_rank_results(self, search_results: Dict, query: str, 
-                               limit: int, page: int) -> List[Dict]:
+    def _generate_suggestions(self, query: str, top_results: List[Dict]) -> List[str]:
         """
-        Intelligent merging and ranking of results from different sources
-        """
-        all_results = []
-        seen_ids = set()
-        
-        # Priority order: primary (index) -> secondary (db) -> external
-        for source in ['primary', 'secondary', 'external']:
-            for result in search_results.get(source, []):
-                if result.get('id') not in seen_ids:
-                    seen_ids.add(result['id'])
-                    result['source'] = source
-                    all_results.append(result)
-        
-        # Re-rank based on combined relevance
-        query_lower = query.lower()
-        
-        for result in all_results:
-            # Base score from search
-            base_score = result.get('search_score', 0)
-            
-            # Title relevance bonus
-            title = result.get('title', '').lower()
-            if query_lower == title:
-                base_score += 50
-            elif title.startswith(query_lower):
-                base_score += 30
-            elif query_lower in title:
-                base_score += 20
-            
-            # Quality indicators
-            rating = result.get('rating', 0)
-            popularity = result.get('popularity', 0)
-            
-            if rating:
-                base_score += (rating / 10) * 15
-            if popularity:
-                base_score += min(popularity / 1000, 10)
-            
-            # Source priority
-            source_bonus = {
-                'primary': 20,
-                'secondary': 10,
-                'external': 5
-            }
-            base_score += source_bonus.get(result['source'], 0)
-            
-            # Recency bonus
-            release_date = result.get('release_date')
-            if release_date:
-                try:
-                    if isinstance(release_date, str):
-                        release_date = datetime.fromisoformat(release_date.replace('Z', '+00:00'))
-                    days_ago = (datetime.now() - release_date.replace(tzinfo=None)).days
-                    if days_ago <= 365:
-                        base_score += (365 - days_ago) / 365 * 10
-                except:
-                    pass
-            
-            result['final_score'] = base_score
-        
-        # Sort by final score
-        all_results.sort(key=lambda x: x.get('final_score', 0), reverse=True)
-        
-        # Handle pagination
-        start_idx = (page - 1) * limit
-        end_idx = start_idx + limit
-        
-        # Clean up result objects
-        for result in all_results:
-            result.pop('search_score', None)
-            result.pop('source', None)
-            result.pop('final_score', None)
-        
-        return all_results[start_idx:end_idx]
-    
-    def _generate_smart_suggestions(self, query: str, top_results: List[Dict]) -> List[str]:
-        """
-        Generate intelligent search suggestions
+        Generate search suggestions based on query and results
         """
         suggestions = []
+        
+        # Add query variations
         query_lower = query.lower()
         
-        # 1. Spelling corrections using fuzzy matching
-        if self.indexer.index['fuzzy_titles']:
-            corrections = self.indexer.fuzzy_matcher.get_best_match(
-                query, self.indexer.index['fuzzy_titles'][:1000], threshold=60
-            )
-            
-            for correction, score in corrections[:2]:
-                if correction.lower() != query_lower and score < 95:
-                    suggestions.append(correction)
+        # Suggest corrections for common typos
+        corrections = self._get_spelling_corrections(query)
+        suggestions.extend(corrections[:2])
         
-        # 2. Related searches based on top results
+        # Suggest related searches based on top results
         if top_results:
+            # Extract genres from top results
             genres = set()
             for result in top_results[:3]:
-                genres.update(result.get('genres', []))
+                if 'genres' in result:
+                    genres.update(result['genres'])
             
-            # Suggest genre combinations
+            # Suggest genre-based searches
             for genre in list(genres)[:2]:
-                if genre.lower() not in query_lower:
-                    suggestions.append(f"{query} {genre}")
+                suggestions.append(f"{query} {genre}")
         
-        # 3. Content type suggestions
-        type_suggestions = []
+        # Suggest different content types
         if 'movie' not in query_lower and 'film' not in query_lower:
-            type_suggestions.append(f"{query} movies")
+            suggestions.append(f"{query} movies")
         if 'series' not in query_lower and 'tv' not in query_lower:
-            type_suggestions.append(f"{query} series")
+            suggestions.append(f"{query} series")
         if 'anime' not in query_lower:
-            type_suggestions.append(f"{query} anime")
-        
-        suggestions.extend(type_suggestions[:2])
-        
-        # 4. Year-based suggestions
-        current_year = datetime.now().year
-        if str(current_year) not in query:
-            suggestions.append(f"{query} {current_year}")
+            suggestions.append(f"{query} anime")
         
         # Remove duplicates and limit
         seen = set()
         unique_suggestions = []
         for suggestion in suggestions:
-            suggestion_lower = suggestion.lower()
-            if suggestion_lower not in seen and suggestion_lower != query_lower:
-                seen.add(suggestion_lower)
+            if suggestion.lower() not in seen and suggestion.lower() != query_lower:
+                seen.add(suggestion.lower())
                 unique_suggestions.append(suggestion)
         
-        return unique_suggestions[:6]
+        return unique_suggestions[:5]
     
-    def _format_content_with_score(self, content: Any, score: float = 0) -> Dict:
-        """Format content object with search score"""
+    def _get_spelling_corrections(self, query: str) -> List[str]:
+        """
+        Get spelling corrections for the query
+        """
+        corrections = []
+        
+        # Use fuzzy matching against known titles
+        all_titles = list(self.indexer.index['titles'].keys())
+        if all_titles:
+            # Get best matches
+            matches = process.extract(
+                query.lower(),
+                all_titles,
+                scorer=fuzz.ratio,
+                limit=3
+            )
+            
+            for match, score, _ in matches:
+                if score > 60 and score < 95:  # Not exact but close
+                    corrections.append(match.title())
+        
+        return corrections
+    
+    def _merge_and_rank_results(self, results: Dict, query: str, limit: int) -> List[Dict]:
+        """
+        Merge and rank results from different sources
+        """
+        all_results = []
+        seen_ids = set()
+        
+        # Priority order: instant > local > external
+        for source in ['instant_results', 'local', 'external']:
+            for result in results.get(source, []):
+                if isinstance(result, dict) and 'id' in result:
+                    if result['id'] not in seen_ids:
+                        seen_ids.add(result['id'])
+                        # Add source info
+                        result['source'] = source
+                        all_results.append(result)
+        
+        # Re-rank based on relevance
+        query_lower = query.lower()
+        for result in all_results:
+            score = 0
+            
+            # Title match scoring
+            title_lower = result.get('title', '').lower()
+            if query_lower == title_lower:
+                score += 100
+            elif query_lower in title_lower:
+                score += 50
+            else:
+                # Fuzzy match
+                score += fuzz.ratio(query_lower, title_lower) * 0.3
+            
+            # Boost by popularity and rating
+            score += (result.get('popularity', 0) / 100) * 10
+            score += (result.get('rating', 0) / 10) * 20
+            
+            # Boost by source
+            if result['source'] == 'instant_results':
+                score += 30
+            elif result['source'] == 'local':
+                score += 20
+            
+            result['relevance_score'] = score
+        
+        # Sort by relevance score
+        all_results.sort(key=lambda x: x.get('relevance_score', 0), reverse=True)
+        
+        # Remove relevance score from final output
+        for result in all_results:
+            result.pop('relevance_score', None)
+            result.pop('source', None)
+        
+        return all_results[:limit]
+    
+    def _format_results(self, content_list: List[Any]) -> List[Dict]:
+        """Format content objects for response"""
+        formatted = []
+        for content in content_list:
+            formatted.append(self._format_content(content))
+        return formatted
+    
+    def _format_content(self, content: Any) -> Dict:
+        """Format a single content object"""
         youtube_url = None
         if hasattr(content, 'youtube_trailer_id') and content.youtube_trailer_id:
             youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
@@ -1145,229 +655,108 @@ class AdvancedHybridSearch:
             'languages': json.loads(content.languages or '[]'),
             'rating': content.rating,
             'popularity': content.popularity,
-            'vote_count': getattr(content, 'vote_count', 0),
             'release_date': content.release_date.isoformat() if content.release_date else None,
-            'poster_path': self._format_poster_url(content.poster_path),
-            'overview': self._truncate_overview(content.overview),
-            'youtube_trailer': youtube_url,
-            'search_score': round(score, 2)
+            'poster_path': self._get_poster_url(content.poster_path),
+            'overview': content.overview[:200] + '...' if content.overview and len(content.overview) > 200 else content.overview,
+            'youtube_trailer': youtube_url
         }
     
-    def _format_poster_url(self, poster_path: str) -> Optional[str]:
-        """Format poster URL"""
+    def _get_poster_url(self, poster_path: str) -> Optional[str]:
+        """Get full poster URL"""
         if not poster_path:
             return None
         if poster_path.startswith('http'):
             return poster_path
         return f"https://image.tmdb.org/t/p/w300{poster_path}"
     
-    def _truncate_overview(self, overview: str, max_length: int = 200) -> str:
-        """Truncate overview text"""
-        if not overview:
-            return ""
-        if len(overview) <= max_length:
-            return overview
-        return overview[:max_length].rsplit(' ', 1)[0] + '...'
-    
     def _get_content_by_ids(self, content_ids: List[int]) -> List[Any]:
-        """Get content objects by IDs efficiently"""
-        if not content_ids:
-            return []
-        
-        try:
-            from models import Content  # Dynamic import
-            return Content.query.filter(Content.id.in_(content_ids)).all()
-        except Exception as e:
-            logger.error(f"Error fetching content by IDs: {e}")
-            return []
-    
-    def _empty_response(self, query: str, page: int) -> Dict[str, Any]:
-        """Return empty search response"""
-        return {
-            'results': [],
-            'total_results': 0,
-            'page': page,
-            'per_page': 0,
-            'query': query,
-            'search_time': 0.001,
-            'suggestions': [],
-            'has_more': False,
-            'cached': False,
-            'algorithm': 'empty'
-        }
+        """Get content objects by IDs"""
+        from models import Content  # Import here to avoid circular imports
+        return Content.query.filter(Content.id.in_(content_ids)).all()
     
     def _generate_cache_key(self, query: str, search_type: str, page: int, filters: Dict) -> str:
-        """Generate optimized cache key"""
+        """Generate cache key for search"""
         filter_str = json.dumps(filters, sort_keys=True) if filters else ''
-        key_data = f"v2:{query}:{search_type}:{page}:{filter_str}"
+        key_data = f"{query}:{search_type}:{page}:{filter_str}"
         return f"search:{hashlib.md5(key_data.encode()).hexdigest()}"
     
     def _get_cached_result(self, cache_key: str) -> Optional[Dict]:
-        """Get cached search result with error handling"""
+        """Get cached search result"""
         try:
             cached = self.cache.get(cache_key)
             if cached:
-                if isinstance(cached, str):
-                    return json.loads(cached)
-                return cached
+                return json.loads(cached) if isinstance(cached, str) else cached
         except Exception as e:
             logger.error(f"Cache retrieval error: {e}")
         return None
     
     def _cache_result(self, cache_key: str, result: Dict) -> None:
-        """Cache search result with error handling"""
+        """Cache search result"""
         try:
-            # Cache for 5 minutes for dynamic results
+            # Cache for 5 minutes for instant results
             self.cache.set(cache_key, json.dumps(result), timeout=300)
         except Exception as e:
             logger.error(f"Cache storage error: {e}")
-    
-    def _record_search_analytics(self, query: str, result_count: int) -> None:
-        """Record search analytics for optimization"""
-        try:
-            analytics_key = "search_analytics_v2"
-            analytics = self.cache.get(analytics_key)
-            
-            if analytics:
-                analytics = json.loads(analytics)
-            else:
-                analytics = {
-                    'queries': {},
-                    'no_results': [],
-                    'popular_terms': {},
-                    'last_update': datetime.now().isoformat()
-                }
-            
-            # Record query
-            analytics['queries'][query] = analytics['queries'].get(query, 0) + 1
-            
-            # Record no results
-            if result_count == 0:
-                analytics['no_results'].append({
-                    'query': query,
-                    'timestamp': datetime.now().isoformat()
-                })
-                # Keep only last 100 no-result queries
-                analytics['no_results'] = analytics['no_results'][-100:]
-            
-            # Extract popular terms
-            words = query.lower().split()
-            for word in words:
-                if len(word) > 2:
-                    analytics['popular_terms'][word] = analytics['popular_terms'].get(word, 0) + 1
-            
-            analytics['last_update'] = datetime.now().isoformat()
-            
-            # Cache analytics
-            self.cache.set(analytics_key, json.dumps(analytics), timeout=86400)
-            
-        except Exception as e:
-            logger.error(f"Analytics recording error: {e}")
 
-class AdvancedSuggestionEngine:
-    """Advanced suggestion engine with machine learning-like features"""
+class SmartSuggestionEngine:
+    """Intelligent suggestion engine for search"""
     
     def __init__(self, cache):
         self.cache = cache
+        self.trending_queries = []
+        self.user_history = defaultdict(list)
         
     def get_trending_searches(self, limit: int = 10) -> List[str]:
-        """Get trending search queries with real-time data"""
-        cache_key = "trending_searches_v2"
+        """Get trending search queries"""
+        cache_key = "trending_searches"
         cached = self.cache.get(cache_key)
         
         if cached:
-            try:
-                trending = json.loads(cached)
-                return trending[:limit]
-            except:
-                pass
+            return json.loads(cached)[:limit]
         
-        # Get from analytics
-        analytics_key = "search_analytics_v2"
-        analytics = self.cache.get(analytics_key)
-        
-        trending = []
-        if analytics:
-            try:
-                analytics = json.loads(analytics)
-                queries = analytics.get('queries', {})
-                
-                # Sort by frequency and recency
-                sorted_queries = sorted(
-                    queries.items(),
-                    key=lambda x: x[1],
-                    reverse=True
-                )
-                
-                trending = [query for query, count in sorted_queries[:limit]]
-                
-            except Exception as e:
-                logger.error(f"Trending extraction error: {e}")
-        
-        # Fallback trending searches
-        if not trending:
-            trending = [
-                "Telugu movies 2024",
-                "Latest releases",
-                "Action thriller",
-                "Romantic comedy",
-                "Popular anime",
-                "Marvel movies",
-                "Netflix series",
-                "Horror films",
-                "Bollywood hits",
-                "Korean drama"
-            ]
+        # Default trending searches
+        trending = [
+            "Telugu movies",
+            "New releases",
+            "Action movies",
+            "Romantic series",
+            "Anime",
+            "Thriller",
+            "Comedy shows",
+            "Marvel",
+            "Netflix originals",
+            "2024 movies"
+        ]
         
         # Cache for 1 hour
-        try:
-            self.cache.set(cache_key, json.dumps(trending), timeout=3600)
-        except:
-            pass
-        
+        self.cache.set(cache_key, json.dumps(trending), timeout=3600)
         return trending[:limit]
     
     def record_search(self, query: str, user_id: Optional[int] = None) -> None:
-        """Record search with enhanced analytics"""
+        """Record a search query for analytics"""
         try:
-            # Record in main analytics
-            analytics_key = "search_analytics_v2"
-            analytics = self.cache.get(analytics_key)
+            # Update trending queries
+            cache_key = "search_analytics"
+            analytics = self.cache.get(cache_key)
             
             if analytics:
                 analytics = json.loads(analytics)
             else:
-                analytics = {
-                    'queries': {},
-                    'user_queries': {},
-                    'hourly_stats': {},
-                    'last_update': datetime.now().isoformat()
-                }
+                analytics = {'queries': {}, 'last_update': datetime.now().isoformat()}
             
-            # Record query
+            # Increment query count
+            if 'queries' not in analytics:
+                analytics['queries'] = {}
+            
             analytics['queries'][query] = analytics['queries'].get(query, 0) + 1
-            
-            # Record hourly stats
-            current_hour = datetime.now().strftime('%Y-%m-%d-%H')
-            if current_hour not in analytics['hourly_stats']:
-                analytics['hourly_stats'][current_hour] = 0
-            analytics['hourly_stats'][current_hour] += 1
-            
-            # Keep only last 7 days of hourly stats
-            cutoff_time = datetime.now() - timedelta(days=7)
-            analytics['hourly_stats'] = {
-                k: v for k, v in analytics['hourly_stats'].items()
-                if datetime.strptime(k, '%Y-%m-%d-%H') > cutoff_time
-            }
-            
             analytics['last_update'] = datetime.now().isoformat()
             
             # Cache updated analytics
-            self.cache.set(analytics_key, json.dumps(analytics), timeout=86400)
+            self.cache.set(cache_key, json.dumps(analytics), timeout=86400)  # 24 hours
             
-            # Record user-specific history
+            # Update user history if user_id provided
             if user_id:
-                user_key = f"user_search_history_v2:{user_id}"
+                user_key = f"user_search_history:{user_id}"
                 history = self.cache.get(user_key)
                 
                 if history:
@@ -1375,130 +764,44 @@ class AdvancedSuggestionEngine:
                 else:
                     history = []
                 
-                # Add to history with timestamp
-                history.insert(0, {
-                    'query': query,
-                    'timestamp': datetime.now().isoformat()
-                })
+                # Add to history (keep last 20)
+                history.insert(0, {'query': query, 'timestamp': datetime.now().isoformat()})
+                history = history[:20]
                 
-                # Keep last 50 searches
-                history = history[:50]
-                
-                # Cache for 30 days
-                self.cache.set(user_key, json.dumps(history), timeout=2592000)
+                self.cache.set(user_key, json.dumps(history), timeout=2592000)  # 30 days
                 
         except Exception as e:
-            logger.error(f"Search recording error: {e}")
+            logger.error(f"Failed to record search: {e}")
     
     def get_personalized_suggestions(self, user_id: int, limit: int = 5) -> List[str]:
-        """Get personalized suggestions based on user history"""
+        """Get personalized search suggestions for a user"""
         try:
-            user_key = f"user_search_history_v2:{user_id}"
+            user_key = f"user_search_history:{user_id}"
             history = self.cache.get(user_key)
             
             if history:
                 history = json.loads(history)
-                
                 # Extract unique recent queries
                 recent_queries = []
                 seen = set()
-                
-                for item in history[:20]:  # Last 20 searches
+                for item in history:
                     query = item['query']
-                    if query not in seen and len(query) > 2:
+                    if query not in seen:
                         seen.add(query)
                         recent_queries.append(query)
                 
                 return recent_queries[:limit]
             
         except Exception as e:
-            logger.error(f"Personalized suggestions error: {e}")
-        
-        return []
-    
-    def get_query_suggestions(self, partial_query: str, limit: int = 5) -> List[str]:
-        """Get query completion suggestions"""
-        if len(partial_query) < 2:
-            return []
-        
-        try:
-            # Get popular queries that start with or contain the partial query
-            analytics_key = "search_analytics_v2"
-            analytics = self.cache.get(analytics_key)
-            
-            if analytics:
-                analytics = json.loads(analytics)
-                queries = analytics.get('queries', {})
-                
-                partial_lower = partial_query.lower()
-                suggestions = []
-                
-                # Find matching queries
-                for query, count in queries.items():
-                    query_lower = query.lower()
-                    if partial_lower in query_lower and query_lower != partial_lower:
-                        suggestions.append((query, count))
-                
-                # Sort by popularity
-                suggestions.sort(key=lambda x: x[1], reverse=True)
-                
-                return [query for query, count in suggestions[:limit]]
-            
-        except Exception as e:
-            logger.error(f"Query suggestions error: {e}")
+            logger.error(f"Failed to get personalized suggestions: {e}")
         
         return []
 
-# Factory functions for integration with app.py
+# Export the main search interface
 def create_search_engine(db, cache, services):
-    """Factory function to create the advanced search engine"""
-    return AdvancedHybridSearch(db, cache, services)
+    """Factory function to create search engine"""
+    return HybridSearch(db, cache, services)
 
 def create_suggestion_engine(cache):
-    """Factory function to create the advanced suggestion engine"""
-    return AdvancedSuggestionEngine(cache)
-
-# Additional utility functions
-def warm_up_search_index(search_engine):
-    """Warm up the search index on application startup"""
-    try:
-        logger.info("Warming up search index...")
-        search_engine._ensure_fresh_index()
-        logger.info("Search index warmed up successfully")
-    except Exception as e:
-        logger.error(f"Search index warm-up failed: {e}")
-
-def get_search_statistics(cache):
-    """Get search statistics for monitoring"""
-    try:
-        analytics_key = "search_analytics_v2"
-        analytics = cache.get(analytics_key)
-        
-        if analytics:
-            analytics = json.loads(analytics)
-            
-            total_searches = sum(analytics.get('queries', {}).values())
-            unique_queries = len(analytics.get('queries', {}))
-            no_results_count = len(analytics.get('no_results', []))
-            
-            return {
-                'total_searches': total_searches,
-                'unique_queries': unique_queries,
-                'no_results_count': no_results_count,
-                'last_update': analytics.get('last_update'),
-                'top_queries': sorted(
-                    analytics.get('queries', {}).items(),
-                    key=lambda x: x[1],
-                    reverse=True
-                )[:10]
-            }
-    except Exception as e:
-        logger.error(f"Statistics retrieval error: {e}")
-    
-    return {
-        'total_searches': 0,
-        'unique_queries': 0,
-        'no_results_count': 0,
-        'last_update': None,
-        'top_queries': []
-    }
+    """Factory function to create suggestion engine"""
+    return SmartSuggestionEngine(cache)
