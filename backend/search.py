@@ -1,4 +1,4 @@
-# backend/search.py - Advanced Title Matching & Search Intelligence
+# backend/search.py - Advanced Title Matching & Search Intelligence (FIXED)
 
 import json
 import logging
@@ -29,6 +29,7 @@ import jellyfish
 
 logger = logging.getLogger(__name__)
 
+# Title variations and common patterns
 # Title variations and common patterns
 TITLE_PATTERNS = {
     "sequel_patterns": [
@@ -1232,16 +1233,14 @@ class AdvancedSearchIndexer:
                 filtered.append(result)
         return filtered
 
-# Keep the rest of the classes (ImprovedHybridSearch, SmartSuggestionEngine) the same
-# but update ImprovedHybridSearch to use the new indexer capabilities
-
 class ImprovedHybridSearch:
     """Enhanced hybrid search with advanced title matching"""
     
-    def __init__(self, db, cache, services):
+    def __init__(self, db, cache, services, content_model=None):
         self.db = db
         self.cache = cache
         self.services = services
+        self.content_model = content_model or services.get('Content')  # Store or get from services
         self.indexer = AdvancedSearchIndexer()
         self.executor = ThreadPoolExecutor(max_workers=3)
         self.query_parser = QueryParser()
@@ -1387,7 +1386,12 @@ class ImprovedHybridSearch:
     def _update_search_index(self):
         """Update search index with latest content"""
         try:
-            from app import Content
+            # Use the stored Content model
+            Content = self.content_model
+            
+            if not Content:
+                logger.error("Content model not available")
+                return
             
             content_query = Content.query.order_by(
                 Content.popularity.desc()
@@ -1474,7 +1478,12 @@ class ImprovedHybridSearch:
     def _fallback_search(self, query: str, limit: int) -> List[SearchResult]:
         """Simple fallback search"""
         try:
-            from app import Content
+            # Use the stored Content model
+            Content = self.content_model
+            
+            if not Content:
+                logger.error("Content model not available for fallback search")
+                return []
             
             contents = Content.query.filter(
                 or_(
@@ -1500,7 +1509,10 @@ class ImprovedHybridSearch:
                         'release_date': content.release_date,
                         'poster_path': content.poster_path,
                         'overview': content.overview,
-                        'youtube_trailer_id': content.youtube_trailer_id
+                        'youtube_trailer_id': content.youtube_trailer_id,
+                        'vote_count': content.vote_count,
+                        'is_trending': getattr(content, 'is_trending', False),
+                        'is_new_release': getattr(content, 'is_new_release', False)
                     }
                 ))
             
@@ -1598,7 +1610,6 @@ class ImprovedHybridSearch:
         
         return suggestions
 
-# Keep SmartSuggestionEngine as is
 class SmartSuggestionEngine:
     """Intelligent suggestion engine for search"""
     
@@ -1716,10 +1727,10 @@ class SmartSuggestionEngine:
         
         return []
 
-# Export factory functions
-def create_search_engine(db, cache, services):
+# Export factory functions with updated signature
+def create_search_engine(db, cache, services, content_model=None):
     """Factory function to create improved search engine"""
-    return ImprovedHybridSearch(db, cache, services)
+    return ImprovedHybridSearch(db, cache, services, content_model)
 
 def create_suggestion_engine(cache):
     """Factory function to create suggestion engine"""
