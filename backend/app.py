@@ -15,7 +15,8 @@ from collections import defaultdict, Counter
 import random
 import hashlib
 import time
-from sqlalchemy import func, and_, or_, desc, text
+from sqlalchemy import func, and_, or_, desc, text, case
+from sqlalchemy.orm import joinedload
 import telebot
 import threading
 from geopy.geocoders import Nominatim
@@ -71,9 +72,9 @@ else:
 # Initialize extensions
 db = SQLAlchemy(app)
 CORS(app)
-cache = Cache(app)
 cache = Cache()
 cache.init_app(app) 
+
 # API Keys - Set these in your environment
 TMDB_API_KEY = os.environ.get('TMDB_API_KEY', '1cf86635f20bb2aff8e70940e7c3ddd5')
 OMDB_API_KEY = os.environ.get('OMDB_API_KEY', '52260795')
@@ -227,12 +228,14 @@ class AnonymousInteraction(db.Model):
     ip_address = db.Column(db.String(45))
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
 
+# Store Content model reference for search engine
+app.config['CONTENT_MODEL'] = Content
+
 # Register blueprints
 app.register_blueprint(auth_bp)
 app.register_blueprint(admin_bp)
 app.register_blueprint(users_bp)
 init_auth(app, db, User)
-
 
 # Helper Functions
 def get_session_id():
@@ -860,7 +863,7 @@ class AnonymousRecommendationEngine:
                 genre_counts = Counter(all_genres)
                 top_genres = [genre for genre, _ in genre_counts.most_common(3)]
                 
-                # Get recommendations based on top genres (would use algorithms here)
+                # Get recommendations based on top genres
                 for genre in top_genres:
                     genre_content = Content.query.filter(
                         Content.genres.contains(genre)
@@ -911,26 +914,51 @@ services = {
     'MLServiceClient': MLServiceClient,
     'http_session': http_session,
     'ML_SERVICE_URL': ML_SERVICE_URL,
-    'cache': cache
+    'cache': cache,
+    'Content': Content  # Add Content model reference
 }
 
 init_admin(app, db, models, services)
 init_users(app, db, models, services)
 
+# Initialize search engines (will be done after database is ready)
+search_engine = None
+suggestion_engine = None
+
+def init_search_engines():
+    """Initialize search and suggestion engines"""
+    global search_engine, suggestion_engine
+    try:
+        search_engine = create_search_engine(db, cache, services)
+        suggestion_engine = create_suggestion_engine(cache)
+        logger.info("Search engines initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize search engines: {e}")
+        search_engine = None
+        suggestion_engine = None
+
 # API Routes
-search_engine = create_search_engine(db, cache, services)
-suggestion_engine = create_suggestion_engine(cache)
-# Enhanced Content Discovery Routes with caching
+
+# Enhanced Search Routes
 @app.route('/api/search', methods=['GET'])
 def search_content():
     """Enhanced search with instant results"""
     try:
+        # Ensure search engine is initialized
+        if not search_engine:
+            init_search_engines()
+            
         query = request.args.get('query', '').strip()
         search_type = request.args.get('type', 'multi')
         page = int(request.args.get('page', 1))
         
         if not query:
-            return jsonify({'error': 'Query parameter required'}), 400
+            return jsonify({
+                'error': 'Query parameter required',
+                'results': [],
+                'total_results': 0,
+                'suggestions': []
+            }), 400
         
         # Parse filters
         filters = {}
@@ -939,9 +967,15 @@ def search_content():
         if request.args.get('language'):
             filters['language'] = request.args.get('language')
         if request.args.get('year'):
-            filters['year'] = int(request.args.get('year'))
+            try:
+                filters['year'] = int(request.args.get('year'))
+            except ValueError:
+                pass
         if request.args.get('min_rating'):
-            filters['min_rating'] = float(request.args.get('min_rating'))
+            try:
+                filters['min_rating'] = float(request.args.get('min_rating'))
+            except ValueError:
+                pass
         if request.args.get('content_type'):
             filters['content_type'] = request.args.get('content_type')
         
@@ -953,33 +987,51 @@ def search_content():
             filters=filters
         )
         
-        # Record search for analytics
-        user_id = session.get('user_id')
-        suggestion_engine.record_search(query, user_id)
-        
-        # Record anonymous interaction
-        session_id = get_session_id()
-        if results['results']:
-            for result in results['results'][:5]:  # Record top 5 results
-                interaction = AnonymousInteraction(
-                    session_id=session_id,
-                    content_id=result['id'],
-                    interaction_type='search',
-                    ip_address=request.remote_addr
-                )
-                db.session.add(interaction)
-            db.session.commit()
+        # Record search for analytics (only if we have valid results)
+        if results.get('results'):
+            user_id = session.get('user_id')
+            suggestion_engine.record_search(query, user_id)
+            
+            # Record anonymous interaction for top results
+            session_id = get_session_id()
+            for result in results['results'][:3]:  # Only record top 3
+                try:
+                    interaction = AnonymousInteraction(
+                        session_id=session_id,
+                        content_id=result['id'],
+                        interaction_type='search',
+                        ip_address=request.remote_addr
+                    )
+                    db.session.add(interaction)
+                except Exception as e:
+                    logger.warning(f"Failed to record interaction: {e}")
+            
+            try:
+                db.session.commit()
+            except Exception as e:
+                logger.warning(f"Failed to commit interactions: {e}")
+                db.session.rollback()
         
         return jsonify(results), 200
         
     except Exception as e:
         logger.error(f"Search error: {e}")
-        return jsonify({'error': 'Search failed', 'message': str(e)}), 500
+        return jsonify({
+            'error': 'Search failed',
+            'message': str(e),
+            'results': [],
+            'total_results': 0,
+            'suggestions': []
+        }), 500
 
 @app.route('/api/search/autocomplete', methods=['GET'])
 def autocomplete():
     """Instant autocomplete suggestions"""
     try:
+        # Ensure search engine is initialized
+        if not search_engine:
+            init_search_engines()
+            
         prefix = request.args.get('q', '').strip()
         limit = int(request.args.get('limit', 10))
         
@@ -998,6 +1050,10 @@ def autocomplete():
 def get_search_suggestions():
     """Get search suggestions (trending or personalized)"""
     try:
+        # Ensure suggestion engine is initialized
+        if not suggestion_engine:
+            init_search_engines()
+            
         user_id = session.get('user_id')
         limit = int(request.args.get('limit', 10))
         
@@ -1019,33 +1075,48 @@ def get_search_suggestions():
 def instant_search():
     """Ultra-fast instant search for live search experiences"""
     try:
+        # Ensure search engine is initialized
+        if not search_engine:
+            init_search_engines()
+            
         query = request.args.get('q', '').strip()
         
         if len(query) < 2:
             return jsonify({'results': []}), 200
         
-        # Use only the in-memory index for instant results
-        results = search_engine.indexer.search(query, limit=5)
+        # Use the new autocomplete which is faster
+        results = search_engine.autocomplete(query, 5)
         
-        # Format quick results
-        instant_results = []
-        for content_id in results:
-            content_data = search_engine.indexer.index['content_map'].get(content_id)
-            if content_data:
-                instant_results.append({
-                    'id': content_id,
-                    'title': content_data['title'],
-                    'type': content_data['content_type'],
-                    'poster': f"https://image.tmdb.org/t/p/w92{content_data['poster_path']}" if content_data['poster_path'] else None,
-                    'year': content_data['release_date'].year if content_data['release_date'] else None,
-                    'rating': content_data['rating']
-                })
-        
-        return jsonify({'results': instant_results}), 200
+        return jsonify({'results': results}), 200
         
     except Exception as e:
         logger.error(f"Instant search error: {e}")
         return jsonify({'results': []}), 200
+
+# Admin endpoint to rebuild search index
+@app.route('/api/admin/rebuild-search-index', methods=['POST'])
+def rebuild_search_index():
+    """Admin endpoint to manually rebuild search index"""
+    try:
+        # Check if user is admin
+        user_id = session.get('user_id')
+        if not user_id:
+            return jsonify({'error': 'Authentication required'}), 401
+            
+        user = User.query.get(user_id)
+        if not user or not user.is_admin:
+            return jsonify({'error': 'Admin access required'}), 403
+        
+        # Rebuild index
+        if search_engine:
+            search_engine._update_search_index()
+            return jsonify({'message': 'Search index rebuilt successfully'}), 200
+        else:
+            return jsonify({'error': 'Search engine not initialized'}), 500
+            
+    except Exception as e:
+        logger.error(f"Index rebuild error: {e}")
+        return jsonify({'error': 'Failed to rebuild index'}), 500
 
 @app.route('/api/content/<int:content_id>', methods=['GET'])
 def get_content_details(content_id):
@@ -1254,7 +1325,7 @@ def get_trending():
                 }
             }
         
-        # Calculate and add metrics - Fixed this section
+        # Calculate and add metrics
         if category != 'all' and selected_category in categories and categories[selected_category]:
             try:
                 # Get all content items from the selected category
@@ -1750,18 +1821,18 @@ def get_public_admin_recommendations():
 # Health check endpoint
 @app.route('/api/health', methods=['GET'])
 def health_check():
-    """Enhanced health check with cache status"""
+    """Enhanced health check with cache and search status"""
     try:
         # Basic health info
         health_info = {
             'status': 'healthy',
             'timestamp': datetime.utcnow().isoformat(),
-            'version': '3.0.0'  # Updated version with algorithms
+            'version': '3.1.0'  # Updated version with improved search
         }
         
         # Check database connectivity
         try:
-            db.session.execute('SELECT 1')
+            db.session.execute(text('SELECT 1'))
             health_info['database'] = 'connected'
         except:
             health_info['database'] = 'disconnected'
@@ -1779,13 +1850,21 @@ def health_check():
             health_info['cache'] = 'disconnected'
             health_info['status'] = 'degraded'
         
+        # Check search engine status
+        if search_engine:
+            health_info['search_engine'] = 'initialized'
+        else:
+            health_info['search_engine'] = 'not_initialized'
+            health_info['status'] = 'degraded'
+        
         # Check external services
         health_info['services'] = {
             'tmdb': bool(TMDB_API_KEY),
             'omdb': bool(OMDB_API_KEY),
             'youtube': bool(YOUTUBE_API_KEY),
             'ml_service': bool(ML_SERVICE_URL),
-            'algorithms': 'enabled'
+            'algorithms': 'enabled',
+            'search': 'improved'
         }
         
         return jsonify(health_info), 200
@@ -1815,11 +1894,23 @@ def create_tables():
                 db.session.add(admin)
                 db.session.commit()
                 logger.info("Admin user created with username: admin, password: admin123")
+                
+            # Store Content model for search engine
+            app.config['CONTENT_MODEL'] = Content
+            
     except Exception as e:
         logger.error(f"Database initialization error: {e}")
 
-# Initialize database when app starts
+# Initialize everything in correct order
 create_tables()
+
+# Initialize search engines with app context
+with app.app_context():
+    try:
+        init_search_engines()
+        logger.info("Search engines initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize search engines: {e}")
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
