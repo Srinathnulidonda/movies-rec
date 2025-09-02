@@ -1,4 +1,6 @@
 # backend/search.py
+# Fix the import error by including TMDBFetcher class directly in the file
+
 import json
 import re
 import time
@@ -31,6 +33,86 @@ def measure_performance(func):
         logger.debug(f"{func.__name__} took {(end - start)*1000:.2f}ms")
         return result
     return wrapper
+
+class TMDBFetcher:
+    """Fetches content from TMDB when not found locally"""
+    
+    def __init__(self, api_key: str, http_session=None):
+        self.api_key = api_key
+        self.base_url = 'https://api.themoviedb.org/3'
+        self.http_session = http_session or requests.Session()
+        self._cache = {}
+        self._lock = threading.Lock()
+        
+    def search_tmdb(self, query: str, content_type: str = 'multi', page: int = 1) -> List[Dict]:
+        """Search TMDB for content"""
+        cache_key = f"tmdb_{query}_{content_type}_{page}"
+        
+        # Check cache first
+        if cache_key in self._cache:
+            cache_entry = self._cache[cache_key]
+            if (datetime.now() - cache_entry['timestamp']).seconds < 3600:  # 1 hour cache
+                return cache_entry['data']
+        
+        url = f"{self.base_url}/search/{content_type}"
+        params = {
+            'api_key': self.api_key,
+            'query': query,
+            'page': page
+        }
+        
+        try:
+            response = self.http_session.get(url, params=params, timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                results = data.get('results', [])
+                
+                # Cache the results
+                with self._lock:
+                    self._cache[cache_key] = {
+                        'data': results,
+                        'timestamp': datetime.now()
+                    }
+                
+                return results
+        except Exception as e:
+            logger.error(f"TMDB search error: {e}")
+        
+        return []
+    
+    def get_content_details(self, tmdb_id: int, content_type: str) -> Optional[Dict]:
+        """Get detailed content information from TMDB"""
+        cache_key = f"tmdb_details_{tmdb_id}_{content_type}"
+        
+        # Check cache
+        if cache_key in self._cache:
+            cache_entry = self._cache[cache_key]
+            if (datetime.now() - cache_entry['timestamp']).seconds < 7200:  # 2 hour cache
+                return cache_entry['data']
+        
+        url = f"{self.base_url}/{content_type}/{tmdb_id}"
+        params = {
+            'api_key': self.api_key,
+            'append_to_response': 'credits,videos'
+        }
+        
+        try:
+            response = self.http_session.get(url, params=params, timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                
+                # Cache the result
+                with self._lock:
+                    self._cache[cache_key] = {
+                        'data': data,
+                        'timestamp': datetime.now()
+                    }
+                
+                return data
+        except Exception as e:
+            logger.error(f"TMDB details error: {e}")
+        
+        return None
 
 @dataclass
 class SearchConfig:
@@ -843,7 +925,6 @@ class EnhancedSearchEngine:
         self.ngram_analyzer = AdvancedNGramAnalyzer(self.config)
         
         # TMDB fetcher for external content
-        from .search import TMDBFetcher  # Import from original file
         self.tmdb_fetcher = TMDBFetcher(tmdb_api_key, http_session) if tmdb_api_key else None
         
         # Threading and caching
