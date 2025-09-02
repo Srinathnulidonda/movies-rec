@@ -926,10 +926,11 @@ search_engine = None
 suggestion_engine = None
 
 def init_search_engines():
-    """Initialize search and suggestion engines"""
+    """Initialize search and suggestion engines with Content model to avoid circular imports"""
     global search_engine, suggestion_engine
     try:
-        search_engine = create_search_engine(db, cache, services)
+        # Pass Content model to avoid circular imports
+        search_engine = create_search_engine(db, cache, services, Content)
         suggestion_engine = create_suggestion_engine(cache)
         logger.info("Search engines initialized successfully")
     except Exception as e:
@@ -937,12 +938,46 @@ def init_search_engines():
         search_engine = None
         suggestion_engine = None
 
+def warm_search_index():
+    """Warm up search index with initial data"""
+    try:
+        if search_engine:
+            # Trigger index update with popular content
+            popular_content = Content.query.order_by(
+                Content.popularity.desc()
+            ).limit(10000).all()  # Increased limit for comprehensive index
+            
+            if popular_content:
+                logger.info(f"Warming search index with {len(popular_content)} items")
+                # This will trigger the index building
+                search_engine.indexer.build_index(popular_content)
+    except Exception as e:
+        logger.error(f"Failed to warm search index: {e}")
+
+def periodic_index_update():
+    """Periodically update search index in background"""
+    def update_loop():
+        while True:
+            time.sleep(300)  # Update every 5 minutes
+            try:
+                with app.app_context():
+                    if search_engine and search_engine.indexer.needs_update():
+                        logger.info("Updating search index...")
+                        search_engine._update_search_index()
+            except Exception as e:
+                logger.error(f"Periodic index update failed: {e}")
+    
+    # Start background thread
+    thread = threading.Thread(target=update_loop, daemon=True)
+    thread.start()
+    logger.info("Started periodic search index update thread")
+
 # API Routes
 
 # Enhanced Search Routes
 @app.route('/api/search', methods=['GET'])
 def search_content():
-    """Enhanced search with instant results"""
+    """Enhanced search with instant results and advanced title matching"""
     try:
         # Ensure search engine is initialized
         if not search_engine:
@@ -987,24 +1022,43 @@ def search_content():
             filters=filters
         )
         
+        # Add match quality indicator for frontend
+        if results.get('results'):
+            for result in results['results']:
+                if 'match_info' in result:
+                    match_info = result['match_info']
+                    # Add a simple quality indicator
+                    if match_info.get('exact_match'):
+                        result['match_quality'] = 'exact'
+                    elif match_info.get('title_match_score', 0) > 800:
+                        result['match_quality'] = 'excellent'
+                    elif match_info.get('title_match_score', 0) > 500:
+                        result['match_quality'] = 'good'
+                    elif match_info.get('partial_match'):
+                        result['match_quality'] = 'partial'
+                    else:
+                        result['match_quality'] = 'fuzzy'
+        
         # Record search for analytics (only if we have valid results)
         if results.get('results'):
             user_id = session.get('user_id')
             suggestion_engine.record_search(query, user_id)
             
-            # Record anonymous interaction for top results
-            session_id = get_session_id()
-            for result in results['results'][:3]:  # Only record top 3
-                try:
-                    interaction = AnonymousInteraction(
-                        session_id=session_id,
-                        content_id=result['id'],
-                        interaction_type='search',
-                        ip_address=request.remote_addr
-                    )
-                    db.session.add(interaction)
-                except Exception as e:
-                    logger.warning(f"Failed to record interaction: {e}")
+            # Only record anonymous interaction for title searches with good matches
+            if results.get('parsed_query', {}).get('is_title_search'):
+                session_id = get_session_id()
+                for result in results['results'][:3]:  # Only record top 3
+                    if result.get('match_info', {}).get('title_match_score', 0) > 500:
+                        try:
+                            interaction = AnonymousInteraction(
+                                session_id=session_id,
+                                content_id=result['id'],
+                                interaction_type='search',
+                                ip_address=request.remote_addr
+                            )
+                            db.session.add(interaction)
+                        except Exception as e:
+                            logger.warning(f"Failed to record interaction: {e}")
             
             try:
                 db.session.commit()
@@ -1026,7 +1080,7 @@ def search_content():
 
 @app.route('/api/search/autocomplete', methods=['GET'])
 def autocomplete():
-    """Instant autocomplete suggestions"""
+    """Instant autocomplete suggestions with advanced matching"""
     try:
         # Ensure search engine is initialized
         if not search_engine:
@@ -1084,8 +1138,17 @@ def instant_search():
         if len(query) < 2:
             return jsonify({'results': []}), 200
         
-        # Use the new autocomplete which is faster
-        results = search_engine.autocomplete(query, 5)
+        # For short queries (2-4 chars), use autocomplete
+        if len(query) <= 4:
+            results = search_engine.autocomplete(query, 5)
+        else:
+            # For longer queries, use full search with title priority
+            search_results = search_engine.search(
+                query=query,
+                limit=5,
+                filters={'quick_mode': True}  # Add a quick mode flag if needed
+            )
+            results = search_results.get('results', [])
         
         return jsonify({'results': results}), 200
         
@@ -1827,7 +1890,7 @@ def health_check():
         health_info = {
             'status': 'healthy',
             'timestamp': datetime.utcnow().isoformat(),
-            'version': '3.1.0'  # Updated version with improved search
+            'version': '3.2.0'  # Updated version with advanced search integration
         }
         
         # Check database connectivity
@@ -1853,6 +1916,14 @@ def health_check():
         # Check search engine status
         if search_engine:
             health_info['search_engine'] = 'initialized'
+            # Add search index stats
+            try:
+                health_info['search_index'] = {
+                    'last_update': search_engine.indexer.last_update.isoformat() if search_engine.indexer.last_update else None,
+                    'content_count': len(search_engine.indexer.index.get('content_map', {}))
+                }
+            except:
+                pass
         else:
             health_info['search_engine'] = 'not_initialized'
             health_info['status'] = 'degraded'
@@ -1864,7 +1935,7 @@ def health_check():
             'youtube': bool(YOUTUBE_API_KEY),
             'ml_service': bool(ML_SERVICE_URL),
             'algorithms': 'enabled',
-            'search': 'improved'
+            'search': 'advanced_title_matching'
         }
         
         return jsonify(health_info), 200
@@ -1908,11 +1979,15 @@ create_tables()
 with app.app_context():
     try:
         init_search_engines()
-        logger.info("Search engines initialized successfully")
+        warm_search_index()
+        logger.info("Search engines initialized and warmed successfully")
     except Exception as e:
         logger.error(f"Failed to initialize search engines: {e}")
 
 if __name__ == '__main__':
+    # Start periodic index update thread
+    periodic_index_update()
+    
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('FLASK_ENV') == 'development'
     app.run(host='0.0.0.0', port=port, debug=debug)

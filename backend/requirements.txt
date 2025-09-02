@@ -20,3 +20,9 @@ gunicorn
 python-dotenv
 python-dateutil
 rapidfuzz
+Levenshtein
+python-Levenshtein
+metaphone
+jellyfish
+unicodedata2
+pickle-mixin
