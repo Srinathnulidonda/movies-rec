@@ -19,4 +19,3 @@ geopy
 gunicorn
 python-dotenv
 python-dateutil
-rapidfuzz
