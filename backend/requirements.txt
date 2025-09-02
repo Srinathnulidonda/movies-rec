@@ -22,3 +22,4 @@ python-dateutil
 rapidfuzz
 protobuf
 grpcio-tools
+search_pb2
