@@ -25,9 +25,9 @@ import redis
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
 from flask_mail import Mail
-import auth
-from services.new_releases import NewReleasesService, ContentType, LanguagePriority
+from services.upcoming import UpcomingContentService, ContentType, LanguagePriority
 import asyncio
+import auth
 from auth import init_auth, auth_bp
 from admin import admin_bp, init_admin
 from users import users_bp, init_users
@@ -1274,136 +1274,174 @@ def get_trending():
         return jsonify({'error': 'Failed to get trending recommendations'}), 500
 
 @app.route('/api/recommendations/new-releases', methods=['GET'])
-async def get_new_releases_v2():
-    """
-    Production-grade new releases endpoint with region and timezone awareness.
-    
-    Query Parameters:
-        - region: ISO 3166-1 alpha-2 country code (default: IN for India)
-        - timezone: Timezone name (default: Asia/Kolkata)
-        - categories: Comma-separated list of categories (movies,tv,anime)
-        - use_cache: Whether to use caching (default: true)
-    """
+@cache.cached(timeout=300, key_prefix=make_cache_key)
+def get_new_releases():
+    """Enhanced new releases with Telugu priority using algorithms"""
     try:
-        # Get parameters
-        region = request.args.get('region', 'IN')
-        timezone_name = request.args.get('timezone', 'Asia/Kolkata')
-        categories_param = request.args.get('categories', 'movies,tv,anime')
-        use_cache = request.args.get('use_cache', 'true').lower() == 'true'
+        content_type = request.args.get('type', 'movie')
+        limit = int(request.args.get('limit', 20))
         
-        # Parse categories
-        categories = [cat.strip() for cat in categories_param.split(',')]
+        # Aggregate new releases from multiple sources
+        all_new_releases = []
         
-        # Validate region (basic validation)
-        if len(region) != 2:
-            return jsonify({'error': 'Invalid region code. Use ISO 3166-1 alpha-2 format (e.g., IN, US)'}), 400
+        # Priority languages in order
+        priority_languages = ['telugu', 'english', 'hindi', 'malayalam', 'kannada', 'tamil']
         
-        # Initialize service
-        service = NewReleasesService(
-            tmdb_api_key=TMDB_API_KEY,
-            cache_backend=cache
+        for language in priority_languages:
+            lang_code = LANGUAGE_PRIORITY['codes'].get(language)
+            
+            try:
+                # Get from TMDB
+                if language == 'english':
+                    releases = TMDBService.get_new_releases(content_type)
+                else:
+                    releases = TMDBService.get_language_specific(lang_code, content_type)
+                
+                if releases:
+                    for item in releases.get('results', [])[:10]:
+                        content = ContentService.save_content_from_tmdb(item, content_type)
+                        if content and content.release_date:
+                            days_old = (datetime.now().date() - content.release_date).days
+                            if days_old <= 60:
+                                all_new_releases.append(content)
+            except Exception as e:
+                logger.error(f"Error fetching {language} releases: {e}")
+        
+        # Get from database
+        db_new_releases = Content.query.filter(
+            Content.is_new_release == True,
+            Content.content_type == content_type
+        ).limit(50).all()
+        all_new_releases.extend(db_new_releases)
+        
+        # Remove duplicates
+        seen_ids = set()
+        unique_releases = []
+        for content in all_new_releases:
+            if content.id not in seen_ids:
+                seen_ids.add(content.id)
+                unique_releases.append(content)
+        
+        # Apply algorithms
+        recommendations = recommendation_orchestrator.get_new_releases_with_algorithms(
+            unique_releases,
+            limit=limit
         )
         
-        try:
-            # Get new releases
-            results = await service.get_new_releases(
-                region=region.upper(),
-                timezone_name=timezone_name,
-                categories=categories,
-                use_cache=use_cache
-            )
+        # Group by language for response
+        language_groups = {
+            'telugu': [],
+            'english': [],
+            'hindi': [],
+            'malayalam': [],
+            'kannada': [],
+            'tamil': [],
+            'others': []
+        }
+        
+        for rec in recommendations:
+            languages = rec.get('languages', [])
+            grouped = False
             
-            # Format response
-            response = {
-                'success': True,
-                'data': {
-                    'movies': [
-                        {
-                            'id': r.id,
-                            'title': r.title,
-                            'original_title': r.original_title,
-                            'release_date': r.release_date.isoformat(),
-                            'languages': r.languages,
-                            'genres': r.genres,
-                            'popularity': r.popularity,
-                            'vote_average': r.vote_average,
-                            'vote_count': r.vote_count,
-                            'poster_url': f"https://image.tmdb.org/t/p/w500{r.poster_path}" if r.poster_path and not r.poster_path.startswith('http') else r.poster_path,
-                            'backdrop_url': f"https://image.tmdb.org/t/p/w1280{r.backdrop_path}" if r.backdrop_path and not r.backdrop_path.startswith('http') else r.backdrop_path,
-                            'overview': r.overview,
-                            'language_priority': r.language_priority
-                        }
-                        for r in results.get('movies', [])[:50]  # Limit to 50 per category
-                    ],
-                    'tv_series': [
-                        {
-                            'id': r.id,
-                            'title': r.title,
-                            'original_title': r.original_title,
-                            'first_air_date': r.release_date.isoformat(),
-                            'languages': r.languages,
-                            'genres': r.genres,
-                            'popularity': r.popularity,
-                            'vote_average': r.vote_average,
-                            'vote_count': r.vote_count,
-                            'poster_url': f"https://image.tmdb.org/t/p/w500{r.poster_path}" if r.poster_path and not r.poster_path.startswith('http') else r.poster_path,
-                            'backdrop_url': f"https://image.tmdb.org/t/p/w1280{r.backdrop_path}" if r.backdrop_path and not r.backdrop_path.startswith('http') else r.backdrop_path,
-                            'overview': r.overview,
-                            'language_priority': r.language_priority
-                        }
-                        for r in results.get('tv_series', [])[:50]
-                    ],
-                    'anime': [
-                        {
-                            'id': r.id,
-                            'title': r.title,
-                            'original_title': r.original_title,
-                            'start_date': r.release_date.isoformat(),
-                            'languages': r.languages,
-                            'genres': r.genres,
-                            'popularity': r.popularity,
-                            'score': r.vote_average,
-                            'favorites': r.vote_count,
-                            'poster_url': r.poster_path,
-                            'banner_url': r.backdrop_path,
-                            'synopsis': r.overview
-                        }
-                        for r in results.get('anime', [])[:50]
-                    ]
+            # Categorize by language
+            for lang in languages:
+                lang_lower = lang.lower() if isinstance(lang, str) else ''
+                if 'telugu' in lang_lower or lang_lower == 'te':
+                    language_groups['telugu'].append(rec)
+                    grouped = True
+                    break
+                elif 'english' in lang_lower or lang_lower == 'en':
+                    language_groups['english'].append(rec)
+                    grouped = True
+                    break
+                elif 'hindi' in lang_lower or lang_lower == 'hi':
+                    language_groups['hindi'].append(rec)
+                    grouped = True
+                    break
+                elif 'malayalam' in lang_lower or lang_lower == 'ml':
+                    language_groups['malayalam'].append(rec)
+                    grouped = True
+                    break
+                elif 'kannada' in lang_lower or lang_lower == 'kn':
+                    language_groups['kannada'].append(rec)
+                    grouped = True
+                    break
+                elif 'tamil' in lang_lower or lang_lower == 'ta':
+                    language_groups['tamil'].append(rec)
+                    grouped = True
+                    break
+            
+            if not grouped:
+                language_groups['others'].append(rec)
+        
+        response = {
+            'recommendations': recommendations,
+            'grouped_by_language': language_groups,
+            'metadata': {
+                'total_analyzed': len(unique_releases),
+                'language_priority': {
+                    'main': 'telugu',
+                    'secondary': ['english', 'hindi'],
+                    'tertiary': ['malayalam', 'kannada', 'tamil']
                 },
-                'metadata': results.get('metadata', {}),
-                'counts': {
-                    'movies': len(results.get('movies', [])),
-                    'tv_series': len(results.get('tv_series', [])),
-                    'anime': len(results.get('anime', []))
-                }
+                'algorithm': 'multi_level_ranking_with_telugu_priority',
+                'scoring_weights': {
+                    'telugu_content': {
+                        'freshness': 0.2,
+                        'popularity': 0.2,
+                        'language': 0.4,
+                        'quality': 0.2
+                    },
+                    'other_content': {
+                        'freshness': 0.3,
+                        'popularity': 0.3,
+                        'language': 0.2,
+                        'quality': 0.2
+                    }
+                },
+                'timestamp': datetime.utcnow().isoformat()
             }
+        }
+        
+        # Add evaluation metrics
+        if recommendations:
+            content_ids = [r['id'] for r in recommendations]
+            contents = Content.query.filter(Content.id.in_(content_ids)).all()
             
-            return jsonify(response), 200
-            
-        finally:
-            # Clean up
-            await service.close()
-    
+            response['metadata']['metrics'] = {
+                'diversity_score': round(EvaluationMetrics.diversity_score(contents), 3),
+                'telugu_content_percentage': round(
+                    len(language_groups['telugu']) / len(recommendations) * 100, 1
+                ) if recommendations else 0
+            }
+        
+        db.session.commit()
+        return jsonify(response), 200
+        
     except Exception as e:
-        logger.error(f"New releases v2 error: {e}")
-        logger.exception(e)
-        return jsonify({
-            'success': False,
-            'error': str(e),
-            'message': 'Failed to fetch new releases'
-        }), 500
+        logger.error(f"New releases error: {e}")
+        return jsonify({'error': 'Failed to get new releases'}), 500
+    
 
-# Add a synchronous wrapper if your Flask version doesn't support async routes
-@app.route('/api/new-releases-sync', methods=['GET'])
-def get_new_releases_v2_sync():
-    """Synchronous wrapper for the new releases endpoint"""
+@app.route('/api/upcoming', methods=['GET'])
+async def get_upcoming_releases():
+    """
+    Advanced upcoming releases endpoint with strict Telugu priority.
+    
+    Query Parameters:
+        - region: ISO 3166-1 alpha-2 country code (default: IN)
+        - timezone: Timezone name (default: Asia/Kolkata)
+        - categories: Comma-separated list (movies,tv,anime)
+        - use_cache: Use caching (default: true)
+        - include_analytics: Include anticipation scores (default: true)
+    """
     try:
         # Get parameters
         region = request.args.get('region', 'IN')
         timezone_name = request.args.get('timezone', 'Asia/Kolkata')
         categories_param = request.args.get('categories', 'movies,tv,anime')
         use_cache = request.args.get('use_cache', 'true').lower() == 'true'
+        include_analytics = request.args.get('include_analytics', 'true').lower() == 'true'
         
         # Parse categories
         categories = [cat.strip() for cat in categories_param.split(',')]
@@ -1412,107 +1450,91 @@ def get_new_releases_v2_sync():
         if len(region) != 2:
             return jsonify({'error': 'Invalid region code'}), 400
         
-        # Run async function in event loop
+        # Initialize service
+        service = UpcomingContentService(
+            tmdb_api_key=TMDB_API_KEY,
+            cache_backend=cache,
+            enable_analytics=include_analytics
+        )
+        
+        try:
+            # Get upcoming releases
+            results = await service.get_upcoming_releases(
+                region=region.upper(),
+                timezone_name=timezone_name,
+                categories=categories,
+                use_cache=use_cache,
+                include_analytics=include_analytics
+            )
+            
+            return jsonify({
+                'success': True,
+                'data': results,
+                'telugu_priority': True
+            }), 200
+            
+        finally:
+            await service.close()
+    
+    except Exception as e:
+        logger.error(f"Upcoming releases error: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/upcoming-sync', methods=['GET'])
+def get_upcoming_releases_sync():
+    """Synchronous wrapper for upcoming releases"""
+    try:
+        region = request.args.get('region', 'IN')
+        timezone_name = request.args.get('timezone', 'Asia/Kolkata')
+        categories_param = request.args.get('categories', 'movies,tv,anime')
+        use_cache = request.args.get('use_cache', 'true').lower() == 'true'
+        include_analytics = request.args.get('include_analytics', 'true').lower() == 'true'
+        
+        categories = [cat.strip() for cat in categories_param.split(',')]
+        
+        if len(region) != 2:
+            return jsonify({'error': 'Invalid region code'}), 400
+        
+        # Run async function
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         
         try:
-            # Initialize service
-            service = NewReleasesService(
+            service = UpcomingContentService(
                 tmdb_api_key=TMDB_API_KEY,
-                cache_backend=cache
+                cache_backend=cache,
+                enable_analytics=include_analytics
             )
             
-            # Get new releases
             results = loop.run_until_complete(
-                service.get_new_releases(
+                service.get_upcoming_releases(
                     region=region.upper(),
                     timezone_name=timezone_name,
                     categories=categories,
-                    use_cache=use_cache
+                    use_cache=use_cache,
+                    include_analytics=include_analytics
                 )
             )
             
-            # Clean up
             loop.run_until_complete(service.close())
             
-            # Format response (same as async version)
-            response = {
+            return jsonify({
                 'success': True,
-                'data': {
-                    'movies': [
-                        {
-                            'id': r.id,
-                            'title': r.title,
-                            'original_title': r.original_title,
-                            'release_date': r.release_date.isoformat(),
-                            'languages': r.languages,
-                            'genres': r.genres,
-                            'popularity': r.popularity,
-                            'vote_average': r.vote_average,
-                            'vote_count': r.vote_count,
-                            'poster_url': f"https://image.tmdb.org/t/p/w500{r.poster_path}" if r.poster_path and not r.poster_path.startswith('http') else r.poster_path,
-                            'backdrop_url': f"https://image.tmdb.org/t/p/w1280{r.backdrop_path}" if r.backdrop_path and not r.backdrop_path.startswith('http') else r.backdrop_path,
-                            'overview': r.overview,
-                            'language_priority': r.language_priority
-                        }
-                        for r in results.get('movies', [])[:50]
-                    ],
-                    'tv_series': [
-                        {
-                            'id': r.id,
-                            'title': r.title,
-                            'original_title': r.original_title,
-                            'first_air_date': r.release_date.isoformat(),
-                            'languages': r.languages,
-                            'genres': r.genres,
-                            'popularity': r.popularity,
-                            'vote_average': r.vote_average,
-                            'vote_count': r.vote_count,
-                            'poster_url': f"https://image.tmdb.org/t/p/w500{r.poster_path}" if r.poster_path and not r.poster_path.startswith('http') else r.poster_path,
-                            'backdrop_url': f"https://image.tmdb.org/t/p/w1280{r.backdrop_path}" if r.backdrop_path and not r.backdrop_path.startswith('http') else r.backdrop_path,
-                            'overview': r.overview,
-                            'language_priority': r.language_priority
-                        }
-                        for r in results.get('tv_series', [])[:50]
-                    ],
-                    'anime': [
-                        {
-                            'id': r.id,
-                            'title': r.title,
-                            'original_title': r.original_title,
-                            'start_date': r.release_date.isoformat(),
-                            'languages': r.languages,
-                            'genres': r.genres,
-                            'popularity': r.popularity,
-                            'score': r.vote_average,
-                            'favorites': r.vote_count,
-                            'poster_url': r.poster_path,
-                            'banner_url': r.backdrop_path,
-                            'synopsis': r.overview
-                        }
-                        for r in results.get('anime', [])[:50]
-                    ]
-                },
-                'metadata': results.get('metadata', {}),
-                'counts': {
-                    'movies': len(results.get('movies', [])),
-                    'tv_series': len(results.get('tv_series', [])),
-                    'anime': len(results.get('anime', []))
-                }
-            }
-            
-            return jsonify(response), 200
+                'data': results,
+                'telugu_priority': True
+            }), 200
             
         finally:
             loop.close()
     
     except Exception as e:
-        logger.error(f"New releases sync error: {e}")
+        logger.error(f"Upcoming sync error: {e}")
         return jsonify({
             'success': False,
-            'error': str(e),
-            'message': 'Failed to fetch new releases'
+            'error': str(e)
         }), 500
 
 @app.route('/api/recommendations/critics-choice', methods=['GET'])
