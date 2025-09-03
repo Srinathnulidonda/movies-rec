@@ -84,49 +84,36 @@ Return the complete best version of search.py that defines search functions that
 
 
 
+You are a senior backend engineer. Implement the “new-releases” feature for my backend using Python. Modify backend/app.py and create backend/services/new_releases.py to provide a production-grade, region- and timezone-aware endpoint that returns the latest releases for Movies, TV/Series, and Anime, following the rules below.
+Context and constraints
+•	Language priority (strict order): ['telugu', 'english', 'hindi', 'malayalam', 'kannada', 'tamil']
+•	Use these ISO-639-1 codes: telugu=te, english=en, hindi=hi, malayalam=ml, kannada=kn, tamil=ta
+•	Categories:
+•	Movies: release_date in current month, then remaining 2 months
+•	TV/Series: first_air_date in current month, then remaining 2 months
+•	Anime: airing_start/first_air_date in current month, then remaining 2 months
+•	Rules:
+•	Limit to current year only
+•	Region-aware release dates
+•	Sort by date (newest first), then by popularity/vote_count; then apply language priority as a tiebreaker
+•	Refresh at least daily (prefer hourly)
+•	Apply the language priority ordering strictly
+•	Timezone: user’s timezone aware (use tz name, not just offset)
+•	Region: user’s region aware (ISO 3166-1 alpha-2, e.g., IN, US)
+•	If repository/framework detection is ambiguous, default to FastAPI, httpx (async), and Redis for caching. Write framework-agnostic core logic in services and a thin integration layer in app.py.
+Data sources (default choices if not otherwise present in repo)
+•	Movies and TV: TMDb API
+•	Use Discover endpoints with region-aware filters
+•	Movies: /discover/movie with params
+•	region={REGION}, primary_release_year={YEAR}, primary_release_date.gte, primary_release_date.lte
+•	with_release_type=2|3|4|5 (theatrical, digital, physical, TV)
+•	TV: /discover/tv with params
+•	first_air_date_year={YEAR}, first_air_date.gte, first_air_date.lte
+•	watch_region={REGION} (influences availability), but expect first_air_date to be global
+•	Use popularity and vote_count fields for secondary sorting
+•	Anime: AniList GraphQL
+•	Filter Media by startDate year==current year
+•	Select TV, TV_SHORT, ONA, OVA, and MOVIE formats
+•	Filter items whose startDate or nextAiringEpisode.airingAt date falls within each target month range (see algorithm)
+•	Use popularity and favourites/averageScore as sorting tie-breakers
 
-
-  Based on the above backend/app.py Improve my below backend/algorithums.py to fetch and serve released movies, TV shows (series), and anime of the current year with accurate, real-time results from trusted sources. Add the “new releases of this month” category and enforce strict language prioritization.
-
-
-  Language priority (strict order):
-  priority_languages = ['telugu', 'english', 'hindi', 'malayalam', 'kannada', 'tamil']
-
-  Categories to implement:
-  0) new_releases_this_month → Fetch and return the latest releases that premiered in the current calendar month (user’s timezone and region aware). Include:
-  - Movies: release_date in current month
-  - TV/Series: first_air_date in current month
-  - Anime: airing_start/first_air_date in current month
-  Rules: limit to current year, region-aware release dates, sort by date (newest first), then by popularity/vote_count; refresh at least daily (prefer hourly); apply language priority ordering.
-
-  1) trending_tv_shows → Fetch and return currently trending TV shows (limit to titles released/premiered in the current year). Apply language priority.
-
-  2) trending_anime → Fetch and return currently trending anime (current-year only). Apply language priority.
-
-  3) popular_nearby → Fetch popular content based on the user’s region/location (geo/region aware, current-year only). Apply language priority.
-
-  4) top_10_today → Daily Top 10 across all categories (movies, TV, anime). Auto-refresh every day at 00:00 user-local time. Prefer current-year titles; if fewer than 10, backfill from previous year but keep current-year first. Apply language priority.
-
-  5) critics_choice → Top critically acclaimed movies, TV shows, and anime of the year. Aggregate and rank using trusted sources (e.g., TMDB ratings + vote_count threshold, IMDb ratings/votes, MyAnimeList scores/reviews). Update daily or weekly. Apply language priority.
-
-  Core requirements (apply to all categories):
-  - Accuracy & freshness:
-    - Use trusted sources (TMDB, IMDb/OMDb, MyAnimeList/Jikan). Prefer official/verified endpoints.
-    - Implement caching with short TTLs (e.g., 1–6 hours), staggered refresh, and retry/backoff.
-    - Ensure daily resets where specified (e.g., top_10_today).
-  - Current-year filter:
-    - Only include titles whose primary release/first_air_date is within the current year (except backfill where explicitly noted).
-  - Region & timezone:
-    - Respect user region (e.g., TMDB “region”/“watch_region”). Use the user’s timezone for month/day boundaries.
-  - Language prioritization:
-    - Always present results grouped/sorted by priority_languages order first. If results are insufficient in those languages, backfill with other languages after the prioritized set.
-  - Deduplication & merging:
-    - Merge the same title across sources (TMDB/IMDb/MAL), prefer the most complete metadata, and deduplicate by external IDs.
-  - Sorting (after language priority):
-    - Primary: category-specific signal (e.g., release_date desc for new_releases_this_month; trend/popularity for trending; composite critic score for critics_choice).
-    - Tie-breakers: vote_count (higher first), then recency.
-  - Minimum metadata to return per item:
-    - id(s) (TMDB, IMDb, MAL), type (movie/tv/anime), title, original_title, original_language, languages, overview, poster/backdrop, genres, release_date/first_air_date, region(s), popularity, ratings (TMDB vote_average/vote_count, IMDb rating/votes, MAL score/users), and source attribution.
-  - Error handling:
-    - Fail gracefully with partial results if one provider is down. Log and continue.
-  TMDB + Jikan integration, month-boundary filters, caching and schedulers
