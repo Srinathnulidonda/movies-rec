@@ -20,4 +20,3 @@ gunicorn
 python-dotenv
 python-dateutil
 networkx 
-calendar
