@@ -1272,126 +1272,61 @@ def get_trending():
         return jsonify({'error': 'Failed to get trending recommendations'}), 500
 
 @app.route('/api/recommendations/new-releases', methods=['GET'])
-@cache.cached(timeout=1800, key_prefix=make_cache_key)  # 30 minutes cache
+@cache.cached(timeout=300, key_prefix=make_cache_key)
 def get_new_releases():
-    """Get new releases for current month with strict language priority"""
+    """Enhanced new releases with Telugu priority using algorithms"""
     try:
-        content_type = request.args.get('type', 'all')  # movie, tv, anime, or all
+        content_type = request.args.get('type', 'movie')
         limit = int(request.args.get('limit', 20))
-        region = request.args.get('region', 'IN')
-        timezone = request.args.get('timezone', 'UTC')
         
-        # Aggregate content from multiple sources
-        all_content = []
+        # Aggregate new releases from multiple sources
+        all_new_releases = []
         
-        # Get current month and year
-        current_date = datetime.now()
-        current_year = current_date.year
-        current_month = current_date.month
-        
-        # Priority languages in strict order
+        # Priority languages in order
         priority_languages = ['telugu', 'english', 'hindi', 'malayalam', 'kannada', 'tamil']
         
-        # Fetch content for each priority language
         for language in priority_languages:
             lang_code = LANGUAGE_PRIORITY['codes'].get(language)
             
             try:
-                # Get movies for this language
-                if content_type in ['movie', 'all']:
-                    if language == 'english':
-                        # Get Hollywood new releases
-                        releases = TMDBService.get_new_releases('movie', region=region)
-                    else:
-                        # Get regional language releases
-                        releases = TMDBService.get_language_specific(lang_code, 'movie')
-                    
-                    if releases:
-                        for item in releases.get('results', [])[:15]:
-                            content = ContentService.save_content_from_tmdb(item, 'movie')
-                            if content and content.release_date:
-                                # Check if it's from current month and year
-                                if (content.release_date.year == current_year and 
-                                    content.release_date.month == current_month):
-                                    all_content.append(content)
+                # Get from TMDB
+                if language == 'english':
+                    releases = TMDBService.get_new_releases(content_type)
+                else:
+                    releases = TMDBService.get_language_specific(lang_code, content_type)
                 
-                # Get TV shows for this language
-                if content_type in ['tv', 'all']:
-                    if language == 'english':
-                        releases = TMDBService.get_new_releases('tv', region=region)
-                    else:
-                        releases = TMDBService.get_language_specific(lang_code, 'tv')
-                    
-                    if releases:
-                        for item in releases.get('results', [])[:10]:
-                            content = ContentService.save_content_from_tmdb(item, 'tv')
-                            if content and content.release_date:
-                                # Check if it's from current month and year
-                                if (content.release_date.year == current_year and 
-                                    content.release_date.month == current_month):
-                                    all_content.append(content)
-                
+                if releases:
+                    for item in releases.get('results', [])[:10]:
+                        content = ContentService.save_content_from_tmdb(item, content_type)
+                        if content and content.release_date:
+                            days_old = (datetime.now().date() - content.release_date).days
+                            if days_old <= 60:
+                                all_new_releases.append(content)
             except Exception as e:
                 logger.error(f"Error fetching {language} releases: {e}")
         
-        # Get anime if requested
-        if content_type in ['anime', 'all']:
-            try:
-                # Get current season anime
-                top_anime = JikanService.get_top_anime()
-                if top_anime:
-                    for anime in top_anime.get('data', [])[:10]:
-                        content = ContentService.save_anime_content(anime)
-                        if content and content.release_date:
-                            # Check if it's from current month and year
-                            if (content.release_date.year == current_year and 
-                                content.release_date.month == current_month):
-                                all_content.append(content)
-            except Exception as e:
-                logger.error(f"Error fetching anime: {e}")
-        
-        # Also get from database - current month releases
-        start_of_month = datetime(current_year, current_month, 1)
-        end_of_month = datetime(current_year, current_month + 1, 1) if current_month < 12 else datetime(current_year + 1, 1, 1)
-        
-        db_query = Content.query.filter(
-            Content.release_date >= start_of_month.date(),
-            Content.release_date < end_of_month.date()
-        )
-        
-        if content_type != 'all':
-            db_query = db_query.filter(Content.content_type == content_type)
-        
-        db_releases = db_query.all()
-        all_content.extend(db_releases)
+        # Get from database
+        db_new_releases = Content.query.filter(
+            Content.is_new_release == True,
+            Content.content_type == content_type
+        ).limit(50).all()
+        all_new_releases.extend(db_new_releases)
         
         # Remove duplicates
         seen_ids = set()
-        unique_content = []
-        for content in all_content:
+        unique_releases = []
+        for content in all_new_releases:
             if content.id not in seen_ids:
                 seen_ids.add(content.id)
-                unique_content.append(content)
+                unique_releases.append(content)
         
-        # Use the monthly release manager for strict language prioritization
-        monthly_releases = recommendation_orchestrator.get_new_releases_this_month(
-            unique_content,
-            region=region,
-            timezone=timezone,
-            limit=limit * 3  # Get more to ensure we have enough after filtering
+        # Apply algorithms
+        recommendations = recommendation_orchestrator.get_new_releases_with_algorithms(
+            unique_releases,
+            limit=limit
         )
         
-        # Filter by content type if specified
-        if content_type != 'all':
-            monthly_releases = [
-                release for release in monthly_releases 
-                if release['content_type'] == content_type
-            ]
-        
-        # Limit to requested amount
-        monthly_releases = monthly_releases[:limit]
-        
-        # Group by language for detailed response
+        # Group by language for response
         language_groups = {
             'telugu': [],
             'english': [],
@@ -1402,70 +1337,80 @@ def get_new_releases():
             'others': []
         }
         
-        for release in monthly_releases:
-            primary_language = release.get('primary_language', 'other')
-            if primary_language in language_groups:
-                language_groups[primary_language].append(release)
-            else:
-                language_groups['others'].append(release)
-        
-        # Calculate statistics
-        total_releases = len(monthly_releases)
-        language_distribution = {}
-        for lang, items in language_groups.items():
-            if items:
-                language_distribution[lang] = {
-                    'count': len(items),
-                    'percentage': round((len(items) / total_releases * 100), 1) if total_releases > 0 else 0
-                }
+        for rec in recommendations:
+            languages = rec.get('languages', [])
+            grouped = False
+            
+            # Categorize by language
+            for lang in languages:
+                lang_lower = lang.lower() if isinstance(lang, str) else ''
+                if 'telugu' in lang_lower or lang_lower == 'te':
+                    language_groups['telugu'].append(rec)
+                    grouped = True
+                    break
+                elif 'english' in lang_lower or lang_lower == 'en':
+                    language_groups['english'].append(rec)
+                    grouped = True
+                    break
+                elif 'hindi' in lang_lower or lang_lower == 'hi':
+                    language_groups['hindi'].append(rec)
+                    grouped = True
+                    break
+                elif 'malayalam' in lang_lower or lang_lower == 'ml':
+                    language_groups['malayalam'].append(rec)
+                    grouped = True
+                    break
+                elif 'kannada' in lang_lower or lang_lower == 'kn':
+                    language_groups['kannada'].append(rec)
+                    grouped = True
+                    break
+                elif 'tamil' in lang_lower or lang_lower == 'ta':
+                    language_groups['tamil'].append(rec)
+                    grouped = True
+                    break
+            
+            if not grouped:
+                language_groups['others'].append(rec)
         
         response = {
-            'recommendations': monthly_releases,
+            'recommendations': recommendations,
             'grouped_by_language': language_groups,
             'metadata': {
-                'month': current_date.strftime('%B %Y'),
-                'total_releases': total_releases,
-                'total_analyzed': len(unique_content),
-                'content_type_filter': content_type,
-                'region': region,
-                'timezone': timezone,
-                'language_priority': priority_languages,
-                'language_distribution': language_distribution,
-                'algorithm': 'monthly_release_manager_with_strict_priority',
-                'features': {
-                    'strict_language_ordering': True,
-                    'current_month_only': True,
-                    'multi_source_aggregation': True,
-                    'freshness_scoring': True,
-                    'popularity_weighting': True
+                'total_analyzed': len(unique_releases),
+                'language_priority': {
+                    'main': 'telugu',
+                    'secondary': ['english', 'hindi'],
+                    'tertiary': ['malayalam', 'kannada', 'tamil']
                 },
+                'algorithm': 'multi_level_ranking_with_telugu_priority',
                 'scoring_weights': {
-                    'language_priority': 0.35,
-                    'release_date_freshness': 0.30,
-                    'popularity': 0.20,
-                    'quality_rating': 0.15
+                    'telugu_content': {
+                        'freshness': 0.2,
+                        'popularity': 0.2,
+                        'language': 0.4,
+                        'quality': 0.2
+                    },
+                    'other_content': {
+                        'freshness': 0.3,
+                        'popularity': 0.3,
+                        'language': 0.2,
+                        'quality': 0.2
+                    }
                 },
                 'timestamp': datetime.utcnow().isoformat()
             }
         }
         
-        # Add quality metrics
-        if monthly_releases:
-            # Calculate average rating
-            ratings = [r['rating'] for r in monthly_releases if r.get('rating')]
-            avg_rating = round(sum(ratings) / len(ratings), 2) if ratings else 0
+        # Add evaluation metrics
+        if recommendations:
+            content_ids = [r['id'] for r in recommendations]
+            contents = Content.query.filter(Content.id.in_(content_ids)).all()
             
-            # Calculate telugu content dominance
-            telugu_count = len(language_groups['telugu'])
-            telugu_percentage = round((telugu_count / total_releases * 100), 1) if total_releases > 0 else 0
-            
-            response['metadata']['quality_metrics'] = {
-                'average_rating': avg_rating,
-                'telugu_content_percentage': telugu_percentage,
-                'priority_language_coverage': round(
-                    (len(language_groups['telugu']) + len(language_groups['english']) + len(language_groups['hindi'])) / total_releases * 100, 1
-                ) if total_releases > 0 else 0,
-                'language_diversity_index': len([lang for lang, items in language_groups.items() if items])
+            response['metadata']['metrics'] = {
+                'diversity_score': round(EvaluationMetrics.diversity_score(contents), 3),
+                'telugu_content_percentage': round(
+                    len(language_groups['telugu']) / len(recommendations) * 100, 1
+                ) if recommendations else 0
             }
         
         db.session.commit()
@@ -1473,7 +1418,6 @@ def get_new_releases():
         
     except Exception as e:
         logger.error(f"New releases error: {e}")
-        logger.exception(e)
         return jsonify({'error': 'Failed to get new releases'}), 500
 
 @app.route('/api/recommendations/critics-choice', methods=['GET'])

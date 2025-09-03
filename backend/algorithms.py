@@ -19,28 +19,11 @@ from typing import List, Dict, Any, Tuple, Optional, Set
 from difflib import SequenceMatcher
 import networkx as nx
 import pytz
-import calendar
 
 logger = logging.getLogger(__name__)
 
-# Language Priority Configuration - STRICT ORDER ENFORCED
+# Language Priority Configuration - Updated with exact order
 PRIORITY_LANGUAGES = ['telugu', 'english', 'hindi', 'malayalam', 'kannada', 'tamil']
-
-# Language code mappings
-LANGUAGE_CODE_MAP = {
-    'telugu': ['te', 'tel', 'telugu'],
-    'english': ['en', 'eng', 'english'],
-    'hindi': ['hi', 'hin', 'hindi'],
-    'malayalam': ['ml', 'mal', 'malayalam'],
-    'kannada': ['kn', 'kan', 'kannada'],
-    'tamil': ['ta', 'tam', 'tamil']
-}
-
-# Reverse mapping for quick lookups
-LANGUAGE_REVERSE_MAP = {}
-for lang, codes in LANGUAGE_CODE_MAP.items():
-    for code in codes:
-        LANGUAGE_REVERSE_MAP[code.lower()] = lang
 
 LANGUAGE_WEIGHTS = {
     'telugu': 1.0,
@@ -83,183 +66,6 @@ ANIME_GENRES = {
     'josei': ['Romance', 'Drama', 'Slice of Life', 'Josei'],
     'kodomomuke': ['Kids', 'Family', 'Adventure', 'Comedy']
 }
-
-class MonthlyReleaseManager:
-    """Specialized manager for handling monthly new releases with strict language prioritization"""
-    
-    def __init__(self):
-        self._cache = {}
-        self._cache_timestamp = None
-        self._cache_duration = 3600  # 1 hour in seconds
-        
-    def get_current_month_range(self, timezone: str = 'UTC') -> Tuple[datetime, datetime]:
-        """Get the start and end datetime for the current month in specified timezone"""
-        try:
-            tz = pytz.timezone(timezone)
-        except:
-            tz = pytz.UTC
-            
-        now = datetime.now(tz)
-        
-        # Get first day of current month
-        first_day = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        
-        # Get last day of current month
-        last_day_num = calendar.monthrange(now.year, now.month)[1]
-        last_day = now.replace(day=last_day_num, hour=23, minute=59, second=59, microsecond=999999)
-        
-        # Convert to UTC for database queries
-        first_day_utc = first_day.astimezone(pytz.UTC).replace(tzinfo=None)
-        last_day_utc = last_day.astimezone(pytz.UTC).replace(tzinfo=None)
-        
-        return first_day_utc, last_day_utc
-    
-    def normalize_language(self, language: str) -> Optional[str]:
-        """Normalize language string to priority language name"""
-        if not language:
-            return None
-            
-        lang_lower = language.lower().strip()
-        
-        # Direct match
-        if lang_lower in PRIORITY_LANGUAGES:
-            return lang_lower
-            
-        # Check against language codes
-        if lang_lower in LANGUAGE_REVERSE_MAP:
-            return LANGUAGE_REVERSE_MAP[lang_lower]
-            
-        # Partial matching for complex language strings
-        for priority_lang in PRIORITY_LANGUAGES:
-            if priority_lang in lang_lower:
-                return priority_lang
-                
-        # Check language codes in complex strings
-        for code, lang in LANGUAGE_REVERSE_MAP.items():
-            if code in lang_lower:
-                return lang
-                
-        return None
-    
-    def categorize_by_language(self, content: Any) -> str:
-        """Categorize content by its primary language"""
-        languages = json.loads(content.languages or '[]')
-        
-        if not languages:
-            return 'other'
-            
-        # Check first/primary language
-        primary_lang = self.normalize_language(languages[0])
-        if primary_lang in PRIORITY_LANGUAGES:
-            return primary_lang
-            
-        # Check any language in the list
-        for lang in languages:
-            normalized = self.normalize_language(lang)
-            if normalized in PRIORITY_LANGUAGES:
-                return normalized
-                
-        return 'other'
-    
-    def get_language_priority_index(self, language: str) -> int:
-        """Get the priority index for a language (lower is higher priority)"""
-        try:
-            return PRIORITY_LANGUAGES.index(language)
-        except ValueError:
-            return len(PRIORITY_LANGUAGES)  # Lowest priority for non-priority languages
-    
-    def calculate_monthly_release_score(self, content: Any, days_since_release: int, 
-                                       days_in_month: int, language_category: str) -> float:
-        """Calculate comprehensive score for monthly releases"""
-        
-        # 1. Freshness Score (newer releases get higher scores)
-        freshness_score = 1.0 - (days_since_release / days_in_month) if days_in_month > 0 else 0.5
-        freshness_score = max(0, min(1, freshness_score))  # Clamp between 0 and 1
-        
-        # 2. Popularity Score
-        popularity = content.popularity or 0
-        vote_count = content.vote_count or 0
-        rating = content.rating or 0
-        
-        # Normalize popularity (assuming max popularity around 1000)
-        normalized_popularity = min(popularity / 1000, 1.0)
-        
-        # Normalize vote count (assuming max around 10000)
-        normalized_votes = min(vote_count / 10000, 1.0)
-        
-        # Combined popularity metric
-        popularity_score = (normalized_popularity * 0.6) + (normalized_votes * 0.4)
-        
-        # 3. Language Priority Score
-        language_priority = self.get_language_priority_index(language_category)
-        # Convert to score (0 is highest priority -> score 1.0)
-        language_score = 1.0 - (language_priority * 0.15) if language_priority < len(PRIORITY_LANGUAGES) else 0.1
-        
-        # 4. Quality Score
-        quality_score = (rating / 10) if rating else 0.5
-        
-        # 5. Content Type Bonus
-        content_type_bonus = 1.0
-        if content.content_type == 'movie':
-            content_type_bonus = 1.1  # Slight bonus for movies
-        elif content.content_type == 'tv':
-            content_type_bonus = 1.05  # Small bonus for TV shows
-        
-        # Weighted combination
-        final_score = (
-            (freshness_score * 0.30) +
-            (popularity_score * 0.20) +
-            (language_score * 0.35) +  # Highest weight for language priority
-            (quality_score * 0.15)
-        ) * content_type_bonus
-        
-        return final_score
-    
-    def should_refresh_cache(self) -> bool:
-        """Check if cache should be refreshed"""
-        if not self._cache_timestamp:
-            return True
-            
-        elapsed = (datetime.now() - self._cache_timestamp).total_seconds()
-        return elapsed >= self._cache_duration
-    
-    def filter_current_month_releases(self, content_list: List[Any], 
-                                     timezone: str = 'UTC') -> List[Any]:
-        """Filter content to only include current month releases"""
-        first_day, last_day = self.get_current_month_range(timezone)
-        current_year = datetime.now().year
-        
-        monthly_releases = []
-        
-        for content in content_list:
-            # Skip if not from current year
-            if content.release_date and content.release_date.year != current_year:
-                continue
-                
-            # Check release date based on content type
-            release_date = None
-            
-            if content.content_type == 'movie' and content.release_date:
-                release_date = content.release_date
-            elif content.content_type == 'tv' and content.release_date:
-                # For TV shows, use first_air_date (stored as release_date)
-                release_date = content.release_date
-            elif content.content_type == 'anime' and content.release_date:
-                # For anime, use airing_start/first_air_date (stored as release_date)
-                release_date = content.release_date
-                
-            # Check if release date is in current month
-            if release_date:
-                # Convert date to datetime for comparison
-                if hasattr(release_date, 'date'):
-                    release_datetime = release_date
-                else:
-                    release_datetime = datetime.combine(release_date, datetime.min.time())
-                    
-                if first_day.date() <= release_datetime.date() <= last_day.date():
-                    monthly_releases.append(content)
-                    
-        return monthly_releases
 
 class ContentBasedFiltering:
     """Content-Based Filtering Strategy with Feature Extraction and Similarity Computation"""
@@ -650,7 +456,7 @@ class PopularityRanking:
         return score
 
 class LanguagePriorityFilter:
-    """Enhanced Language Priority Filtering System with Strict Ordering"""
+    """Enhanced Language Priority Filtering System"""
     
     @staticmethod
     def get_language_score(languages: List[str], preferred_languages: List[str] = None) -> float:
@@ -666,7 +472,7 @@ class LanguagePriorityFilter:
             
             # Check against priority languages
             for idx, priority_lang in enumerate(PRIORITY_LANGUAGES):
-                if priority_lang in lang_lower or lang_lower in LANGUAGE_CODE_MAP.get(priority_lang, []):
+                if priority_lang in lang_lower or lang_lower == LANGUAGE_WEIGHTS.get(priority_lang, ''):
                     # Score based on position in priority list (earlier = higher score)
                     position_score = 1.0 - (idx * 0.15)  # 0.15 reduction per position
                     max_score = max(max_score, position_score)
@@ -706,8 +512,8 @@ class LanguagePriorityFilter:
             categorized = False
             # Categorize content by priority languages
             for priority_lang in PRIORITY_LANGUAGES:
-                lang_codes = LANGUAGE_CODE_MAP.get(priority_lang, [])
-                if any(priority_lang in lang or lang in lang_codes for lang in languages_lower):
+                lang_code = LANGUAGE_WEIGHTS.get(priority_lang, '')
+                if any(priority_lang in lang or lang == lang_code for lang in languages_lower):
                     priority_groups[priority_lang].append(content)
                     categorized = True
                     break
@@ -720,39 +526,6 @@ class LanguagePriorityFilter:
         for lang in PRIORITY_LANGUAGES:
             sorted_content.extend(priority_groups[lang])
         sorted_content.extend(priority_groups['others'])
-        
-        return sorted_content
-    
-    @staticmethod
-    def strict_language_sort(content_list: List[Any]) -> List[Any]:
-        """Apply strict language sorting based on PRIORITY_LANGUAGES order"""
-        manager = MonthlyReleaseManager()
-        
-        # Categorize content by language
-        language_groups = {lang: [] for lang in PRIORITY_LANGUAGES}
-        language_groups['other'] = []
-        
-        for content in content_list:
-            language_category = manager.categorize_by_language(content)
-            if language_category in language_groups:
-                language_groups[language_category].append(content)
-            else:
-                language_groups['other'].append(content)
-        
-        # Sort within each language group by release date (newest first), then by popularity
-        for lang in language_groups:
-            language_groups[lang].sort(
-                key=lambda x: (
-                    -(x.release_date.toordinal() if x.release_date else 0),  # Newest first
-                    -(x.popularity or 0)  # Then by popularity
-                )
-            )
-        
-        # Combine in strict priority order
-        sorted_content = []
-        for lang in PRIORITY_LANGUAGES:
-            sorted_content.extend(language_groups[lang])
-        sorted_content.extend(language_groups['other'])
         
         return sorted_content
 
@@ -1842,179 +1615,19 @@ class UltraPowerfulSimilarityEngine:
         return diverse_results
 
 class RecommendationOrchestrator:
-    """Enhanced orchestrator with new_releases_this_month category and strict language priority"""
+    """Enhanced orchestrator with proper category handling and daily refresh"""
     
     def __init__(self):
         self.content_based = ContentBasedFiltering()
         self.collaborative = CollaborativeFiltering()
         self.hybrid = HybridRecommendationEngine()
         self.ultra_similarity_engine = UltraPowerfulSimilarityEngine()
-        self.monthly_manager = MonthlyReleaseManager()
         self._last_refresh_date = None
         self._cached_top_10 = None
-        self._monthly_cache = {}
-        self._monthly_cache_timestamp = None
-    
-    def get_new_releases_this_month(self, content_list: List[Any], 
-                                   region: str = 'IN', 
-                                   timezone: str = 'UTC',
-                                   limit: int = 100) -> List[Dict]:
-        """
-        Get new releases from the current calendar month with strict language prioritization.
-        
-        Args:
-            content_list: Pool of all content
-            region: User's region code (e.g., 'IN', 'US')
-            timezone: User's timezone (e.g., 'Asia/Kolkata', 'UTC')
-            limit: Maximum number of results (default 100)
-            
-        Returns:
-            List of new releases sorted by language priority, then by date and popularity
-        """
-        
-        # Check cache
-        cache_key = f"monthly_{region}_{timezone}_{datetime.now().strftime('%Y-%m')}"
-        if cache_key in self._monthly_cache and not self.monthly_manager.should_refresh_cache():
-            logger.info(f"Returning cached monthly releases for {cache_key}")
-            return self._monthly_cache[cache_key][:limit]
-        
-        logger.info(f"Generating fresh monthly releases for {region} in {timezone}")
-        
-        # Step 1: Filter for current month releases
-        monthly_releases = self.monthly_manager.filter_current_month_releases(content_list, timezone)
-        
-        if not monthly_releases:
-            logger.warning("No releases found for current month")
-            return []
-        
-        logger.info(f"Found {len(monthly_releases)} releases in current month")
-        
-        # Step 2: Calculate scores for each release
-        scored_releases = []
-        current_date = datetime.now()
-        days_in_month = calendar.monthrange(current_date.year, current_date.month)[1]
-        
-        for content in monthly_releases:
-            # Calculate days since release
-            if content.release_date:
-                if hasattr(content.release_date, 'date'):
-                    release_date = content.release_date.date()
-                else:
-                    release_date = content.release_date
-                    
-                days_since_release = (current_date.date() - release_date).days
-            else:
-                days_since_release = days_in_month  # Assume oldest if no date
-            
-            # Get language category
-            language_category = self.monthly_manager.categorize_by_language(content)
-            
-            # Calculate comprehensive score
-            score = self.monthly_manager.calculate_monthly_release_score(
-                content, 
-                days_since_release,
-                days_in_month,
-                language_category
-            )
-            
-            scored_releases.append({
-                'content': content,
-                'score': score,
-                'language_category': language_category,
-                'days_since_release': days_since_release,
-                'language_priority': self.monthly_manager.get_language_priority_index(language_category)
-            })
-        
-        # Step 3: Sort with STRICT language priority
-        # Primary sort: Language priority (lower index = higher priority)
-        # Secondary sort: Release date (newest first)
-        # Tertiary sort: Score (higher score first)
-        scored_releases.sort(
-            key=lambda x: (
-                x['language_priority'],  # Strict language priority
-                -x['content'].release_date.toordinal() if x['content'].release_date else 0,  # Newest first
-                -x['score']  # Higher score
-            )
-        )
-        
-        # Step 4: Format results
-        formatted_results = []
-        language_counts = defaultdict(int)
-        
-        for item in scored_releases[:limit]:
-            content = item['content']
-            
-            # Track language distribution
-            language_counts[item['language_category']] += 1
-            
-            # Prepare formatted result
-            formatted_result = {
-                'id': content.id,
-                'title': content.title,
-                'content_type': content.content_type,
-                'genres': json.loads(content.genres or '[]'),
-                'languages': json.loads(content.languages or '[]'),
-                'primary_language': item['language_category'],
-                'language_priority_rank': item['language_priority'] + 1,  # 1-based for display
-                'rating': content.rating,
-                'vote_count': content.vote_count,
-                'popularity': content.popularity,
-                'release_date': content.release_date.isoformat() if content.release_date else None,
-                'days_since_release': item['days_since_release'],
-                'poster_path': self._format_poster_path(content.poster_path),
-                'backdrop_path': self._format_backdrop_path(content.backdrop_path),
-                'overview': content.overview[:200] + '...' if content.overview and len(content.overview) > 200 else content.overview,
-                'youtube_trailer_id': content.youtube_trailer_id,
-                'is_trending': content.is_trending,
-                'is_new_release': True,  # All are new releases by definition
-                'is_critics_choice': content.is_critics_choice,
-                'algorithm_score': round(item['score'], 3),
-                'metadata': {
-                    'month': datetime.now().strftime('%B %Y'),
-                    'region': region,
-                    'timezone': timezone,
-                    'language_category': item['language_category']
-                }
-            }
-            
-            formatted_results.append(formatted_result)
-        
-        # Step 5: Add summary statistics
-        summary = {
-            'total_releases': len(monthly_releases),
-            'returned_count': len(formatted_results),
-            'language_distribution': dict(language_counts),
-            'content_type_distribution': self._get_content_type_distribution(formatted_results),
-            'average_rating': self._calculate_average_rating(formatted_results),
-            'cache_timestamp': datetime.now().isoformat(),
-            'cache_duration_hours': self.monthly_manager._cache_duration / 3600
-        }
-        
-        # Prepare final response
-        response = {
-            'releases': formatted_results,
-            'summary': summary,
-            'filters_applied': {
-                'month': datetime.now().strftime('%Y-%m'),
-                'year': datetime.now().year,
-                'region': region,
-                'timezone': timezone,
-                'language_priority': PRIORITY_LANGUAGES,
-                'limit': limit
-            }
-        }
-        
-        # Cache the results
-        self._monthly_cache[cache_key] = formatted_results
-        self.monthly_manager._cache_timestamp = datetime.now()
-        
-        logger.info(f"Generated {len(formatted_results)} monthly releases with language distribution: {dict(language_counts)}")
-        
-        return formatted_results
     
     def get_trending_with_algorithms(self, content_list: List[Any], limit: int = 20, 
                                     region: str = None, apply_language_priority: bool = True) -> Dict[str, List[Dict]]:
-        """Get trending content with proper categorization including new_releases_this_month"""
+        """Get trending content with proper categorization and daily refresh"""
         
         # Filter for current year content
         current_year = datetime.now().year
@@ -2037,8 +1650,7 @@ class RecommendationOrchestrator:
             'trending_anime': [],
             'popular_nearby': [],
             'top_10_today': [],
-            'critics_choice': [],
-            'new_releases_this_month': []  # NEW CATEGORY
+            'critics_choice': []
         }
         
         # Separate content by type
@@ -2046,16 +1658,7 @@ class RecommendationOrchestrator:
         tv_shows = [c for c in current_year_content if c.content_type == 'tv']
         anime = [c for c in current_year_content if c.content_type == 'anime']
         
-        # 1. NEW RELEASES THIS MONTH (with strict language priority)
-        monthly_releases = self.get_new_releases_this_month(
-            content_list,
-            region=region or 'IN',
-            timezone='UTC',
-            limit=limit
-        )
-        categories['new_releases_this_month'] = monthly_releases
-        
-        # 2. TRENDING TV SHOWS
+        # 1. TRENDING TV SHOWS
         tv_trending_scores = []
         for content in tv_shows:
             # Multi-level scoring for TV shows
@@ -2080,7 +1683,7 @@ class RecommendationOrchestrator:
         
         categories['trending_tv_shows'] = self._format_recommendations(tv_trending_scores[:limit])
         
-        # 3. TRENDING ANIME
+        # 2. TRENDING ANIME
         anime_trending_scores = []
         for content in anime:
             popularity_score = PopularityRanking.calculate_trending_score(content)
@@ -2097,7 +1700,7 @@ class RecommendationOrchestrator:
         anime_trending_scores.sort(key=lambda x: x[1], reverse=True)
         categories['trending_anime'] = self._format_recommendations(anime_trending_scores[:limit])
         
-        # 4. TRENDING MOVIES
+        # 3. TRENDING MOVIES (for completeness)
         movie_trending_scores = []
         for content in movies:
             popularity_score = PopularityRanking.calculate_trending_score(content)
@@ -2118,7 +1721,7 @@ class RecommendationOrchestrator:
         
         categories['trending_movies'] = self._format_recommendations(movie_trending_scores[:limit])
         
-        # 5. POPULAR NEARBY - Region-specific content
+        # 4. POPULAR NEARBY - Region-specific content
         if region:
             regional_content = self._get_regional_content(current_year_content, region)
             
@@ -2150,10 +1753,10 @@ class RecommendationOrchestrator:
             # Default to Indian regional content
             categories['popular_nearby'] = self._get_default_regional_content(current_year_content, limit)
         
-        # 6. TOP 10 TODAY - Daily refreshing top content
+        # 5. TOP 10 TODAY - Daily refreshing top content across all categories
         categories['top_10_today'] = self._get_daily_top_10(current_year_content)
         
-        # 7. CRITICS CHOICE
+        # 6. CRITICS CHOICE - Top critically acclaimed content of the year (continued)
         critics_scores = []
         for content in current_year_content:
             critics_score = PopularityRanking.calculate_critics_score(content)
@@ -2162,6 +1765,7 @@ class RecommendationOrchestrator:
         
         critics_scores.sort(key=lambda x: x[1], reverse=True)
         
+        # Apply language priority to critics choice
         if apply_language_priority and critics_scores:
             critics_content = [item[0] for item in critics_scores]
             critics_content = LanguagePriorityFilter.filter_by_language_priority(critics_content)
@@ -2171,36 +1775,6 @@ class RecommendationOrchestrator:
         categories['critics_choice'] = self._format_recommendations(critics_scores[:limit])
         
         return categories
-    
-    def _format_poster_path(self, poster_path: str) -> str:
-        """Format poster path to full URL"""
-        if not poster_path:
-            return None
-        if poster_path.startswith('http'):
-            return poster_path
-        return f"https://image.tmdb.org/t/p/w300{poster_path}"
-    
-    def _format_backdrop_path(self, backdrop_path: str) -> str:
-        """Format backdrop path to full URL"""
-        if not backdrop_path:
-            return None
-        if backdrop_path.startswith('http'):
-            return backdrop_path
-        return f"https://image.tmdb.org/t/p/w1280{backdrop_path}"
-    
-    def _get_content_type_distribution(self, releases: List[Dict]) -> Dict[str, int]:
-        """Get distribution of content types"""
-        distribution = defaultdict(int)
-        for release in releases:
-            distribution[release['content_type']] += 1
-        return dict(distribution)
-    
-    def _calculate_average_rating(self, releases: List[Dict]) -> float:
-        """Calculate average rating of releases"""
-        ratings = [r['rating'] for r in releases if r.get('rating')]
-        if not ratings:
-            return 0.0
-        return round(sum(ratings) / len(ratings), 2)
     
     def _get_daily_top_10(self, content_list: List[Any]) -> List[Dict]:
         """Get daily refreshing top 10 content"""
@@ -2409,7 +1983,19 @@ class RecommendationOrchestrator:
     def get_ultra_similar_content(self, base_content_id: int, content_pool: List[Any],
                                  limit: int = 20, strict_mode: bool = True,
                                  min_similarity: float = 0.5) -> List[Dict]:
-        """Get ultra-accurate similar content"""
+        """
+        Get ultra-accurate similar content using the most powerful similarity engine
+        
+        Args:
+            base_content_id: ID of the base content
+            content_pool: Pool of content to search from
+            limit: Maximum number of results
+            strict_mode: Enable strict filtering for 100% accuracy
+            min_similarity: Minimum similarity threshold (0.5 = 50% match)
+        
+        Returns:
+            List of similar content with detailed matching information
+        """
         
         # Find base content
         base_content = next((c for c in content_pool if c.id == base_content_id), None)
@@ -2430,6 +2016,14 @@ class RecommendationOrchestrator:
         for idx, result in enumerate(similar_results):
             content = result['content']
             
+            # Generate detailed match explanation
+            match_explanation = self._generate_detailed_match_explanation(
+                base_content, 
+                content, 
+                result['detail_scores'],
+                result['similarity_score']
+            )
+            
             formatted_result = {
                 'rank': idx + 1,
                 'id': content.id,
@@ -2439,17 +2033,96 @@ class RecommendationOrchestrator:
                 'languages': json.loads(content.languages or '[]'),
                 'rating': content.rating,
                 'release_date': content.release_date.isoformat() if content.release_date else None,
-                'poster_path': self._format_poster_path(content.poster_path),
+                'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
                 'overview': content.overview[:150] + '...' if content.overview else '',
                 'similarity_score': round(result['similarity_score'], 4),
                 'confidence': result['confidence'],
                 'match_type': result['match_type'],
+                'similarity_breakdown': {
+                    'genre': {
+                        'exact': round(result['detail_scores'].get('genre_exact', 0), 3),
+                        'semantic': round(result['detail_scores'].get('genre_semantic', 0), 3)
+                    },
+                    'plot': {
+                        'tfidf': round(result['detail_scores'].get('plot_tfidf', 0), 3),
+                        'semantic': round(result['detail_scores'].get('plot_semantic', 0), 3)
+                    },
+                    'language': round(result['detail_scores'].get('language', 0), 3),
+                    'temporal': round(result['detail_scores'].get('temporal', 0), 3),
+                    'rating_profile': round(result['detail_scores'].get('rating_profile', 0), 3),
+                    'audience': round(result['detail_scores'].get('audience_overlap', 0), 3),
+                    'production': round(result['detail_scores'].get('production', 0), 3),
+                    'keywords': round(result['detail_scores'].get('keywords', 0), 3),
+                    'mood_tone': round(result['detail_scores'].get('mood_tone', 0), 3)
+                },
+                'match_explanation': match_explanation,
                 'youtube_trailer_id': content.youtube_trailer_id
             }
             
             formatted_results.append(formatted_result)
         
         return formatted_results
+    
+    def _generate_detailed_match_explanation(self, base_content: Any, similar_content: Any,
+                                            detail_scores: Dict, overall_score: float) -> Dict:
+        """Generate detailed explanation of why content matches"""
+        
+        explanation = {
+            'primary_reasons': [],
+            'secondary_reasons': [],
+            'match_strength': '',
+            'recommendation_note': ''
+        }
+        
+        # Determine match strength
+        if overall_score > 0.9:
+            explanation['match_strength'] = 'Nearly Identical Match'
+            explanation['recommendation_note'] = 'This is an almost perfect match to your selection'
+        elif overall_score > 0.8:
+            explanation['match_strength'] = 'Excellent Match'
+            explanation['recommendation_note'] = 'Highly recommended based on strong similarities'
+        elif overall_score > 0.7:
+            explanation['match_strength'] = 'Very Good Match'
+            explanation['recommendation_note'] = 'Strong similarities make this a great choice'
+        elif overall_score > 0.6:
+            explanation['match_strength'] = 'Good Match'
+            explanation['recommendation_note'] = 'Notable similarities worth exploring'
+        else:
+            explanation['match_strength'] = 'Related Content'
+            explanation['recommendation_note'] = 'Share some common elements'
+        
+        # Analyze primary reasons (scores > 0.7)
+        if detail_scores.get('genre_exact', 0) > 0.7:
+            base_genres = set(json.loads(base_content.genres or '[]'))
+            similar_genres = set(json.loads(similar_content.genres or '[]'))
+            common = base_genres & similar_genres
+            if common:
+                explanation['primary_reasons'].append(f"Same genres: {', '.join(list(common)[:3])}")
+        
+        if detail_scores.get('plot_tfidf', 0) > 0.7:
+            explanation['primary_reasons'].append("Very similar storyline and themes")
+        
+        if detail_scores.get('mood_tone', 0) > 0.7:
+            explanation['primary_reasons'].append("Similar mood and tone")
+        
+        if detail_scores.get('rating_profile', 0) > 0.8:
+            explanation['primary_reasons'].append("Similarly acclaimed by audiences")
+        
+        # Analyze secondary reasons (scores 0.5-0.7)
+        if 0.5 < detail_scores.get('temporal', 0) <= 0.7:
+            explanation['secondary_reasons'].append("From similar time period")
+        
+        if 0.5 < detail_scores.get('keywords', 0) <= 0.7:
+            explanation['secondary_reasons'].append("Share key themes and elements")
+        
+        if detail_scores.get('language', 0) > 0.8:
+            explanation['secondary_reasons'].append("Same language")
+        
+        # Add special notes
+        if base_content.content_type != similar_content.content_type:
+            explanation['secondary_reasons'].append(f"Different format ({similar_content.content_type}) but similar content")
+        
+        return explanation
     
     def _format_recommendations(self, recommendations: List[Tuple[Any, float]]) -> List[Dict]:
         """Format recommendations for API response"""
@@ -2463,13 +2136,32 @@ class RecommendationOrchestrator:
                 'languages': json.loads(content.languages or '[]'),
                 'rating': content.rating,
                 'release_date': content.release_date.isoformat() if content.release_date else None,
-                'poster_path': self._format_poster_path(content.poster_path),
+                'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
                 'overview': content.overview[:150] + '...' if content.overview else '',
                 'algorithm_score': round(score, 3),
                 'youtube_trailer_id': content.youtube_trailer_id,
                 'is_current_year': content.release_date.year == datetime.now().year if content.release_date else False
             })
         return formatted
+    
+    def _is_regional_content(self, content: Any, region: str) -> bool:
+        """Check if content is relevant to a region"""
+        languages = json.loads(content.languages or '[]')
+        
+        # Get expected languages for the region
+        region_config = REGION_LANGUAGE_MAP.get(region, REGION_LANGUAGE_MAP.get('IN'))
+        
+        if isinstance(region_config, dict):
+            expected_langs = region_config.get('primary', []) + region_config.get('secondary', [])
+        else:
+            expected_langs = region_config if region_config else []
+        
+        # Check if content matches regional languages
+        for lang in languages:
+            if any(expected in lang.lower() for expected in expected_langs):
+                return True
+        
+        return False
 
 # Evaluation Metrics
 class EvaluationMetrics:
