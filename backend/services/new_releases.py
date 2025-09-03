@@ -1,4 +1,8 @@
-#backend/services/new_releases.py
+"""
+New Releases Service - Production-grade, region and timezone-aware service
+for fetching latest releases across Movies, TV/Series, and Anime.
+"""
+
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple, Any
@@ -189,20 +193,28 @@ class AniListClient:
     def __init__(self, http_client: Optional[httpx.AsyncClient] = None):
         self.http_client = http_client or httpx.AsyncClient(timeout=10.0)
     
-    def _build_query(self, start_date: datetime, end_date: datetime) -> str:
+    def _build_query(self) -> str:
         """Build GraphQL query for anime releases"""
         return """
-        query ($startDate: Int, $endDate: Int, $year: Int) {
-            Page(page: 1, perPage: 50) {
+        query ($startDate: Int, $endDate: Int, $year: Int, $page: Int) {
+            Page(page: $page, perPage: 50) {
+                pageInfo {
+                    total
+                    currentPage
+                    lastPage
+                    hasNextPage
+                }
                 media(
-                    type_in: [ANIME]
+                    type: ANIME
                     format_in: [TV, TV_SHORT, ONA, OVA, MOVIE]
                     startDate_greater: $startDate
                     startDate_lesser: $endDate
                     seasonYear: $year
                     sort: [START_DATE_DESC, POPULARITY_DESC]
+                    isAdult: false
                 ) {
                     id
+                    idMal
                     title {
                         romaji
                         english
@@ -213,6 +225,17 @@ class AniListClient:
                         month
                         day
                     }
+                    endDate {
+                        year
+                        month
+                        day
+                    }
+                    episodes
+                    duration
+                    status
+                    season
+                    seasonYear
+                    format
                     genres
                     popularity
                     averageScore
@@ -220,13 +243,22 @@ class AniListClient:
                     coverImage {
                         large
                         medium
+                        extraLarge
                     }
                     bannerImage
-                    description
-                    format
+                    description(asHtml: false)
                     countryOfOrigin
+                    isAdult
                     nextAiringEpisode {
                         airingAt
+                        timeUntilAiring
+                        episode
+                    }
+                    studios {
+                        nodes {
+                            name
+                            isAnimationStudio
+                        }
                     }
                 }
             }
@@ -246,19 +278,136 @@ class AniListClient:
         variables = {
             "startDate": start_int,
             "endDate": end_int,
-            "year": start_date.year
+            "year": start_date.year,
+            "page": 1
         }
         
         try:
+            # Add proper headers for AniList
+            headers = {
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            }
+            
             response = await self.http_client.post(
                 self.BASE_URL,
-                json={"query": self._build_query(start_date, end_date), "variables": variables}
+                json={
+                    "query": self._build_query(),
+                    "variables": variables
+                },
+                headers=headers
             )
             response.raise_for_status()
             data = response.json()
+            
+            # Check for GraphQL errors
+            if "errors" in data:
+                logger.error(f"AniList GraphQL errors: {data['errors']}")
+                return []
+            
             return data.get("data", {}).get("Page", {}).get("media", [])
+        except httpx.HTTPStatusError as e:
+            logger.error(f"AniList HTTP error: {e.response.status_code} - {e.response.text}")
+            return []
         except Exception as e:
             logger.error(f"AniList query error: {e}")
+            return []
+    
+    async def get_current_season_anime(self) -> List[Dict[str, Any]]:
+        """Alternative method to get current season anime"""
+        query = """
+        query ($season: MediaSeason, $year: Int, $page: Int) {
+            Page(page: $page, perPage: 50) {
+                pageInfo {
+                    total
+                    hasNextPage
+                }
+                media(
+                    type: ANIME
+                    season: $season
+                    seasonYear: $year
+                    sort: [POPULARITY_DESC, START_DATE_DESC]
+                    isAdult: false
+                ) {
+                    id
+                    idMal
+                    title {
+                        romaji
+                        english
+                        native
+                    }
+                    startDate {
+                        year
+                        month
+                        day
+                    }
+                    episodes
+                    status
+                    format
+                    genres
+                    popularity
+                    averageScore
+                    favourites
+                    coverImage {
+                        large
+                        medium
+                        extraLarge
+                    }
+                    bannerImage
+                    description(asHtml: false)
+                    nextAiringEpisode {
+                        airingAt
+                        episode
+                    }
+                    studios {
+                        nodes {
+                            name
+                        }
+                    }
+                }
+            }
+        }
+        """
+        
+        # Determine current season
+        now = datetime.now()
+        month = now.month
+        if month in [12, 1, 2]:
+            season = "WINTER"
+        elif month in [3, 4, 5]:
+            season = "SPRING"
+        elif month in [6, 7, 8]:
+            season = "SUMMER"
+        else:
+            season = "FALL"
+        
+        variables = {
+            "season": season,
+            "year": now.year,
+            "page": 1
+        }
+        
+        try:
+            headers = {
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            }
+            
+            response = await self.http_client.post(
+                self.BASE_URL,
+                json={"query": query, "variables": variables},
+                headers=headers
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            if "errors" in data:
+                logger.error(f"AniList GraphQL errors: {data['errors']}")
+                return []
+            
+            return data.get("data", {}).get("Page", {}).get("media", [])
+        except Exception as e:
+            logger.error(f"AniList current season error: {e}")
             return []
 
 
@@ -335,6 +484,15 @@ class NewReleasesService:
         original_lang = item.get("original_language", "")
         languages = [original_lang] if original_lang else []
         
+        # Get poster and backdrop paths
+        poster_path = item.get("poster_path")
+        if poster_path and not poster_path.startswith("http"):
+            poster_path = f"https://image.tmdb.org/t/p/w500{poster_path}"
+        
+        backdrop_path = item.get("backdrop_path")
+        if backdrop_path and not backdrop_path.startswith("http"):
+            backdrop_path = f"https://image.tmdb.org/t/p/w1280{backdrop_path}"
+        
         return Release(
             id=f"tmdb_movie_{item['id']}",
             title=item.get("title", ""),
@@ -346,8 +504,8 @@ class NewReleasesService:
             popularity=item.get("popularity", 0),
             vote_count=item.get("vote_count", 0),
             vote_average=item.get("vote_average", 0),
-            poster_path=item.get("poster_path"),
-            backdrop_path=item.get("backdrop_path"),
+            poster_path=poster_path,
+            backdrop_path=backdrop_path,
             overview=item.get("overview"),
             region=region,
             source="tmdb"
@@ -366,6 +524,15 @@ class NewReleasesService:
         original_lang = item.get("original_language", "")
         languages = [original_lang] if original_lang else []
         
+        # Get poster and backdrop paths
+        poster_path = item.get("poster_path")
+        if poster_path and not poster_path.startswith("http"):
+            poster_path = f"https://image.tmdb.org/t/p/w500{poster_path}"
+        
+        backdrop_path = item.get("backdrop_path")
+        if backdrop_path and not backdrop_path.startswith("http"):
+            backdrop_path = f"https://image.tmdb.org/t/p/w1280{backdrop_path}"
+        
         return Release(
             id=f"tmdb_tv_{item['id']}",
             title=item.get("name", ""),
@@ -377,8 +544,8 @@ class NewReleasesService:
             popularity=item.get("popularity", 0),
             vote_count=item.get("vote_count", 0),
             vote_average=item.get("vote_average", 0),
-            poster_path=item.get("poster_path"),
-            backdrop_path=item.get("backdrop_path"),
+            poster_path=poster_path,
+            backdrop_path=backdrop_path,
             overview=item.get("overview"),
             region=region,
             source="tmdb"
@@ -388,21 +555,37 @@ class NewReleasesService:
         """Parse AniList anime data into Release object"""
         # Parse start date
         start_date_info = item.get("startDate", {})
-        if not all([start_date_info.get("year"), start_date_info.get("month"), start_date_info.get("day")]):
+        if not start_date_info:
             return None
         
+        # Check if we have valid date components
+        year = start_date_info.get("year")
+        month = start_date_info.get("month")
+        day = start_date_info.get("day")
+        
+        # Skip if no year
+        if not year:
+            return None
+        
+        # Use defaults for missing month/day
+        month = month or 1
+        day = day or 1
+        
         try:
-            release_date = datetime(
-                start_date_info["year"],
-                start_date_info["month"],
-                start_date_info["day"]
-            )
-        except (ValueError, KeyError):
+            release_date = datetime(year, month, day)
+        except (ValueError, TypeError):
             return None
         
         # Get title (prefer English, fallback to Romaji)
         title_info = item.get("title", {})
         title = title_info.get("english") or title_info.get("romaji", "")
+        
+        if not title:
+            return None
+        
+        # Get cover image
+        cover_image = item.get("coverImage", {})
+        poster_url = cover_image.get("extraLarge") or cover_image.get("large") or cover_image.get("medium")
         
         return Release(
             id=f"anilist_{item['id']}",
@@ -415,7 +598,7 @@ class NewReleasesService:
             popularity=item.get("popularity", 0),
             vote_count=item.get("favourites", 0),
             vote_average=(item.get("averageScore", 0) / 10) if item.get("averageScore") else 0,
-            poster_path=item.get("coverImage", {}).get("large"),
+            poster_path=poster_url,
             backdrop_path=item.get("bannerImage"),
             overview=item.get("description"),
             source="anilist"
@@ -443,6 +626,19 @@ class NewReleasesService:
                 release = self._parse_tmdb_movie(item, region)
                 releases.append(release)
         
+        # Also fetch general releases without language filter for the region
+        general_items = await self.tmdb_client.discover_movies(
+            region=region,
+            start_date=window.start_date,
+            end_date=window.end_date
+        )
+        
+        for item in general_items[:20]:  # Limit to avoid too many items
+            release = self._parse_tmdb_movie(item, region)
+            # Avoid duplicates
+            if not any(r.id == release.id for r in releases):
+                releases.append(release)
+        
         return releases
     
     async def _fetch_tv_for_window(
@@ -467,6 +663,18 @@ class NewReleasesService:
                 release = self._parse_tmdb_tv(item, region)
                 releases.append(release)
         
+        # Also fetch general releases
+        general_items = await self.tmdb_client.discover_tv(
+            region=region,
+            start_date=window.start_date,
+            end_date=window.end_date
+        )
+        
+        for item in general_items[:20]:
+            release = self._parse_tmdb_tv(item, region)
+            if not any(r.id == release.id for r in releases):
+                releases.append(release)
+        
         return releases
     
     async def _fetch_anime_for_window(
@@ -474,16 +682,27 @@ class NewReleasesService:
         window: ReleaseWindow
     ) -> List[Release]:
         """Fetch anime for a specific release window"""
+        releases = []
+        
+        # Try the date range query first
         items = await self.anilist_client.get_seasonal_anime(
             start_date=window.start_date,
             end_date=window.end_date
         )
         
-        releases = []
+        # If no results or error, try current season as fallback for current window
+        if not items and window.priority == 1:  # Only for current month window
+            logger.info("Falling back to current season anime query")
+            items = await self.anilist_client.get_current_season_anime()
+        
         for item in items:
             release = self._parse_anilist_anime(item)
             if release:
-                releases.append(release)
+                # Only include if release date is within our window or if it's currently airing
+                if window.priority == 1:  # Current month - include currently airing
+                    releases.append(release)
+                elif release.release_date >= window.start_date and release.release_date <= window.end_date:
+                    releases.append(release)
         
         return releases
     
@@ -502,6 +721,18 @@ class NewReleasesService:
                 r.language_priority  # Language priority (lower is better)
             )
         )
+    
+    def _deduplicate_releases(self, releases: List[Release]) -> List[Release]:
+        """Remove duplicate releases based on ID"""
+        seen_ids = set()
+        unique_releases = []
+        
+        for release in releases:
+            if release.id not in seen_ids:
+                seen_ids.add(release.id)
+                unique_releases.append(release)
+        
+        return unique_releases
     
     def _generate_cache_key(
         self,
@@ -580,7 +811,7 @@ class NewReleasesService:
             }
         }
         
-        # Fetch data concurrently
+        # Fetch data concurrently for each window
         for window in windows:
             window_releases = {
                 "movies": [],
@@ -606,19 +837,34 @@ class NewReleasesService:
             
             # Execute tasks concurrently
             for category, task in tasks:
-                releases = await task
-                window_releases[category].extend(releases)
+                try:
+                    releases = await task
+                    window_releases[category].extend(releases)
+                except Exception as e:
+                    logger.error(f"Error fetching {category} for window {window.month_label}: {e}")
             
             # Add window results to main results
             for category in ["movies", "tv_series", "anime"]:
                 results[category].extend(window_releases[category])
         
-        # Sort each category
+        # Deduplicate and sort each category
         for category in ["movies", "tv_series", "anime"]:
+            results[category] = self._deduplicate_releases(results[category])
             results[category] = self._sort_releases(results[category])
+        
+        # Add statistics to metadata
+        results["metadata"]["statistics"] = {
+            "total_movies": len(results["movies"]),
+            "total_tv_series": len(results["tv_series"]),
+            "total_anime": len(results["anime"]),
+            "telugu_content": sum(1 for r in results["movies"] + results["tv_series"] if r.language_priority == 1),
+            "english_content": sum(1 for r in results["movies"] + results["tv_series"] if r.language_priority == 2),
+            "cache_used": False
+        }
         
         # Cache the results
         if use_cache and self.cache:
+            cache_key = self._generate_cache_key(region, timezone_name, categories)
             await self._save_to_cache(cache_key, results, ttl=3600)  # 1 hour TTL
         
         return results
@@ -631,7 +877,12 @@ class NewReleasesService:
         try:
             cached = self.cache.get(f"new_releases:{key}")
             if cached:
-                return json.loads(cached) if isinstance(cached, str) else cached
+                data = json.loads(cached) if isinstance(cached, str) else cached
+                # Mark that cache was used
+                if data and "metadata" in data:
+                    data["metadata"]["statistics"] = data["metadata"].get("statistics", {})
+                    data["metadata"]["statistics"]["cache_used"] = True
+                return data
         except Exception as e:
             logger.error(f"Cache retrieval error: {e}")
         
@@ -648,6 +899,7 @@ class NewReleasesService:
                 json.dumps(data, default=str),
                 timeout=ttl
             )
+            logger.info(f"Cached new releases with key: new_releases:{key}")
         except Exception as e:
             logger.error(f"Cache save error: {e}")
     
