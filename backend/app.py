@@ -42,19 +42,24 @@ from algorithms import (
     HybridRecommendationEngine,
     UltraPowerfulSimilarityEngine
 )
-# Add these imports at the top of app.py
-from services.personalized import (
-    PersonalizedRecommendationService,
-    UserActivity,
-    UserPreferences,
-    ContentFeatures,
-    RecommendationContext,
-    InteractionType,
-    ContentType as PersonalizedContentType,
-    create_recommendation_service
-)
-import asyncio
-from datetime import timezone
+
+# Optional personalized service import
+try:
+    from services.personalized import (
+        PersonalizedRecommendationService,
+        UserActivity,
+        UserPreferences,
+        ContentFeatures,
+        RecommendationContext,
+        InteractionType,
+        ContentType as PersonalizedContentType,
+        create_recommendation_service
+    )
+    PERSONALIZED_SERVICE_AVAILABLE = True
+except ImportError as e:
+    logging.warning(f"Personalized service module not available: {e}")
+    PERSONALIZED_SERVICE_AVAILABLE = False
+
 # Initialize Flask app
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'your-secret-key-change-in-production')
@@ -239,8 +244,8 @@ class AnonymousInteraction(db.Model):
     interaction_type = db.Column(db.String(20), nullable=False)
     ip_address = db.Column(db.String(45))
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
-# Add these new models after existing models
 
+# New models for personalized recommendations
 class UserActivityLog(db.Model):
     """Extended activity tracking for personalization"""
     id = db.Column(db.Integer, primary_key=True)
@@ -254,7 +259,7 @@ class UserActivityLog(db.Model):
     device_type = db.Column(db.String(50))
     context_data = db.Column(db.Text)  # JSON string for additional context
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
-    
+
 class UserPreferenceProfile(db.Model):
     """User preference profiles for personalization"""
     id = db.Column(db.Integer, primary_key=True)
@@ -283,20 +288,26 @@ class ContentMetadata(db.Model):
     embeddings = db.Column(db.LargeBinary)  # Serialized numpy array
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-# Initialize Personalized Recommendation Service (after create_tables())
-personalized_service = None
-
-def initialize_personalized_service():
-    """Initialize the personalized recommendation service"""
-    global personalized_service
-    try:
-        personalized_service = create_recommendation_service(app, db, cache)
-        logger.info("Personalized recommendation service initialized successfully")
-    except Exception as e:
-        logger.error(f"Failed to initialize personalized service: {e}")
-
-# Call this after create_tables()
-initialize_personalized_service()
+# Authentication Decorator
+def require_auth(f):
+    """Decorator to require authentication for routes"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        token = request.headers.get('Authorization')
+        if not token:
+            return jsonify({'error': 'No token provided'}), 401
+        
+        try:
+            token = token.replace('Bearer ', '')
+            data = jwt.decode(token, app.secret_key, algorithms=['HS256'])
+            current_user = User.query.get(data['user_id'])
+            if not current_user:
+                return jsonify({'error': 'Invalid token'}), 401
+        except Exception as e:
+            return jsonify({'error': 'Invalid token'}), 401
+        
+        return f(current_user, *args, **kwargs)
+    return decorated_function
 
 # Register blueprints
 app.register_blueprint(auth_bp)
@@ -987,6 +998,47 @@ services = {
 init_admin(app, db, models, services)
 init_users(app, db, models, services)
 
+# Initialize Personalized Recommendation Service
+personalized_service = None
+
+def initialize_personalized_service():
+    """Initialize the personalized recommendation service with proper error handling"""
+    global personalized_service
+    
+    if not PERSONALIZED_SERVICE_AVAILABLE:
+        logger.warning("Personalized service module not available, skipping initialization")
+        return
+    
+    try:
+        # Handle Redis client extraction safely
+        redis_client = None
+        
+        # Try different methods to get Redis connection
+        try:
+            # Method 1: Direct Redis URL connection
+            if REDIS_URL and REDIS_URL.startswith(('redis://', 'rediss://')):
+                import redis
+                redis_client = redis.from_url(REDIS_URL)
+                # Test connection
+                redis_client.ping()
+                logger.info("Direct Redis connection successful for personalized service")
+        except Exception as e:
+            logger.warning(f"Direct Redis connection failed for personalized service: {e}")
+            redis_client = None
+        
+        # Create service (works with or without Redis)
+        personalized_service = create_recommendation_service(app, db, redis_client)
+        
+        if personalized_service:
+            logger.info("✅ Personalized recommendation service initialized successfully")
+        else:
+            logger.warning("⚠️ Personalized service initialized with limited functionality")
+            
+    except Exception as e:
+        logger.error(f"Failed to initialize personalized service: {e}")
+        logger.warning("Running without personalized recommendations")
+        personalized_service = None
+
 # API Routes
 
 # Enhanced Content Discovery Routes with caching
@@ -1491,7 +1543,6 @@ def get_new_releases():
     except Exception as e:
         logger.error(f"New releases error: {e}")
         return jsonify({'error': 'Failed to get new releases'}), 500
-    
 
 @app.route('/api/upcoming', methods=['GET'])
 async def get_upcoming_releases():
@@ -1924,48 +1975,83 @@ def get_anonymous_recommendations():
         logger.error(f"Anonymous recommendations error: {e}")
         return jsonify({'error': 'Failed to get recommendations'}), 500
 
-# Public Admin Recommendations
-@app.route('/api/recommendations/admin-choice', methods=['GET'])
-@cache.cached(timeout=600, key_prefix=make_cache_key)
-def get_public_admin_recommendations():
+# Personalized Recommendation Routes
+@app.route('/api/recommendations/personalized/v2', methods=['GET'])
+@require_auth
+def get_personalized_recommendations_v2(current_user):
+    """Enhanced personalized recommendations using the new system"""
+    
+    if not PERSONALIZED_SERVICE_AVAILABLE or not personalized_service:
+        # Fallback to existing recommendation system
+        return jsonify({
+            'status': 'fallback',
+            'recommendations': [],
+            'message': 'Personalized service temporarily unavailable'
+        }), 200
+    
     try:
-        limit = int(request.args.get('limit', 20))
-        rec_type = request.args.get('type', 'admin_choice')
+        # Get request context
+        request_context = {
+            'device_type': request.args.get('device_type'),
+            'location': request.args.get('location'),
+            'mood': request.args.get('mood'),
+            'limit': int(request.args.get('limit', 20)),
+            'filters': {
+                'content_type': request.args.get('content_type'),
+                'language': request.args.get('language'),
+                'genre': request.args.get('genre'),
+                'min_rating': float(request.args.get('min_rating', 0))
+            } if request.args.get('content_type') else None
+        }
         
-        admin_recs = AdminRecommendation.query.filter_by(
-            is_active=True,
-            recommendation_type=rec_type
-        ).order_by(AdminRecommendation.created_at.desc()).limit(limit).all()
+        # Use async endpoint
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
         
-        result = []
-        for rec in admin_recs:
-            content = Content.query.get(rec.content_id)
-            admin = User.query.get(rec.admin_id)
+        try:
+            response = loop.run_until_complete(
+                personalized_service.get_recommendations(
+                    current_user.id,
+                    request_context
+                )
+            )
+        finally:
+            loop.close()
+        
+        # Enrich with content details
+        if response['status'] == 'success':
+            enriched_recommendations = []
+            for rec in response['recommendations']:
+                content = Content.query.get(rec['content_id'])
+                if content:
+                    youtube_url = None
+                    if content.youtube_trailer_id:
+                        youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
+                    
+                    enriched_rec = {
+                        'id': content.id,
+                        'title': content.title,
+                        'content_type': content.content_type,
+                        'genres': json.loads(content.genres or '[]'),
+                        'languages': json.loads(content.languages or '[]'),
+                        'rating': content.rating,
+                        'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
+                        'overview': content.overview[:150] + '...' if content.overview else '',
+                        'youtube_trailer': youtube_url,
+                        'recommendation_score': rec['score'],
+                        'recommendation_sources': rec['sources'],
+                        'explanation': rec['explanation'],
+                        'confidence': rec['confidence']
+                    }
+                    enriched_recommendations.append(enriched_rec)
             
-            if content:
-                youtube_url = None
-                if content.youtube_trailer_id:
-                    youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
-                
-                result.append({
-                    'id': content.id,
-                    'title': content.title,
-                    'content_type': content.content_type,
-                    'genres': json.loads(content.genres or '[]'),
-                    'rating': content.rating,
-                    'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
-                    'overview': content.overview[:150] + '...' if content.overview else '',
-                    'youtube_trailer': youtube_url,
-                    'admin_description': rec.description,
-                    'admin_name': admin.username if admin else 'Admin',
-                    'recommended_at': rec.created_at.isoformat()
-                })
+            response['recommendations'] = enriched_recommendations
         
-        return jsonify({'recommendations': result}), 200
+        return jsonify(response), 200
         
     except Exception as e:
-        logger.error(f"Public admin recommendations error: {e}")
-        return jsonify({'error': 'Failed to get admin recommendations'}), 500
+        logger.error(f"Personalized recommendations v2 error: {e}")
+        return jsonify({'error': 'Failed to get personalized recommendations'}), 500
 
 @app.route('/api/interactions', methods=['POST'])
 @require_auth
@@ -1982,7 +2068,7 @@ def record_interaction(current_user):
         )
         db.session.add(interaction)
         
-        # NEW: Extended activity logging for personalization
+        # Extended activity logging for personalization
         activity_log = UserActivityLog(
             user_id=current_user.id,
             content_id=data['content_id'],
@@ -1996,20 +2082,23 @@ def record_interaction(current_user):
         )
         db.session.add(activity_log)
         
-        # NEW: Queue for real-time processing
-        if personalized_service:
-            activity = UserActivity(
-                user_id=current_user.id,
-                content_id=data['content_id'],
-                interaction_type=InteractionType[data['interaction_type'].upper()],
-                timestamp=datetime.utcnow(),
-                duration=data.get('duration'),
-                completion_rate=data.get('completion_rate'),
-                rating=data.get('rating'),
-                session_id=get_session_id(),
-                device_type=data.get('device_type')
-            )
-            personalized_service.record_interaction(activity)
+        # Queue for real-time processing if personalized service is available
+        if PERSONALIZED_SERVICE_AVAILABLE and personalized_service:
+            try:
+                activity = UserActivity(
+                    user_id=current_user.id,
+                    content_id=data['content_id'],
+                    interaction_type=InteractionType[data['interaction_type'].upper()],
+                    timestamp=datetime.utcnow(),
+                    duration=data.get('duration'),
+                    completion_rate=data.get('completion_rate'),
+                    rating=data.get('rating'),
+                    session_id=get_session_id(),
+                    device_type=data.get('device_type')
+                )
+                personalized_service.record_interaction(activity)
+            except Exception as e:
+                logger.warning(f"Failed to queue interaction for personalized service: {e}")
         
         db.session.commit()
         return jsonify({'message': 'Interaction recorded successfully'}), 201
@@ -2018,78 +2107,6 @@ def record_interaction(current_user):
         logger.error(f"Interaction recording error: {e}")
         db.session.rollback()
         return jsonify({'error': 'Failed to record interaction'}), 500
-    
-@app.route('/api/recommendations/personalized/v2', methods=['GET'])
-@require_auth
-def get_personalized_recommendations_v2(current_user):
-    """Enhanced personalized recommendations using the new system"""
-    try:
-        # Get request context
-        request_context = {
-            'device_type': request.args.get('device_type'),
-            'location': request.args.get('location'),
-            'mood': request.args.get('mood'),
-            'limit': int(request.args.get('limit', 20)),
-            'filters': {
-                'content_type': request.args.get('content_type'),
-                'language': request.args.get('language'),
-                'genre': request.args.get('genre'),
-                'min_rating': float(request.args.get('min_rating', 0))
-            } if request.args.get('content_type') else None
-        }
-        
-        if personalized_service:
-            # Use async endpoint
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
-            try:
-                response = loop.run_until_complete(
-                    personalized_service.get_recommendations(
-                        current_user.id,
-                        request_context
-                    )
-                )
-            finally:
-                loop.close()
-            
-            # Enrich with content details
-            if response['status'] == 'success':
-                enriched_recommendations = []
-                for rec in response['recommendations']:
-                    content = Content.query.get(rec['content_id'])
-                    if content:
-                        youtube_url = None
-                        if content.youtube_trailer_id:
-                            youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
-                        
-                        enriched_rec = {
-                            'id': content.id,
-                            'title': content.title,
-                            'content_type': content.content_type,
-                            'genres': json.loads(content.genres or '[]'),
-                            'languages': json.loads(content.languages or '[]'),
-                            'rating': content.rating,
-                            'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
-                            'overview': content.overview[:150] + '...' if content.overview else '',
-                            'youtube_trailer': youtube_url,
-                            'recommendation_score': rec['score'],
-                            'recommendation_sources': rec['sources'],
-                            'explanation': rec['explanation'],
-                            'confidence': rec['confidence']
-                        }
-                        enriched_recommendations.append(enriched_rec)
-                
-                response['recommendations'] = enriched_recommendations
-            
-            return jsonify(response), 200
-        else:
-            # Fallback to existing recommendation system
-            return get_ml_personalized_recommendations()
-            
-    except Exception as e:
-        logger.error(f"Personalized recommendations v2 error: {e}")
-        return jsonify({'error': 'Failed to get personalized recommendations'}), 500
 
 @app.route('/api/user/preferences', methods=['GET', 'PUT'])
 @require_auth
@@ -2163,87 +2180,50 @@ def manage_user_preferences(current_user):
         db.session.rollback()
         return jsonify({'error': 'Failed to manage preferences'}), 500
 
-@app.route('/api/recommendations/contextual', methods=['POST'])
-@require_auth
-def get_contextual_recommendations(current_user):
-    """Get context-aware recommendations"""
+# Public Admin Recommendations
+@app.route('/api/recommendations/admin-choice', methods=['GET'])
+@cache.cached(timeout=600, key_prefix=make_cache_key)
+def get_public_admin_recommendations():
     try:
-        data = request.get_json()
+        limit = int(request.args.get('limit', 20))
+        rec_type = request.args.get('type', 'admin_choice')
         
-        # Build context
-        context = {
-            'device_type': data.get('device_type'),
-            'location': data.get('location'),
-            'mood': data.get('mood'),
-            'time_available': data.get('time_available'),  # minutes available to watch
-            'with_friends': data.get('with_friends', False),
-            'limit': data.get('limit', 20)
-        }
+        admin_recs = AdminRecommendation.query.filter_by(
+            is_active=True,
+            recommendation_type=rec_type
+        ).order_by(AdminRecommendation.created_at.desc()).limit(limit).all()
         
-        # Add time-based context
-        current_hour = datetime.now().hour
-        if 6 <= current_hour < 12:
-            context['time_context'] = 'morning'
-        elif 12 <= current_hour < 17:
-            context['time_context'] = 'afternoon'
-        elif 17 <= current_hour < 21:
-            context['time_context'] = 'evening'
-        else:
-            context['time_context'] = 'night'
-        
-        # Filter by available time if specified
-        if context['time_available']:
-            context['filters'] = {
-                'max_runtime': context['time_available']
-            }
-        
-        if personalized_service:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+        result = []
+        for rec in admin_recs:
+            content = Content.query.get(rec.content_id)
+            admin = User.query.get(rec.admin_id)
             
-            try:
-                response = loop.run_until_complete(
-                    personalized_service.get_recommendations(
-                        current_user.id,
-                        context
-                    )
-                )
-            finally:
-                loop.close()
-            
-            return jsonify(response), 200
-        else:
-            return jsonify({'error': 'Personalized service not available'}), 503
-            
-    except Exception as e:
-        logger.error(f"Contextual recommendations error: {e}")
-        return jsonify({'error': 'Failed to get contextual recommendations'}), 500
-
-@app.route('/api/recommendations/feedback', methods=['POST'])
-@require_auth
-def submit_recommendation_feedback(current_user):
-    """Submit feedback on recommendations for continuous improvement"""
-    try:
-        data = request.get_json()
+            if content:
+                youtube_url = None
+                if content.youtube_trailer_id:
+                    youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
+                
+                result.append({
+                    'id': content.id,
+                    'title': content.title,
+                    'content_type': content.content_type,
+                    'genres': json.loads(content.genres or '[]'),
+                    'rating': content.rating,
+                    'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
+                    'overview': content.overview[:150] + '...' if content.overview else '',
+                    'youtube_trailer': youtube_url,
+                    'admin_description': rec.description,
+                    'admin_name': admin.username if admin else 'Admin',
+                    'recommended_at': rec.created_at.isoformat()
+                })
         
-        content_id = data.get('content_id')
-        feedback_type = data.get('feedback_type')  # 'positive', 'negative', 'neutral'
-        source = data.get('source')  # Which algorithm recommended it
-        
-        if personalized_service and source:
-            # Update multi-armed bandit
-            reward = feedback_type == 'positive'
-            personalized_service.hybrid_engine.update_bandit(source, reward)
-        
-        # Store feedback for model retraining
-        # You might want to create a RecommendationFeedback model
-        
-        return jsonify({'message': 'Feedback recorded successfully'}), 200
+        return jsonify({'recommendations': result}), 200
         
     except Exception as e:
-        logger.error(f"Recommendation feedback error: {e}")
-        return jsonify({'error': 'Failed to record feedback'}), 500
+        logger.error(f"Public admin recommendations error: {e}")
+        return jsonify({'error': 'Failed to get admin recommendations'}), 500
 
+# Health check endpoint
 @app.route('/api/health', methods=['GET'])
 def health_check():
     """Enhanced health check with personalization service status"""
@@ -2273,16 +2253,16 @@ def health_check():
             health_info['cache'] = 'disconnected'
         
         # Check personalization service
-        if personalized_service:
+        if PERSONALIZED_SERVICE_AVAILABLE and personalized_service:
             health_info['personalization_service'] = 'active'
-            health_info['personalization_metrics'] = {
-                'recommendations_served': personalized_service.hybrid_engine.metrics.get('recommendations_served', 0),
-                'cache_hits': personalized_service.hybrid_engine.metrics.get('cache_hits', 0),
-                'cache_misses': personalized_service.hybrid_engine.metrics.get('cache_misses', 0)
-            }
+            if hasattr(personalized_service, 'hybrid_engine') and hasattr(personalized_service.hybrid_engine, 'metrics'):
+                health_info['personalization_metrics'] = {
+                    'recommendations_served': personalized_service.hybrid_engine.metrics.get('recommendations_served', 0),
+                    'cache_hits': personalized_service.hybrid_engine.metrics.get('cache_hits', 0),
+                    'cache_misses': personalized_service.hybrid_engine.metrics.get('cache_misses', 0)
+                }
         else:
             health_info['personalization_service'] = 'inactive'
-            health_info['status'] = 'degraded'
         
         # External services
         health_info['services'] = {
@@ -2291,7 +2271,7 @@ def health_check():
             'youtube': bool(YOUTUBE_API_KEY),
             'ml_service': bool(ML_SERVICE_URL),
             'algorithms': 'ultra_powerful_enabled',
-            'personalization': 'neural_collaborative_filtering'
+            'personalization': 'available' if PERSONALIZED_SERVICE_AVAILABLE else 'unavailable'
         }
         
         return jsonify(health_info), 200
@@ -2302,6 +2282,8 @@ def health_check():
             'error': str(e),
             'timestamp': datetime.utcnow().isoformat()
         }), 500
+
+# Initialize database
 def create_tables():
     try:
         with app.app_context():
@@ -2318,7 +2300,7 @@ def create_tables():
                 )
                 db.session.add(admin)
             
-            # NEW: Initialize sample user preferences for testing
+            # Initialize sample user preferences for testing
             if admin and not UserPreferenceProfile.query.filter_by(user_id=admin.id).first():
                 admin_prefs = UserPreferenceProfile(
                     user_id=admin.id,
@@ -2331,10 +2313,15 @@ def create_tables():
                 db.session.add(admin_prefs)
             
             db.session.commit()
-            logger.info("Database initialized successfully")
+            logger.info("✅ Database initialized successfully")
             
     except Exception as e:
         logger.error(f"Database initialization error: {e}")
+
+# Initialize everything when app starts
+create_tables()
+initialize_personalized_service()
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('FLASK_ENV') == 'development'

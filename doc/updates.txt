@@ -117,3 +117,18 @@ Data sources (default choices if not otherwise present in repo)
 •	Filter items whose startDate or nextAiringEpisode.airingAt date falls within each target month range (see algorithm)
 •	Use popularity and favourites/averageScore as sorting tie-breakers
 
+
+
+
+
+
+
+
+
+
+
+1.	In backend/services/personalized.py, build a personalized recommendation engine for movies, anime, TV shows, and series using UserActivity (watch history, completion rate, dwell time), UserPreferences (preferred_genres, preferred_languages, content_types), search history, and story similarity (plot/description embeddings).
+2.	Use Neural Collaborative Filtering (90% traffic) as the primary engine, with Matrix Factorization (10% fallback), and integrate ANN retrieval + Redis for fast candidate serving.
+3.	Implement story embedding similarity using transformer/NLP encoders to match user-watched plots with similar items, combining it with NCF/MF in a hybrid ranking pipeline that enforces hard filters for language & content type.
+4.	Continuously improve via online learning (mini-batches), multi-armed bandit (exploring NCF, MF, story-similarity, trending), and real-time A/B testing to evolve recommendations with user behavior.
+5.	Ensure recommendations are context-aware, diverse, and real-time, returning each item with scores, reasons (e.g., "story match: Inception", "pref: Action"), and experiment ID for observability.
