@@ -22,3 +22,6 @@ python-dateutil
 networkx 
 httpx
 pytz
+scipy
+torch
+faiss-cpu

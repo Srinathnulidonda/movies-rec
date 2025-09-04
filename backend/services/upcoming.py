@@ -1,9 +1,4 @@
-"""
-Upcoming Content Service - Production-grade, region and timezone-aware service
-for fetching upcoming releases across Movies, TV/Series, and Anime with strict language priority.
-Advanced features include predictive analytics, personalization, and intelligent caching.
-"""
-
+#backend/service/upcoming.py
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple, Any, Set

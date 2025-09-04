@@ -42,7 +42,19 @@ from algorithms import (
     HybridRecommendationEngine,
     UltraPowerfulSimilarityEngine
 )
-
+# Add these imports at the top of app.py
+from services.personalized import (
+    PersonalizedRecommendationService,
+    UserActivity,
+    UserPreferences,
+    ContentFeatures,
+    RecommendationContext,
+    InteractionType,
+    ContentType as PersonalizedContentType,
+    create_recommendation_service
+)
+import asyncio
+from datetime import timezone
 # Initialize Flask app
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'your-secret-key-change-in-production')
@@ -227,6 +239,64 @@ class AnonymousInteraction(db.Model):
     interaction_type = db.Column(db.String(20), nullable=False)
     ip_address = db.Column(db.String(45))
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+# Add these new models after existing models
+
+class UserActivityLog(db.Model):
+    """Extended activity tracking for personalization"""
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    content_id = db.Column(db.Integer, db.ForeignKey('content.id'), nullable=False)
+    interaction_type = db.Column(db.String(20), nullable=False)
+    duration = db.Column(db.Float)  # Watch duration in seconds
+    completion_rate = db.Column(db.Float)  # 0-1
+    rating = db.Column(db.Float)
+    session_id = db.Column(db.String(100))
+    device_type = db.Column(db.String(50))
+    context_data = db.Column(db.Text)  # JSON string for additional context
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+    
+class UserPreferenceProfile(db.Model):
+    """User preference profiles for personalization"""
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), unique=True, nullable=False)
+    preferred_genres = db.Column(db.Text)  # JSON
+    preferred_languages = db.Column(db.Text)  # JSON
+    preferred_content_types = db.Column(db.Text)  # JSON
+    blacklisted_genres = db.Column(db.Text)  # JSON
+    viewing_time_preferences = db.Column(db.Text)  # JSON
+    avg_session_duration = db.Column(db.Float)
+    diversity_preference = db.Column(db.Float, default=0.5)
+    exploration_rate = db.Column(db.Float, default=0.2)
+    maturity_rating = db.Column(db.String(20), default='PG-13')
+    subtitle_preference = db.Column(db.String(20))
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+class ContentMetadata(db.Model):
+    """Extended content metadata for better recommendations"""
+    id = db.Column(db.Integer, primary_key=True)
+    content_id = db.Column(db.Integer, db.ForeignKey('content.id'), unique=True, nullable=False)
+    cast = db.Column(db.Text)  # JSON list of cast members
+    director = db.Column(db.String(255))
+    tags = db.Column(db.Text)  # JSON list of tags
+    mood = db.Column(db.String(50))  # e.g., 'uplifting', 'dark', 'thrilling'
+    franchise = db.Column(db.String(255))
+    embeddings = db.Column(db.LargeBinary)  # Serialized numpy array
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+# Initialize Personalized Recommendation Service (after create_tables())
+personalized_service = None
+
+def initialize_personalized_service():
+    """Initialize the personalized recommendation service"""
+    global personalized_service
+    try:
+        personalized_service = create_recommendation_service(app, db, cache)
+        logger.info("Personalized recommendation service initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize personalized service: {e}")
+
+# Call this after create_tables()
+initialize_personalized_service()
 
 # Register blueprints
 app.register_blueprint(auth_bp)
@@ -1946,6 +2016,59 @@ def health_check():
             'error': str(e),
             'timestamp': datetime.utcnow().isoformat()
         }), 500
+
+
+@app.route('/api/interactions', methods=['POST'])
+@require_auth
+def record_interaction(current_user):
+    try:
+        data = request.get_json()
+        
+        # Original interaction recording
+        interaction = UserInteraction(
+            user_id=current_user.id,
+            content_id=data['content_id'],
+            interaction_type=data['interaction_type'],
+            rating=data.get('rating')
+        )
+        db.session.add(interaction)
+        
+        # NEW: Extended activity logging for personalization
+        activity_log = UserActivityLog(
+            user_id=current_user.id,
+            content_id=data['content_id'],
+            interaction_type=data['interaction_type'],
+            duration=data.get('duration'),
+            completion_rate=data.get('completion_rate'),
+            rating=data.get('rating'),
+            session_id=get_session_id(),
+            device_type=data.get('device_type', request.headers.get('User-Agent')),
+            context_data=json.dumps(data.get('context', {}))
+        )
+        db.session.add(activity_log)
+        
+        # NEW: Queue for real-time processing
+        if personalized_service:
+            activity = UserActivity(
+                user_id=current_user.id,
+                content_id=data['content_id'],
+                interaction_type=InteractionType[data['interaction_type'].upper()],
+                timestamp=datetime.utcnow(),
+                duration=data.get('duration'),
+                completion_rate=data.get('completion_rate'),
+                rating=data.get('rating'),
+                session_id=get_session_id(),
+                device_type=data.get('device_type')
+            )
+            personalized_service.record_interaction(activity)
+        
+        db.session.commit()
+        return jsonify({'message': 'Interaction recorded successfully'}), 201
+        
+    except Exception as e:
+        logger.error(f"Interaction recording error: {e}")
+        db.session.rollback()
+        return jsonify({'error': 'Failed to record interaction'}), 500
 
 # Initialize database
 def create_tables():
