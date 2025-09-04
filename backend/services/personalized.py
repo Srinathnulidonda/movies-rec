@@ -1,5 +1,4 @@
 # backend/services/personalized.py
-
 import numpy as np
 import pandas as pd
 from sklearn.decomposition import TruncatedSVD, NMF, PCA
@@ -248,6 +247,393 @@ class UltraPersonalizedRecommendationEngine:
             'linguistic_extractor': self._extract_linguistic_features,
             'mood_extractor': self._extract_mood_features
         }
+    
+    def _extract_genre_features(self, content):
+        """
+        Extract genre-based features from content for similarity matching.
+        
+        Args:
+            content: Content object with genres field
+            
+        Returns:
+            dict: Dictionary of genre features with weights
+        """
+        try:
+            genre_features = {}
+            
+            # Parse genres from JSON string
+            if hasattr(content, 'genres') and content.genres:
+                genres = json.loads(content.genres) if isinstance(content.genres, str) else content.genres
+                
+                # Primary genre gets highest weight
+                for i, genre in enumerate(genres):
+                    if i == 0:
+                        genre_features[f"primary_genre_{genre}"] = 1.0
+                    elif i == 1:
+                        genre_features[f"secondary_genre_{genre}"] = 0.7
+                    else:
+                        genre_features[f"tertiary_genre_{genre}"] = 0.5
+                
+                # Add genre combinations for better matching
+                if len(genres) >= 2:
+                    for i in range(len(genres) - 1):
+                        for j in range(i + 1, min(i + 2, len(genres))):
+                            combo = f"{genres[i]}-{genres[j]}"
+                            genre_features[f"genre_combo_{combo}"] = 0.6
+            
+            # Add anime-specific genres if applicable
+            if hasattr(content, 'anime_genres') and content.anime_genres:
+                anime_genres = json.loads(content.anime_genres) if isinstance(content.anime_genres, str) else content.anime_genres
+                for anime_genre in anime_genres:
+                    genre_features[f"anime_genre_{anime_genre}"] = 0.8
+            
+            # Add genre mood mappings
+            genre_mood_map = {
+                'Action': ['exciting', 'intense', 'adrenaline'],
+                'Comedy': ['funny', 'lighthearted', 'humorous'],
+                'Drama': ['emotional', 'serious', 'thoughtful'],
+                'Horror': ['scary', 'tense', 'dark'],
+                'Romance': ['romantic', 'emotional', 'heartfelt'],
+                'Thriller': ['suspenseful', 'tense', 'mysterious'],
+                'Sci-Fi': ['futuristic', 'imaginative', 'technological'],
+                'Fantasy': ['magical', 'imaginative', 'adventurous'],
+                'Documentary': ['informative', 'educational', 'real'],
+                'Animation': ['creative', 'colorful', 'imaginative']
+            }
+            
+            if hasattr(content, 'genres') and content.genres:
+                genres = json.loads(content.genres) if isinstance(content.genres, str) else content.genres
+                for genre in genres:
+                    if genre in genre_mood_map:
+                        for mood in genre_mood_map[genre]:
+                            genre_features[f"mood_{mood}"] = 0.4
+            
+            return genre_features
+            
+        except Exception as e:
+            logger.error(f"Error extracting genre features: {e}")
+            return {}
+
+    def _extract_language_features(self, content):
+        """
+        Extract language-based features from content.
+        
+        Args:
+            content: Content object with languages field
+            
+        Returns:
+            dict: Dictionary of language features with weights
+        """
+        try:
+            language_features = {}
+            
+            # Parse languages from JSON string
+            if hasattr(content, 'languages') and content.languages:
+                languages = json.loads(content.languages) if isinstance(content.languages, str) else content.languages
+                
+                for lang in languages:
+                    # Normalize language names
+                    lang_lower = lang.lower() if isinstance(lang, str) else str(lang).lower()
+                    
+                    # Map to standard language codes
+                    language_map = {
+                        'telugu': 'te',
+                        'english': 'en',
+                        'hindi': 'hi',
+                        'tamil': 'ta',
+                        'malayalam': 'ml',
+                        'kannada': 'kn',
+                        'japanese': 'ja',
+                        'korean': 'ko',
+                        'spanish': 'es',
+                        'french': 'fr'
+                    }
+                    
+                    # Add both full name and code
+                    language_features[f"language_{lang_lower}"] = 1.0
+                    
+                    if lang_lower in language_map:
+                        language_features[f"language_code_{language_map[lang_lower]}"] = 1.0
+                    
+                    # Add language family features
+                    if lang_lower in ['telugu', 'tamil', 'kannada', 'malayalam']:
+                        language_features["language_family_dravidian"] = 0.7
+                    elif lang_lower in ['hindi', 'bengali', 'marathi', 'gujarati']:
+                        language_features["language_family_indo_aryan"] = 0.7
+                    elif lang_lower in ['english', 'spanish', 'french', 'german']:
+                        language_features["language_family_indo_european"] = 0.7
+                    elif lang_lower in ['japanese', 'korean', 'chinese']:
+                        language_features["language_family_east_asian"] = 0.7
+            
+            # Add original language if different from spoken languages
+            if hasattr(content, 'original_language') and content.original_language:
+                orig_lang = content.original_language.lower()
+                language_features[f"original_language_{orig_lang}"] = 0.8
+            
+            return language_features
+            
+        except Exception as e:
+            logger.error(f"Error extracting language features: {e}")
+            return {}
+
+    def _extract_temporal_features(self, content):
+        """
+        Extract time-based features from content.
+        
+        Args:
+            content: Content object with release_date field
+            
+        Returns:
+            dict: Dictionary of temporal features with weights
+        """
+        try:
+            temporal_features = {}
+            
+            if hasattr(content, 'release_date') and content.release_date:
+                # Parse release date
+                if isinstance(content.release_date, str):
+                    try:
+                        release_date = datetime.strptime(content.release_date, '%Y-%m-%d').date()
+                    except:
+                        release_date = None
+                else:
+                    release_date = content.release_date
+                
+                if release_date:
+                    # Extract year, decade, era
+                    year = release_date.year
+                    decade = (year // 10) * 10
+                    
+                    temporal_features[f"release_year_{year}"] = 1.0
+                    temporal_features[f"release_decade_{decade}s"] = 0.8
+                    
+                    # Era classification
+                    if year >= 2020:
+                        temporal_features["era_modern"] = 1.0
+                    elif year >= 2010:
+                        temporal_features["era_contemporary"] = 0.9
+                    elif year >= 2000:
+                        temporal_features["era_millennium"] = 0.8
+                    elif year >= 1990:
+                        temporal_features["era_90s"] = 0.7
+                    elif year >= 1980:
+                        temporal_features["era_80s"] = 0.7
+                    else:
+                        temporal_features["era_classic"] = 0.6
+                    
+                    # Seasonality
+                    month = release_date.month
+                    if month in [6, 7, 8]:
+                        temporal_features["season_summer"] = 0.5
+                    elif month in [11, 12, 1]:
+                        temporal_features["season_holiday"] = 0.5
+                    elif month in [3, 4, 5]:
+                        temporal_features["season_spring"] = 0.5
+                    else:
+                        temporal_features["season_fall"] = 0.5
+                    
+                    # Recency score
+                    days_old = (datetime.now().date() - release_date).days
+                    if days_old <= 30:
+                        temporal_features["recency_new"] = 1.0
+                    elif days_old <= 90:
+                        temporal_features["recency_recent"] = 0.8
+                    elif days_old <= 365:
+                        temporal_features["recency_current"] = 0.6
+                    elif days_old <= 730:
+                        temporal_features["recency_modern"] = 0.4
+                    else:
+                        temporal_features["recency_catalog"] = 0.2
+            
+            return temporal_features
+            
+        except Exception as e:
+            logger.error(f"Error extracting temporal features: {e}")
+            return {}
+
+    def _extract_quality_features(self, content):
+        """
+        Extract quality-based features from content.
+        
+        Args:
+            content: Content object with rating and vote_count fields
+            
+        Returns:
+            dict: Dictionary of quality features with weights
+        """
+        try:
+            quality_features = {}
+            
+            # Rating-based features
+            if hasattr(content, 'rating') and content.rating:
+                rating = float(content.rating)
+                
+                # Rating tiers
+                if rating >= 9.0:
+                    quality_features["rating_masterpiece"] = 1.0
+                elif rating >= 8.0:
+                    quality_features["rating_excellent"] = 0.9
+                elif rating >= 7.0:
+                    quality_features["rating_good"] = 0.8
+                elif rating >= 6.0:
+                    quality_features["rating_above_average"] = 0.6
+                elif rating >= 5.0:
+                    quality_features["rating_average"] = 0.4
+                else:
+                    quality_features["rating_below_average"] = 0.2
+                
+                # Exact rating range
+                quality_features[f"rating_range_{int(rating)}-{int(rating)+1}"] = 0.7
+            
+            # Popularity features
+            if hasattr(content, 'vote_count') and content.vote_count:
+                votes = int(content.vote_count)
+                
+                if votes >= 10000:
+                    quality_features["popularity_blockbuster"] = 1.0
+                elif votes >= 5000:
+                    quality_features["popularity_very_popular"] = 0.8
+                elif votes >= 1000:
+                    quality_features["popularity_popular"] = 0.6
+                elif votes >= 500:
+                    quality_features["popularity_moderate"] = 0.4
+                else:
+                    quality_features["popularity_niche"] = 0.3
+            
+            # Critics choice feature
+            if hasattr(content, 'is_critics_choice') and content.is_critics_choice:
+                quality_features["critics_choice"] = 1.0
+            
+            # Trending feature
+            if hasattr(content, 'is_trending') and content.is_trending:
+                quality_features["currently_trending"] = 0.9
+            
+            # New release feature
+            if hasattr(content, 'is_new_release') and content.is_new_release:
+                quality_features["new_release"] = 0.8
+            
+            return quality_features
+            
+        except Exception as e:
+            logger.error(f"Error extracting quality features: {e}")
+            return {}
+
+    def _extract_content_type_features(self, content):
+        """
+        Extract content type specific features.
+        
+        Args:
+            content: Content object with content_type field
+            
+        Returns:
+            dict: Dictionary of content type features with weights
+        """
+        try:
+            type_features = {}
+            
+            if hasattr(content, 'content_type') and content.content_type:
+                content_type = content.content_type.lower()
+                
+                # Basic content type
+                type_features[f"type_{content_type}"] = 1.0
+                
+                # Content type categories
+                if content_type == 'movie':
+                    type_features["format_film"] = 0.8
+                    type_features["duration_single"] = 0.7
+                elif content_type == 'tv':
+                    type_features["format_series"] = 0.8
+                    type_features["duration_episodic"] = 0.7
+                elif content_type == 'anime':
+                    type_features["format_animation"] = 0.8
+                    type_features["origin_japanese"] = 0.9
+                    
+                    # Check if it's a series or movie
+                    if hasattr(content, 'runtime') and content.runtime:
+                        if content.runtime > 60:
+                            type_features["anime_movie"] = 0.7
+                        else:
+                            type_features["anime_series"] = 0.7
+            
+            # Runtime features
+            if hasattr(content, 'runtime') and content.runtime:
+                runtime = int(content.runtime)
+                
+                if runtime <= 30:
+                    type_features["duration_short"] = 0.6
+                elif runtime <= 60:
+                    type_features["duration_episode"] = 0.6
+                elif runtime <= 120:
+                    type_features["duration_standard"] = 0.6
+                elif runtime <= 180:
+                    type_features["duration_long"] = 0.6
+                else:
+                    type_features["duration_epic"] = 0.6
+            
+            return type_features
+            
+        except Exception as e:
+            logger.error(f"Error extracting content type features: {e}")
+            return {}
+
+    def _extract_metadata_features(self, content):
+        """
+        Extract additional metadata features from content.
+        
+        Args:
+            content: Content object
+            
+        Returns:
+            dict: Dictionary of metadata features with weights
+        """
+        try:
+            metadata_features = {}
+            
+            # Title-based features (for franchise detection)
+            if hasattr(content, 'title') and content.title:
+                title_lower = content.title.lower()
+                
+                # Common franchise indicators
+                franchise_keywords = ['2', '3', 'ii', 'iii', 'part', 'chapter', 'sequel', 
+                                    'prequel', 'returns', 'reloaded', 'resurrection', 
+                                    'chronicles', 'saga', 'trilogy']
+                
+                for keyword in franchise_keywords:
+                    if keyword in title_lower:
+                        metadata_features["franchise_member"] = 0.7
+                        break
+                
+                # Check for series indicators
+                if any(x in title_lower for x in ['season', 'series', 'vol', 'volume']):
+                    metadata_features["series_member"] = 0.7
+            
+            # Overview-based features (themes extraction)
+            if hasattr(content, 'overview') and content.overview:
+                overview_lower = content.overview.lower()
+                
+                # Theme detection
+                themes = {
+                    'superhero': ['superhero', 'marvel', 'dc', 'avenger', 'batman', 'superman'],
+                    'war': ['war', 'battle', 'soldier', 'military', 'army', 'navy'],
+                    'space': ['space', 'alien', 'planet', 'galaxy', 'astronaut', 'cosmos'],
+                    'crime': ['crime', 'detective', 'police', 'murder', 'investigation', 'criminal'],
+                    'love': ['love', 'romance', 'relationship', 'marriage', 'dating', 'couple'],
+                    'family': ['family', 'parent', 'child', 'mother', 'father', 'sibling'],
+                    'adventure': ['adventure', 'journey', 'quest', 'explore', 'discovery', 'expedition'],
+                    'survival': ['survival', 'survive', 'apocalypse', 'disaster', 'zombie'],
+                    'magic': ['magic', 'wizard', 'witch', 'spell', 'sorcerer', 'enchant'],
+                    'sports': ['sport', 'game', 'team', 'champion', 'player', 'match', 'tournament']
+                }
+                
+                for theme, keywords in themes.items():
+                    if any(keyword in overview_lower for keyword in keywords):
+                        metadata_features[f"theme_{theme}"] = 0.5
+            
+            return metadata_features
+            
+        except Exception as e:
+            logger.error(f"Error extracting metadata features: {e}")
+            return {}
     
     def _initialize_content_analysis(self):
         """Pre-compute content embeddings and indices for fast retrieval"""
