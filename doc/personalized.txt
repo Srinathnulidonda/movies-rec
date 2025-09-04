@@ -1,0 +1,97 @@
+instead of ml-services url in user.py replace it with backend/services/personalized.py and 
+Build Advanced Personalized Recommendation Engine ml services in backend/services/personalized.py
+
+CORE REQUIREMENTS:
+Create a multi-algorithm hybrid recommendation system for movies/anime/TV shows/series that combines:
+- Neural Collaborative Filtering (NCF) as primary engine (90% traffic weight)
+- Matrix Factorization (MF) as fallback/backup (10% traffic weight)  
+- Story/Plot Similarity using transformer embeddings for content matching
+- Real-time candidate retrieval with ANN + Redis caching
+- Continuous learning with online adaptation
+
+DATA SOURCES TO LEVERAGE:
+1. UserActivity: watch_history, completion_rates, dwell_time, skip_patterns, rewatch_behavior
+2. UserPreferences: preferred_genres, preferred_languages, content_types, rating_patterns
+3. SearchHistory: query_terms, clicked_results, search_abandon_rate, refinement_patterns
+4. ContentMetadata: plot_descriptions, genre_tags, cast_crew, release_dates, ratings
+
+ALGORITHM IMPLEMENTATION:
+- Primary: Neural Collaborative Filtering with deep embeddings (user/item/context)
+- Secondary: Alternating Least Squares Matrix Factorization for cold-start
+- Content: Transformer-based story embeddings (BERT/RoBERTa/SentenceTransformers)
+- Retrieval: Approximate Nearest Neighbors (Faiss/Annoy) for fast candidate generation
+- Serving: Redis-cached user/item embeddings for sub-50ms response times
+
+HYBRID RANKING PIPELINE:
+1. Candidate Generation (ANN retrieval from 100k+ items → 1k candidates)
+2. Multi-signal Scoring (NCF score + MF score + story similarity + trending boost)
+3. Hard Filtering (language preferences, content_type constraints, already_watched removal)
+4. Diversity Injection (genre/year/popularity distribution enforcement)
+5. Final Ranking with explanations and confidence scores
+
+STORY SIMILARITY ENGINE:
+- Generate plot/description embeddings using pre-trained transformers
+- Build semantic similarity index for "users who liked X plot will like Y plot"
+- Integrate story-match signals into hybrid scoring with adjustable weights
+- Track story preference evolution (user's taste in themes/narratives over time)
+
+CONTINUOUS LEARNING SYSTEM:
+- Online Learning: Mini-batch SGD updates on NCF/MF models with fresh interaction data
+- Multi-Armed Bandit: Thompson Sampling across algorithms (NCF/MF/story/trending/random)
+- Real-time A/B Testing: Experiment framework comparing algorithm variants
+- Feedback Loop: Implicit signals (watch_time, completion) + explicit signals (ratings, saves)
+- Model Retraining: Daily batch updates + hourly incremental learning
+
+CONTEXT-AWARE FEATURES:
+- Temporal: time_of_day, day_of_week, season, trending_now weights
+- Sequential: session-based recommendations, binge-watching patterns
+- Mood-based: infer user mood from recent viewing (action→comedy transition patterns)
+- Social: incorporate friend activity, popular_in_region signals (if available)
+- Device: mobile vs desktop viewing behavior adaptation
+
+OUTPUT SPECIFICATION:
+Return recommendations as structured objects containing:
+- item_id, title, predicted_score (0-1), confidence_interval
+- explanation_reasons: ["story_match: Inception (0.89)", "genre_pref: Action (0.82)", "trending: #3"]
+- algorithm_source: "ncf_primary", "mf_fallback", "story_similarity", "trending_boost"
+- experiment_id: for A/B test attribution and performance tracking
+- diversity_category: genre/year/popularity bucket for recommendation diversity
+
+PERFORMANCE & SCALABILITY:
+- Target: <50ms p95 response time for recommendation serving
+- Handle: 10M+ users, 1M+ items, 1B+ interactions
+- Caching: Multi-layer (Redis user embeddings, candidate pools, popular items)
+- Monitoring: recommendation_quality_metrics, algorithm_performance, A/B_test_results
+- Failover: Graceful degradation to popularity-based when ML models fail
+
+PRODUCTION FEATURES:
+- Cold Start: Handle new users (demographic/onboarding preferences) and new items (content-based)
+- Bias Mitigation: Ensure recommendation diversity, avoid filter bubbles, fair content exposure
+- Privacy: User data anonymization, GDPR compliance, preference deletion capabilities
+- Observability: Detailed logging, metrics, alerts for model drift and performance degradation
+- API Design: RESTful endpoints with proper error handling, rate limiting, and documentation
+
+TECHNICAL STACK INTEGRATION:
+- Vector Storage: Faiss/Pinecone for embedding similarity search
+- Caching: Redis for user profiles, item embeddings, recommendation cache
+- Data Pipeline: Real-time feature computation, batch model training orchestration
+- Monitoring: Model performance dashboards, recommendation quality analytics
+
+ML FRAMEWORK SPECIFICATION FOR RENDER FREE DEPLOYMENT:
+
+- ML Framework: scikit-learn for all models (lightweight, CPU-optimized, minimal dependencies)
+- Matrix Factorization: scikit-learn's TruncatedSVD and NMF 
+- Collaborative Filtering: scikit-learn's NearestNeighbors with cosine similarity
+- Content-Based: scikit-learn's TfidfVectorizer + cosine_similarity for plot matching
+- Clustering: scikit-learn's KMeans for user/item segmentation
+- Dimensionality Reduction: scikit-learn's PCA for embedding compression
+- Additional: numpy, pandas for data processing (no heavy ML dependencies)
+
+RENDER-OPTIMIZED DESIGN:
+- Memory-efficient models that fit in 512MB RAM limit
+- CPU-only inference (no GPU requirements)
+- Lightweight pickle model serialization
+- Fast startup times with pre-computed embeddings
+- Minimal package dependencies for quick deployment
+
+Build this as a production-ready, horizontally scalable system capable of serving millions of users with personalized, accurate, diverse, and explainable recommendations in real-time.
