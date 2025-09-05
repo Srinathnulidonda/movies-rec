@@ -1,4 +1,4 @@
-# backend/users.py
+# backend/services/users.py
 from flask import Blueprint, request, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta
@@ -148,7 +148,7 @@ def login():
         logger.error(f"Login error: {e}")
         return jsonify({'error': 'Login failed'}), 500
 
-# User Interaction Routes
+# User Interaction Routes - FIXED: Only one record_interaction function
 @users_bp.route('/api/interactions', methods=['POST'])
 @require_auth
 def record_interaction(current_user):
@@ -159,6 +159,34 @@ def record_interaction(current_user):
         if not all(field in data for field in required_fields):
             return jsonify({'error': 'Missing required fields'}), 400
         
+        # Handle remove_watchlist specially
+        if data['interaction_type'] == 'remove_watchlist':
+            # Find and delete the watchlist interaction
+            interaction = UserInteraction.query.filter_by(
+                user_id=current_user.id,
+                content_id=data['content_id'],
+                interaction_type='watchlist'
+            ).first()
+            
+            if interaction:
+                db.session.delete(interaction)
+                db.session.commit()
+                return jsonify({'message': 'Removed from watchlist'}), 200
+            else:
+                return jsonify({'message': 'Content not in watchlist'}), 404
+        
+        # For adding to watchlist, check if already exists
+        if data['interaction_type'] == 'watchlist':
+            existing = UserInteraction.query.filter_by(
+                user_id=current_user.id,
+                content_id=data['content_id'],
+                interaction_type='watchlist'
+            ).first()
+            
+            if existing:
+                return jsonify({'message': 'Already in watchlist'}), 200
+        
+        # Create new interaction for other types
         interaction = UserInteraction(
             user_id=current_user.id,
             content_id=data['content_id'],
@@ -176,6 +204,7 @@ def record_interaction(current_user):
         db.session.rollback()
         return jsonify({'error': 'Failed to record interaction'}), 500
 
+# Watchlist specific routes
 @users_bp.route('/api/user/watchlist', methods=['GET'])
 @require_auth
 def get_watchlist(current_user):
@@ -209,6 +238,47 @@ def get_watchlist(current_user):
     except Exception as e:
         logger.error(f"Watchlist error: {e}")
         return jsonify({'error': 'Failed to get watchlist'}), 500
+
+@users_bp.route('/api/user/watchlist/<int:content_id>', methods=['DELETE'])
+@require_auth
+def remove_from_watchlist(current_user, content_id):
+    """Remove content from user's watchlist"""
+    try:
+        # Find and delete the watchlist interaction
+        interaction = UserInteraction.query.filter_by(
+            user_id=current_user.id,
+            content_id=content_id,
+            interaction_type='watchlist'
+        ).first()
+        
+        if interaction:
+            db.session.delete(interaction)
+            db.session.commit()
+            return jsonify({'message': 'Removed from watchlist'}), 200
+        else:
+            return jsonify({'message': 'Content not in watchlist'}), 404
+            
+    except Exception as e:
+        logger.error(f"Remove from watchlist error: {e}")
+        db.session.rollback()
+        return jsonify({'error': 'Failed to remove from watchlist'}), 500
+
+@users_bp.route('/api/user/watchlist/<int:content_id>', methods=['GET'])
+@require_auth
+def check_watchlist_status(current_user, content_id):
+    """Check if content is in user's watchlist"""
+    try:
+        interaction = UserInteraction.query.filter_by(
+            user_id=current_user.id,
+            content_id=content_id,
+            interaction_type='watchlist'
+        ).first()
+        
+        return jsonify({'in_watchlist': interaction is not None}), 200
+        
+    except Exception as e:
+        logger.error(f"Check watchlist status error: {e}")
+        return jsonify({'error': 'Failed to check watchlist status'}), 500
 
 @users_bp.route('/api/user/favorites', methods=['GET'])
 @require_auth
@@ -389,103 +459,3 @@ def get_ml_personalized_recommendations(current_user):
     except Exception as e:
         logger.error(f"ML personalized recommendations error: {e}")
         return jsonify({'recommendations': [], 'error': 'Failed to get recommendations'}), 200
-    
-
-# Add these routes to backend/services/users.py
-
-@users_bp.route('/api/user/watchlist/<int:content_id>', methods=['DELETE'])
-@require_auth
-def remove_from_watchlist(current_user, content_id):
-    """Remove content from user's watchlist"""
-    try:
-        # Find and delete the watchlist interaction
-        interaction = UserInteraction.query.filter_by(
-            user_id=current_user.id,
-            content_id=content_id,
-            interaction_type='watchlist'
-        ).first()
-        
-        if interaction:
-            db.session.delete(interaction)
-            db.session.commit()
-            return jsonify({'message': 'Removed from watchlist'}), 200
-        else:
-            return jsonify({'message': 'Content not in watchlist'}), 404
-            
-    except Exception as e:
-        logger.error(f"Remove from watchlist error: {e}")
-        db.session.rollback()
-        return jsonify({'error': 'Failed to remove from watchlist'}), 500
-
-@users_bp.route('/api/user/watchlist/<int:content_id>', methods=['GET'])
-@require_auth
-def check_watchlist_status(current_user, content_id):
-    """Check if content is in user's watchlist"""
-    try:
-        interaction = UserInteraction.query.filter_by(
-            user_id=current_user.id,
-            content_id=content_id,
-            interaction_type='watchlist'
-        ).first()
-        
-        return jsonify({'in_watchlist': interaction is not None}), 200
-        
-    except Exception as e:
-        logger.error(f"Check watchlist status error: {e}")
-        return jsonify({'error': 'Failed to check watchlist status'}), 500
-
-# Update the record_interaction function to handle remove_watchlist:
-@users_bp.route('/api/interactions', methods=['POST'])
-@require_auth
-def record_interaction(current_user):
-    try:
-        data = request.get_json()
-        
-        required_fields = ['content_id', 'interaction_type']
-        if not all(field in data for field in required_fields):
-            return jsonify({'error': 'Missing required fields'}), 400
-        
-        # Handle remove_watchlist specially
-        if data['interaction_type'] == 'remove_watchlist':
-            # Find and delete the watchlist interaction
-            interaction = UserInteraction.query.filter_by(
-                user_id=current_user.id,
-                content_id=data['content_id'],
-                interaction_type='watchlist'
-            ).first()
-            
-            if interaction:
-                db.session.delete(interaction)
-                db.session.commit()
-                return jsonify({'message': 'Removed from watchlist'}), 200
-            else:
-                return jsonify({'message': 'Content not in watchlist'}), 404
-        
-        # For adding to watchlist, check if already exists
-        if data['interaction_type'] == 'watchlist':
-            existing = UserInteraction.query.filter_by(
-                user_id=current_user.id,
-                content_id=data['content_id'],
-                interaction_type='watchlist'
-            ).first()
-            
-            if existing:
-                return jsonify({'message': 'Already in watchlist'}), 200
-        
-        # Create new interaction
-        interaction = UserInteraction(
-            user_id=current_user.id,
-            content_id=data['content_id'],
-            interaction_type=data['interaction_type'],
-            rating=data.get('rating')
-        )
-        
-        db.session.add(interaction)
-        db.session.commit()
-        
-        return jsonify({'message': 'Interaction recorded successfully'}), 201
-        
-    except Exception as e:
-        logger.error(f"Interaction recording error: {e}")
-        db.session.rollback()
-        return jsonify({'error': 'Failed to record interaction'}), 500
