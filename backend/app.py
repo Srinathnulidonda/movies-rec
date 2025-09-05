@@ -27,11 +27,11 @@ from requests.packages.urllib3.util.retry import Retry
 from flask_mail import Mail
 from services.upcoming import UpcomingContentService, ContentType, LanguagePriority
 import asyncio
-import auth
-from auth import init_auth, auth_bp
-from admin import admin_bp, init_admin
-from users import users_bp, init_users
-from algorithms import (
+import backend.services.auth as auth
+from backend.services.auth import init_auth, auth_bp
+from backend.services.admin import admin_bp, init_admin
+from backend.services.users import users_bp, init_users
+from backend.services.algorithms import (
     RecommendationOrchestrator,
     PopularityRanking,
     LanguagePriorityFilter,

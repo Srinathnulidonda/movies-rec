@@ -454,6 +454,60 @@ class PopularityRanking:
             score *= 1.5
         
         return score
+    
+class NewReleaseMonitor:
+    """Monitor for new releases with automatic detection"""
+    
+    def __init__(self, check_interval_minutes: int = 30):
+        self.check_interval = check_interval_minutes
+        self.last_check = None
+        self.detected_new_releases = set()
+    
+    def check_for_new_releases(self, external_services) -> List[Any]:
+        """Check all sources for new releases"""
+        new_content = []
+        current_date = datetime.now().date()
+        
+        # Priority order for checking
+        language_priority = ['telugu', 'english', 'hindi', 'malayalam', 'kannada', 'tamil']
+        
+        for language in language_priority:
+            lang_code = LANGUAGE_WEIGHTS.get(language, '')
+            
+            try:
+                # Check TMDB for new releases in this language
+                if language == 'english':
+                    releases = external_services['TMDBService'].get_new_releases('movie')
+                else:
+                    releases = external_services['TMDBService'].get_language_specific(lang_code, 'movie')
+                
+                if releases:
+                    for item in releases.get('results', []):
+                        # Check if truly new (released in last 60 days)
+                        if 'release_date' in item:
+                            try:
+                                release_date = datetime.strptime(item['release_date'], '%Y-%m-%d').date()
+                                days_old = (current_date - release_date).days
+                                
+                                if 0 <= days_old <= 60:
+                                    # Check if we haven't seen this before
+                                    if item['id'] not in self.detected_new_releases:
+                                        new_content.append({
+                                            'data': item,
+                                            'language': language,
+                                            'days_old': days_old,
+                                            'content_type': 'movie'
+                                        })
+                                        self.detected_new_releases.add(item['id'])
+                            except:
+                                pass
+                
+            except Exception as e:
+                logger.error(f"Error checking {language} releases: {e}")
+                continue
+        
+        self.last_check = datetime.now()
+        return new_content
 
 class LanguagePriorityFilter:
     """Enhanced Language Priority Filtering System"""
@@ -1874,74 +1928,171 @@ class RecommendationOrchestrator:
         return self._format_recommendations(regional_scores[:limit])
     
     def get_new_releases_with_algorithms(self, content_list: List[Any], limit: int = 20) -> List[Dict]:
-        """Get new releases of current year with language priority"""
+        """Get new releases with STRICT language priority ordering"""
         current_year = datetime.now().year
+        current_date = datetime.now().date()
         
-        # Filter for current year releases
+        # Define strict language priority order
+        STRICT_PRIORITY = ['telugu', 'english', 'hindi', 'malayalam', 'kannada', 'tamil']
+        
+        # Filter for recent releases (last 60 days for "new")
         new_releases = []
         for content in content_list:
-            if content.release_date and content.release_date.year == current_year:
-                days_since_release = (datetime.now().date() - content.release_date).days
-                # Include all current year content, but boost recent ones
-                new_releases.append(content)
+            if content.release_date:
+                days_since_release = (current_date - content.release_date).days
+                # Only include content released in last 60 days
+                if 0 <= days_since_release <= 60:
+                    new_releases.append(content)
         
-        # Apply multi-level ranking
-        scored_releases = []
+        # Categorize by language priority
+        language_buckets = {lang: [] for lang in STRICT_PRIORITY}
+        language_buckets['others'] = []
+        
         for content in new_releases:
-            days_since_release = (datetime.now().date() - content.release_date).days
-            
-            # Calculate multiple scores
-            # Freshness score - higher for more recent releases
-            if days_since_release <= 30:
-                freshness_score = 1.0 - (days_since_release / 30) * 0.3
-            elif days_since_release <= 90:
-                freshness_score = 0.7 - ((days_since_release - 30) / 60) * 0.2
-            else:
-                freshness_score = 0.5 - min((days_since_release - 90) / 275, 0.3)
-            
-            popularity_score = PopularityRanking.calculate_popularity_score(content, time_decay=False)
-            language_score = LanguagePriorityFilter.get_language_score(
-                json.loads(content.languages or '[]')
-            )
-            quality_score = PopularityRanking.bayesian_average(
-                content.rating or 0,
-                content.vote_count or 0
-            ) / 10
-            
-            # Check for priority languages
             languages = json.loads(content.languages or '[]')
-            is_priority = False
-            for lang in languages:
-                if any(priority_lang in lang.lower() for priority_lang in PRIORITY_LANGUAGES[:3]):
-                    is_priority = True
+            languages_lower = [lang.lower() for lang in languages if isinstance(lang, str)]
+            
+            # Check against priority languages IN ORDER
+            categorized = False
+            for priority_lang in STRICT_PRIORITY:
+                lang_code = LANGUAGE_WEIGHTS.get(priority_lang, '')
+                
+                # Check if content matches this priority language
+                for content_lang in languages_lower:
+                    if (priority_lang in content_lang or 
+                        content_lang == lang_code or
+                        content_lang == priority_lang):
+                        
+                        # Calculate content score
+                        days_since = (current_date - content.release_date).days
+                        
+                        # Freshness score (newer = higher)
+                        freshness = 1.0 - (days_since / 60)
+                        
+                        # Quality score
+                        quality = PopularityRanking.bayesian_average(
+                            content.rating or 0,
+                            content.vote_count or 0
+                        ) / 10
+                        
+                        # Popularity score
+                        popularity = min(content.popularity / 100, 1.0) if content.popularity else 0
+                        
+                        # Combined score
+                        score = (freshness * 0.5) + (quality * 0.3) + (popularity * 0.2)
+                        
+                        language_buckets[priority_lang].append((content, score))
+                        categorized = True
+                        break
+                
+                if categorized:
                     break
             
-            if is_priority:
-                # Priority language content gets different weights
-                final_score = (freshness_score * 0.25) + (popularity_score * 0.25) + \
-                             (language_score * 0.35) + (quality_score * 0.15)
-            else:
-                # Other content with standard weights
-                final_score = (freshness_score * 0.35) + (popularity_score * 0.3) + \
-                             (language_score * 0.15) + (quality_score * 0.2)
-            
-            scored_releases.append((content, final_score))
+            # If not in priority languages, add to others
+            if not categorized:
+                days_since = (current_date - content.release_date).days
+                freshness = 1.0 - (days_since / 60)
+                quality = PopularityRanking.bayesian_average(
+                    content.rating or 0,
+                    content.vote_count or 0
+                ) / 10
+                popularity = min(content.popularity / 100, 1.0) if content.popularity else 0
+                score = (freshness * 0.5) + (quality * 0.3) + (popularity * 0.2)
+                language_buckets['others'].append((content, score))
         
-        # Sort by score
-        scored_releases.sort(key=lambda x: x[1], reverse=True)
+        # Sort each bucket by score
+        for lang in language_buckets:
+            language_buckets[lang].sort(key=lambda x: x[1], reverse=True)
         
-        # Apply language priority ordering
-        releases_content = [item[0] for item in scored_releases]
-        prioritized_releases = LanguagePriorityFilter.filter_by_language_priority(releases_content)
-        
-        # Maintain scores after reordering
+        # Build final list in STRICT priority order
         final_releases = []
-        for content in prioritized_releases[:limit]:
-            score = next((s for c, s in scored_releases if c.id == content.id), 0)
-            final_releases.append((content, score))
+        added_ids = set()  # Prevent duplicates
         
-        return self._format_recommendations(final_releases)
-    
+        # First pass: Add at least some content from each priority language
+        min_per_language = max(1, limit // len(STRICT_PRIORITY))
+        
+        for priority_lang in STRICT_PRIORITY:
+            bucket = language_buckets[priority_lang]
+            added_count = 0
+            
+            for content, score in bucket:
+                if content.id not in added_ids:
+                    final_releases.append((content, score))
+                    added_ids.add(content.id)
+                    added_count += 1
+                    
+                    if added_count >= min_per_language or len(final_releases) >= limit:
+                        break
+            
+            if len(final_releases) >= limit:
+                break
+        
+        # Second pass: Fill remaining slots in priority order
+        if len(final_releases) < limit:
+            for priority_lang in STRICT_PRIORITY:
+                bucket = language_buckets[priority_lang]
+                
+                for content, score in bucket:
+                    if content.id not in added_ids:
+                        final_releases.append((content, score))
+                        added_ids.add(content.id)
+                        
+                        if len(final_releases) >= limit:
+                            break
+                
+                if len(final_releases) >= limit:
+                    break
+        
+        # Add others if still space
+        if len(final_releases) < limit:
+            for content, score in language_buckets['others']:
+                if content.id not in added_ids:
+                    final_releases.append((content, score))
+                    added_ids.add(content.id)
+                    
+                    if len(final_releases) >= limit:
+                        break
+        
+        # Format the response with language labels
+        formatted_results = []
+        for idx, (content, score) in enumerate(final_releases[:limit]):
+            languages = json.loads(content.languages or '[]')
+            
+            # Determine primary language category
+            primary_language = 'others'
+            for lang in languages:
+                lang_lower = lang.lower() if isinstance(lang, str) else ''
+                for priority_lang in STRICT_PRIORITY:
+                    if priority_lang in lang_lower or lang_lower == LANGUAGE_WEIGHTS.get(priority_lang, ''):
+                        primary_language = priority_lang
+                        break
+                if primary_language != 'others':
+                    break
+            
+            days_old = (current_date - content.release_date).days
+            
+            formatted = {
+                'id': content.id,
+                'title': content.title,
+                'content_type': content.content_type,
+                'genres': json.loads(content.genres or '[]'),
+                'languages': languages,
+                'primary_language': primary_language,
+                'language_priority_rank': STRICT_PRIORITY.index(primary_language) + 1 if primary_language in STRICT_PRIORITY else 999,
+                'rating': content.rating,
+                'release_date': content.release_date.isoformat() if content.release_date else None,
+                'days_since_release': days_old,
+                'is_brand_new': days_old <= 7,  # Released in last week
+                'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
+                'overview': content.overview[:150] + '...' if content.overview else '',
+                'algorithm_score': round(score, 3),
+                'youtube_trailer_id': content.youtube_trailer_id,
+                'freshness_indicator': 'Just Released' if days_old <= 3 else 'New This Week' if days_old <= 7 else 'Recent Release'
+            }
+            formatted_results.append(formatted)
+        
+        return formatted_results
+        
     def get_personalized_recommendations(self, user_profile: Dict, content_list: List[Any], 
                                         context: Dict = None, limit: int = 20) -> List[Dict]:
         """Get personalized recommendations using hybrid approach"""
