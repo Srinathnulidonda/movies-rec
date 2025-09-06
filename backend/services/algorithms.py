@@ -1928,9 +1928,12 @@ class RecommendationOrchestrator:
         return self._format_recommendations(regional_scores[:limit])
     
     def get_new_releases_with_algorithms(self, content_list: List[Any], limit: int = 20) -> List[Dict]:
-        """Get new releases with Telugu content ALWAYS shown first"""
+        """Get new releases with STRICT language priority ordering"""
         current_year = datetime.now().year
         current_date = datetime.now().date()
+        
+        # Define strict language priority order
+        STRICT_PRIORITY = ['telugu', 'english', 'hindi', 'malayalam', 'kannada', 'tamil']
         
         # Filter for recent releases (last 60 days for "new")
         new_releases = []
@@ -1941,30 +1944,52 @@ class RecommendationOrchestrator:
                 if 0 <= days_since_release <= 60:
                     new_releases.append(content)
         
-        # Separate Telugu content from others
-        telugu_releases = []
-        other_language_releases = {
-            'english': [],
-            'hindi': [],
-            'malayalam': [],
-            'kannada': [],
-            'tamil': [],
-            'others': []
-        }
+        # Categorize by language priority
+        language_buckets = {lang: [] for lang in STRICT_PRIORITY}
+        language_buckets['others'] = []
         
         for content in new_releases:
             languages = json.loads(content.languages or '[]')
             languages_lower = [lang.lower() for lang in languages if isinstance(lang, str)]
             
-            # Check if it's Telugu content FIRST
-            is_telugu = False
-            for lang in languages_lower:
-                if 'telugu' in lang or lang == 'te':
-                    is_telugu = True
+            # Check against priority languages IN ORDER
+            categorized = False
+            for priority_lang in STRICT_PRIORITY:
+                lang_code = LANGUAGE_WEIGHTS.get(priority_lang, '')
+                
+                # Check if content matches this priority language
+                for content_lang in languages_lower:
+                    if (priority_lang in content_lang or 
+                        content_lang == lang_code or
+                        content_lang == priority_lang):
+                        
+                        # Calculate content score
+                        days_since = (current_date - content.release_date).days
+                        
+                        # Freshness score (newer = higher)
+                        freshness = 1.0 - (days_since / 60)
+                        
+                        # Quality score
+                        quality = PopularityRanking.bayesian_average(
+                            content.rating or 0,
+                            content.vote_count or 0
+                        ) / 10
+                        
+                        # Popularity score
+                        popularity = min(content.popularity / 100, 1.0) if content.popularity else 0
+                        
+                        # Combined score
+                        score = (freshness * 0.5) + (quality * 0.3) + (popularity * 0.2)
+                        
+                        language_buckets[priority_lang].append((content, score))
+                        categorized = True
+                        break
+                
+                if categorized:
                     break
             
-            if is_telugu:
-                # Calculate score for Telugu content
+            # If not in priority languages, add to others
+            if not categorized:
                 days_since = (current_date - content.release_date).days
                 freshness = 1.0 - (days_since / 60)
                 quality = PopularityRanking.bayesian_average(
@@ -1973,74 +1998,41 @@ class RecommendationOrchestrator:
                 ) / 10
                 popularity = min(content.popularity / 100, 1.0) if content.popularity else 0
                 score = (freshness * 0.5) + (quality * 0.3) + (popularity * 0.2)
-                telugu_releases.append((content, score))
-            else:
-                # Categorize other languages
-                categorized = False
-                for priority_lang in ['english', 'hindi', 'malayalam', 'kannada', 'tamil']:
-                    lang_code = LANGUAGE_WEIGHTS.get(priority_lang, '')
-                    
-                    for content_lang in languages_lower:
-                        if (priority_lang in content_lang or 
-                            content_lang == lang_code or
-                            content_lang == priority_lang):
-                            
-                            days_since = (current_date - content.release_date).days
-                            freshness = 1.0 - (days_since / 60)
-                            quality = PopularityRanking.bayesian_average(
-                                content.rating or 0,
-                                content.vote_count or 0
-                            ) / 10
-                            popularity = min(content.popularity / 100, 1.0) if content.popularity else 0
-                            score = (freshness * 0.5) + (quality * 0.3) + (popularity * 0.2)
-                            
-                            other_language_releases[priority_lang].append((content, score))
-                            categorized = True
-                            break
-                    
-                    if categorized:
-                        break
-                
-                if not categorized:
-                    days_since = (current_date - content.release_date).days
-                    freshness = 1.0 - (days_since / 60)
-                    quality = PopularityRanking.bayesian_average(
-                        content.rating or 0,
-                        content.vote_count or 0
-                    ) / 10
-                    popularity = min(content.popularity / 100, 1.0) if content.popularity else 0
-                    score = (freshness * 0.5) + (quality * 0.3) + (popularity * 0.2)
-                    other_language_releases['others'].append((content, score))
+                language_buckets['others'].append((content, score))
         
-        # Sort Telugu releases by score
-        telugu_releases.sort(key=lambda x: x[1], reverse=True)
+        # Sort each bucket by score
+        for lang in language_buckets:
+            language_buckets[lang].sort(key=lambda x: x[1], reverse=True)
         
-        # Sort other language releases by score
-        for lang in other_language_releases:
-            other_language_releases[lang].sort(key=lambda x: x[1], reverse=True)
-        
-        # Build final list: ALL Telugu content first, then others
+        # Build final list in STRICT priority order
         final_releases = []
-        added_ids = set()
+        added_ids = set()  # Prevent duplicates
         
-        # STEP 1: Add ALL Telugu releases first (up to limit)
-        for content, score in telugu_releases:
-            if content.id not in added_ids:
-                final_releases.append((content, score))
-                added_ids.add(content.id)
-                
-                if len(final_releases) >= limit:
-                    break
+        # First pass: Add at least some content from each priority language
+        min_per_language = max(1, limit // len(STRICT_PRIORITY))
         
-        # STEP 2: If we still have space, add other languages in priority order
+        for priority_lang in STRICT_PRIORITY:
+            bucket = language_buckets[priority_lang]
+            added_count = 0
+            
+            for content, score in bucket:
+                if content.id not in added_ids:
+                    final_releases.append((content, score))
+                    added_ids.add(content.id)
+                    added_count += 1
+                    
+                    if added_count >= min_per_language or len(final_releases) >= limit:
+                        break
+            
+            if len(final_releases) >= limit:
+                break
+        
+        # Second pass: Fill remaining slots in priority order
         if len(final_releases) < limit:
-            remaining_slots = limit - len(final_releases)
-            
-            # Order of other languages after Telugu
-            other_language_order = ['english', 'hindi', 'malayalam', 'kannada', 'tamil', 'others']
-            
-            for lang in other_language_order:
-                for content, score in other_language_releases[lang]:
+            for priority_lang in STRICT_PRIORITY:
+                bucket = language_buckets[priority_lang]
+                
+                for content, score in bucket:
                     if content.id not in added_ids:
                         final_releases.append((content, score))
                         added_ids.add(content.id)
@@ -2051,30 +2043,31 @@ class RecommendationOrchestrator:
                 if len(final_releases) >= limit:
                     break
         
-        # Format the response
+        # Add others if still space
+        if len(final_releases) < limit:
+            for content, score in language_buckets['others']:
+                if content.id not in added_ids:
+                    final_releases.append((content, score))
+                    added_ids.add(content.id)
+                    
+                    if len(final_releases) >= limit:
+                        break
+        
+        # Format the response with language labels
         formatted_results = []
         for idx, (content, score) in enumerate(final_releases[:limit]):
             languages = json.loads(content.languages or '[]')
             
-            # Determine if it's Telugu content
-            is_telugu_content = False
+            # Determine primary language category
+            primary_language = 'others'
             for lang in languages:
                 lang_lower = lang.lower() if isinstance(lang, str) else ''
-                if 'telugu' in lang_lower or lang_lower == 'te':
-                    is_telugu_content = True
-                    break
-            
-            # Determine primary language
-            primary_language = 'telugu' if is_telugu_content else 'others'
-            if not is_telugu_content:
-                for lang in languages:
-                    lang_lower = lang.lower() if isinstance(lang, str) else ''
-                    for priority_lang in ['english', 'hindi', 'malayalam', 'kannada', 'tamil']:
-                        if priority_lang in lang_lower or lang_lower == LANGUAGE_WEIGHTS.get(priority_lang, ''):
-                            primary_language = priority_lang
-                            break
-                    if primary_language != 'others':
+                for priority_lang in STRICT_PRIORITY:
+                    if priority_lang in lang_lower or lang_lower == LANGUAGE_WEIGHTS.get(priority_lang, ''):
+                        primary_language = priority_lang
                         break
+                if primary_language != 'others':
+                    break
             
             days_old = (current_date - content.release_date).days
             
@@ -2085,18 +2078,16 @@ class RecommendationOrchestrator:
                 'genres': json.loads(content.genres or '[]'),
                 'languages': languages,
                 'primary_language': primary_language,
-                'is_telugu': is_telugu_content,
-                'display_order': idx + 1,  # Shows exact order in the list
+                'language_priority_rank': STRICT_PRIORITY.index(primary_language) + 1 if primary_language in STRICT_PRIORITY else 999,
                 'rating': content.rating,
                 'release_date': content.release_date.isoformat() if content.release_date else None,
                 'days_since_release': days_old,
-                'is_brand_new': days_old <= 7,
+                'is_brand_new': days_old <= 7,  # Released in last week
                 'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
                 'overview': content.overview[:150] + '...' if content.overview else '',
                 'algorithm_score': round(score, 3),
                 'youtube_trailer_id': content.youtube_trailer_id,
-                'freshness_indicator': 'Just Released' if days_old <= 3 else 'New This Week' if days_old <= 7 else 'Recent Release',
-                'language_section': 'Telugu New Releases' if is_telugu_content else f'{primary_language.capitalize()} New Releases'
+                'freshness_indicator': 'Just Released' if days_old <= 3 else 'New This Week' if days_old <= 7 else 'Recent Release'
             }
             formatted_results.append(formatted)
         

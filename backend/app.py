@@ -42,25 +42,13 @@ from services.algorithms import (
     HybridRecommendationEngine,
     UltraPowerfulSimilarityEngine
 )
-import pytz
-import httpx
-import schedule
-
-# Try to import the new releases service, fall back if not available
-try:
-    from services.new_releases import RealTimeNewReleasesService, NewRelease
-    NEW_RELEASES_SERVICE_AVAILABLE = True
-except ImportError:
-    logger = logging.getLogger(__name__)
-    logger.warning("RealTimeNewReleasesService not available, using fallback")
-    NEW_RELEASES_SERVICE_AVAILABLE = False
 
 # Initialize Flask app
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'your-secret-key-change-in-production')
 
 # Database configuration
-DATABASE_URL = 'postgresql://movies_rec_panf_user:BO5X3d2QihK7GG9hxgtBiCtni8NTbbIi@dpg-d2q7bamr433s73e0hcm0-a/movies_rec_panf'
+DATABASE_URL = 'postgresql://movies_rec_panf_user:BO5X3d2QihK7GG9hxgtBiCtni8NTbbIi@dpg-d2q7gamr433s73e0hcm0-a/movies_rec_panf'
 
 if os.environ.get('DATABASE_URL'):
     app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL').replace('postgres://', 'postgresql://')
@@ -153,19 +141,6 @@ ANIME_GENRES = {
 
 # Initialize Recommendation Orchestrator
 recommendation_orchestrator = RecommendationOrchestrator()
-
-# Initialize Real-time New Releases Service if available
-if NEW_RELEASES_SERVICE_AVAILABLE:
-    try:
-        realtime_releases_service = RealTimeNewReleasesService(
-            tmdb_api_key=TMDB_API_KEY,
-            cache_backend=cache,
-            refresh_interval_minutes=5  # Refresh every 5 minutes
-        )
-        logger.info("RealTimeNewReleasesService initialized successfully")
-    except Exception as e:
-        logger.error(f"Failed to initialize RealTimeNewReleasesService: {e}")
-        NEW_RELEASES_SERVICE_AVAILABLE = False
 
 # Cache key generators
 def make_cache_key(*args, **kwargs):
@@ -1299,142 +1274,154 @@ def get_trending():
         return jsonify({'error': 'Failed to get trending recommendations'}), 500
 
 @app.route('/api/recommendations/new-releases', methods=['GET'])
+@cache.cached(timeout=300, key_prefix=make_cache_key)
 def get_new_releases():
-    """Real-time new releases with timezone awareness and continuous updates"""
+    """Enhanced new releases with Telugu priority using algorithms"""
     try:
         content_type = request.args.get('type', 'movie')
         limit = int(request.args.get('limit', 20))
-        days_back = int(request.args.get('days_back', 60))
-        user_timezone = request.args.get('timezone', 'UTC')
-        force_refresh = request.args.get('force_refresh', 'false').lower() == 'true'
         
-        # If RealTimeNewReleasesService is available, use it
-        if NEW_RELEASES_SERVICE_AVAILABLE and 'realtime_releases_service' in globals():
-            # Validate timezone
-            try:
-                pytz.timezone(user_timezone)
-            except pytz.UnknownTimeZoneError:
-                user_timezone = 'UTC'
-                logger.warning(f"Invalid timezone provided, using UTC")
-            
-            # Run async function
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+        # Aggregate new releases from multiple sources
+        all_new_releases = []
+        
+        # Priority languages in order
+        priority_languages = ['telugu', 'english', 'hindi', 'malayalam', 'kannada', 'tamil']
+        
+        for language in priority_languages:
+            lang_code = LANGUAGE_PRIORITY['codes'].get(language)
             
             try:
-                # Get real-time releases
-                result = loop.run_until_complete(
-                    realtime_releases_service.get_new_releases(
-                        content_type=content_type,
-                        days_back=days_back,
-                        user_timezone=user_timezone,
-                        use_cache=True,
-                        force_refresh=force_refresh
-                    )
-                )
-            finally:
-                loop.close()
-            
-            # Format response with limit
-            releases = result.get('releases', [])[:limit]
-            todays_releases = result.get('todays_releases', [])
-            
-            # Ensure today's releases are shown first
-            final_releases = []
-            seen_ids = set()
-            
-            # Add today's releases first
-            for release in todays_releases:
-                if release['id'] not in seen_ids:
-                    final_releases.append(release)
-                    seen_ids.add(release['id'])
-            
-            # Add remaining releases
-            for release in releases:
-                if release['id'] not in seen_ids and len(final_releases) < limit:
-                    final_releases.append(release)
-                    seen_ids.add(release['id'])
-            
-            # Prepare response
-            response = {
-                'recommendations': final_releases,
-                'metadata': {
-                    **result.get('metadata', {}),
-                    'returned_count': len(final_releases),
-                    'todays_releases_count': len([r for r in final_releases if r.get('is_today', False)]),
-                    'strict_language_order': 'Telugu → English → Hindi → Malayalam → Kannada → Tamil'
-                },
-                'statistics': result.get('statistics', {})
-            }
-            
-            return jsonify(response), 200
-        else:
-            # Fallback to algorithm-based approach
-            logger.info("Using fallback algorithm-based new releases")
-            
-            # Aggregate new releases from multiple sources
-            all_new_releases = []
-            
-            # Priority languages in order
-            priority_languages = ['telugu', 'english', 'hindi', 'malayalam', 'kannada', 'tamil']
-            
-            for language in priority_languages:
-                lang_code = LANGUAGE_PRIORITY['codes'].get(language)
+                # Get from TMDB
+                if language == 'english':
+                    releases = TMDBService.get_new_releases(content_type)
+                else:
+                    releases = TMDBService.get_language_specific(lang_code, content_type)
                 
-                try:
-                    # Get from TMDB
-                    if language == 'english':
-                        releases = TMDBService.get_new_releases(content_type)
-                    else:
-                        releases = TMDBService.get_language_specific(lang_code, content_type)
-                    
-                    if releases:
-                        for item in releases.get('results', [])[:10]:
-                            content = ContentService.save_content_from_tmdb(item, content_type)
-                            if content and content.release_date:
-                                days_old = (datetime.now().date() - content.release_date).days
-                                if days_old <= days_back:
-                                    all_new_releases.append(content)
-                except Exception as e:
-                    logger.error(f"Error fetching {language} releases: {e}")
+                if releases:
+                    for item in releases.get('results', [])[:10]:
+                        content = ContentService.save_content_from_tmdb(item, content_type)
+                        if content and content.release_date:
+                            days_old = (datetime.now().date() - content.release_date).days
+                            if days_old <= 60:
+                                all_new_releases.append(content)
+            except Exception as e:
+                logger.error(f"Error fetching {language} releases: {e}")
+        
+        # Get from database
+        db_new_releases = Content.query.filter(
+            Content.is_new_release == True,
+            Content.content_type == content_type
+        ).limit(50).all()
+        all_new_releases.extend(db_new_releases)
+        
+        # Remove duplicates
+        seen_ids = set()
+        unique_releases = []
+        for content in all_new_releases:
+            if content.id not in seen_ids:
+                seen_ids.add(content.id)
+                unique_releases.append(content)
+        
+        # Apply algorithms
+        recommendations = recommendation_orchestrator.get_new_releases_with_algorithms(
+            unique_releases,
+            limit=limit
+        )
+        
+        # Group by language for response
+        language_groups = {
+            'telugu': [],
+            'english': [],
+            'hindi': [],
+            'malayalam': [],
+            'kannada': [],
+            'tamil': [],
+            'others': []
+        }
+        
+        for rec in recommendations:
+            languages = rec.get('languages', [])
+            grouped = False
             
-            # Get from database
-            db_new_releases = Content.query.filter(
-                Content.is_new_release == True,
-                Content.content_type == content_type
-            ).limit(50).all()
-            all_new_releases.extend(db_new_releases)
+            # Categorize by language
+            for lang in languages:
+                lang_lower = lang.lower() if isinstance(lang, str) else ''
+                if 'telugu' in lang_lower or lang_lower == 'te':
+                    language_groups['telugu'].append(rec)
+                    grouped = True
+                    break
+                elif 'english' in lang_lower or lang_lower == 'en':
+                    language_groups['english'].append(rec)
+                    grouped = True
+                    break
+                elif 'hindi' in lang_lower or lang_lower == 'hi':
+                    language_groups['hindi'].append(rec)
+                    grouped = True
+                    break
+                elif 'malayalam' in lang_lower or lang_lower == 'ml':
+                    language_groups['malayalam'].append(rec)
+                    grouped = True
+                    break
+                elif 'kannada' in lang_lower or lang_lower == 'kn':
+                    language_groups['kannada'].append(rec)
+                    grouped = True
+                    break
+                elif 'tamil' in lang_lower or lang_lower == 'ta':
+                    language_groups['tamil'].append(rec)
+                    grouped = True
+                    break
             
-            # Remove duplicates
-            seen_ids = set()
-            unique_releases = []
-            for content in all_new_releases:
-                if content.id not in seen_ids:
-                    seen_ids.add(content.id)
-                    unique_releases.append(content)
-            
-            # Apply algorithms
-            recommendations = recommendation_orchestrator.get_new_releases_with_algorithms(
-                unique_releases,
-                limit=limit
-            )
-            
-            response = {
-                'recommendations': recommendations,
-                'metadata': {
-                    'total_analyzed': len(unique_releases),
-                    'language_priority': ['Telugu', 'English', 'Hindi', 'Malayalam', 'Kannada', 'Tamil'],
-                    'algorithm': 'telugu_first_priority',
-                    'timestamp': datetime.utcnow().isoformat()
-                }
+            if not grouped:
+                language_groups['others'].append(rec)
+        
+        response = {
+            'recommendations': recommendations,
+            'grouped_by_language': language_groups,
+            'metadata': {
+                'total_analyzed': len(unique_releases),
+                'language_priority': {
+                    'main': 'telugu',
+                    'secondary': ['english', 'hindi'],
+                    'tertiary': ['malayalam', 'kannada', 'tamil']
+                },
+                'algorithm': 'multi_level_ranking_with_telugu_priority',
+                'scoring_weights': {
+                    'telugu_content': {
+                        'freshness': 0.2,
+                        'popularity': 0.2,
+                        'language': 0.4,
+                        'quality': 0.2
+                    },
+                    'other_content': {
+                        'freshness': 0.3,
+                        'popularity': 0.3,
+                        'language': 0.2,
+                        'quality': 0.2
+                    }
+                },
+                'timestamp': datetime.utcnow().isoformat()
             }
+        }
+        
+        # Add evaluation metrics
+        if recommendations:
+            content_ids = [r['id'] for r in recommendations]
+            contents = Content.query.filter(Content.id.in_(content_ids)).all()
             
-            return jsonify(response), 200
+            response['metadata']['metrics'] = {
+                'diversity_score': round(EvaluationMetrics.diversity_score(contents), 3),
+                'telugu_content_percentage': round(
+                    len(language_groups['telugu']) / len(recommendations) * 100, 1
+                ) if recommendations else 0
+            }
+        
+        db.session.commit()
+        return jsonify(response), 200
         
     except Exception as e:
         logger.error(f"New releases error: {e}")
-        logger.exception(e)
-        return jsonify({'error': 'Failed to get new releases', 'details': str(e)}), 500
+        return jsonify({'error': 'Failed to get new releases'}), 500
+    
 
 @app.route('/api/upcoming', methods=['GET'])
 async def get_upcoming_releases():
@@ -1549,57 +1536,6 @@ def get_upcoming_releases_sync():
             'success': False,
             'error': str(e)
         }), 500
-
-# Background task for pre-warming cache
-def refresh_releases_cache():
-    """Background task to refresh releases cache"""
-    try:
-        logger.info("Starting scheduled releases cache refresh")
-        
-        if NEW_RELEASES_SERVICE_AVAILABLE and 'realtime_releases_service' in globals():
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
-            # Common timezones to pre-warm
-            timezones = ['Asia/Kolkata', 'UTC', 'America/New_York', 'Europe/London']
-            
-            for tz in timezones:
-                for content_type in ['movie', 'tv']:
-                    try:
-                        loop.run_until_complete(
-                            realtime_releases_service.get_new_releases(
-                                content_type=content_type,
-                                days_back=60,
-                                user_timezone=tz,
-                                use_cache=False
-                            )
-                        )
-                        logger.info(f"Refreshed {content_type} releases for {tz}")
-                    except Exception as e:
-                        logger.error(f"Error refreshing {content_type} cache for {tz}: {e}")
-            
-            loop.close()
-        
-        logger.info("Completed releases cache refresh")
-        
-    except Exception as e:
-        logger.error(f"Background refresh error: {e}")
-
-# Schedule refresh if service is available
-if NEW_RELEASES_SERVICE_AVAILABLE:
-    schedule.every(5).minutes.do(refresh_releases_cache)
-    
-    def run_scheduler():
-        """Run the scheduler in a background thread"""
-        while True:
-            schedule.run_pending()
-            time.sleep(60)  # Check every minute
-    
-    # Start the scheduler in a background thread when the app starts
-    scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
-    scheduler_thread.start()
-
-# Continue with rest of the routes...
 
 @app.route('/api/recommendations/critics-choice', methods=['GET'])
 @cache.cached(timeout=600, key_prefix=make_cache_key)
@@ -1970,7 +1906,7 @@ def health_check():
         health_info = {
             'status': 'healthy',
             'timestamp': datetime.utcnow().isoformat(),
-            'version': '5.0.0'  # Updated version with real-time releases
+            'version': '4.0.0'  # Updated version with ultra-powerful algorithms
         }
         
         # Check database connectivity
@@ -1999,8 +1935,7 @@ def health_check():
             'omdb': bool(OMDB_API_KEY),
             'youtube': bool(YOUTUBE_API_KEY),
             'ml_service': bool(ML_SERVICE_URL),
-            'algorithms': 'ultra_powerful_enabled',
-            'realtime_releases': NEW_RELEASES_SERVICE_AVAILABLE
+            'algorithms': 'ultra_powerful_enabled'
         }
         
         return jsonify(health_info), 200
