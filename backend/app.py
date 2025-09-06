@@ -1025,6 +1025,18 @@ def background_releases_updater():
         
         # Wait 3 minutes before next update
         time.sleep(180)
+def init_background_tasks():
+    """Initialize background tasks"""
+    global background_tasks_started
+    if not background_tasks_started:
+        threading.Thread(target=background_top10_updater, daemon=True).start()
+        threading.Thread(target=background_releases_updater, daemon=True).start()
+        background_tasks_started = True
+        logger.info("Background update tasks started")
+
+# Initialize background tasks after app context is ready
+with app.app_context():
+    init_background_tasks()
 
 # Start background tasks on first request
 @app.before_first_request
@@ -1823,9 +1835,12 @@ def create_tables():
 # Initialize database when app starts
 create_tables()
 
+# Create application factory for Gunicorn
+application = app
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('FLASK_ENV') == 'development'
     
-    # Use socketio.run instead of app.run for WebSocket support
+    # Use socketio.run for development
     socketio.run(app, host='0.0.0.0', port=port, debug=debug)
