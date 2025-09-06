@@ -9,7 +9,7 @@ from scipy.sparse import csr_matrix, hstack
 from scipy.stats import pearsonr, spearmanr
 from scipy.spatial.distance import jaccard, hamming
 from collections import defaultdict, Counter
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 import json
 import logging
 import math
@@ -19,10 +19,6 @@ from typing import List, Dict, Any, Tuple, Optional, Set
 from difflib import SequenceMatcher
 import networkx as nx
 import pytz
-import threading
-import time
-from concurrent.futures import ThreadPoolExecutor
-import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -70,107 +66,6 @@ ANIME_GENRES = {
     'josei': ['Romance', 'Drama', 'Slice of Life', 'Josei'],
     'kodomomuke': ['Kids', 'Family', 'Adventure', 'Comedy']
 }
-
-# Real-time update configuration
-REALTIME_CONFIG = {
-    'top_10_refresh_interval': 120,  # 2 minutes in seconds
-    'new_releases_refresh_interval': 180,  # 3 minutes in seconds
-    'cache_ttl': 60,  # Cache TTL in seconds for real-time data
-    'timezone_aware': True,
-    'auto_refresh_enabled': True,
-    'performance_mode': True  # Enable performance optimizations
-}
-
-class RealtimeDataManager:
-    """Manages real-time data fetching and caching with auto-refresh"""
-    
-    def __init__(self):
-        self._top_10_cache = {}
-        self._new_releases_cache = {}
-        self._last_top_10_update = None
-        self._last_new_releases_update = None
-        self._update_threads = {}
-        self._stop_threads = False
-        self._executor = ThreadPoolExecutor(max_workers=4)
-        self._locks = {
-            'top_10': threading.RLock(),
-            'new_releases': threading.RLock()
-        }
-        
-    def start_auto_refresh(self):
-        """Start background threads for auto-refresh"""
-        if REALTIME_CONFIG['auto_refresh_enabled']:
-            # Start Top 10 auto-refresh thread
-            top_10_thread = threading.Thread(target=self._auto_refresh_top_10, daemon=True)
-            top_10_thread.start()
-            self._update_threads['top_10'] = top_10_thread
-            
-            # Start New Releases auto-refresh thread
-            new_releases_thread = threading.Thread(target=self._auto_refresh_new_releases, daemon=True)
-            new_releases_thread.start()
-            self._update_threads['new_releases'] = new_releases_thread
-            
-            logger.info("Real-time auto-refresh threads started")
-    
-    def stop_auto_refresh(self):
-        """Stop all auto-refresh threads"""
-        self._stop_threads = True
-        for thread in self._update_threads.values():
-            if thread.is_alive():
-                thread.join(timeout=5)
-        logger.info("Real-time auto-refresh threads stopped")
-    
-    def _auto_refresh_top_10(self):
-        """Background thread for Top 10 auto-refresh"""
-        while not self._stop_threads:
-            try:
-                with self._locks['top_10']:
-                    self._last_top_10_update = None
-                time.sleep(REALTIME_CONFIG['top_10_refresh_interval'])
-            except Exception as e:
-                logger.error(f"Top 10 auto-refresh error: {e}")
-                time.sleep(60)
-    
-    def _auto_refresh_new_releases(self):
-        """Background thread for New Releases auto-refresh"""
-        while not self._stop_threads:
-            try:
-                with self._locks['new_releases']:
-                    self._last_new_releases_update = None
-                time.sleep(REALTIME_CONFIG['new_releases_refresh_interval'])
-            except Exception as e:
-                logger.error(f"New releases auto-refresh error: {e}")
-                time.sleep(60)
-    
-    def needs_refresh(self, last_update: datetime, interval_seconds: int) -> bool:
-        """Check if data needs refresh based on interval"""
-        if not last_update:
-            return True
-        
-        time_since_update = (datetime.now() - last_update).total_seconds()
-        return time_since_update >= interval_seconds
-    
-    def get_user_timezone_date(self, timezone_str: str = 'UTC') -> datetime:
-        """Get current date/time in user's timezone"""
-        try:
-            if timezone_str == 'UTC':
-                return datetime.now(pytz.UTC)
-            tz = pytz.timezone(timezone_str)
-            return datetime.now(tz)
-        except:
-            return datetime.now(pytz.UTC)
-    
-    def clear_cache(self, cache_type: str = 'all'):
-        """Clear specific or all caches"""
-        if cache_type in ['all', 'top_10']:
-            with self._locks['top_10']:
-                self._top_10_cache.clear()
-                self._last_top_10_update = None
-        
-        if cache_type in ['all', 'new_releases']:
-            with self._locks['new_releases']:
-                self._new_releases_cache.clear()
-                self._last_new_releases_update = None
 
 class ContentBasedFiltering:
     """Content-Based Filtering Strategy with Feature Extraction and Similarity Computation"""
@@ -521,6 +416,7 @@ class PopularityRanking:
             base_score *= 1.3
         
         # Daily refresh factor - content gets recalculated daily
+        # This ensures the list changes daily based on new data
         daily_factor = hash(f"{content.id}_{datetime.now().date()}") % 100 / 1000
         base_score += daily_factor
         
@@ -558,6 +454,60 @@ class PopularityRanking:
             score *= 1.5
         
         return score
+    
+class NewReleaseMonitor:
+    """Monitor for new releases with automatic detection"""
+    
+    def __init__(self, check_interval_minutes: int = 30):
+        self.check_interval = check_interval_minutes
+        self.last_check = None
+        self.detected_new_releases = set()
+    
+    def check_for_new_releases(self, external_services) -> List[Any]:
+        """Check all sources for new releases"""
+        new_content = []
+        current_date = datetime.now().date()
+        
+        # Priority order for checking
+        language_priority = ['telugu', 'english', 'hindi', 'malayalam', 'kannada', 'tamil']
+        
+        for language in language_priority:
+            lang_code = LANGUAGE_WEIGHTS.get(language, '')
+            
+            try:
+                # Check TMDB for new releases in this language
+                if language == 'english':
+                    releases = external_services['TMDBService'].get_new_releases('movie')
+                else:
+                    releases = external_services['TMDBService'].get_language_specific(lang_code, 'movie')
+                
+                if releases:
+                    for item in releases.get('results', []):
+                        # Check if truly new (released in last 60 days)
+                        if 'release_date' in item:
+                            try:
+                                release_date = datetime.strptime(item['release_date'], '%Y-%m-%d').date()
+                                days_old = (current_date - release_date).days
+                                
+                                if 0 <= days_old <= 60:
+                                    # Check if we haven't seen this before
+                                    if item['id'] not in self.detected_new_releases:
+                                        new_content.append({
+                                            'data': item,
+                                            'language': language,
+                                            'days_old': days_old,
+                                            'content_type': 'movie'
+                                        })
+                                        self.detected_new_releases.add(item['id'])
+                            except:
+                                pass
+                
+            except Exception as e:
+                logger.error(f"Error checking {language} releases: {e}")
+                continue
+        
+        self.last_check = datetime.now()
+        return new_content
 
 class LanguagePriorityFilter:
     """Enhanced Language Priority Filtering System"""
@@ -1719,526 +1669,21 @@ class UltraPowerfulSimilarityEngine:
         return diverse_results
 
 class RecommendationOrchestrator:
-    """Enhanced orchestrator with real-time updates and continuous fetching"""
+    """Enhanced orchestrator with proper category handling and daily refresh"""
     
     def __init__(self):
         self.content_based = ContentBasedFiltering()
         self.collaborative = CollaborativeFiltering()
         self.hybrid = HybridRecommendationEngine()
         self.ultra_similarity_engine = UltraPowerfulSimilarityEngine()
-        self.realtime_manager = RealtimeDataManager()
         self._last_refresh_date = None
         self._cached_top_10 = None
-        self._top_10_lock = threading.RLock()
-        self._new_releases_lock = threading.RLock()
-        
-        # Start auto-refresh threads
-        self.realtime_manager.start_auto_refresh()
-    
-    def _get_realtime_top_10(self, content_list: List[Any], user_timezone: str = 'UTC') -> List[Dict]:
-        """
-        Get REAL-TIME Top 10 content with continuous updates
-        Auto-refreshes every 2 minutes for 100% accuracy
-        """
-        with self._top_10_lock:
-            current_time = datetime.now()
-            user_date = self.realtime_manager.get_user_timezone_date(user_timezone)
-            
-            # Check if we need to refresh (every 2 minutes or new day)
-            needs_refresh = (
-                self._last_refresh_date is None or
-                self._last_refresh_date.date() != user_date.date() or
-                self.realtime_manager.needs_refresh(
-                    self._last_refresh_date, 
-                    REALTIME_CONFIG['top_10_refresh_interval']
-                )
-            )
-            
-            if needs_refresh or not self._cached_top_10:
-                logger.info(f"Refreshing Top 10 at {current_time.isoformat()} for timezone {user_timezone}")
-                
-                # Get current year content
-                current_year = user_date.year
-                current_content = [
-                    c for c in content_list 
-                    if c.release_date and c.release_date.year == current_year
-                ]
-                
-                # Calculate REAL-TIME scores
-                all_scores = []
-                
-                for content in current_content:
-                    # Real-time trending score
-                    trend_score = self._calculate_realtime_trending_score(content, user_date)
-                    
-                    # Language priority score
-                    lang_score = LanguagePriorityFilter.get_language_score(
-                        json.loads(content.languages or '[]')
-                    )
-                    
-                    # Real-time popularity (includes current hour factor)
-                    current_hour = user_date.hour
-                    hour_boost = self._get_hourly_boost(content.content_type, current_hour)
-                    
-                    # Quality score with recent vote weight
-                    quality_score = PopularityRanking.bayesian_average(
-                        content.rating or 0,
-                        content.vote_count or 0
-                    ) / 10
-                    
-                    # Real-time variation (changes throughout the day)
-                    realtime_seed = hash(f"{content.id}_{user_date.strftime('%Y%m%d%H')}")
-                    realtime_variation = (realtime_seed % 100) / 1000
-                    
-                    # Combined real-time score
-                    final_score = (
-                        trend_score * 0.4 * hour_boost +
-                        lang_score * 0.25 +
-                        quality_score * 0.25 +
-                        self._get_velocity_score(content, user_date) * 0.1 +
-                        realtime_variation
-                    )
-                    
-                    all_scores.append({
-                        'content': content,
-                        'score': final_score,
-                        'trend_score': trend_score,
-                        'hour_boost': hour_boost,
-                        'timestamp': current_time.isoformat()
-                    })
-                
-                # Sort by real-time score
-                all_scores.sort(key=lambda x: x['score'], reverse=True)
-                
-                # Get diverse top 10 with type balancing
-                top_10 = self._select_diverse_top_10(all_scores)
-                
-                # Format with real-time metadata
-                formatted_top_10 = []
-                for idx, item in enumerate(top_10):
-                    content = item['content']
-                    formatted_top_10.append({
-                        'rank': idx + 1,
-                        'id': content.id,
-                        'title': content.title,
-                        'content_type': content.content_type,
-                        'genres': json.loads(content.genres or '[]'),
-                        'languages': json.loads(content.languages or '[]'),
-                        'rating': content.rating,
-                        'release_date': content.release_date.isoformat() if content.release_date else None,
-                        'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
-                        'overview': content.overview[:150] + '...' if content.overview else '',
-                        'realtime_score': round(item['score'], 4),
-                        'trend_indicator': self._get_trend_indicator(item['trend_score']),
-                        'hour_boost_applied': item['hour_boost'],
-                        'last_updated': item['timestamp'],
-                        'youtube_trailer_id': content.youtube_trailer_id,
-                        'is_trending_now': content.is_trending,
-                        'realtime_badge': self._get_realtime_badge(idx + 1)
-                    })
-                
-                # Cache the result
-                self._cached_top_10 = formatted_top_10
-                self._last_refresh_date = current_time
-                
-                logger.info(f"Top 10 refreshed successfully at {current_time.isoformat()}")
-            
-            return self._cached_top_10
-    
-    def _calculate_realtime_trending_score(self, content: Any, user_date: datetime) -> float:
-        """Calculate real-time trending score with minute-level precision"""
-        base_score = PopularityRanking.calculate_trending_score(content)
-        
-        # Add real-time factors
-        if content.release_date:
-            # Hours since release (for very new content)
-            hours_old = (user_date - datetime.combine(
-                content.release_date, 
-                datetime.min.time()
-            ).replace(tzinfo=user_date.tzinfo)).total_seconds() / 3600
-            
-            if hours_old <= 24:  # Released today
-                base_score *= 3.0
-            elif hours_old <= 72:  # Released in last 3 days
-                base_score *= 2.0
-            elif hours_old <= 168:  # Released this week
-                base_score *= 1.5
-        
-        # Real-time popularity boost
-        if content.is_trending:
-            base_score *= 1.8
-        
-        return base_score
-    
-    def _get_hourly_boost(self, content_type: str, current_hour: int) -> float:
-        """Get hourly boost based on viewing patterns"""
-        if 6 <= current_hour < 9:  # Morning
-            return 1.1 if content_type == 'tv' else 0.9
-        elif 12 <= current_hour < 14:  # Lunch
-            return 1.2 if content_type == 'tv' else 1.0
-        elif 18 <= current_hour < 23:  # Prime time
-            return 1.5 if content_type == 'movie' else 1.3
-        elif 23 <= current_hour or current_hour < 2:  # Late night
-            return 1.3 if content_type == 'anime' else 1.1
-        else:
-            return 1.0
-    
-    def _get_velocity_score(self, content: Any, user_date: datetime) -> float:
-        """Calculate velocity score for rapidly trending content"""
-        if not content.vote_count or not content.release_date:
-            return 0.0
-        
-        days_old = (user_date.date() - content.release_date).days
-        if days_old <= 0:
-            days_old = 0.5  # For same-day releases
-        
-        # Velocity = votes per day
-        velocity = content.vote_count / days_old
-        
-        # Normalize (assuming 10000 votes/day is maximum velocity)
-        return min(velocity / 10000, 1.0)
-    
-    def _select_diverse_top_10(self, scored_items: List[Dict]) -> List[Dict]:
-        """Select diverse top 10 with type balancing"""
-        top_10 = []
-        type_counts = {'movie': 0, 'tv': 0, 'anime': 0}
-        max_per_type = 5
-        
-        for item in scored_items:
-            content_type = item['content'].content_type
-            
-            # Ensure diversity
-            if type_counts.get(content_type, 0) < max_per_type:
-                top_10.append(item)
-                type_counts[content_type] = type_counts.get(content_type, 0) + 1
-                
-                if len(top_10) >= 10:
-                    break
-        
-        # Fill remaining slots if needed
-        if len(top_10) < 10:
-            for item in scored_items:
-                if item not in top_10:
-                    top_10.append(item)
-                    if len(top_10) >= 10:
-                        break
-        
-        return top_10
-    
-    def _get_trend_indicator(self, trend_score: float) -> str:
-        """Get trend indicator based on score"""
-        if trend_score > 2.0:
-            return "🔥 On Fire"
-        elif trend_score > 1.5:
-            return "📈 Trending Up"
-        elif trend_score > 1.0:
-            return "⬆️ Rising"
-        else:
-            return "📊 Steady"
-    
-    def _get_realtime_badge(self, rank: int) -> str:
-        """Get badge for top 10 ranking"""
-        badges = {
-            1: "🥇 #1 Today",
-            2: "🥈 #2 Today",
-            3: "🥉 #3 Today"
-        }
-        return badges.get(rank, f"🏆 Top {rank}")
-    
-    def get_realtime_new_releases(self, content_list: List[Any], user_timezone: str = 'UTC', 
-                                  limit: int = 20) -> List[Dict]:
-        """
-        Get REAL-TIME new releases with continuous updates
-        Auto-refreshes every 3 minutes
-        Shows TODAY'S releases first, then strict language priority
-        """
-        with self._new_releases_lock:
-            user_datetime = self.realtime_manager.get_user_timezone_date(user_timezone)
-            user_date = user_datetime.date()
-            current_time = datetime.now()
-            
-            logger.info(f"Fetching real-time new releases at {current_time.isoformat()} for timezone {user_timezone}")
-            
-            # Define release categories
-            release_categories = {
-                'released_today': [],
-                'released_yesterday': [],
-                'released_this_week': [],
-                'released_this_month': [],
-                'recent_releases': []
-            }
-            
-            # Categorize all content by release timing
-            for content in content_list:
-                if not content.release_date:
-                    continue
-                
-                days_since_release = (user_date - content.release_date).days
-                
-                # Categorize based on release timing
-                if days_since_release == 0:
-                    release_categories['released_today'].append(content)
-                elif days_since_release == 1:
-                    release_categories['released_yesterday'].append(content)
-                elif days_since_release <= 7:
-                    release_categories['released_this_week'].append(content)
-                elif days_since_release <= 30:
-                    release_categories['released_this_month'].append(content)
-                elif days_since_release <= 60:
-                    release_categories['recent_releases'].append(content)
-            
-            # Process TODAY'S releases first (no language priority for today)
-            todays_releases = []
-            for content in release_categories['released_today']:
-                score = self._calculate_release_score(content, 0, user_datetime)
-                todays_releases.append((content, score))
-            
-            # Sort today's releases by score (quality/popularity)
-            todays_releases.sort(key=lambda x: x[1], reverse=True)
-            
-            # Process remaining releases with STRICT language priority
-            remaining_releases = []
-            
-            # Combine all non-today releases
-            all_other_releases = (
-                release_categories['released_yesterday'] +
-                release_categories['released_this_week'] +
-                release_categories['released_this_month'] +
-                release_categories['recent_releases']
-            )
-            
-            # Categorize by language with STRICT priority
-            language_buckets = {lang: [] for lang in PRIORITY_LANGUAGES}
-            language_buckets['others'] = []
-            
-            for content in all_other_releases:
-                languages = json.loads(content.languages or '[]')
-                languages_lower = [lang.lower() for lang in languages if isinstance(lang, str)]
-                
-                categorized = False
-                # Check languages in STRICT priority order
-                for priority_lang in PRIORITY_LANGUAGES:
-                    lang_code = LANGUAGE_WEIGHTS.get(priority_lang, '')
-                    
-                    for content_lang in languages_lower:
-                        if (priority_lang in content_lang or 
-                            content_lang == lang_code or
-                            content_lang == priority_lang):
-                            
-                            days_since = (user_date - content.release_date).days
-                            score = self._calculate_release_score(content, days_since, user_datetime)
-                            language_buckets[priority_lang].append((content, score))
-                            categorized = True
-                            break
-                    
-                    if categorized:
-                        break
-                
-                if not categorized:
-                    days_since = (user_date - content.release_date).days
-                    score = self._calculate_release_score(content, days_since, user_datetime)
-                    language_buckets['others'].append((content, score))
-            
-            # Sort each language bucket by score
-            for lang in language_buckets:
-                language_buckets[lang].sort(key=lambda x: x[1], reverse=True)
-            
-            # Build final list: TODAY'S releases first, then STRICT language priority
-            final_releases = []
-            added_ids = set()
-            
-            # 1. Add ALL today's releases first
-            for content, score in todays_releases:
-                if content.id not in added_ids:
-                    final_releases.append((content, score, 'TODAY'))
-                    added_ids.add(content.id)
-            
-            # 2. Add remaining by STRICT language priority
-            for priority_lang in PRIORITY_LANGUAGES:
-                for content, score in language_buckets[priority_lang]:
-                    if content.id not in added_ids:
-                        days_old = (user_date - content.release_date).days
-                        time_category = self._get_time_category(days_old)
-                        final_releases.append((content, score, time_category))
-                        added_ids.add(content.id)
-                        
-                        if len(final_releases) >= limit * 2:  # Get extra for better selection
-                            break
-                
-                if len(final_releases) >= limit * 2:
-                    break
-            
-            # Add others if still space
-            for content, score in language_buckets['others']:
-                if content.id not in added_ids:
-                    days_old = (user_date - content.release_date).days
-                    time_category = self._get_time_category(days_old)
-                    final_releases.append((content, score, time_category))
-                    added_ids.add(content.id)
-                    
-                    if len(final_releases) >= limit * 2:
-                        break
-            
-            # Format the results with real-time metadata
-            formatted_results = []
-            for idx, (content, score, time_category) in enumerate(final_releases[:limit]):
-                languages = json.loads(content.languages or '[]')
-                
-                # Determine primary language
-                primary_language = 'others'
-                for lang in languages:
-                    lang_lower = lang.lower() if isinstance(lang, str) else ''
-                    for priority_lang in PRIORITY_LANGUAGES:
-                        if priority_lang in lang_lower or lang_lower == LANGUAGE_WEIGHTS.get(priority_lang, ''):
-                            primary_language = priority_lang
-                            break
-                    if primary_language != 'others':
-                        break
-                
-                days_old = (user_date - content.release_date).days
-                
-                # Calculate hours old for today's releases
-                if days_old == 0:
-                    release_datetime = datetime.combine(
-                        content.release_date,
-                        datetime.min.time()
-                    ).replace(tzinfo=user_datetime.tzinfo)
-                    hours_old = (user_datetime - release_datetime).total_seconds() / 3600
-                else:
-                    hours_old = days_old * 24
-                
-                formatted = {
-                    'rank': idx + 1,
-                    'id': content.id,
-                    'title': content.title,
-                    'content_type': content.content_type,
-                    'genres': json.loads(content.genres or '[]'),
-                    'languages': languages,
-                    'primary_language': primary_language,
-                    'language_priority_rank': PRIORITY_LANGUAGES.index(primary_language) + 1 if primary_language in PRIORITY_LANGUAGES else 999,
-                    'rating': content.rating,
-                    'release_date': content.release_date.isoformat() if content.release_date else None,
-                    'release_time_category': time_category,
-                    'days_since_release': days_old,
-                    'hours_since_release': round(hours_old, 1) if days_old == 0 else None,
-                    'is_released_today': days_old == 0,
-                    'is_brand_new': days_old <= 1,
-                    'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
-                    'overview': content.overview[:150] + '...' if content.overview else '',
-                    'realtime_score': round(score, 4),
-                    'youtube_trailer_id': content.youtube_trailer_id,
-                    'freshness_indicator': self._get_freshness_indicator(days_old, hours_old if days_old == 0 else None),
-                    'release_badge': self._get_release_badge(time_category),
-                    'last_updated': current_time.isoformat(),
-                    'user_timezone': user_timezone
-                }
-                formatted_results.append(formatted)
-            
-            logger.info(f"New releases fetched: {len(formatted_results)} items (Today: {len(todays_releases)})")
-            
-            return formatted_results
-    
-    def _calculate_release_score(self, content: Any, days_since_release: int, user_datetime: datetime) -> float:
-        """Calculate real-time score for new releases"""
-        # Freshness score (exponential decay)
-        if days_since_release == 0:
-            freshness = 1.0  # Maximum for today's releases
-        else:
-            freshness = math.exp(-days_since_release / 10)  # Decay over 10 days
-        
-        # Quality score
-        quality = PopularityRanking.bayesian_average(
-            content.rating or 0,
-            content.vote_count or 0,
-            global_mean=7.0,
-            min_votes=10
-        ) / 10
-        
-        # Popularity score
-        popularity = min((content.popularity or 0) / 100, 1.0)
-        
-        # Velocity score (for very new content)
-        if days_since_release <= 3 and content.vote_count:
-            velocity = content.vote_count / max(days_since_release, 0.5)
-            velocity_score = min(velocity / 5000, 1.0)
-        else:
-            velocity_score = 0
-        
-        # Real-time boost for content released in last few hours
-        hour_boost = 1.0
-        if days_since_release == 0:
-            current_hour = user_datetime.hour
-            if 0 <= current_hour < 6:
-                hour_boost = 1.2  # Overnight releases get boost
-            elif 6 <= current_hour < 12:
-                hour_boost = 1.5  # Morning releases
-            elif 12 <= current_hour < 18:
-                hour_boost = 1.3  # Afternoon releases
-        
-        # Combined score
-        return (
-            freshness * 0.4 * hour_boost +
-            quality * 0.3 +
-            popularity * 0.2 +
-            velocity_score * 0.1
-        )
-    
-    def _get_time_category(self, days_old: int) -> str:
-        """Get time category for release"""
-        if days_old == 0:
-            return 'TODAY'
-        elif days_old == 1:
-            return 'YESTERDAY'
-        elif days_old <= 7:
-            return 'THIS_WEEK'
-        elif days_old <= 30:
-            return 'THIS_MONTH'
-        else:
-            return 'RECENT'
-    
-    def _get_freshness_indicator(self, days_old: int, hours_old: Optional[float] = None) -> str:
-        """Get freshness indicator with real-time precision"""
-        if days_old == 0:
-            if hours_old is not None:
-                if hours_old < 1:
-                    return '🔴 JUST RELEASED!'
-                elif hours_old < 6:
-                    return '🟠 Released Today (Few Hours Ago)'
-                elif hours_old < 12:
-                    return '🟡 Released Today (This Morning)'
-                else:
-                    return '🟢 Released Today'
-            return '🟢 Released Today'
-        elif days_old == 1:
-            return '📅 Released Yesterday'
-        elif days_old <= 3:
-            return '✨ Brand New'
-        elif days_old <= 7:
-            return '📆 This Week'
-        elif days_old <= 14:
-            return '📍 Last Week'
-        elif days_old <= 30:
-            return '📌 This Month'
-        else:
-            return '📎 Recent Release'
-    
-    def _get_release_badge(self, time_category: str) -> str:
-        """Get badge for release category"""
-        badges = {
-            'TODAY': '🎬 TODAY',
-            'YESTERDAY': '📽️ YESTERDAY',
-            'THIS_WEEK': '🎞️ THIS WEEK',
-            'THIS_MONTH': '🎥 THIS MONTH',
-            'RECENT': '📹 RECENT'
-        }
-        return badges.get(time_category, '')
     
     def get_trending_with_algorithms(self, content_list: List[Any], limit: int = 20, 
-                                    region: str = None, apply_language_priority: bool = True,
-                                    user_timezone: str = 'UTC') -> Dict[str, List[Dict]]:
-        """Enhanced trending with real-time Top 10"""
+                                    region: str = None, apply_language_priority: bool = True) -> Dict[str, List[Dict]]:
+        """Get trending content with proper categorization and daily refresh"""
         
-        # Get current year content
+        # Filter for current year content
         current_year = datetime.now().year
         current_year_content = [
             c for c in content_list 
@@ -2258,7 +1703,7 @@ class RecommendationOrchestrator:
             'trending_tv_shows': [],
             'trending_anime': [],
             'popular_nearby': [],
-            'top_10_today': [],  # Will use real-time version
+            'top_10_today': [],
             'critics_choice': []
         }
         
@@ -2309,7 +1754,7 @@ class RecommendationOrchestrator:
         anime_trending_scores.sort(key=lambda x: x[1], reverse=True)
         categories['trending_anime'] = self._format_recommendations(anime_trending_scores[:limit])
         
-        # 3. TRENDING MOVIES
+        # 3. TRENDING MOVIES (for completeness)
         movie_trending_scores = []
         for content in movies:
             popularity_score = PopularityRanking.calculate_trending_score(content)
@@ -2362,10 +1807,10 @@ class RecommendationOrchestrator:
             # Default to Indian regional content
             categories['popular_nearby'] = self._get_default_regional_content(current_year_content, limit)
         
-        # 5. TOP 10 TODAY - Use REAL-TIME version
-        categories['top_10_today'] = self._get_realtime_top_10(current_year_content, user_timezone)
+        # 5. TOP 10 TODAY - Daily refreshing top content across all categories
+        categories['top_10_today'] = self._get_daily_top_10(current_year_content)
         
-        # 6. CRITICS CHOICE - Top critically acclaimed content of the year
+        # 6. CRITICS CHOICE - Top critically acclaimed content of the year (continued)
         critics_scores = []
         for content in current_year_content:
             critics_score = PopularityRanking.calculate_critics_score(content)
@@ -2385,10 +1830,58 @@ class RecommendationOrchestrator:
         
         return categories
     
-    def get_new_releases_with_algorithms(self, content_list: List[Any], limit: int = 20,
-                                        user_timezone: str = 'UTC') -> List[Dict]:
-        """Get new releases with REAL-TIME updates and timezone awareness"""
-        return self.get_realtime_new_releases(content_list, user_timezone, limit)
+    def _get_daily_top_10(self, content_list: List[Any]) -> List[Dict]:
+        """Get daily refreshing top 10 content"""
+        current_date = datetime.now().date()
+        
+        # Check if we need to refresh (new day)
+        if self._last_refresh_date != current_date or not self._cached_top_10:
+            # Calculate fresh scores for all content
+            all_scores = []
+            
+            for content in content_list:
+                # Complex scoring for top 10
+                trend_score = PopularityRanking.calculate_trending_score(content)
+                lang_score = LanguagePriorityFilter.get_language_score(
+                    json.loads(content.languages or '[]')
+                )
+                quality_score = PopularityRanking.bayesian_average(
+                    content.rating or 0,
+                    content.vote_count or 0
+                ) / 10
+                
+                # Daily variation factor (changes daily)
+                daily_seed = hash(f"{content.id}_{current_date}")
+                daily_variation = (daily_seed % 100) / 500  # Small daily variation
+                
+                # Combined score with daily variation
+                final_score = (trend_score * 0.5) + (lang_score * 0.2) + (quality_score * 0.3) + daily_variation
+                
+                all_scores.append((content, final_score))
+            
+            # Sort and get top 10
+            all_scores.sort(key=lambda x: x[1], reverse=True)
+            
+            # Ensure diversity in top 10 (mix of movies, TV, anime)
+            top_10 = []
+            type_counts = {'movie': 0, 'tv': 0, 'anime': 0}
+            
+            for content, score in all_scores:
+                content_type = content.content_type
+                
+                # Limit each type to max 5 in top 10
+                if type_counts.get(content_type, 0) < 5:
+                    top_10.append((content, score))
+                    type_counts[content_type] = type_counts.get(content_type, 0) + 1
+                    
+                    if len(top_10) >= 10:
+                        break
+            
+            # Cache the result
+            self._cached_top_10 = self._format_recommendations(top_10)
+            self._last_refresh_date = current_date
+        
+        return self._cached_top_10
     
     def _get_regional_content(self, content_list: List[Any], region: str) -> List[Any]:
         """Get content relevant to a specific region"""
@@ -2434,6 +1927,181 @@ class RecommendationOrchestrator:
         regional_scores.sort(key=lambda x: x[1], reverse=True)
         return self._format_recommendations(regional_scores[:limit])
     
+    def get_new_releases_with_algorithms(self, content_list: List[Any], limit: int = 20) -> List[Dict]:
+        """Get new releases with Telugu content ALWAYS shown first"""
+        current_year = datetime.now().year
+        current_date = datetime.now().date()
+        
+        # Filter for recent releases (last 60 days for "new")
+        new_releases = []
+        for content in content_list:
+            if content.release_date:
+                days_since_release = (current_date - content.release_date).days
+                # Only include content released in last 60 days
+                if 0 <= days_since_release <= 60:
+                    new_releases.append(content)
+        
+        # Separate Telugu content from others
+        telugu_releases = []
+        other_language_releases = {
+            'english': [],
+            'hindi': [],
+            'malayalam': [],
+            'kannada': [],
+            'tamil': [],
+            'others': []
+        }
+        
+        for content in new_releases:
+            languages = json.loads(content.languages or '[]')
+            languages_lower = [lang.lower() for lang in languages if isinstance(lang, str)]
+            
+            # Check if it's Telugu content FIRST
+            is_telugu = False
+            for lang in languages_lower:
+                if 'telugu' in lang or lang == 'te':
+                    is_telugu = True
+                    break
+            
+            if is_telugu:
+                # Calculate score for Telugu content
+                days_since = (current_date - content.release_date).days
+                freshness = 1.0 - (days_since / 60)
+                quality = PopularityRanking.bayesian_average(
+                    content.rating or 0,
+                    content.vote_count or 0
+                ) / 10
+                popularity = min(content.popularity / 100, 1.0) if content.popularity else 0
+                score = (freshness * 0.5) + (quality * 0.3) + (popularity * 0.2)
+                telugu_releases.append((content, score))
+            else:
+                # Categorize other languages
+                categorized = False
+                for priority_lang in ['english', 'hindi', 'malayalam', 'kannada', 'tamil']:
+                    lang_code = LANGUAGE_WEIGHTS.get(priority_lang, '')
+                    
+                    for content_lang in languages_lower:
+                        if (priority_lang in content_lang or 
+                            content_lang == lang_code or
+                            content_lang == priority_lang):
+                            
+                            days_since = (current_date - content.release_date).days
+                            freshness = 1.0 - (days_since / 60)
+                            quality = PopularityRanking.bayesian_average(
+                                content.rating or 0,
+                                content.vote_count or 0
+                            ) / 10
+                            popularity = min(content.popularity / 100, 1.0) if content.popularity else 0
+                            score = (freshness * 0.5) + (quality * 0.3) + (popularity * 0.2)
+                            
+                            other_language_releases[priority_lang].append((content, score))
+                            categorized = True
+                            break
+                    
+                    if categorized:
+                        break
+                
+                if not categorized:
+                    days_since = (current_date - content.release_date).days
+                    freshness = 1.0 - (days_since / 60)
+                    quality = PopularityRanking.bayesian_average(
+                        content.rating or 0,
+                        content.vote_count or 0
+                    ) / 10
+                    popularity = min(content.popularity / 100, 1.0) if content.popularity else 0
+                    score = (freshness * 0.5) + (quality * 0.3) + (popularity * 0.2)
+                    other_language_releases['others'].append((content, score))
+        
+        # Sort Telugu releases by score
+        telugu_releases.sort(key=lambda x: x[1], reverse=True)
+        
+        # Sort other language releases by score
+        for lang in other_language_releases:
+            other_language_releases[lang].sort(key=lambda x: x[1], reverse=True)
+        
+        # Build final list: ALL Telugu content first, then others
+        final_releases = []
+        added_ids = set()
+        
+        # STEP 1: Add ALL Telugu releases first (up to limit)
+        for content, score in telugu_releases:
+            if content.id not in added_ids:
+                final_releases.append((content, score))
+                added_ids.add(content.id)
+                
+                if len(final_releases) >= limit:
+                    break
+        
+        # STEP 2: If we still have space, add other languages in priority order
+        if len(final_releases) < limit:
+            remaining_slots = limit - len(final_releases)
+            
+            # Order of other languages after Telugu
+            other_language_order = ['english', 'hindi', 'malayalam', 'kannada', 'tamil', 'others']
+            
+            for lang in other_language_order:
+                for content, score in other_language_releases[lang]:
+                    if content.id not in added_ids:
+                        final_releases.append((content, score))
+                        added_ids.add(content.id)
+                        
+                        if len(final_releases) >= limit:
+                            break
+                
+                if len(final_releases) >= limit:
+                    break
+        
+        # Format the response
+        formatted_results = []
+        for idx, (content, score) in enumerate(final_releases[:limit]):
+            languages = json.loads(content.languages or '[]')
+            
+            # Determine if it's Telugu content
+            is_telugu_content = False
+            for lang in languages:
+                lang_lower = lang.lower() if isinstance(lang, str) else ''
+                if 'telugu' in lang_lower or lang_lower == 'te':
+                    is_telugu_content = True
+                    break
+            
+            # Determine primary language
+            primary_language = 'telugu' if is_telugu_content else 'others'
+            if not is_telugu_content:
+                for lang in languages:
+                    lang_lower = lang.lower() if isinstance(lang, str) else ''
+                    for priority_lang in ['english', 'hindi', 'malayalam', 'kannada', 'tamil']:
+                        if priority_lang in lang_lower or lang_lower == LANGUAGE_WEIGHTS.get(priority_lang, ''):
+                            primary_language = priority_lang
+                            break
+                    if primary_language != 'others':
+                        break
+            
+            days_old = (current_date - content.release_date).days
+            
+            formatted = {
+                'id': content.id,
+                'title': content.title,
+                'content_type': content.content_type,
+                'genres': json.loads(content.genres or '[]'),
+                'languages': languages,
+                'primary_language': primary_language,
+                'is_telugu': is_telugu_content,
+                'display_order': idx + 1,  # Shows exact order in the list
+                'rating': content.rating,
+                'release_date': content.release_date.isoformat() if content.release_date else None,
+                'days_since_release': days_old,
+                'is_brand_new': days_old <= 7,
+                'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
+                'overview': content.overview[:150] + '...' if content.overview else '',
+                'algorithm_score': round(score, 3),
+                'youtube_trailer_id': content.youtube_trailer_id,
+                'freshness_indicator': 'Just Released' if days_old <= 3 else 'New This Week' if days_old <= 7 else 'Recent Release',
+                'language_section': 'Telugu New Releases' if is_telugu_content else f'{primary_language.capitalize()} New Releases'
+            }
+            formatted_results.append(formatted)
+        
+        return formatted_results
+        
     def get_personalized_recommendations(self, user_profile: Dict, content_list: List[Any], 
                                         context: Dict = None, limit: int = 20) -> List[Dict]:
         """Get personalized recommendations using hybrid approach"""
@@ -2477,6 +2145,16 @@ class RecommendationOrchestrator:
                                  min_similarity: float = 0.5) -> List[Dict]:
         """
         Get ultra-accurate similar content using the most powerful similarity engine
+        
+        Args:
+            base_content_id: ID of the base content
+            content_pool: Pool of content to search from
+            limit: Maximum number of results
+            strict_mode: Enable strict filtering for 100% accuracy
+            min_similarity: Minimum similarity threshold (0.5 = 50% match)
+        
+        Returns:
+            List of similar content with detailed matching information
         """
         
         # Find base content
@@ -2626,9 +2304,24 @@ class RecommendationOrchestrator:
             })
         return formatted
     
-    def shutdown(self):
-        """Cleanup method to stop background threads"""
-        self.realtime_manager.stop_auto_refresh()
+    def _is_regional_content(self, content: Any, region: str) -> bool:
+        """Check if content is relevant to a region"""
+        languages = json.loads(content.languages or '[]')
+        
+        # Get expected languages for the region
+        region_config = REGION_LANGUAGE_MAP.get(region, REGION_LANGUAGE_MAP.get('IN'))
+        
+        if isinstance(region_config, dict):
+            expected_langs = region_config.get('primary', []) + region_config.get('secondary', [])
+        else:
+            expected_langs = region_config if region_config else []
+        
+        # Check if content matches regional languages
+        for lang in languages:
+            if any(expected in lang.lower() for expected in expected_langs):
+                return True
+        
+        return False
 
 # Evaluation Metrics
 class EvaluationMetrics:

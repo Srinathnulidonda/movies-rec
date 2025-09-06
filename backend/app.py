@@ -40,13 +40,8 @@ from services.algorithms import (
     ContentBasedFiltering,
     CollaborativeFiltering,
     HybridRecommendationEngine,
-    UltraPowerfulSimilarityEngine,
-    RealtimeDataManager,
-    REALTIME_CONFIG
+    UltraPowerfulSimilarityEngine
 )
-import pytz
-import signal
-import atexit
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -66,21 +61,18 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 REDIS_URL = os.environ.get('REDIS_URL', 'redis://red-d2qlbuje5dus73c71qog:xp7inVzgblGCbo9I4taSGLdKUg0xY91I@red-d2qlbuje5dus73c71qog:6379')
 
 if REDIS_URL and REDIS_URL.startswith(('redis://', 'rediss://')):
-    # Production - Redis with shorter TTL for real-time data
+    # Production - Redis
     app.config['CACHE_TYPE'] = 'redis'
     app.config['CACHE_REDIS_URL'] = REDIS_URL
-    app.config['CACHE_DEFAULT_TIMEOUT'] = 1800  # 30 minutes default
-    # Shorter cache for real-time endpoints
-    app.config['CACHE_REALTIME_TIMEOUT'] = 60  # 1 minute for real-time data
+    app.config['CACHE_DEFAULT_TIMEOUT'] = 3600  # 1 hour default
 else:
     # Fallback to simple cache if Redis URL is invalid
     app.config['CACHE_TYPE'] = 'simple'
-    app.config['CACHE_DEFAULT_TIMEOUT'] = 900  # 15 minutes default
-    app.config['CACHE_REALTIME_TIMEOUT'] = 30  # 30 seconds for real-time data
+    app.config['CACHE_DEFAULT_TIMEOUT'] = 1800  # 30 minutes default
 
 # Initialize extensions
 db = SQLAlchemy(app)
-CORS(app, supports_credentials=True, origins=['*'])
+CORS(app)
 cache = Cache(app)
 
 # API Keys - Set these in your environment
@@ -147,40 +139,15 @@ ANIME_GENRES = {
     'kodomomuke': ['Kids', 'Family', 'Adventure', 'Comedy']
 }
 
-# Initialize Recommendation Orchestrator with real-time capabilities
+# Initialize Recommendation Orchestrator
 recommendation_orchestrator = RecommendationOrchestrator()
 
-# Cleanup function for graceful shutdown
-def cleanup_resources():
-    """Cleanup resources on app shutdown"""
-    try:
-        logger.info("Shutting down real-time recommendation threads...")
-        recommendation_orchestrator.shutdown()
-        executor.shutdown(wait=False)
-        logger.info("Cleanup completed successfully")
-    except Exception as e:
-        logger.error(f"Error during cleanup: {e}")
-
-# Register cleanup handlers
-atexit.register(cleanup_resources)
-
-def signal_handler(sig, frame):
-    """Handle termination signals"""
-    logger.info("Received termination signal, cleaning up...")
-    cleanup_resources()
-    exit(0)
-
-signal.signal(signal.SIGINT, signal_handler)
-signal.signal(signal.SIGTERM, signal_handler)
-
-# Cache key generators with real-time awareness
+# Cache key generators
 def make_cache_key(*args, **kwargs):
     """Generate cache key from function arguments"""
     path = request.path
     args_str = str(hash(frozenset(request.args.items())))
-    # Include timezone in cache key for real-time endpoints
-    timezone = request.args.get('timezone', 'UTC')
-    return f"{path}:{args_str}:{timezone}"
+    return f"{path}:{args_str}"
 
 def content_cache_key(content_id):
     """Generate cache key for content details"""
@@ -191,10 +158,9 @@ def search_cache_key(query, content_type, page):
     return f"search:{query}:{content_type}:{page}"
 
 def recommendations_cache_key(rec_type, **kwargs):
-    """Generate cache key for recommendations with timezone awareness"""
-    timezone = kwargs.get('timezone', 'UTC')
+    """Generate cache key for recommendations"""
     params = ':'.join([f"{k}={v}" for k, v in sorted(kwargs.items())])
-    return f"recommendations:{rec_type}:{params}:{timezone}"
+    return f"recommendations:{rec_type}:{params}"
 
 # Database Models
 class User(db.Model):
@@ -205,7 +171,6 @@ class User(db.Model):
     is_admin = db.Column(db.Boolean, default=False)
     preferred_languages = db.Column(db.Text)  # JSON string
     preferred_genres = db.Column(db.Text)  # JSON string
-    preferred_timezone = db.Column(db.String(50), default='UTC')  # User's timezone
     location = db.Column(db.String(100))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     last_active = db.Column(db.DateTime, default=datetime.utcnow)
@@ -237,7 +202,6 @@ class Content(db.Model):
     critics_score = db.Column(db.Float)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    last_trending_update = db.Column(db.DateTime)  # Track when trending status was last updated
 
 class UserInteraction(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -262,7 +226,6 @@ class AnonymousInteraction(db.Model):
     content_id = db.Column(db.Integer, db.ForeignKey('content.id'), nullable=False)
     interaction_type = db.Column(db.String(20), nullable=False)
     ip_address = db.Column(db.String(45))
-    timezone = db.Column(db.String(50))  # Track user's timezone
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
 
 # Register blueprints
@@ -277,44 +240,8 @@ def get_session_id():
         session['session_id'] = hashlib.md5(f"{request.remote_addr}{time.time()}".encode()).hexdigest()
     return session['session_id']
 
-def get_user_timezone():
-    """Get user timezone from request or session"""
-    # Check request args first
-    timezone = request.args.get('timezone')
-    
-    # Check session
-    if not timezone and 'user_timezone' in session:
-        timezone = session['user_timezone']
-    
-    # Check user preferences if logged in
-    if not timezone and 'user_id' in session:
-        user = User.query.get(session['user_id'])
-        if user and user.preferred_timezone:
-            timezone = user.preferred_timezone
-    
-    # Default to UTC
-    return timezone or 'UTC'
-
-def set_user_timezone(timezone):
-    """Set user timezone in session"""
-    try:
-        # Validate timezone
-        pytz.timezone(timezone)
-        session['user_timezone'] = timezone
-        
-        # Update user record if logged in
-        if 'user_id' in session:
-            user = User.query.get(session['user_id'])
-            if user:
-                user.preferred_timezone = timezone
-                db.session.commit()
-        
-        return True
-    except:
-        return False
-
 def get_user_location(ip_address):
-    """Get user location with caching and timezone detection"""
+    """Get user location with caching"""
     cache_key = f"location:{ip_address}"
     cached_location = cache.get(cache_key)
     
@@ -332,8 +259,7 @@ def get_user_location(ip_address):
                     'region': data.get('regionName'),
                     'city': data.get('city'),
                     'lat': data.get('lat'),
-                    'lon': data.get('lon'),
-                    'timezone': data.get('timezone', 'UTC')  # Get timezone from IP
+                    'lon': data.get('lon')
                 }
                 # Cache for 24 hours
                 cache.set(cache_key, location, timeout=86400)
@@ -466,7 +392,7 @@ class TMDBService:
         return None
     
     @staticmethod
-    @cache.memoize(timeout=600)  # Cache for 10 minutes (real-time data)
+    @cache.memoize(timeout=1800)  # Cache for 30 minutes
     def get_trending(content_type='all', time_window='day', page=1):
         url = f"{TMDBService.BASE_URL}/trending/{content_type}/{time_window}"
         params = {
@@ -483,7 +409,7 @@ class TMDBService:
         return None
     
     @staticmethod
-    @cache.memoize(timeout=1800)  # Cache for 30 minutes
+    @cache.memoize(timeout=3600)  # Cache for 1 hour
     def get_popular(content_type='movie', page=1, region=None):
         url = f"{TMDBService.BASE_URL}/{content_type}/popular"
         params = {
@@ -502,7 +428,7 @@ class TMDBService:
         return None
     
     @staticmethod
-    @cache.memoize(timeout=600)  # Cache for 10 minutes (real-time data)
+    @cache.memoize(timeout=3600)  # Cache for 1 hour
     def get_new_releases(content_type='movie', region=None, page=1):
         """Get content released in the last 60 days"""
         end_date = datetime.now().strftime('%Y-%m-%d')
@@ -714,7 +640,7 @@ class YouTubeService:
             logger.error(f"YouTube search error: {e}")
         return None
 
-# Enhanced Content Management Service with real-time updates
+# Enhanced Content Management Service with caching
 class ContentService:
     @staticmethod
     def save_content_from_tmdb(tmdb_data, content_type):
@@ -761,11 +687,6 @@ class ContentService:
             if critics_score >= 7.5 and vote_count >= 100:
                 is_critics_choice = True
             
-            # Determine if it's trending (based on popularity)
-            is_trending = False
-            if tmdb_data.get('popularity', 0) >= 50:
-                is_trending = True
-            
             # Get YouTube trailer
             youtube_trailer_id = ContentService.get_youtube_trailer(tmdb_data.get('title') or tmdb_data.get('name'))
             
@@ -788,9 +709,7 @@ class ContentService:
                 youtube_trailer_id=youtube_trailer_id,
                 is_new_release=is_new_release,
                 is_critics_choice=is_critics_choice,
-                critics_score=critics_score,
-                is_trending=is_trending,
-                last_trending_update=datetime.utcnow() if is_trending else None
+                critics_score=critics_score
             )
             
             db.session.add(content)
@@ -808,35 +727,12 @@ class ContentService:
     
     @staticmethod
     def update_content_from_tmdb(content, tmdb_data):
-        """Update existing content with new TMDB data and real-time status"""
+        """Update existing content with new TMDB data"""
         try:
             # Update fields
             content.rating = tmdb_data.get('vote_average', content.rating)
             content.vote_count = tmdb_data.get('vote_count', content.vote_count)
             content.popularity = tmdb_data.get('popularity', content.popularity)
-            
-            # Update trending status based on current popularity
-            if content.popularity and content.popularity >= 50:
-                content.is_trending = True
-                content.last_trending_update = datetime.utcnow()
-            elif content.last_trending_update and \
-                 content.last_trending_update < datetime.utcnow() - timedelta(hours=24):
-                # Remove trending status if not updated in 24 hours
-                content.is_trending = False
-            
-            # Update critics choice status
-            if content.rating and content.vote_count:
-                if content.rating >= 7.5 and content.vote_count >= 100:
-                    content.is_critics_choice = True
-                    content.critics_score = content.rating
-                else:
-                    content.is_critics_choice = False
-            
-            # Update new release status
-            if content.release_date:
-                days_old = (datetime.now().date() - content.release_date).days
-                content.is_new_release = days_old <= 60
-            
             content.updated_at = datetime.utcnow()
             
             db.session.commit()
@@ -877,12 +773,6 @@ class ContentService:
                 except:
                     pass
             
-            # Determine if it's new
-            is_new_release = False
-            if release_date:
-                days_old = (datetime.now().date() - release_date).days
-                is_new_release = days_old <= 60
-            
             # Get YouTube trailer for anime
             youtube_trailer_id = ContentService.get_youtube_trailer(anime_data.get('title'), 'anime')
             
@@ -901,8 +791,7 @@ class ContentService:
                 popularity=anime_data.get('popularity'),
                 overview=anime_data.get('synopsis'),
                 poster_path=anime_data.get('images', {}).get('jpg', {}).get('image_url'),
-                youtube_trailer_id=youtube_trailer_id,
-                is_new_release=is_new_release
+                youtube_trailer_id=youtube_trailer_id
             )
             
             db.session.add(content)
@@ -947,9 +836,8 @@ class AnonymousRecommendationEngine:
     @staticmethod
     def get_recommendations_for_anonymous(session_id, ip_address, limit=20):
         try:
-            # Get user location and timezone
+            # Get user location for regional content
             location = get_user_location(ip_address)
-            user_timezone = location.get('timezone', 'UTC') if location else 'UTC'
             
             # Get anonymous user's interaction history
             interactions = AnonymousInteraction.query.filter_by(session_id=session_id).all()
@@ -1031,7 +919,7 @@ init_users(app, db, models, services)
 
 # API Routes
 
-# Enhanced Content Discovery Routes with real-time support
+# Enhanced Content Discovery Routes with caching
 @app.route('/api/search', methods=['GET'])
 @cache.cached(timeout=300, key_prefix=make_cache_key)
 def search_content():
@@ -1043,9 +931,8 @@ def search_content():
         if not query:
             return jsonify({'error': 'Query parameter required'}), 400
         
-        # Record search interaction with timezone
+        # Record search interaction
         session_id = get_session_id()
-        user_timezone = get_user_timezone()
         
         # Use concurrent requests for multiple sources
         futures = []
@@ -1074,8 +961,7 @@ def search_content():
                         session_id=session_id,
                         content_id=content.id,
                         interaction_type='search',
-                        ip_address=request.remote_addr,
-                        timezone=user_timezone
+                        ip_address=request.remote_addr
                     )
                     db.session.add(interaction)
                     
@@ -1148,15 +1034,13 @@ def get_content_details(content_id):
             content = Content.query.get_or_404(content_id)
             cache.set(cache_key, content, timeout=7200)
         
-        # Record view interaction with timezone
+        # Record view interaction
         session_id = get_session_id()
-        user_timezone = get_user_timezone()
         interaction = AnonymousInteraction(
             session_id=session_id,
             content_id=content.id,
             interaction_type='view',
-            ip_address=request.remote_addr,
-            timezone=user_timezone
+            ip_address=request.remote_addr
         )
         db.session.add(interaction)
         
@@ -1258,24 +1142,15 @@ def get_content_details(content_id):
         return jsonify({'error': 'Failed to get content details'}), 500
 
 @app.route('/api/recommendations/trending', methods=['GET'])
-@cache.cached(timeout=REALTIME_CONFIG['cache_ttl'], key_prefix=make_cache_key)
+@cache.cached(timeout=300, key_prefix=make_cache_key)
 def get_trending():
-    """Enhanced trending endpoint with REAL-TIME updates"""
+    """Enhanced trending endpoint using advanced algorithms"""
     try:
         # Get parameters
         category = request.args.get('category', 'all')
         limit = int(request.args.get('limit', 10))
         region = request.args.get('region', 'IN')
         apply_language_priority = request.args.get('language_priority', 'true').lower() == 'true'
-        user_timezone = get_user_timezone()
-        
-        # Update trending status for content (real-time check)
-        # This could be done as a background task for better performance
-        recent_tmdb = TMDBService.get_trending('all', 'day')
-        if recent_tmdb:
-            for item in recent_tmdb.get('results', [])[:20]:
-                content_type = 'movie' if 'title' in item else 'tv'
-                ContentService.save_content_from_tmdb(item, content_type)
         
         # Aggregate data from multiple sources
         all_content = []
@@ -1321,13 +1196,12 @@ def get_trending():
                 seen_ids.add(content.id)
                 unique_content.append(content)
         
-        # Apply algorithms with real-time support
+        # Apply algorithms
         categories = recommendation_orchestrator.get_trending_with_algorithms(
             unique_content,
             limit=limit,
             region=region,
-            apply_language_priority=apply_language_priority,
-            user_timezone=user_timezone  # Pass timezone for real-time calculations
+            apply_language_priority=apply_language_priority
         )
         
         # Format response based on category
@@ -1338,10 +1212,8 @@ def get_trending():
                     'total_content_analyzed': len(unique_content),
                     'region': region,
                     'language_priority_applied': apply_language_priority,
-                    'algorithm': 'real_time_multi_level_ranking',
-                    'user_timezone': user_timezone,
-                    'timestamp': datetime.now(pytz.timezone(user_timezone)).isoformat(),
-                    'auto_refresh_interval': REALTIME_CONFIG['top_10_refresh_interval']
+                    'algorithm': 'multi_level_ranking',
+                    'timestamp': datetime.utcnow().isoformat()
                 }
             }
         else:
@@ -1362,10 +1234,8 @@ def get_trending():
                     'total_content_analyzed': len(unique_content),
                     'region': region,
                     'language_priority_applied': apply_language_priority,
-                    'algorithm': 'real_time_multi_level_ranking',
-                    'user_timezone': user_timezone,
-                    'timestamp': datetime.now(pytz.timezone(user_timezone)).isoformat(),
-                    'auto_refresh_interval': REALTIME_CONFIG['top_10_refresh_interval'] if category == 'top10' else None
+                    'algorithm': 'multi_level_ranking',
+                    'timestamp': datetime.utcnow().isoformat()
                 }
             }
         
@@ -1402,22 +1272,22 @@ def get_trending():
         logger.error(f"Trending recommendations error: {e}")
         logger.exception(e)
         return jsonify({'error': 'Failed to get trending recommendations'}), 500
-
+    
 @app.route('/api/recommendations/new-releases', methods=['GET'])
-@cache.cached(timeout=REALTIME_CONFIG['cache_ttl'], key_prefix=make_cache_key)
+@cache.cached(timeout=300, key_prefix=make_cache_key)
 def get_new_releases():
-    """Enhanced new releases with REAL-TIME updates and timezone awareness"""
+    """Enhanced new releases with Telugu priority using algorithms"""
     try:
         content_type = request.args.get('type', 'movie')
         limit = int(request.args.get('limit', 20))
-        user_timezone = get_user_timezone()
         
-        # Update new releases from external sources (real-time)
-        # Priority languages in order
-        priority_languages = ['telugu', 'english', 'hindi', 'malayalam', 'kannada', 'tamil']
-        
+        # Aggregate new releases from multiple sources
         all_new_releases = []
         
+        # Priority languages in order - Telugu MUST be first
+        priority_languages = ['telugu', 'english', 'hindi', 'malayalam', 'kannada', 'tamil']
+        
+        # Fetch Telugu content FIRST
         for language in priority_languages:
             lang_code = LANGUAGE_PRIORITY['codes'].get(language)
             
@@ -1442,7 +1312,7 @@ def get_new_releases():
         db_new_releases = Content.query.filter(
             Content.is_new_release == True,
             Content.content_type == content_type
-        ).limit(100).all()
+        ).limit(50).all()
         all_new_releases.extend(db_new_releases)
         
         # Remove duplicates
@@ -1453,14 +1323,27 @@ def get_new_releases():
                 seen_ids.add(content.id)
                 unique_releases.append(content)
         
-        # Apply real-time algorithms with timezone awareness
+        # Apply algorithms - THIS IS THE KEY PART
+        # The algorithm now ensures Telugu content appears first
         recommendations = recommendation_orchestrator.get_new_releases_with_algorithms(
             unique_releases,
-            limit=limit,
-            user_timezone=user_timezone  # Pass timezone for real-time calculations
+            limit=limit
         )
         
-        # Group by language for response
+        # The response structure is already good - just verify the order
+        # The recommendations list should have Telugu content first
+        
+        # Additional validation to ensure Telugu is first
+        telugu_count = 0
+        first_non_telugu_index = -1
+        
+        for i, rec in enumerate(recommendations):
+            if rec.get('is_telugu', False):
+                telugu_count += 1
+            elif first_non_telugu_index == -1:
+                first_non_telugu_index = i
+        
+        # Group by language for response (this is for display purposes)
         language_groups = {
             'telugu': [],
             'english': [],
@@ -1472,66 +1355,56 @@ def get_new_releases():
         }
         
         for rec in recommendations:
-            languages = rec.get('languages', [])
-            grouped = False
-            
-            # Categorize by language
-            for lang in languages:
-                lang_lower = lang.lower() if isinstance(lang, str) else ''
-                if 'telugu' in lang_lower or lang_lower == 'te':
-                    language_groups['telugu'].append(rec)
-                    grouped = True
-                    break
-                elif 'english' in lang_lower or lang_lower == 'en':
-                    language_groups['english'].append(rec)
-                    grouped = True
-                    break
-                elif 'hindi' in lang_lower or lang_lower == 'hi':
-                    language_groups['hindi'].append(rec)
-                    grouped = True
-                    break
-                elif 'malayalam' in lang_lower or lang_lower == 'ml':
-                    language_groups['malayalam'].append(rec)
-                    grouped = True
-                    break
-                elif 'kannada' in lang_lower or lang_lower == 'kn':
-                    language_groups['kannada'].append(rec)
-                    grouped = True
-                    break
-                elif 'tamil' in lang_lower or lang_lower == 'ta':
-                    language_groups['tamil'].append(rec)
-                    grouped = True
-                    break
-            
-            if not grouped:
-                language_groups['others'].append(rec)
+            if rec.get('is_telugu', False):
+                language_groups['telugu'].append(rec)
+            else:
+                # Categorize other languages
+                languages = rec.get('languages', [])
+                grouped = False
+                
+                for lang in languages:
+                    lang_lower = lang.lower() if isinstance(lang, str) else ''
+                    if 'english' in lang_lower or lang_lower == 'en':
+                        language_groups['english'].append(rec)
+                        grouped = True
+                        break
+                    elif 'hindi' in lang_lower or lang_lower == 'hi':
+                        language_groups['hindi'].append(rec)
+                        grouped = True
+                        break
+                    elif 'malayalam' in lang_lower or lang_lower == 'ml':
+                        language_groups['malayalam'].append(rec)
+                        grouped = True
+                        break
+                    elif 'kannada' in lang_lower or lang_lower == 'kn':
+                        language_groups['kannada'].append(rec)
+                        grouped = True
+                        break
+                    elif 'tamil' in lang_lower or lang_lower == 'ta':
+                        language_groups['tamil'].append(rec)
+                        grouped = True
+                        break
+                
+                if not grouped:
+                    language_groups['others'].append(rec)
         
         response = {
-            'recommendations': recommendations,
-            'grouped_by_language': language_groups,
+            'recommendations': recommendations,  # Main list with Telugu first
+            'grouped_by_language': language_groups,  # Grouped view
             'metadata': {
                 'total_analyzed': len(unique_releases),
+                'telugu_priority_enforced': True,
+                'telugu_content_first': telugu_count > 0 and (first_non_telugu_index == -1 or first_non_telugu_index >= telugu_count),
+                'telugu_content_count': telugu_count,
                 'language_priority': {
-                    'order': priority_languages,
-                    'today_first': True,
-                    'timezone_aware': True
+                    'main': 'telugu',
+                    'order': ['telugu', 'english', 'hindi', 'malayalam', 'kannada', 'tamil']
                 },
-                'algorithm': 'real_time_release_tracking',
-                'user_timezone': user_timezone,
-                'current_time': datetime.now(pytz.timezone(user_timezone)).isoformat(),
-                'auto_refresh_interval': REALTIME_CONFIG['new_releases_refresh_interval'],
-                'scoring_weights': {
-                    'todays_releases': {
-                        'freshness': 1.0,
-                        'quality': 0.3,
-                        'popularity': 0.2
-                    },
-                    'other_releases': {
-                        'freshness': 0.4,
-                        'language_priority': 0.4,
-                        'quality': 0.2
-                    }
-                }
+                'algorithm': 'strict_telugu_priority_ranking',
+                'scoring_info': {
+                    'description': 'All Telugu new releases are shown first, sorted by quality/freshness, followed by other languages in priority order'
+                },
+                'timestamp': datetime.utcnow().isoformat()
             }
         }
         
@@ -1540,15 +1413,12 @@ def get_new_releases():
             content_ids = [r['id'] for r in recommendations]
             contents = Content.query.filter(Content.id.in_(content_ids)).all()
             
-            # Count today's releases
-            todays_count = sum(1 for r in recommendations if r.get('is_released_today', False))
-            
             response['metadata']['metrics'] = {
                 'diversity_score': round(EvaluationMetrics.diversity_score(contents), 3),
-                'todays_releases_count': todays_count,
                 'telugu_content_percentage': round(
                     len(language_groups['telugu']) / len(recommendations) * 100, 1
-                ) if recommendations else 0
+                ) if recommendations else 0,
+                'telugu_appears_first': telugu_count > 0 and (first_non_telugu_index == -1 or first_non_telugu_index >= telugu_count)
             }
         
         db.session.commit()
@@ -1557,15 +1427,16 @@ def get_new_releases():
     except Exception as e:
         logger.error(f"New releases error: {e}")
         return jsonify({'error': 'Failed to get new releases'}), 500
+    
 
 @app.route('/api/upcoming', methods=['GET'])
 async def get_upcoming_releases():
     """
-    Advanced upcoming releases endpoint with strict Telugu priority and real-time updates.
+    Advanced upcoming releases endpoint with strict Telugu priority.
     
     Query Parameters:
         - region: ISO 3166-1 alpha-2 country code (default: IN)
-        - timezone: Timezone name (default: from session or UTC)
+        - timezone: Timezone name (default: Asia/Kolkata)
         - categories: Comma-separated list (movies,tv,anime)
         - use_cache: Use caching (default: true)
         - include_analytics: Include anticipation scores (default: true)
@@ -1573,7 +1444,7 @@ async def get_upcoming_releases():
     try:
         # Get parameters
         region = request.args.get('region', 'IN')
-        timezone_name = get_user_timezone()
+        timezone_name = request.args.get('timezone', 'Asia/Kolkata')
         categories_param = request.args.get('categories', 'movies,tv,anime')
         use_cache = request.args.get('use_cache', 'true').lower() == 'true'
         include_analytics = request.args.get('include_analytics', 'true').lower() == 'true'
@@ -1605,9 +1476,7 @@ async def get_upcoming_releases():
             return jsonify({
                 'success': True,
                 'data': results,
-                'telugu_priority': True,
-                'user_timezone': timezone_name,
-                'timestamp': datetime.now(pytz.timezone(timezone_name)).isoformat()
+                'telugu_priority': True
             }), 200
             
         finally:
@@ -1622,10 +1491,10 @@ async def get_upcoming_releases():
 
 @app.route('/api/upcoming-sync', methods=['GET'])
 def get_upcoming_releases_sync():
-    """Synchronous wrapper for upcoming releases with real-time support"""
+    """Synchronous wrapper for upcoming releases"""
     try:
         region = request.args.get('region', 'IN')
-        timezone_name = get_user_timezone()
+        timezone_name = request.args.get('timezone', 'Asia/Kolkata')
         categories_param = request.args.get('categories', 'movies,tv,anime')
         use_cache = request.args.get('use_cache', 'true').lower() == 'true'
         include_analytics = request.args.get('include_analytics', 'true').lower() == 'true'
@@ -1661,9 +1530,7 @@ def get_upcoming_releases_sync():
             return jsonify({
                 'success': True,
                 'data': results,
-                'telugu_priority': True,
-                'user_timezone': timezone_name,
-                'timestamp': datetime.now(pytz.timezone(timezone_name)).isoformat()
+                'telugu_priority': True
             }), 200
             
         finally:
@@ -1675,29 +1542,6 @@ def get_upcoming_releases_sync():
             'success': False,
             'error': str(e)
         }), 500
-
-@app.route('/api/set-timezone', methods=['POST'])
-def set_timezone():
-    """Set user's timezone preference"""
-    try:
-        data = request.get_json()
-        timezone = data.get('timezone', 'UTC')
-        
-        if set_user_timezone(timezone):
-            return jsonify({
-                'success': True,
-                'timezone': timezone,
-                'message': 'Timezone updated successfully'
-            }), 200
-        else:
-            return jsonify({
-                'success': False,
-                'error': 'Invalid timezone'
-            }), 400
-    
-    except Exception as e:
-        logger.error(f"Set timezone error: {e}")
-        return jsonify({'error': 'Failed to set timezone'}), 500
 
 @app.route('/api/recommendations/critics-choice', methods=['GET'])
 @cache.cached(timeout=600, key_prefix=make_cache_key)
@@ -1928,15 +1772,13 @@ def get_similar_recommendations(content_id):
             min_similarity=min_similarity
         )
         
-        # Track interaction with timezone
+        # Track interaction
         session_id = get_session_id()
-        user_timezone = get_user_timezone()
         interaction = AnonymousInteraction(
             session_id=session_id,
             content_id=content_id,
             interaction_type='similar_view',
-            ip_address=request.remote_addr,
-            timezone=user_timezone
+            ip_address=request.remote_addr
         )
         db.session.add(interaction)
         db.session.commit()
@@ -2061,21 +1903,16 @@ def get_public_admin_recommendations():
         logger.error(f"Public admin recommendations error: {e}")
         return jsonify({'error': 'Failed to get admin recommendations'}), 500
 
-# Health check endpoint with real-time status
+# Health check endpoint
 @app.route('/api/health', methods=['GET'])
 def health_check():
-    """Enhanced health check with real-time system status"""
+    """Enhanced health check with cache status"""
     try:
         # Basic health info
         health_info = {
             'status': 'healthy',
             'timestamp': datetime.utcnow().isoformat(),
-            'version': '5.0.0',  # Updated version with real-time support
-            'features': {
-                'real_time_updates': True,
-                'timezone_aware': True,
-                'auto_refresh': REALTIME_CONFIG['auto_refresh_enabled']
-            }
+            'version': '4.0.0'  # Updated version with ultra-powerful algorithms
         }
         
         # Check database connectivity
@@ -2104,12 +1941,7 @@ def health_check():
             'omdb': bool(OMDB_API_KEY),
             'youtube': bool(YOUTUBE_API_KEY),
             'ml_service': bool(ML_SERVICE_URL),
-            'algorithms': 'ultra_powerful_enabled',
-            'real_time': {
-                'top_10_interval': REALTIME_CONFIG['top_10_refresh_interval'],
-                'new_releases_interval': REALTIME_CONFIG['new_releases_refresh_interval'],
-                'threads_active': threading.active_count()
-            }
+            'algorithms': 'ultra_powerful_enabled'
         }
         
         return jsonify(health_info), 200
@@ -2121,86 +1953,26 @@ def health_check():
             'timestamp': datetime.utcnow().isoformat()
         }), 500
 
+# Initialize database
 def create_tables():
-    """Initialize database with migration support"""
     try:
         with app.app_context():
-            # Create all tables first
-            try:
-                db.create_all()
-                logger.info("Database tables created/verified")
-            except Exception as e:
-                logger.warning(f"Table creation warning: {e}")
+            db.create_all()
             
-            # Run migrations for new columns
-            migrations = [
-                ("user", "preferred_timezone", "ALTER TABLE \"user\" ADD COLUMN preferred_timezone VARCHAR(50) DEFAULT 'UTC'"),
-                ("content", "last_trending_update", "ALTER TABLE content ADD COLUMN last_trending_update TIMESTAMP"),
-                ("anonymous_interaction", "timezone", "ALTER TABLE anonymous_interaction ADD COLUMN timezone VARCHAR(50)")
-            ]
-            
-            for table, column, migration_sql in migrations:
-                try:
-                    # Check if column exists
-                    check_sql = f"""
-                        SELECT column_name 
-                        FROM information_schema.columns 
-                        WHERE table_name = '{table}' 
-                        AND column_name = '{column}'
-                    """
-                    result = db.session.execute(text(check_sql)).first()
-                    
-                    if not result:
-                        # Column doesn't exist, add it
-                        db.session.execute(text(migration_sql))
-                        db.session.commit()
-                        logger.info(f"Added column {column} to {table}")
-                    else:
-                        logger.debug(f"Column {column} already exists in {table}")
-                        
-                except Exception as e:
-                    db.session.rollback()
-                    logger.warning(f"Migration for {table}.{column} failed or skipped: {str(e)[:100]}")
-            
-            # Create admin user if not exists (using raw SQL to avoid ORM issues)
-            try:
-                result = db.session.execute(
-                    text("SELECT COUNT(*) FROM \"user\" WHERE username = 'admin'")
-                ).scalar()
-                
-                if result == 0:
-                    admin_sql = """
-                        INSERT INTO "user" (
-                            username, email, password_hash, is_admin, 
-                            preferred_languages, preferred_genres, 
-                            created_at, last_active
-                        ) VALUES (
-                            :username, :email, :password_hash, true,
-                            '["english"]', '["action", "drama"]',
-                            CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-                        )
-                    """
-                    
-                    db.session.execute(text(admin_sql), {
-                        'username': 'admin',
-                        'email': 'admin@example.com',
-                        'password_hash': generate_password_hash('admin123')
-                    })
-                    db.session.commit()
-                    logger.info("Admin user created successfully")
-                else:
-                    logger.info("Admin user already exists")
-                    
-            except Exception as admin_error:
-                logger.error(f"Admin creation error: {admin_error}")
-                db.session.rollback()
-            
-            logger.info("✅ Database initialization completed successfully")
-            
+            # Create admin user if not exists
+            admin = User.query.filter_by(username='admin').first()
+            if not admin:
+                admin = User(
+                    username='admin',
+                    email='admin@example.com',
+                    password_hash=generate_password_hash('admin123'),
+                    is_admin=True
+                )
+                db.session.add(admin)
+                db.session.commit()
+                logger.info("Admin user created with username: admin, password: admin123")
     except Exception as e:
-        logger.error(f"Database initialization failed: {e}")
-        # Don't crash the app, it might still work
-        logger.warning("App will continue with possible database limitations")
+        logger.error(f"Database initialization error: {e}")
 
 # Initialize database when app starts
 create_tables()
@@ -2208,11 +1980,4 @@ create_tables()
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('FLASK_ENV') == 'development'
-    
-    # Start the app
-    logger.info(f"Starting app with real-time features on port {port}")
-    logger.info(f"Auto-refresh enabled: {REALTIME_CONFIG['auto_refresh_enabled']}")
-    logger.info(f"Top 10 refresh interval: {REALTIME_CONFIG['top_10_refresh_interval']}s")
-    logger.info(f"New releases refresh interval: {REALTIME_CONFIG['new_releases_refresh_interval']}s")
-    
     app.run(host='0.0.0.0', port=port, debug=debug)
