@@ -2121,29 +2121,86 @@ def health_check():
             'timestamp': datetime.utcnow().isoformat()
         }), 500
 
-# Initialize database
 def create_tables():
+    """Initialize database with migration support"""
     try:
         with app.app_context():
-            db.create_all()
+            # Create all tables first
+            try:
+                db.create_all()
+                logger.info("Database tables created/verified")
+            except Exception as e:
+                logger.warning(f"Table creation warning: {e}")
             
-            # Create admin user if not exists
-            admin = User.query.filter_by(username='admin').first()
-            if not admin:
-                admin = User(
-                    username='admin',
-                    email='admin@example.com',
-                    password_hash=generate_password_hash('admin123'),
-                    is_admin=True,
-                    preferred_timezone='UTC'
-                )
-                db.session.add(admin)
-                db.session.commit()
-                logger.info("Admin user created with username: admin, password: admin123")
+            # Run migrations for new columns
+            migrations = [
+                ("user", "preferred_timezone", "ALTER TABLE \"user\" ADD COLUMN preferred_timezone VARCHAR(50) DEFAULT 'UTC'"),
+                ("content", "last_trending_update", "ALTER TABLE content ADD COLUMN last_trending_update TIMESTAMP"),
+                ("anonymous_interaction", "timezone", "ALTER TABLE anonymous_interaction ADD COLUMN timezone VARCHAR(50)")
+            ]
+            
+            for table, column, migration_sql in migrations:
+                try:
+                    # Check if column exists
+                    check_sql = f"""
+                        SELECT column_name 
+                        FROM information_schema.columns 
+                        WHERE table_name = '{table}' 
+                        AND column_name = '{column}'
+                    """
+                    result = db.session.execute(text(check_sql)).first()
+                    
+                    if not result:
+                        # Column doesn't exist, add it
+                        db.session.execute(text(migration_sql))
+                        db.session.commit()
+                        logger.info(f"Added column {column} to {table}")
+                    else:
+                        logger.debug(f"Column {column} already exists in {table}")
+                        
+                except Exception as e:
+                    db.session.rollback()
+                    logger.warning(f"Migration for {table}.{column} failed or skipped: {str(e)[:100]}")
+            
+            # Create admin user if not exists (using raw SQL to avoid ORM issues)
+            try:
+                result = db.session.execute(
+                    text("SELECT COUNT(*) FROM \"user\" WHERE username = 'admin'")
+                ).scalar()
                 
-            logger.info("Database initialized successfully")
+                if result == 0:
+                    admin_sql = """
+                        INSERT INTO "user" (
+                            username, email, password_hash, is_admin, 
+                            preferred_languages, preferred_genres, 
+                            created_at, last_active
+                        ) VALUES (
+                            :username, :email, :password_hash, true,
+                            '["english"]', '["action", "drama"]',
+                            CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                        )
+                    """
+                    
+                    db.session.execute(text(admin_sql), {
+                        'username': 'admin',
+                        'email': 'admin@example.com',
+                        'password_hash': generate_password_hash('admin123')
+                    })
+                    db.session.commit()
+                    logger.info("Admin user created successfully")
+                else:
+                    logger.info("Admin user already exists")
+                    
+            except Exception as admin_error:
+                logger.error(f"Admin creation error: {admin_error}")
+                db.session.rollback()
+            
+            logger.info("✅ Database initialization completed successfully")
+            
     except Exception as e:
-        logger.error(f"Database initialization error: {e}")
+        logger.error(f"Database initialization failed: {e}")
+        # Don't crash the app, it might still work
+        logger.warning("App will continue with possible database limitations")
 
 # Initialize database when app starts
 create_tables()
