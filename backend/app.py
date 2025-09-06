@@ -42,7 +42,7 @@ from services.algorithms import (
     HybridRecommendationEngine,
     UltraPowerfulSimilarityEngine
 )
-
+from services.new_releases import NewReleasesService
 # Initialize Flask app
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'your-secret-key-change-in-production')
@@ -99,6 +99,12 @@ def create_http_session():
     session.mount('http://', adapter)
     session.mount('https://', adapter)
     return session
+
+new_releases_service = NewReleasesService(
+    tmdb_api_key=TMDB_API_KEY,
+    cache_backend=cache,
+    refresh_interval_hours=3  # Auto-refresh every 3 hours
+)
 
 # Global HTTP session
 http_session = create_http_session()
@@ -1274,160 +1280,164 @@ def get_trending():
         return jsonify({'error': 'Failed to get trending recommendations'}), 500
     
 @app.route('/api/recommendations/new-releases', methods=['GET'])
-@cache.cached(timeout=300, key_prefix=make_cache_key)
 def get_new_releases():
-    """Enhanced new releases with Telugu priority using algorithms"""
+    """Enhanced new releases with auto-refresh every 3 hours and Telugu priority"""
     try:
         content_type = request.args.get('type', 'movie')
         limit = int(request.args.get('limit', 20))
+        days_back = int(request.args.get('days_back', 60))
+        include_stats = request.args.get('include_stats', 'true').lower() == 'true'
         
-        # Aggregate new releases from multiple sources
-        all_new_releases = []
+        # Run async function
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
         
-        # Priority languages in order - Telugu MUST be first
-        priority_languages = ['telugu', 'english', 'hindi', 'malayalam', 'kannada', 'tamil']
+        try:
+            # Get new releases with auto-refresh
+            releases = loop.run_until_complete(
+                new_releases_service.get_new_releases(
+                    content_type=content_type,
+                    days_back=days_back,
+                    use_cache=True  # Cache refreshes every 3 hours
+                )
+            )
+        finally:
+            loop.close()
         
-        # Fetch Telugu content FIRST
-        for language in priority_languages:
-            lang_code = LANGUAGE_PRIORITY['codes'].get(language)
-            
-            try:
-                # Get from TMDB
-                if language == 'english':
-                    releases = TMDBService.get_new_releases(content_type)
-                else:
-                    releases = TMDBService.get_language_specific(lang_code, content_type)
-                
-                if releases:
-                    for item in releases.get('results', [])[:10]:
-                        content = ContentService.save_content_from_tmdb(item, content_type)
-                        if content and content.release_date:
-                            days_old = (datetime.now().date() - content.release_date).days
-                            if days_old <= 60:
-                                all_new_releases.append(content)
-            except Exception as e:
-                logger.error(f"Error fetching {language} releases: {e}")
-        
-        # Get from database
-        db_new_releases = Content.query.filter(
-            Content.is_new_release == True,
-            Content.content_type == content_type
-        ).limit(50).all()
-        all_new_releases.extend(db_new_releases)
-        
-        # Remove duplicates
-        seen_ids = set()
-        unique_releases = []
-        for content in all_new_releases:
-            if content.id not in seen_ids:
-                seen_ids.add(content.id)
-                unique_releases.append(content)
-        
-        # Apply algorithms - THIS IS THE KEY PART
-        # The algorithm now ensures Telugu content appears first
-        recommendations = recommendation_orchestrator.get_new_releases_with_algorithms(
-            unique_releases,
-            limit=limit
-        )
-        
-        # The response structure is already good - just verify the order
-        # The recommendations list should have Telugu content first
-        
-        # Additional validation to ensure Telugu is first
+        # Format response
+        formatted_releases = []
         telugu_count = 0
-        first_non_telugu_index = -1
+        today_count = 0
+        fresh_count = 0
+        brand_new_count = 0
         
-        for i, rec in enumerate(recommendations):
-            if rec.get('is_telugu', False):
+        for release in releases[:limit]:
+            # Track statistics
+            if release.is_telugu:
                 telugu_count += 1
-            elif first_non_telugu_index == -1:
-                first_non_telugu_index = i
-        
-        # Group by language for response (this is for display purposes)
-        language_groups = {
-            'telugu': [],
-            'english': [],
-            'hindi': [],
-            'malayalam': [],
-            'kannada': [],
-            'tamil': [],
-            'others': []
-        }
-        
-        for rec in recommendations:
-            if rec.get('is_telugu', False):
-                language_groups['telugu'].append(rec)
-            else:
-                # Categorize other languages
-                languages = rec.get('languages', [])
-                grouped = False
-                
-                for lang in languages:
-                    lang_lower = lang.lower() if isinstance(lang, str) else ''
-                    if 'english' in lang_lower or lang_lower == 'en':
-                        language_groups['english'].append(rec)
-                        grouped = True
-                        break
-                    elif 'hindi' in lang_lower or lang_lower == 'hi':
-                        language_groups['hindi'].append(rec)
-                        grouped = True
-                        break
-                    elif 'malayalam' in lang_lower or lang_lower == 'ml':
-                        language_groups['malayalam'].append(rec)
-                        grouped = True
-                        break
-                    elif 'kannada' in lang_lower or lang_lower == 'kn':
-                        language_groups['kannada'].append(rec)
-                        grouped = True
-                        break
-                    elif 'tamil' in lang_lower or lang_lower == 'ta':
-                        language_groups['tamil'].append(rec)
-                        grouped = True
-                        break
-                
-                if not grouped:
-                    language_groups['others'].append(rec)
-        
-        response = {
-            'recommendations': recommendations,  # Main list with Telugu first
-            'grouped_by_language': language_groups,  # Grouped view
-            'metadata': {
-                'total_analyzed': len(unique_releases),
-                'telugu_priority_enforced': True,
-                'telugu_content_first': telugu_count > 0 and (first_non_telugu_index == -1 or first_non_telugu_index >= telugu_count),
-                'telugu_content_count': telugu_count,
-                'language_priority': {
-                    'main': 'telugu',
-                    'order': ['telugu', 'english', 'hindi', 'malayalam', 'kannada', 'tamil']
-                },
-                'algorithm': 'strict_telugu_priority_ranking',
-                'scoring_info': {
-                    'description': 'All Telugu new releases are shown first, sorted by quality/freshness, followed by other languages in priority order'
-                },
-                'timestamp': datetime.utcnow().isoformat()
-            }
-        }
-        
-        # Add evaluation metrics
-        if recommendations:
-            content_ids = [r['id'] for r in recommendations]
-            contents = Content.query.filter(Content.id.in_(content_ids)).all()
+            if release.is_today:
+                today_count += 1
+            if release.is_fresh:
+                fresh_count += 1
+            if release.is_brand_new:
+                brand_new_count += 1
             
-            response['metadata']['metrics'] = {
-                'diversity_score': round(EvaluationMetrics.diversity_score(contents), 3),
-                'telugu_content_percentage': round(
-                    len(language_groups['telugu']) / len(recommendations) * 100, 1
-                ) if recommendations else 0,
-                'telugu_appears_first': telugu_count > 0 and (first_non_telugu_index == -1 or first_non_telugu_index >= telugu_count)
+            # Format release for response
+            formatted = {
+                'id': release.id,
+                'title': release.title,
+                'original_title': release.original_title,
+                'content_type': release.content_type,
+                'release_date': release.release_date.isoformat(),
+                'days_since_release': release.days_since_release,
+                'hours_since_release': release.hours_since_release,
+                'languages': release.languages,
+                'genres': release.genres,
+                'rating': release.vote_average,
+                'vote_count': release.vote_count,
+                'popularity': release.popularity,
+                'poster_path': release.poster_path,
+                'backdrop_path': release.backdrop_path,
+                'overview': release.overview[:200] + '...' if release.overview and len(release.overview) > 200 else release.overview,
+                'runtime': release.runtime,
+                
+                # Release status
+                'is_telugu': release.is_telugu,
+                'is_today': release.is_today,
+                'is_fresh': release.is_fresh,
+                'is_brand_new': release.is_brand_new,
+                
+                # Scores
+                'freshness_score': round(release.freshness_score, 2),
+                'quality_score': round(release.quality_score, 2),
+                'combined_score': round(release.combined_score, 2),
+                
+                # Display labels
+                'release_label': 'Released Today' if release.is_today else 
+                                f'Released {release.days_since_release} days ago',
+                'freshness_indicator': 'Just Released!' if release.is_today else
+                                      'Fresh Release' if release.is_fresh else
+                                      'New This Week' if release.is_brand_new else
+                                      'Recent Release',
+                'language_label': 'Telugu' if release.is_telugu else
+                                 release.languages[0].upper() if release.languages else 'Unknown'
             }
+            
+            formatted_releases.append(formatted)
         
-        db.session.commit()
+        # Prepare response
+        response = {
+            'recommendations': formatted_releases,
+            'metadata': {
+                'total_results': len(releases),
+                'returned_results': len(formatted_releases),
+                'days_coverage': days_back,
+                'auto_refresh_hours': 3,
+                'last_refresh': datetime.now().replace(
+                    minute=0, second=0, microsecond=0
+                ).isoformat(),
+                'next_refresh': (datetime.now().replace(
+                    minute=0, second=0, microsecond=0
+                ) + timedelta(hours=3)).isoformat(),
+                'telugu_priority_enforced': True,
+                'algorithm': 'telugu_first_with_auto_refresh'
+            }
+        }
+        
+        # Add statistics if requested
+        if include_stats:
+            response['statistics'] = {
+                'telugu_count': telugu_count,
+                'telugu_percentage': round(telugu_count / len(formatted_releases) * 100, 1) if formatted_releases else 0,
+                'released_today': today_count,
+                'fresh_releases': fresh_count,
+                'brand_new_releases': brand_new_count,
+                'language_distribution': {},
+                'genre_distribution': {},
+                'daily_breakdown': {}
+            }
+            
+            # Calculate language distribution
+            lang_counts = defaultdict(int)
+            for release in formatted_releases:
+                if release['is_telugu']:
+                    lang_counts['Telugu'] += 1
+                elif release['languages']:
+                    lang_counts[release['languages'][0].upper()] += 1
+            
+            response['statistics']['language_distribution'] = dict(lang_counts)
+            
+            # Calculate genre distribution
+            genre_counts = defaultdict(int)
+            for release in formatted_releases:
+                for genre in release['genres']:
+                    genre_counts[genre] += 1
+            
+            response['statistics']['genre_distribution'] = dict(genre_counts)
+            
+            # Calculate daily breakdown
+            daily_counts = defaultdict(int)
+            for release in formatted_releases:
+                days_ago = release['days_since_release']
+                if days_ago == 0:
+                    daily_counts['Today'] += 1
+                elif days_ago <= 3:
+                    daily_counts['Last 3 Days'] += 1
+                elif days_ago <= 7:
+                    daily_counts['Last Week'] += 1
+                elif days_ago <= 30:
+                    daily_counts['Last Month'] += 1
+                else:
+                    daily_counts['Older'] += 1
+            
+            response['statistics']['daily_breakdown'] = dict(daily_counts)
+        
         return jsonify(response), 200
         
     except Exception as e:
         logger.error(f"New releases error: {e}")
-        return jsonify({'error': 'Failed to get new releases'}), 500
-    
+        logger.exception(e)
+        return jsonify({'error': 'Failed to get new releases', 'details': str(e)}), 500    
 
 @app.route('/api/upcoming', methods=['GET'])
 async def get_upcoming_releases():
