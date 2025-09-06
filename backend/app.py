@@ -1,4 +1,3 @@
-# backend/app.py
 from flask import Flask, request, jsonify, session, render_template
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
@@ -21,14 +20,12 @@ import threading
 from geopy.geocoders import Nominatim
 import jwt
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import redis
+import redis  # Make sure this import is here
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
 from flask_mail import Mail
 from services.upcoming import UpcomingContentService, ContentType, LanguagePriority
 import asyncio
-import asyncio
-from services.algorithms import RecommendationOrchestrator, RealTimeDataFetcher
 import services.auth as auth
 from services.auth import init_auth, auth_bp
 from services.admin import admin_bp, init_admin
@@ -42,8 +39,11 @@ from services.algorithms import (
     ContentBasedFiltering,
     CollaborativeFiltering,
     HybridRecommendationEngine,
-    UltraPowerfulSimilarityEngine
+    UltraPowerfulSimilarityEngine,
+    RealTimeDataFetcher
 )
+import pytz
+from flask_socketio import SocketIO, emit
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -83,7 +83,24 @@ OMDB_API_KEY = os.environ.get('OMDB_API_KEY', '52260795')
 YOUTUBE_API_KEY = os.environ.get('YOUTUBE_API_KEY', 'AIzaSyDU-JLASTdIdoLOmlpWuJYLTZDUspqw2T4')
 ML_SERVICE_URL = os.environ.get('ML_SERVICE_URL', 'https://movies-rec-xmf5.onrender.com')
 recommendation_orchestrator = RecommendationOrchestrator()
-recommendation_orchestrator.initialize_realtime(TMDB_API_KEY, cache._cache)
+
+# Initialize Redis client separately for real-time features
+redis_client = None
+try:
+    if REDIS_URL and REDIS_URL.startswith(('redis://', 'rediss://')):
+        import redis
+        redis_client = redis.from_url(REDIS_URL)
+        # Test connection
+        redis_client.ping()
+        logger.info("Redis client initialized successfully")
+    else:
+        logger.warning("No valid Redis URL found, using in-memory cache")
+except Exception as e:
+    logger.warning(f"Could not initialize Redis client: {e}")
+    redis_client = None
+
+# Initialize real-time fetcher with Redis client (or None for fallback)
+recommendation_orchestrator.initialize_realtime(TMDB_API_KEY, redis_client)
 
 from flask_socketio import SocketIO, emit
 
