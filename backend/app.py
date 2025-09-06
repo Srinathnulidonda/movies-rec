@@ -42,7 +42,8 @@ from services.algorithms import (
     HybridRecommendationEngine,
     UltraPowerfulSimilarityEngine
 )
-from services.new_releases import NewReleasesService
+from services.new_releases import RealTimeNewReleasesService
+import pytz
 # Initialize Flask app
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'your-secret-key-change-in-production')
@@ -100,12 +101,11 @@ def create_http_session():
     session.mount('https://', adapter)
     return session
 
-new_releases_service = NewReleasesService(
+realtime_releases_service = RealTimeNewReleasesService(
     tmdb_api_key=TMDB_API_KEY,
     cache_backend=cache,
-    refresh_interval_hours=3  # Auto-refresh every 3 hours
+    refresh_interval_minutes=5  # Refresh every 5 minutes
 )
-
 # Global HTTP session
 http_session = create_http_session()
 
@@ -1281,163 +1281,113 @@ def get_trending():
     
 @app.route('/api/recommendations/new-releases', methods=['GET'])
 def get_new_releases():
-    """Enhanced new releases with auto-refresh every 3 hours and Telugu priority"""
+    """Real-time new releases with timezone awareness and continuous updates"""
     try:
         content_type = request.args.get('type', 'movie')
         limit = int(request.args.get('limit', 20))
         days_back = int(request.args.get('days_back', 60))
-        include_stats = request.args.get('include_stats', 'true').lower() == 'true'
+        user_timezone = request.args.get('timezone', 'UTC')
+        force_refresh = request.args.get('force_refresh', 'false').lower() == 'true'
+        
+        # Validate timezone
+        try:
+            pytz.timezone(user_timezone)
+        except pytz.UnknownTimeZoneError:
+            user_timezone = 'UTC'
+            logger.warning(f"Invalid timezone provided, using UTC")
         
         # Run async function
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         
         try:
-            # Get new releases with auto-refresh
-            releases = loop.run_until_complete(
-                new_releases_service.get_new_releases(
+            # Get real-time releases
+            result = loop.run_until_complete(
+                realtime_releases_service.get_new_releases(
                     content_type=content_type,
                     days_back=days_back,
-                    use_cache=True  # Cache refreshes every 3 hours
+                    user_timezone=user_timezone,
+                    use_cache=True,
+                    force_refresh=force_refresh
                 )
             )
         finally:
             loop.close()
         
-        # Format response
-        formatted_releases = []
-        telugu_count = 0
-        today_count = 0
-        fresh_count = 0
-        brand_new_count = 0
+        # Format response with limit
+        releases = result.get('releases', [])[:limit]
+        todays_releases = result.get('todays_releases', [])
         
-        for release in releases[:limit]:
-            # Track statistics
-            if release.is_telugu:
-                telugu_count += 1
-            if release.is_today:
-                today_count += 1
-            if release.is_fresh:
-                fresh_count += 1
-            if release.is_brand_new:
-                brand_new_count += 1
-            
-            # Format release for response
-            formatted = {
-                'id': release.id,
-                'title': release.title,
-                'original_title': release.original_title,
-                'content_type': release.content_type,
-                'release_date': release.release_date.isoformat(),
-                'days_since_release': release.days_since_release,
-                'hours_since_release': release.hours_since_release,
-                'languages': release.languages,
-                'genres': release.genres,
-                'rating': release.vote_average,
-                'vote_count': release.vote_count,
-                'popularity': release.popularity,
-                'poster_path': release.poster_path,
-                'backdrop_path': release.backdrop_path,
-                'overview': release.overview[:200] + '...' if release.overview and len(release.overview) > 200 else release.overview,
-                'runtime': release.runtime,
-                
-                # Release status
-                'is_telugu': release.is_telugu,
-                'is_today': release.is_today,
-                'is_fresh': release.is_fresh,
-                'is_brand_new': release.is_brand_new,
-                
-                # Scores
-                'freshness_score': round(release.freshness_score, 2),
-                'quality_score': round(release.quality_score, 2),
-                'combined_score': round(release.combined_score, 2),
-                
-                # Display labels
-                'release_label': 'Released Today' if release.is_today else 
-                                f'Released {release.days_since_release} days ago',
-                'freshness_indicator': 'Just Released!' if release.is_today else
-                                      'Fresh Release' if release.is_fresh else
-                                      'New This Week' if release.is_brand_new else
-                                      'Recent Release',
-                'language_label': 'Telugu' if release.is_telugu else
-                                 release.languages[0].upper() if release.languages else 'Unknown'
-            }
-            
-            formatted_releases.append(formatted)
+        # Ensure today's releases are shown first
+        final_releases = []
+        seen_ids = set()
+        
+        # Add today's releases first
+        for release in todays_releases:
+            if release['id'] not in seen_ids:
+                final_releases.append(release)
+                seen_ids.add(release['id'])
+        
+        # Add remaining releases
+        for release in releases:
+            if release['id'] not in seen_ids and len(final_releases) < limit:
+                final_releases.append(release)
+                seen_ids.add(release['id'])
         
         # Prepare response
         response = {
-            'recommendations': formatted_releases,
+            'recommendations': final_releases,
             'metadata': {
-                'total_results': len(releases),
-                'returned_results': len(formatted_releases),
-                'days_coverage': days_back,
-                'auto_refresh_hours': 3,
-                'last_refresh': datetime.now().replace(
-                    minute=0, second=0, microsecond=0
-                ).isoformat(),
-                'next_refresh': (datetime.now().replace(
-                    minute=0, second=0, microsecond=0
-                ) + timedelta(hours=3)).isoformat(),
-                'telugu_priority_enforced': True,
-                'algorithm': 'telugu_first_with_auto_refresh'
-            }
+                **result.get('metadata', {}),
+                'returned_count': len(final_releases),
+                'todays_releases_count': len([r for r in final_releases if r.get('is_today', False)]),
+                'strict_language_order': 'Telugu → English → Hindi → Malayalam → Kannada → Tamil'
+            },
+            'statistics': result.get('statistics', {})
         }
-        
-        # Add statistics if requested
-        if include_stats:
-            response['statistics'] = {
-                'telugu_count': telugu_count,
-                'telugu_percentage': round(telugu_count / len(formatted_releases) * 100, 1) if formatted_releases else 0,
-                'released_today': today_count,
-                'fresh_releases': fresh_count,
-                'brand_new_releases': brand_new_count,
-                'language_distribution': {},
-                'genre_distribution': {},
-                'daily_breakdown': {}
-            }
-            
-            # Calculate language distribution
-            lang_counts = defaultdict(int)
-            for release in formatted_releases:
-                if release['is_telugu']:
-                    lang_counts['Telugu'] += 1
-                elif release['languages']:
-                    lang_counts[release['languages'][0].upper()] += 1
-            
-            response['statistics']['language_distribution'] = dict(lang_counts)
-            
-            # Calculate genre distribution
-            genre_counts = defaultdict(int)
-            for release in formatted_releases:
-                for genre in release['genres']:
-                    genre_counts[genre] += 1
-            
-            response['statistics']['genre_distribution'] = dict(genre_counts)
-            
-            # Calculate daily breakdown
-            daily_counts = defaultdict(int)
-            for release in formatted_releases:
-                days_ago = release['days_since_release']
-                if days_ago == 0:
-                    daily_counts['Today'] += 1
-                elif days_ago <= 3:
-                    daily_counts['Last 3 Days'] += 1
-                elif days_ago <= 7:
-                    daily_counts['Last Week'] += 1
-                elif days_ago <= 30:
-                    daily_counts['Last Month'] += 1
-                else:
-                    daily_counts['Older'] += 1
-            
-            response['statistics']['daily_breakdown'] = dict(daily_counts)
         
         return jsonify(response), 200
         
     except Exception as e:
         logger.error(f"New releases error: {e}")
         logger.exception(e)
-        return jsonify({'error': 'Failed to get new releases', 'details': str(e)}), 500    
+        return jsonify({'error': 'Failed to get new releases', 'details': str(e)}), 500
+
+# Background task for pre-warming cache
+def refresh_releases_cache():
+    """Background task to refresh releases cache"""
+    try:
+        logger.info("Starting scheduled releases cache refresh")
+        
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        # Common timezones to pre-warm
+        timezones = ['Asia/Kolkata', 'UTC', 'America/New_York', 'Europe/London']
+        
+        for tz in timezones:
+            for content_type in ['movie', 'tv']:
+                try:
+                    loop.run_until_complete(
+                        realtime_releases_service.get_new_releases(
+                            content_type=content_type,
+                            days_back=60,
+                            user_timezone=tz,
+                            use_cache=False
+                        )
+                    )
+                    logger.info(f"Refreshed {content_type} releases for {tz}")
+                except Exception as e:
+                    logger.error(f"Error refreshing {content_type} cache for {tz}: {e}")
+        
+        loop.close()
+        logger.info("Completed releases cache refresh")
+        
+    except Exception as e:
+        logger.error(f"Background refresh error: {e}")
+
+# Schedule refresh every 5 minutes
+schedule.every(5).minutes.do(refresh_releases_cache)
 
 @app.route('/api/upcoming', methods=['GET'])
 async def get_upcoming_releases():
