@@ -1025,18 +1025,6 @@ def background_releases_updater():
         
         # Wait 3 minutes before next update
         time.sleep(180)
-def init_background_tasks():
-    """Initialize background tasks"""
-    global background_tasks_started
-    if not background_tasks_started:
-        threading.Thread(target=background_top10_updater, daemon=True).start()
-        threading.Thread(target=background_releases_updater, daemon=True).start()
-        background_tasks_started = True
-        logger.info("Background update tasks started")
-
-# Initialize background tasks after app context is ready
-with app.app_context():
-    init_background_tasks()
 
 # Start background tasks on first request
 @app.before_first_request
