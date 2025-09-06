@@ -22,3 +22,8 @@ python-dateutil
 networkx 
 httpx
 pytz
+flask_socketio
+time
+aiohttp
+asyncio
+random

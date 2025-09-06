@@ -27,6 +27,8 @@ from requests.packages.urllib3.util.retry import Retry
 from flask_mail import Mail
 from services.upcoming import UpcomingContentService, ContentType, LanguagePriority
 import asyncio
+import asyncio
+from services.algorithms import RecommendationOrchestrator, RealTimeDataFetcher
 import services.auth as auth
 from services.auth import init_auth, auth_bp
 from services.admin import admin_bp, init_admin
@@ -80,6 +82,12 @@ TMDB_API_KEY = os.environ.get('TMDB_API_KEY', '1cf86635f20bb2aff8e70940e7c3ddd5'
 OMDB_API_KEY = os.environ.get('OMDB_API_KEY', '52260795')
 YOUTUBE_API_KEY = os.environ.get('YOUTUBE_API_KEY', 'AIzaSyDU-JLASTdIdoLOmlpWuJYLTZDUspqw2T4')
 ML_SERVICE_URL = os.environ.get('ML_SERVICE_URL', 'https://movies-rec-xmf5.onrender.com')
+recommendation_orchestrator = RecommendationOrchestrator()
+recommendation_orchestrator.initialize_realtime(TMDB_API_KEY, cache._cache)
+
+from flask_socketio import SocketIO, emit
+
+socketio = SocketIO(app, cors_allowed_origins="*")
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -1896,6 +1904,168 @@ def get_public_admin_recommendations():
     except Exception as e:
         logger.error(f"Public admin recommendations error: {e}")
         return jsonify({'error': 'Failed to get admin recommendations'}), 500
+
+def background_top10_updater():
+    """Background task to update top 10 every 2 minutes"""
+    while True:
+        try:
+            # Run async function in sync context
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            # Get all regions to update
+            regions = ['IN', 'US', 'UK']
+            timezones = {
+                'IN': 'Asia/Kolkata',
+                'US': 'America/New_York',
+                'UK': 'Europe/London'
+            }
+            
+            for region in regions:
+                timezone_str = timezones.get(region, 'UTC')
+                
+                # Fetch latest top 10
+                top10_data = loop.run_until_complete(
+                    recommendation_orchestrator.get_realtime_top_10(region, timezone_str)
+                )
+                
+                # Emit to all connected clients
+                socketio.emit(f'top10_update_{region}', top10_data, broadcast=True)
+            
+            loop.close()
+            
+        except Exception as e:
+            logger.error(f"Background top 10 updater error: {e}")
+        
+        # Wait 2 minutes before next update
+        time.sleep(120)
+
+def background_releases_updater():
+    """Background task to update new releases every 3 minutes"""
+    while True:
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            regions = ['IN', 'US', 'UK']
+            timezones = {
+                'IN': 'Asia/Kolkata',
+                'US': 'America/New_York',
+                'UK': 'Europe/London'
+            }
+            
+            for region in regions:
+                timezone_str = timezones.get(region, 'UTC')
+                
+                # Fetch latest releases
+                releases_data = loop.run_until_complete(
+                    recommendation_orchestrator.get_realtime_new_releases(region, timezone_str)
+                )
+                
+                # Emit to all connected clients
+                socketio.emit(f'releases_update_{region}', releases_data, broadcast=True)
+            
+            loop.close()
+            
+        except Exception as e:
+            logger.error(f"Background releases updater error: {e}")
+        
+        # Wait 3 minutes before next update
+        time.sleep(180)
+
+# Start background tasks
+@app.before_first_request
+def start_background_tasks():
+    """Start background update tasks"""
+    threading.Thread(target=background_top10_updater, daemon=True).start()
+    threading.Thread(target=background_releases_updater, daemon=True).start()
+
+# Real-time API endpoints
+@app.route('/api/realtime/top10', methods=['GET'])
+def get_realtime_top10():
+    """
+    Get real-time top 10 with automatic refresh
+    Updates every 2 minutes for 100% accuracy
+    """
+    try:
+        region = request.args.get('region', 'IN')
+        timezone_str = request.args.get('timezone', 'Asia/Kolkata')
+        
+        # Validate timezone
+        try:
+            pytz.timezone(timezone_str)
+        except:
+            return jsonify({'error': 'Invalid timezone'}), 400
+        
+        # Run async function
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        try:
+            result = loop.run_until_complete(
+                recommendation_orchestrator.get_realtime_top_10(region, timezone_str)
+            )
+            
+            return jsonify(result), 200
+            
+        finally:
+            loop.close()
+    
+    except Exception as e:
+        logger.error(f"Real-time top 10 error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/realtime/new-releases', methods=['GET'])
+def get_realtime_new_releases():
+    """
+    Get real-time new releases with timezone-aware sorting
+    Today's releases first, then by language priority
+    """
+    try:
+        region = request.args.get('region', 'IN')
+        timezone_str = request.args.get('timezone', 'Asia/Kolkata')
+        
+        # Validate timezone
+        try:
+            pytz.timezone(timezone_str)
+        except:
+            return jsonify({'error': 'Invalid timezone'}), 400
+        
+        # Run async function
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        try:
+            result = loop.run_until_complete(
+                recommendation_orchestrator.get_realtime_new_releases(region, timezone_str)
+            )
+            
+            return jsonify(result), 200
+            
+        finally:
+            loop.close()
+    
+    except Exception as e:
+        logger.error(f"Real-time new releases error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+# WebSocket events
+@socketio.on('connect')
+def handle_connect():
+    """Handle client connection"""
+    emit('connected', {'message': 'Connected to real-time updates'})
+
+@socketio.on('subscribe_top10')
+def handle_subscribe_top10(data):
+    """Subscribe to top 10 updates for specific region"""
+    region = data.get('region', 'IN')
+    emit('subscription_confirmed', {'type': 'top10', 'region': region})
+
+@socketio.on('subscribe_releases')
+def handle_subscribe_releases(data):
+    """Subscribe to new releases updates for specific region"""
+    region = data.get('region', 'IN')
+    emit('subscription_confirmed', {'type': 'releases', 'region': region})
 
 # Health check endpoint
 @app.route('/api/health', methods=['GET'])
