@@ -26,3 +26,4 @@ pytz
 python-socketio
 eventlet
 gunicorn
+gevent
