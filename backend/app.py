@@ -36,6 +36,7 @@ from services.users import users_bp, init_users
 try:
     from services.ott import register_ott_routes, UltraAccurateOTTService
     OTT_AVAILABLE = True
+    logger.info("OTT service imported successfully")
 except ImportError as e:
     logging.warning(f"OTT service import warning: {e}")
     register_ott_routes = None
@@ -57,16 +58,30 @@ from services.algorithms import (
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'your-secret-key-change-in-production')
 
-# Database configuration
+# Replace the DATABASE_URL configuration
 DATABASE_URL = 'postgresql://movies_rec_panf_user:BO5X3d2QihK7GG9hxgtBiCtni8NTbbIi@dpg-d2q7gamr433s73e0hcm0-a/movies_rec_panf'
 
 if os.environ.get('DATABASE_URL'):
-    app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL').replace('postgres://', 'postgresql://')
+    db_url = os.environ.get('DATABASE_URL')
+    if db_url.startswith('postgres://'):
+        db_url = db_url.replace('postgres://', 'postgresql://')
+    # Add SSL configuration for production
+    if 'sslmode' not in db_url:
+        db_url += '?sslmode=require'
+    app.config['SQLALCHEMY_DATABASE_URI'] = db_url
 else:
-    app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
+    app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL + '?sslmode=require'
 
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-
+# Add connection pool settings for better reliability
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    'pool_size': 5,
+    'pool_recycle': 3600,
+    'pool_pre_ping': True,
+    'connect_args': {
+        'sslmode': 'require',
+        'connect_timeout': 10
+    }
+}
 # Cache configuration with Redis
 REDIS_URL = os.environ.get('REDIS_URL', 'redis://red-d2qlbuje5dus73c71qog:xp7inVzgblGCbo9I4taSGLdKUg0xY91I@red-d2qlbuje5dus73c71qog:6379')
 
@@ -1744,13 +1759,12 @@ def get_anime():
 
 @app.route('/api/recommendations/similar/<int:content_id>', methods=['GET'])
 def get_similar_recommendations(content_id):
-    """Ultra-powerful similarity endpoint with 100% accuracy"""
+    """Ultra-powerful similarity endpoint with timeout protection"""
     try:
-        # Parameters
-        limit = int(request.args.get('limit', 20))
+        # Parameters with limits for Render
+        limit = min(int(request.args.get('limit', 20)), 20)  # Max 20 for performance
         strict_mode = request.args.get('strict_mode', 'true').lower() == 'true'
         min_similarity = float(request.args.get('min_similarity', 0.5))
-        algorithm = request.args.get('algorithm', 'ultra')  # 'ultra' or 'standard'
         
         # Validate parameters
         if min_similarity < 0 or min_similarity > 1:
@@ -1761,20 +1775,32 @@ def get_similar_recommendations(content_id):
         if not base_content:
             return jsonify({'error': 'Content not found'}), 404
         
-        # Build comprehensive content pool
-        content_pool_query = Content.query
-        
-        # Get a large pool for accurate matching
-        content_pool = content_pool_query.limit(2000).all()  # Increased pool size
-        
-        # Use the ultra-powerful similarity engine for 100% accuracy
-        similar_content = recommendation_orchestrator.get_ultra_similar_content(
-            content_id,
-            content_pool,
-            limit=limit,
-            strict_mode=strict_mode,
-            min_similarity=min_similarity
+        # Build smaller content pool for Render
+        content_pool_query = Content.query.filter(
+            Content.content_type == base_content.content_type
         )
+        content_pool = content_pool_query.limit(300).all()  # Reduced from 2000
+        
+        # Add timeout protection
+        import signal
+        
+        def timeout_handler(signum, frame):
+            raise TimeoutError("Similarity calculation timeout")
+        
+        signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(25)  # 25 second timeout
+        
+        try:
+            # Use the ultra-powerful similarity engine
+            similar_content = recommendation_orchestrator.get_ultra_similar_content(
+                content_id,
+                content_pool,
+                limit=limit,
+                strict_mode=strict_mode,
+                min_similarity=min_similarity
+            )
+        finally:
+            signal.alarm(0)  # Cancel timeout
         
         # Track interaction
         session_id = get_session_id()
@@ -1826,9 +1852,11 @@ def get_similar_recommendations(content_id):
         
         return jsonify(response), 200
         
+    except TimeoutError:
+        logger.error(f"Similarity calculation timeout for content {content_id}")
+        return jsonify({'error': 'Similarity calculation timeout - try with fewer results'}), 504
     except Exception as e:
         logger.error(f"Similar recommendations error: {e}")
-        logger.exception(e)
         return jsonify({'error': 'Failed to get similar recommendations'}), 500
 
 @app.route('/api/recommendations/anonymous', methods=['GET'])
@@ -1956,6 +1984,14 @@ def health_check():
             'error': str(e),
             'timestamp': datetime.utcnow().isoformat()
         }), 500
+    
+if OTT_AVAILABLE and register_ott_routes:
+    try:
+        ott_service = register_ott_routes(app, db, cache)
+        logger.info("OTT routes registered successfully")
+    except Exception as e:
+        logger.error(f"Failed to register OTT routes: {e}")
+        OTT_AVAILABLE = False
 
 # Initialize database
 def create_tables():

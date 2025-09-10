@@ -1237,18 +1237,31 @@ class UltraPowerfulSimilarityEngine:
         if len(embedding1) != len(embedding2):
             return 0.0
         
-        # Cosine similarity
-        cos_sim = cosine_similarity([embedding1], [embedding2])[0][0]
+        # Check for constant arrays (all zeros or all same values)
+        if np.all(embedding1 == embedding1[0]) or np.all(embedding2 == embedding2[0]):
+            return 0.0
         
-        # Correlation
+        # Check for zero variance
+        if np.var(embedding1) == 0 or np.var(embedding2) == 0:
+            return 0.0
+        
+        # Cosine similarity
+        try:
+            cos_sim = cosine_similarity([embedding1], [embedding2])[0][0]
+            if np.isnan(cos_sim):
+                cos_sim = 0.0
+        except:
+            cos_sim = 0.0
+        
+        # Correlation (with error handling)
         try:
             pearson_corr, _ = pearsonr(embedding1, embedding2)
-            if not np.isnan(pearson_corr):
-                return cos_sim * 0.7 + pearson_corr * 0.3
-        except:
-            pass
-        
-        return cos_sim
+            if np.isnan(pearson_corr):
+                pearson_corr = 0.0
+            return cos_sim * 0.7 + pearson_corr * 0.3
+        except (ValueError, RuntimeWarning):
+            # Handle constant input warning
+            return cos_sim
     
     def _calculate_language_similarity(self, languages1: List[str], languages2: List[str]) -> float:
         """Calculate language similarity with nuanced scoring"""
@@ -1494,21 +1507,16 @@ class UltraPowerfulSimilarityEngine:
             return 0
     
     def find_ultra_similar_content(self, base_content: Any, content_pool: List[Any],
-                                  limit: int = 20, min_similarity: float = 0.5,
-                                  strict_mode: bool = True) -> List[Dict]:
-        """
-        Find similar content with ultra-high accuracy
+                                limit: int = 20, min_similarity: float = 0.5,
+                                strict_mode: bool = True) -> List[Dict]:
+        """Find similar content with performance optimizations for Render"""
         
-        Args:
-            base_content: The content to find similarities for
-            content_pool: Pool of content to search from
-            limit: Maximum number of results
-            min_similarity: Minimum similarity threshold (0.5 recommended for high quality)
-            strict_mode: If True, applies stricter filtering for 100% accuracy
+        # Limit content pool size for Render free tier
+        if len(content_pool) > 500:
+            content_pool = content_pool[:500]
         
-        Returns:
-            List of similar content with detailed similarity information
-        """
+        # Reduce limit if too high
+        limit = min(limit, 50)
         
         results = []
         
