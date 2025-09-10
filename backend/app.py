@@ -31,7 +31,17 @@ import services.auth as auth
 from services.auth import init_auth, auth_bp
 from services.admin import admin_bp, init_admin
 from services.users import users_bp, init_users
-from services.ott import register_ott_routes, UltraAccurateOTTService
+
+# Safe OTT import with error handling
+try:
+    from services.ott import register_ott_routes, UltraAccurateOTTService
+    OTT_AVAILABLE = True
+except ImportError as e:
+    logging.warning(f"OTT service import warning: {e}")
+    register_ott_routes = None
+    UltraAccurateOTTService = None
+    OTT_AVAILABLE = False
+
 from services.algorithms import (
     RecommendationOrchestrator,
     PopularityRanking,
@@ -43,7 +53,6 @@ from services.algorithms import (
     HybridRecommendationEngine,
     UltraPowerfulSimilarityEngine
 )
-
 # Initialize Flask app
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'your-secret-key-change-in-production')
@@ -82,11 +91,6 @@ OMDB_API_KEY = os.environ.get('OMDB_API_KEY', '52260795')
 YOUTUBE_API_KEY = os.environ.get('YOUTUBE_API_KEY', 'AIzaSyDU-JLASTdIdoLOmlpWuJYLTZDUspqw2T4')
 ML_SERVICE_URL = os.environ.get('ML_SERVICE_URL', 'https://movies-rec-xmf5.onrender.com')
 
-# OTT Service Configuration
-OTT_CACHE_TIMEOUT = int(os.environ.get('OTT_CACHE_TIMEOUT', 1800))  # 30 minutes
-USE_SELENIUM_FOR_OTT = os.environ.get('USE_SELENIUM_FOR_OTT', 'false').lower() == 'true'
-OTT_HEADLESS_MODE = os.environ.get('OTT_HEADLESS_MODE', 'true').lower() == 'true'
-
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -110,7 +114,7 @@ def create_http_session():
 http_session = create_http_session()
 
 # Thread pool for concurrent API calls
-executor = ThreadPoolExecutor(max_workers=10)
+executor = ThreadPoolExecutor(max_workers=5)
 
 # Regional Language Mapping
 REGIONAL_LANGUAGES = {
@@ -147,29 +151,6 @@ ANIME_GENRES = {
 
 # Initialize Recommendation Orchestrator
 recommendation_orchestrator = RecommendationOrchestrator()
-
-# Initialize OTT Service
-ott_service = None
-
-def init_ott_service():
-    global ott_service
-    try:
-        ott_service = register_ott_routes(app, db, cache)
-        logger.info("OTT Service initialized successfully")
-    except Exception as e:
-        logger.error(f"Failed to initialize OTT Service: {e}")
-        # Initialize without Selenium as fallback
-        try:
-            from services.ott import UltraAccurateOTTService
-            ott_service = UltraAccurateOTTService(
-                cache_backend=cache,
-                use_selenium=False,
-                headless=True
-            )
-            logger.info("OTT Service initialized in fallback mode")
-        except Exception as fallback_error:
-            logger.error(f"Failed to initialize OTT Service fallback: {fallback_error}")
-            ott_service = None
 
 # Cache key generators
 def make_cache_key(*args, **kwargs):
@@ -231,17 +212,6 @@ class Content(db.Model):
     critics_score = db.Column(db.Float)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
-    # OTT Integration fields
-    ott_platforms = db.Column(db.Text)  # JSON string of available platforms
-    ott_last_checked = db.Column(db.DateTime)
-    ott_availability_status = db.Column(db.String(20))  # 'available', 'unavailable', 'pending'
-    direct_watch_links = db.Column(db.Text)  # JSON string of direct links
-    platform_specific_ids = db.Column(db.Text)  # JSON string of platform IDs
-    netflix_id = db.Column(db.String(50))
-    hotstar_id = db.Column(db.String(50))
-    prime_id = db.Column(db.String(50))
-    jiocinema_id = db.Column(db.String(50))
 
 class UserInteraction(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -680,7 +650,7 @@ class YouTubeService:
             logger.error(f"YouTube search error: {e}")
         return None
 
-# Enhanced Content Management Service with OTT integration
+# Enhanced Content Management Service with caching
 class ContentService:
     @staticmethod
     def save_content_from_tmdb(tmdb_data, content_type):
@@ -749,8 +719,7 @@ class ContentService:
                 youtube_trailer_id=youtube_trailer_id,
                 is_new_release=is_new_release,
                 is_critics_choice=is_critics_choice,
-                critics_score=critics_score,
-                ott_availability_status='pending'  # Will be checked later
+                critics_score=critics_score
             )
             
             db.session.add(content)
@@ -765,74 +734,6 @@ class ContentService:
             logger.error(f"Error saving content: {e}")
             db.session.rollback()
             return None
-    
-    @staticmethod
-    def save_content_with_ott(tmdb_data, content_type):
-        """Save content and check OTT availability"""
-        try:
-            # First save the content as usual
-            content = ContentService.save_content_from_tmdb(tmdb_data, content_type)
-            
-            if content and ott_service:
-                # Check OTT availability in background
-                executor.submit(
-                    ContentService.update_ott_availability,
-                    content.id,
-                    content.title,
-                    content.release_date.year if content.release_date else None,
-                    content.imdb_id,
-                    content.tmdb_id
-                )
-            
-            return content
-        except Exception as e:
-            logger.error(f"Error saving content with OTT: {e}")
-            return None
-    
-    @staticmethod
-    def update_ott_availability(content_id, title, year, imdb_id, tmdb_id):
-        """Update OTT availability for content"""
-        try:
-            if not ott_service:
-                return
-            
-            # Get OTT availability
-            availability = ott_service.get_100_percent_accurate_availability(
-                title=title,
-                year=year,
-                imdb_id=imdb_id,
-                tmdb_id=tmdb_id
-            )
-            
-            # Update content with OTT data
-            with app.app_context():
-                content = Content.query.get(content_id)
-                if content and availability:
-                    content.ott_availability_status = 'available' if availability.get('is_available') else 'unavailable'
-                    content.ott_last_checked = datetime.utcnow()
-                    
-                    if availability.get('is_available'):
-                        # Store platform data
-                        platforms = []
-                        for platform_type in ['free', 'subscription', 'rental', 'purchase']:
-                            for platform in availability.get('availability', {}).get(platform_type, []):
-                                platforms.append({
-                                    'name': platform.get('platform'),
-                                    'url': platform.get('direct_url'),
-                                    'type': platform_type,
-                                    'quality': platform.get('quality', []),
-                                    'languages': platform.get('languages', []),
-                                    'subtitles': platform.get('subtitles', [])
-                                })
-                        
-                        content.ott_platforms = json.dumps(platforms)
-                        content.direct_watch_links = json.dumps(availability.get('availability', {}))
-                    
-                    db.session.commit()
-                    logger.info(f"Updated OTT availability for {title}")
-                    
-        except Exception as e:
-            logger.error(f"Error updating OTT availability: {e}")
     
     @staticmethod
     def update_content_from_tmdb(content, tmdb_data):
@@ -900,8 +801,7 @@ class ContentService:
                 popularity=anime_data.get('popularity'),
                 overview=anime_data.get('synopsis'),
                 poster_path=anime_data.get('images', {}).get('jpg', {}).get('image_url'),
-                youtube_trailer_id=youtube_trailer_id,
-                ott_availability_status='pending'
+                youtube_trailer_id=youtube_trailer_id
             )
             
             db.session.add(content)
@@ -970,7 +870,7 @@ class AnonymousRecommendationEngine:
                 genre_counts = Counter(all_genres)
                 top_genres = [genre for genre, _ in genre_counts.most_common(3)]
                 
-                # Get recommendations based on top genres
+                # Get recommendations based on top genres (would use algorithms here)
                 for genre in top_genres:
                     genre_content = Content.query.filter(
                         Content.genres.contains(genre)
@@ -1027,14 +927,9 @@ services = {
 init_admin(app, db, models, services)
 init_users(app, db, models, services)
 
-# Initialize OTT Service after models are defined
-init_ott_service()
+# API Routes
 
-# ============================================
-# API Routes - Complete Set with OTT Integration
-# ============================================
-
-# Enhanced Content Discovery Routes with OTT integration
+# Enhanced Content Discovery Routes with caching
 @app.route('/api/search', methods=['GET'])
 @cache.cached(timeout=300, key_prefix=make_cache_key)
 def search_content():
@@ -1051,13 +946,13 @@ def search_content():
         
         # Use concurrent requests for multiple sources
         futures = []
-        with ThreadPoolExecutor(max_workers=2) as search_executor:
+        with ThreadPoolExecutor(max_workers=2) as executor:
             # Search TMDB
-            futures.append(search_executor.submit(TMDBService.search_content, query, content_type, page=page))
+            futures.append(executor.submit(TMDBService.search_content, query, content_type, page=page))
             
             # Search anime if content_type is anime or multi
             if content_type in ['anime', 'multi']:
-                futures.append(search_executor.submit(JikanService.search_anime, query, page=page))
+                futures.append(executor.submit(JikanService.search_anime, query, page=page))
         
         # Get results
         tmdb_results = futures[0].result()
@@ -1069,7 +964,7 @@ def search_content():
         if tmdb_results:
             for item in tmdb_results.get('results', []):
                 content_type_detected = 'movie' if 'title' in item else 'tv'
-                content = ContentService.save_content_with_ott(item, content_type_detected)
+                content = ContentService.save_content_from_tmdb(item, content_type_detected)
                 if content:
                     # Record anonymous interaction
                     interaction = AnonymousInteraction(
@@ -1085,14 +980,6 @@ def search_content():
                     if content.youtube_trailer_id:
                         youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
                     
-                    # Add OTT data if available
-                    ott_data = None
-                    if content.ott_platforms:
-                        ott_data = {
-                            'available': content.ott_availability_status == 'available',
-                            'platforms': json.loads(content.ott_platforms or '[]')[:3]  # Show top 3 platforms
-                        }
-                    
                     results.append({
                         'id': content.id,
                         'tmdb_id': content.tmdb_id,
@@ -1103,8 +990,7 @@ def search_content():
                         'release_date': content.release_date.isoformat() if content.release_date else None,
                         'poster_path': f"https://image.tmdb.org/t/p/w500{content.poster_path}" if content.poster_path else None,
                         'overview': content.overview,
-                        'youtube_trailer': youtube_url,
-                        'ott_availability': ott_data
+                        'youtube_trailer': youtube_url
                     })
         
         # Add anime results
@@ -1223,29 +1109,6 @@ def get_content_details(content_id):
                 'match_type': similar['match_type']
             })
         
-        # Add OTT availability to response
-        ott_data = None
-        if content.ott_platforms:
-            ott_data = {
-                'platforms': json.loads(content.ott_platforms or '[]'),
-                'status': content.ott_availability_status,
-                'last_checked': content.ott_last_checked.isoformat() if content.ott_last_checked else None,
-                'direct_links': json.loads(content.direct_watch_links or '{}')
-            }
-        
-        # Check if OTT data is stale (older than 24 hours)
-        if not content.ott_last_checked or \
-           (datetime.utcnow() - content.ott_last_checked).total_seconds() > 86400:
-            # Update OTT availability in background
-            executor.submit(
-                ContentService.update_ott_availability,
-                content.id,
-                content.title,
-                content.release_date.year if content.release_date else None,
-                content.imdb_id,
-                content.tmdb_id
-            )
-        
         db.session.commit()
         
         # Get YouTube trailer URL
@@ -1275,8 +1138,7 @@ def get_content_details(content_id):
             'crew': crew,
             'is_trending': content.is_trending,
             'is_new_release': content.is_new_release,
-            'is_critics_choice': content.is_critics_choice,
-            'ott_availability': ott_data
+            'is_critics_choice': content.is_critics_choice
         }
         
         # Add anime-specific data
@@ -1308,14 +1170,14 @@ def get_trending():
             tmdb_movies = TMDBService.get_trending('movie', 'day')
             if tmdb_movies:
                 for item in tmdb_movies.get('results', []):
-                    content = ContentService.save_content_with_ott(item, 'movie')
+                    content = ContentService.save_content_from_tmdb(item, 'movie')
                     if content:
                         all_content.append(content)
             
             tmdb_tv = TMDBService.get_trending('tv', 'day')
             if tmdb_tv:
                 for item in tmdb_tv.get('results', []):
-                    content = ContentService.save_content_with_ott(item, 'tv')
+                    content = ContentService.save_content_from_tmdb(item, 'tv')
                     if content:
                         all_content.append(content)
         except Exception as e:
@@ -1351,17 +1213,6 @@ def get_trending():
             region=region,
             apply_language_priority=apply_language_priority
         )
-        
-        # Add OTT information to each recommendation
-        for category_name, items in categories.items():
-            for item in items:
-                if isinstance(item, dict) and 'id' in item:
-                    content = Content.query.get(item['id'])
-                    if content and content.ott_platforms:
-                        item['ott_availability'] = {
-                            'available': content.ott_availability_status == 'available',
-                            'platforms': json.loads(content.ott_platforms or '[]')[:3]
-                        }
         
         # Format response based on category
         if category == 'all':
@@ -1458,7 +1309,7 @@ def get_new_releases():
                 
                 if releases:
                     for item in releases.get('results', [])[:10]:
-                        content = ContentService.save_content_with_ott(item, content_type)
+                        content = ContentService.save_content_from_tmdb(item, content_type)
                         if content and content.release_date:
                             days_old = (datetime.now().date() - content.release_date).days
                             if days_old <= 60:
@@ -1580,6 +1431,7 @@ def get_new_releases():
     except Exception as e:
         logger.error(f"New releases error: {e}")
         return jsonify({'error': 'Failed to get new releases'}), 500
+    
 
 @app.route('/api/upcoming', methods=['GET'])
 async def get_upcoming_releases():
@@ -1708,19 +1560,11 @@ def get_critics_choice():
         recommendations = []
         if critics_choice:
             for item in critics_choice.get('results', [])[:limit]:
-                content = ContentService.save_content_with_ott(item, content_type)
+                content = ContentService.save_content_from_tmdb(item, content_type)
                 if content:
                     youtube_url = None
                     if content.youtube_trailer_id:
                         youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
-                    
-                    # Add OTT data if available
-                    ott_data = None
-                    if content.ott_platforms:
-                        ott_data = {
-                            'available': content.ott_availability_status == 'available',
-                            'platforms': json.loads(content.ott_platforms or '[]')[:3]
-                        }
                     
                     recommendations.append({
                         'id': content.id,
@@ -1732,8 +1576,7 @@ def get_critics_choice():
                         'overview': content.overview[:150] + '...' if content.overview else '',
                         'youtube_trailer': youtube_url,
                         'is_critics_choice': content.is_critics_choice,
-                        'critics_score': content.critics_score,
-                        'ott_availability': ott_data
+                        'critics_score': content.critics_score
                     })
         
         return jsonify({'recommendations': recommendations}), 200
@@ -1767,19 +1610,11 @@ def get_genre_recommendations(genre):
             
             if genre_content:
                 for item in genre_content.get('results', [])[:limit]:
-                    content = ContentService.save_content_with_ott(item, content_type)
+                    content = ContentService.save_content_from_tmdb(item, content_type)
                     if content:
                         youtube_url = None
                         if content.youtube_trailer_id:
                             youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
-                        
-                        # Add OTT data if available
-                        ott_data = None
-                        if content.ott_platforms:
-                            ott_data = {
-                                'available': content.ott_availability_status == 'available',
-                                'platforms': json.loads(content.ott_platforms or '[]')[:3]
-                            }
                         
                         recommendations.append({
                             'id': content.id,
@@ -1789,8 +1624,7 @@ def get_genre_recommendations(genre):
                             'rating': content.rating,
                             'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
                             'overview': content.overview[:150] + '...' if content.overview else '',
-                            'youtube_trailer': youtube_url,
-                            'ott_availability': ott_data
+                            'youtube_trailer': youtube_url
                         })
         
         return jsonify({'recommendations': recommendations}), 200
@@ -1815,19 +1649,11 @@ def get_regional(language):
             lang_content = TMDBService.get_language_specific(lang_code, content_type)
             if lang_content:
                 for item in lang_content.get('results', [])[:limit]:
-                    content = ContentService.save_content_with_ott(item, content_type)
+                    content = ContentService.save_content_from_tmdb(item, content_type)
                     if content:
                         youtube_url = None
                         if content.youtube_trailer_id:
                             youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
-                        
-                        # Add OTT data if available
-                        ott_data = None
-                        if content.ott_platforms:
-                            ott_data = {
-                                'available': content.ott_availability_status == 'available',
-                                'platforms': json.loads(content.ott_platforms or '[]')[:3]
-                            }
                         
                         recommendations.append({
                             'id': content.id,
@@ -1837,8 +1663,7 @@ def get_regional(language):
                             'rating': content.rating,
                             'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
                             'overview': content.overview[:150] + '...' if content.overview else '',
-                            'youtube_trailer': youtube_url,
-                            'ott_availability': ott_data
+                            'youtube_trailer': youtube_url
                         })
         
         return jsonify({'recommendations': recommendations}), 200
@@ -2022,14 +1847,6 @@ def get_anonymous_recommendations():
             if content.youtube_trailer_id:
                 youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
             
-            # Add OTT data if available
-            ott_data = None
-            if content.ott_platforms:
-                ott_data = {
-                    'available': content.ott_availability_status == 'available',
-                    'platforms': json.loads(content.ott_platforms or '[]')[:3]
-                }
-            
             result.append({
                 'id': content.id,
                 'title': content.title,
@@ -2038,8 +1855,7 @@ def get_anonymous_recommendations():
                 'rating': content.rating,
                 'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
                 'overview': content.overview[:150] + '...' if content.overview else '',
-                'youtube_trailer': youtube_url,
-                'ott_availability': ott_data
+                'youtube_trailer': youtube_url
             })
         
         return jsonify({'recommendations': result}), 200
@@ -2071,14 +1887,6 @@ def get_public_admin_recommendations():
                 if content.youtube_trailer_id:
                     youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
                 
-                # Add OTT data if available
-                ott_data = None
-                if content.ott_platforms:
-                    ott_data = {
-                        'available': content.ott_availability_status == 'available',
-                        'platforms': json.loads(content.ott_platforms or '[]')[:3]
-                    }
-                
                 result.append({
                     'id': content.id,
                     'title': content.title,
@@ -2090,8 +1898,7 @@ def get_public_admin_recommendations():
                     'youtube_trailer': youtube_url,
                     'admin_description': rec.description,
                     'admin_name': admin.username if admin else 'Admin',
-                    'recommended_at': rec.created_at.isoformat(),
-                    'ott_availability': ott_data
+                    'recommended_at': rec.created_at.isoformat()
                 })
         
         return jsonify({'recommendations': result}), 200
@@ -2100,149 +1907,16 @@ def get_public_admin_recommendations():
         logger.error(f"Public admin recommendations error: {e}")
         return jsonify({'error': 'Failed to get admin recommendations'}), 500
 
-# OTT-specific routes
-@app.route('/api/ott/batch-check', methods=['POST'])
-def batch_check_ott():
-    """Check OTT availability for multiple contents"""
-    try:
-        data = request.get_json()
-        content_ids = data.get('content_ids', [])
-        
-        if not content_ids:
-            return jsonify({'error': 'No content IDs provided'}), 400
-        
-        results = []
-        contents = Content.query.filter(Content.id.in_(content_ids)).all()
-        
-        for content in contents:
-            # Check if we have recent OTT data
-            if content.ott_last_checked and \
-               (datetime.utcnow() - content.ott_last_checked).total_seconds() < 3600:
-                # Use cached data
-                results.append({
-                    'content_id': content.id,
-                    'title': content.title,
-                    'ott_status': content.ott_availability_status,
-                    'platforms': json.loads(content.ott_platforms or '[]')
-                })
-            else:
-                # Schedule background update
-                executor.submit(
-                    ContentService.update_ott_availability,
-                    content.id,
-                    content.title,
-                    content.release_date.year if content.release_date else None,
-                    content.imdb_id,
-                    content.tmdb_id
-                )
-                results.append({
-                    'content_id': content.id,
-                    'title': content.title,
-                    'ott_status': 'checking',
-                    'platforms': []
-                })
-        
-        return jsonify({'results': results}), 200
-        
-    except Exception as e:
-        logger.error(f"Batch OTT check error: {e}")
-        return jsonify({'error': 'Failed to check OTT availability'}), 500
-
-@app.route('/api/ott/refresh/<int:content_id>', methods=['POST'])
-def refresh_ott_availability(content_id):
-    """Force refresh OTT availability for specific content"""
-    try:
-        content = Content.query.get_or_404(content_id)
-        
-        if not ott_service:
-            return jsonify({'error': 'OTT service not available'}), 503
-        
-        # Force refresh
-        availability = ott_service.get_100_percent_accurate_availability(
-            title=content.title,
-            year=content.release_date.year if content.release_date else None,
-            imdb_id=content.imdb_id,
-            tmdb_id=content.tmdb_id
-        )
-        
-        # Update database
-        content.ott_availability_status = 'available' if availability.get('is_available') else 'unavailable'
-        content.ott_last_checked = datetime.utcnow()
-        
-        if availability.get('is_available'):
-            platforms = []
-            for platform_type in ['free', 'subscription', 'rental', 'purchase']:
-                for platform in availability.get('availability', {}).get(platform_type, []):
-                    platforms.append({
-                        'name': platform.get('platform'),
-                        'url': platform.get('direct_url'),
-                        'type': platform_type,
-                        'quality': platform.get('quality', []),
-                        'languages': platform.get('languages', []),
-                        'subtitles': platform.get('subtitles', [])
-                    })
-            
-            content.ott_platforms = json.dumps(platforms)
-            content.direct_watch_links = json.dumps(availability.get('availability', {}))
-        
-        db.session.commit()
-        
-        return jsonify({
-            'message': 'OTT availability refreshed',
-            'availability': availability
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"OTT refresh error: {e}")
-        return jsonify({'error': 'Failed to refresh OTT availability'}), 500
-
-@app.route('/api/ott/trending-on-platforms', methods=['GET'])
-@cache.cached(timeout=3600, key_prefix=make_cache_key)
-def get_trending_on_platforms():
-    """Get trending content on each OTT platform"""
-    try:
-        platform = request.args.get('platform', 'all')
-        limit = int(request.args.get('limit', 10))
-        
-        # Get trending content that's available on OTT
-        query = Content.query.filter(
-            Content.ott_availability_status == 'available',
-            Content.is_trending == True
-        )
-        
-        if platform != 'all':
-            query = query.filter(Content.ott_platforms.contains(platform))
-        
-        trending = query.order_by(Content.popularity.desc()).limit(limit).all()
-        
-        results = []
-        for content in trending:
-            platforms = json.loads(content.ott_platforms or '[]')
-            results.append({
-                'id': content.id,
-                'title': content.title,
-                'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path else None,
-                'rating': content.rating,
-                'platforms': platforms,
-                'direct_links': json.loads(content.direct_watch_links or '{}')
-            })
-        
-        return jsonify({'trending': results}), 200
-        
-    except Exception as e:
-        logger.error(f"Trending on platforms error: {e}")
-        return jsonify({'error': 'Failed to get trending content'}), 500
-
-# Health check endpoint with OTT service status
+# Health check endpoint
 @app.route('/api/health', methods=['GET'])
 def health_check():
-    """Enhanced health check with OTT service status"""
+    """Enhanced health check with cache status"""
     try:
         # Basic health info
         health_info = {
             'status': 'healthy',
             'timestamp': datetime.utcnow().isoformat(),
-            'version': '5.0.0'  # Updated version with OTT integration
+            'version': '4.0.0'  # Updated version with ultra-powerful algorithms
         }
         
         # Check database connectivity
@@ -2265,21 +1939,13 @@ def health_check():
             health_info['cache'] = 'disconnected'
             health_info['status'] = 'degraded'
         
-        # Check OTT service status
-        if ott_service:
-            health_info['ott_service'] = 'active'
-        else:
-            health_info['ott_service'] = 'inactive'
-            health_info['status'] = 'degraded'
-        
         # Check external services
         health_info['services'] = {
             'tmdb': bool(TMDB_API_KEY),
             'omdb': bool(OMDB_API_KEY),
             'youtube': bool(YOUTUBE_API_KEY),
             'ml_service': bool(ML_SERVICE_URL),
-            'algorithms': 'ultra_powerful_enabled',
-            'ott_verification': '100_percent_accurate'
+            'algorithms': 'ultra_powerful_enabled'
         }
         
         return jsonify(health_info), 200
@@ -2290,16 +1956,6 @@ def health_check():
             'error': str(e),
             'timestamp': datetime.utcnow().isoformat()
         }), 500
-
-# Cleanup function
-@app.teardown_appcontext
-def shutdown_services(exception=None):
-    """Clean up services on app shutdown"""
-    try:
-        if ott_service:
-            ott_service.close()
-    except:
-        pass
 
 # Initialize database
 def create_tables():

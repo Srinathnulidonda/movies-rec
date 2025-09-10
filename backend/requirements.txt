@@ -26,6 +26,3 @@ schedule
 cloudscraper
 fake-useragent
 beautifulsoup4
-selenium
-undetected-chromedriver
-packaging
