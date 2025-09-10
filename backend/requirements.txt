@@ -26,5 +26,5 @@ schedule
 cloudscraper
 fake-useragent
 beautifulsoup4
-selenium
-undetected-chromedriver
+# selenium
+# undetected-chromedriver
