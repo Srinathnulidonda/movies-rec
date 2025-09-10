@@ -21,7 +21,10 @@ from selenium.common.exceptions import TimeoutException, NoSuchElementException
 import cloudscraper
 from fake_useragent import UserAgent
 import undetected_chromedriver as uc
-
+import sys
+if sys.version_info >= (3, 12):
+    import packaging.version
+    sys.modules['distutils.version'] = packaging.version
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
