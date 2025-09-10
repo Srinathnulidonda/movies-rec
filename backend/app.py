@@ -1,5 +1,5 @@
 # backend/app.py
-from flask import Flask, request, jsonify, session, render_template, send_from_directory
+from flask import Flask, request, jsonify, session, render_template
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
 from flask_caching import Cache
@@ -31,18 +31,6 @@ import services.auth as auth
 from services.auth import init_auth, auth_bp
 from services.admin import admin_bp, init_admin
 from services.users import users_bp, init_users
-
-# Safe OTT import with error handling
-try:
-    from services.ott import register_ott_routes, UltraAccurateOTTService
-    OTT_AVAILABLE = True
-    logger.info("OTT service imported successfully")
-except ImportError as e:
-    logging.warning(f"OTT service import warning: {e}")
-    register_ott_routes = None
-    UltraAccurateOTTService = None
-    OTT_AVAILABLE = False
-
 from services.algorithms import (
     RecommendationOrchestrator,
     PopularityRanking,
@@ -54,34 +42,21 @@ from services.algorithms import (
     HybridRecommendationEngine,
     UltraPowerfulSimilarityEngine
 )
+
 # Initialize Flask app
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'your-secret-key-change-in-production')
 
-# Replace the DATABASE_URL configuration
+# Database configuration
 DATABASE_URL = 'postgresql://movies_rec_panf_user:BO5X3d2QihK7GG9hxgtBiCtni8NTbbIi@dpg-d2q7gamr433s73e0hcm0-a/movies_rec_panf'
 
 if os.environ.get('DATABASE_URL'):
-    db_url = os.environ.get('DATABASE_URL')
-    if db_url.startswith('postgres://'):
-        db_url = db_url.replace('postgres://', 'postgresql://')
-    # Add SSL configuration for production
-    if 'sslmode' not in db_url:
-        db_url += '?sslmode=require'
-    app.config['SQLALCHEMY_DATABASE_URI'] = db_url
+    app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL').replace('postgres://', 'postgresql://')
 else:
-    app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL + '?sslmode=require'
+    app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
 
-# Add connection pool settings for better reliability
-app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
-    'pool_size': 5,
-    'pool_recycle': 3600,
-    'pool_pre_ping': True,
-    'connect_args': {
-        'sslmode': 'require',
-        'connect_timeout': 10
-    }
-}
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
 # Cache configuration with Redis
 REDIS_URL = os.environ.get('REDIS_URL', 'redis://red-d2qlbuje5dus73c71qog:xp7inVzgblGCbo9I4taSGLdKUg0xY91I@red-d2qlbuje5dus73c71qog:6379')
 
@@ -1984,14 +1959,6 @@ def health_check():
             'error': str(e),
             'timestamp': datetime.utcnow().isoformat()
         }), 500
-    
-if OTT_AVAILABLE and register_ott_routes:
-    try:
-        ott_service = register_ott_routes(app, db, cache)
-        logger.info("OTT routes registered successfully")
-    except Exception as e:
-        logger.error(f"Failed to register OTT routes: {e}")
-        OTT_AVAILABLE = False
 
 # Initialize database
 def create_tables():
