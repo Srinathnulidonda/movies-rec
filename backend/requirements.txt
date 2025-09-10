@@ -26,3 +26,4 @@ schedule
 cloudscraper
 fake-useragent
 beautifulsoup4
+aiohttp
