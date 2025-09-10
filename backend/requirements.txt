@@ -28,3 +28,4 @@ fake-useragent
 beautifulsoup4
 selenium
 undetected-chromedriver
+distutils
