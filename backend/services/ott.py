@@ -1,1268 +1,1010 @@
 # backend/services/ott.py
-
+import asyncio
+import aiohttp
 import requests
-from bs4 import BeautifulSoup
+from typing import Dict, List, Optional, Any, Union, Tuple
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+from enum import Enum
 import json
 import re
-from typing import Dict, List, Optional, Any, Tuple
-from dataclasses import dataclass, asdict, field
-from datetime import datetime, timedelta
 import hashlib
+from urllib.parse import quote, urlencode
+import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
-from urllib.parse import quote, urlencode, urlparse, parse_qs
-import logging
-import cloudscraper
-from fake_useragent import UserAgent
+from functools import lru_cache, wraps
+from bs4 import BeautifulSoup
+import redis
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Mock Selenium classes for compatibility
-class MockWebDriver:
-    class By:
-        ID = "id"
-        CLASS_NAME = "class"
-        CSS_SELECTOR = "css"
-    
-    class WebDriverWait:
-        def __init__(self, driver, timeout):
-            pass
-        def until(self, condition):
-            return []
-    
-    class expected_conditions:
-        @staticmethod
-        def presence_of_all_elements_located(locator):
-            return lambda driver: []
-    
-    class Options:
-        def __init__(self):
-            self.arguments = []
-        def add_argument(self, arg):
-            self.arguments.append(arg)
+# Platform configurations
+class StreamingPlatform(Enum):
+    """Supported streaming platforms with metadata"""
+    NETFLIX = ("Netflix", "https://www.netflix.com", "https://i.imgur.com/netflix-logo.png")
+    AMAZON_PRIME = ("Amazon Prime Video", "https://www.primevideo.com", "https://i.imgur.com/prime-logo.png")
+    DISNEY_PLUS = ("Disney+", "https://www.disneyplus.com", "https://i.imgur.com/disney-logo.png")
+    HOTSTAR = ("Disney+ Hotstar", "https://www.hotstar.com", "https://i.imgur.com/hotstar-logo.png")
+    HULU = ("Hulu", "https://www.hulu.com", "https://i.imgur.com/hulu-logo.png")
+    YOUTUBE = ("YouTube", "https://www.youtube.com", "https://i.imgur.com/youtube-logo.png")
+    ETV_WIN = ("ETV Win", "https://www.etvwin.com", "https://i.imgur.com/etv-logo.png")
+    AHA = ("Aha", "https://www.aha.video", "https://i.imgur.com/aha-logo.png")
+    JIO_CINEMA = ("Jio Cinema", "https://www.jiocinema.com", "https://i.imgur.com/jio-logo.png")
+    MX_PLAYER = ("MX Player", "https://www.mxplayer.in", "https://i.imgur.com/mx-logo.png")
+    ZEE5 = ("Zee5", "https://www.zee5.com", "https://i.imgur.com/zee5-logo.png")
+    SONY_LIV = ("SonyLIV", "https://www.sonyliv.com", "https://i.imgur.com/sony-logo.png")
+    VOOT = ("Voot", "https://www.voot.com", "https://i.imgur.com/voot-logo.png")
+    ALT_BALAJI = ("ALTBalaji", "https://www.altbalaji.com", "https://i.imgur.com/alt-logo.png")
+    APPLE_TV = ("Apple TV+", "https://tv.apple.com", "https://i.imgur.com/appletv-logo.png")
+    HBO_MAX = ("HBO Max", "https://www.hbomax.com", "https://i.imgur.com/hbo-logo.png")
+    PARAMOUNT_PLUS = ("Paramount+", "https://www.paramountplus.com", "https://i.imgur.com/paramount-logo.png")
+    PEACOCK = ("Peacock", "https://www.peacocktv.com", "https://i.imgur.com/peacock-logo.png")
+    CRUNCHYROLL = ("Crunchyroll", "https://www.crunchyroll.com", "https://i.imgur.com/crunchyroll-logo.png")
+    FUNIMATION = ("Funimation", "https://www.funimation.com", "https://i.imgur.com/funimation-logo.png")
 
-# Use mock objects
-By = MockWebDriver.By
-WebDriverWait = MockWebDriver.WebDriverWait
-EC = MockWebDriver.expected_conditions
-Options = MockWebDriver.Options
-TimeoutException = Exception
-NoSuchElementException = Exception
+class OfferType(Enum):
+    """Types of content offers"""
+    FREE = "free"
+    SUBSCRIPTION = "subscription"
+    RENT = "rent"
+    BUY = "buy"
+    ADS = "ads"  # Free with ads
 
-# Mock undetected_chromedriver
-class MockUC:
-    class ChromeOptions:
-        def __init__(self):
-            self.arguments = []
-            self.experimental_options = {}
-        def add_argument(self, arg):
-            self.arguments.append(arg)
-        def add_experimental_option(self, key, value):
-            self.experimental_options[key] = value
+class VideoQuality(Enum):
+    """Video quality options"""
+    SD = "SD"
+    HD = "HD"
+    FHD = "Full HD"
+    UHD_4K = "4K"
+    UHD_8K = "8K"
+    HDR = "HDR"
+    DOLBY_VISION = "Dolby Vision"
+
+@dataclass
+class StreamingOffer:
+    """Represents a streaming offer for content"""
+    platform: StreamingPlatform
+    offer_type: OfferType
+    url: str
+    price: Optional[float] = None
+    currency: str = "INR"
+    quality: List[VideoQuality] = field(default_factory=list)
+    languages: List[str] = field(default_factory=list)
+    subtitles: List[str] = field(default_factory=list)
+    audio_formats: List[str] = field(default_factory=list)
+    expires_at: Optional[datetime] = None
+    region: str = "IN"
+    deep_link: Optional[str] = None
+    package_info: Optional[str] = None  # e.g., "Premium Plan", "Basic Plan"
+
+@dataclass
+class ContentAvailability:
+    """Complete availability information for content"""
+    content_id: str
+    title: str
+    content_type: str  # movie, series, anime
+    release_year: Optional[int] = None
+    runtime: Optional[int] = None
+    streaming_offers: List[StreamingOffer] = field(default_factory=list)
+    not_available_message: Optional[str] = None
+    trailer_url: Optional[str] = None
+    last_updated: datetime = field(default_factory=datetime.utcnow)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+class CacheManager:
+    """Redis-based cache manager for OTT data"""
     
-    @staticmethod
-    def Chrome(*args, **kwargs):
+    def __init__(self, redis_url: Optional[str] = None, default_ttl: int = 3600):
+        self.redis_client = None
+        self.default_ttl = default_ttl
+        
+        if redis_url:
+            try:
+                self.redis_client = redis.from_url(redis_url, decode_responses=True)
+                self.redis_client.ping()
+                logger.info("Redis cache connected successfully")
+            except Exception as e:
+                logger.warning(f"Redis connection failed: {e}. Using in-memory cache.")
+                self.redis_client = None
+        
+        # Fallback to in-memory cache
+        self.memory_cache = {}
+        self.cache_timestamps = {}
+    
+    def get(self, key: str) -> Optional[Any]:
+        """Get value from cache"""
+        if self.redis_client:
+            try:
+                value = self.redis_client.get(key)
+                return json.loads(value) if value else None
+            except Exception as e:
+                logger.debug(f"Redis get error: {e}")
+        
+        # Fallback to memory cache
+        if key in self.memory_cache:
+            timestamp = self.cache_timestamps.get(key)
+            if timestamp and (datetime.utcnow() - timestamp).seconds < self.default_ttl:
+                return self.memory_cache[key]
+            else:
+                del self.memory_cache[key]
+                del self.cache_timestamps[key]
         return None
-
-uc = MockUC()
-UC_AVAILABLE = False
-
-@dataclass
-class VerifiedStreamingLink:
-    """Verified streaming link with 100% accuracy guarantee"""
-    platform: str
-    platform_logo: str
-    direct_watch_url: str  # Direct, verified watch URL
-    verification_status: str  # 'verified', 'available', 'unavailable'
-    verification_timestamp: datetime
-    quality: List[str]  # ['4K', 'HD', 'SD']
-    price: Optional[Dict[str, str]] = None  # {'rental': '₹120', 'purchase': '₹490'}
-    is_free: bool = False
-    requires_subscription: bool = True
-    subscription_plan: Optional[str] = None  # 'Premium', 'Basic', etc.
-    languages_available: List[str] = field(default_factory=list)
-    audio_tracks: List[str] = field(default_factory=list)
-    subtitles_available: List[str] = field(default_factory=list)
-    region_locked: bool = False
-    availability_region: str = "IN"
-    expires_on: Optional[datetime] = None  # For rentals or limited availability
-    deep_link_mobile: Optional[str] = None  # Mobile app deep link
-    accuracy_score: float = 100.0  # Accuracy percentage
-
-@dataclass
-class PlatformAvailability:
-    """Complete platform availability with verification"""
-    platform_name: str
-    is_available: bool
-    verified: bool
-    direct_links: Dict[str, str]  # {'web': url, 'mobile': url, 'tv': url}
-    availability_details: Dict[str, Any]
-    last_checked: datetime
-    confidence_score: float  # 0-100 confidence in the result
-
-class UltraAccurateOTTService:
-    """
-    Ultra-accurate OTT availability service with 100% verification.
-    Optimized for Render free tier - uses API-only mode.
-    """
     
-    # Enhanced platform configurations with exact API endpoints
-    PLATFORM_CONFIGS = {
-        'netflix': {
-            'name': 'Netflix',
-            'logo': 'https://upload.wikimedia.org/wikipedia/commons/0/08/Netflix_2015_logo.svg',
-            'domains': ['netflix.com', 'www.netflix.com'],
-            'api_endpoints': {
-                'search': 'https://www.netflix.com/api/shakti/{build_id}/search',
-                'title': 'https://www.netflix.com/title/',
-                'availability': 'https://unogs.com/api/title/details'
-            },
-            'verification_method': 'api_and_scrape',
-            'selectors': {
-                'title': '[data-uia="title-info-title"]',
-                'play_button': '[data-uia="play-button"]',
-                'availability': '.availability-message'
-            }
-        },
-        'prime': {
-            'name': 'Amazon Prime Video',
-            'logo': 'https://upload.wikimedia.org/wikipedia/commons/f/f1/Prime_Video.png',
-            'domains': ['primevideo.com', 'www.amazon.in/minitv', 'www.amazon.com/prime-video'],
-            'api_endpoints': {
-                'search': 'https://www.primevideo.com/api/search',
-                'detail': 'https://www.primevideo.com/api/detail'
-            },
-            'verification_method': 'advanced_scrape',
-            'selectors': {
-                'title': 'h1[data-automation-id="title"]',
-                'watch_button': '[data-automation-id="play-button"]',
-                'price': '.price-display'
-            }
-        },
-        'hotstar': {
-            'name': 'Disney+ Hotstar',
-            'logo': 'https://secure-media.hotstarext.com/web-assets/prod/images/brand-logos/disney-hotstar-logo-dark.svg',
-            'domains': ['hotstar.com', 'www.hotstar.com'],
-            'api_endpoints': {
-                'search': 'https://api.hotstar.com/s/v1/scout/search',
-                'detail': 'https://api.hotstar.com/o/v1/show/detail',
-                'playback': 'https://api.hotstar.com/play/v1/playback'
-            },
-            'api_params': {
-                'tas': '20',
-                'hl': 'en'
-            },
-            'verification_method': 'api',
-            'headers': {
-                'x-country-code': 'IN',
-                'x-platform-code': 'PCTV'
-            }
-        },
-        'jiocinema': {
-            'name': 'JioCinema',
-            'logo': 'https://www.jiocinema.com/images/jc-logo.svg',
-            'domains': ['jiocinema.com', 'www.jiocinema.com'],
-            'api_endpoints': {
-                'search': 'https://prod.media.jio.com/apis/common/v3/search',
-                'detail': 'https://prod.media.jio.com/apis/common/v3/metamore/get',
-                'stream': 'https://prod.media.jio.com/apis/common/v3/stream/get'
-            },
-            'verification_method': 'api',
-            'is_free': True
-        },
-        'zee5': {
-            'name': 'ZEE5',
-            'logo': 'https://www.zee5.com/images/ZEE5_logo.svg',
-            'domains': ['zee5.com', 'www.zee5.com'],
-            'api_endpoints': {
-                'search': 'https://catalogapi.zee5.com/v1/search',
-                'content': 'https://gwapi.zee5.com/content/details/',
-                'playback': 'https://useraction.zee5.com/v1/playback'
-            },
-            'api_key': 'web_app',
-            'verification_method': 'api'
-        },
-        'sonyliv': {
-            'name': 'SonyLIV',
-            'logo': 'https://images.slivcdn.com/UI_icons/sonyliv_new_revised_header_logo.png',
-            'domains': ['sonyliv.com', 'www.sonyliv.com'],
-            'api_endpoints': {
-                'search': 'https://apiv2.sonyliv.com/AGL/3.0.0/R/ENG/WEB/IN/SEARCH',
-                'detail': 'https://apiv2.sonyliv.com/AGL/3.0.0/R/ENG/WEB/IN/CONTENT/DETAIL/',
-                'stream': 'https://apiv2.sonyliv.com/AGL/3.0.0/R/ENG/WEB/IN/STREAM'
-            },
-            'verification_method': 'api',
-            'headers': {
-                'security-token': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9'  # Public token
-            }
-        },
-        'mxplayer': {
-            'name': 'MX Player',
-            'logo': 'https://www.mxplayer.in/public/images/logo.svg',
-            'domains': ['mxplayer.in', 'www.mxplayer.in'],
-            'api_endpoints': {
-                'search': 'https://api.mxplay.com/v1/web/search',
-                'detail': 'https://api.mxplay.com/v1/web/detail/video',
-                'stream': 'https://api.mxplay.com/v1/web/live/detail'
-            },
-            'is_free': True,
-            'verification_method': 'api'
-        },
-        'aha': {
-            'name': 'Aha',
-            'logo': 'https://www.aha.video/aha-logo.svg',
-            'domains': ['aha.video', 'www.aha.video'],
-            'api_endpoints': {
-                'search': 'https://api.aha.video/search/v1',
-                'content': 'https://api.aha.video/content/v1'
-            },
-            'verification_method': 'api_and_scrape',
-            'focus_languages': ['Telugu', 'Tamil']
-        },
-        'youtube': {
-            'name': 'YouTube',
-            'logo': 'https://upload.wikimedia.org/wikipedia/commons/b/b8/YouTube_Logo_2017.svg',
-            'domains': ['youtube.com', 'www.youtube.com'],
-            'api_endpoints': {
-                'search': 'https://www.googleapis.com/youtube/v3/search',
-                'video': 'https://www.googleapis.com/youtube/v3/videos'
-            },
-            'api_key': 'AIzaSyDU-JLASTdIdoLOmlpWuJYLTZDUspqw2T4',
-            'is_free': True,
-            'has_paid': True,
-            'verification_method': 'api'
-        },
-        'appletv': {
-            'name': 'Apple TV+',
-            'logo': 'https://tv.apple.com/assets/brands/Apple_TV+_logo.svg',
-            'domains': ['tv.apple.com'],
-            'api_endpoints': {
-                'search': 'https://tv.apple.com/api/search',
-                'content': 'https://tv.apple.com/api/content'
-            },
-            'verification_method': 'advanced_scrape'
-        },
-        'voot': {
-            'name': 'Voot',
-            'logo': 'https://www.voot.com/images/Voot-Logo.svg',
-            'domains': ['voot.com', 'www.voot.com'],
-            'api_endpoints': {
-                'search': 'https://psapi.voot.com/jio/voot/v1/voot-web/search',
-                'content': 'https://psapi.voot.com/jio/voot/v1/voot-web/content/detail'
-            },
-            'verification_method': 'api'
-        },
-        'sunnxt': {
-            'name': 'Sun NXT',
-            'logo': 'https://www.sunnxt.com/images/logo.svg',
-            'domains': ['sunnxt.com', 'www.sunnxt.com'],
-            'api_endpoints': {
-                'search': 'https://api.sunnxt.com/api/v2/search',
-                'content': 'https://api.sunnxt.com/api/v2/content'
-            },
-            'verification_method': 'api',
-            'focus_languages': ['Tamil', 'Telugu', 'Malayalam', 'Kannada']
-        }
-    }
+    def set(self, key: str, value: Any, ttl: Optional[int] = None) -> bool:
+        """Set value in cache"""
+        ttl = ttl or self.default_ttl
+        
+        if self.redis_client:
+            try:
+                self.redis_client.setex(key, ttl, json.dumps(value))
+                return True
+            except Exception as e:
+                logger.debug(f"Redis set error: {e}")
+        
+        # Fallback to memory cache
+        self.memory_cache[key] = value
+        self.cache_timestamps[key] = datetime.utcnow()
+        return True
     
-    def __init__(self, cache_backend=None, use_selenium=False, headless=True):
-        """
-        Initialize Ultra Accurate OTT Service (Render Free Tier Optimized)
+    def delete(self, key: str) -> bool:
+        """Delete key from cache"""
+        if self.redis_client:
+            try:
+                self.redis_client.delete(key)
+            except Exception as e:
+                logger.debug(f"Redis delete error: {e}")
         
-        Args:
-            cache_backend: Cache backend for storing verified results
-            use_selenium: DISABLED for Render free tier
-            headless: Run browser in headless mode (not used in API-only mode)
-        """
-        self.cache = cache_backend
-        self.use_selenium = False  # Force disable Selenium for Render
-        self.headless = headless
-        
-        # Initialize sessions and tools
-        self.session = self._create_advanced_session()
-        self.cloudscraper = cloudscraper.create_scraper()
-        self.ua = UserAgent()
-        self.executor = ThreadPoolExecutor(max_workers=5)  # Reduced for free tier
-        
-        # No Selenium driver for Render
-        self.driver = None
-        
-        # Verification cache (in-memory for session)
-        self.verification_cache = {}
-        
-        logger.info("OTT Service initialized in API-only mode (Render free tier optimized)")
+        if key in self.memory_cache:
+            del self.memory_cache[key]
+            if key in self.cache_timestamps:
+                del self.cache_timestamps[key]
+        return True
+
+class StreamingAvailabilityAPI:
+    """Primary API client for streaming availability"""
     
-    def _create_advanced_session(self):
-        """Create advanced HTTP session with retry and rotation"""
+    BASE_URL = "https://streaming-availability.p.rapidapi.com"
+    
+    def __init__(self, api_key: str, api_host: str = "streaming-availability.p.rapidapi.com"):
+        self.api_key = api_key
+        self.api_host = api_host
+        self.session = self._create_session()
+    
+    def _create_session(self) -> requests.Session:
+        """Create HTTP session with retry logic"""
         session = requests.Session()
-        
-        # Rotate user agents
-        session.headers.update({
-            'User-Agent': self.ua.random,
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.9,hi;q=0.8',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'DNT': '1',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
-            'Cache-Control': 'max-age=0'
-        })
-        
-        # Add retry adapter
-        from requests.adapters import HTTPAdapter
-        from requests.packages.urllib3.util.retry import Retry
-        
-        retry_strategy = Retry(
+        retry = Retry(
             total=3,
-            backoff_factor=1,
-            status_forcelist=[429, 500, 502, 503, 504],
+            read=3,
+            connect=3,
+            backoff_factor=0.3,
+            status_forcelist=(500, 502, 504)
         )
-        adapter = HTTPAdapter(max_retries=retry_strategy)
-        session.mount("http://", adapter)
-        session.mount("https://", adapter)
-        
+        adapter = HTTPAdapter(max_retries=retry)
+        session.mount('http://', adapter)
+        session.mount('https://', adapter)
+        session.headers.update({
+            'x-rapidapi-key': self.api_key,
+            'x-rapidapi-host': self.api_host
+        })
         return session
     
-    def _init_selenium_driver(self):
-        """Selenium disabled for Render free tier"""
-        logger.info("Selenium disabled - using API-only mode for Render deployment")
-        return None
-    
-    def get_100_percent_accurate_availability(self, title: str, year: Optional[int] = None,
-                                             imdb_id: Optional[str] = None,
-                                             tmdb_id: Optional[int] = None,
-                                             languages: List[str] = None) -> Dict[str, Any]:
-        """
-        Get 100% accurate OTT availability with verification
-        
-        Returns:
-            Dictionary with verified streaming links and availability
-        """
-        logger.info(f"Starting 100% accurate search for: {title} ({year})")
-        
-        # Generate cache key
-        cache_key = self._generate_cache_key(title, year, imdb_id, tmdb_id)
-        
-        # Check cache for recent verified results
-        if self.cache:
-            cached = self.cache.get(f"verified_{cache_key}")
-            if cached and self._is_cache_valid(cached):
-                logger.info(f"Returning verified cached result for {title}")
-                return cached
-        
-        # Perform parallel verification across all platforms
-        verified_results = self._parallel_platform_verification(
-            title, year, imdb_id, tmdb_id, languages
-        )
-        
-        # Build response with 100% verified data
-        response = self._build_verified_response(
-            title, year, verified_results, languages
-        )
-        
-        # Cache verified results
-        if self.cache and response['is_available']:
-            self.cache.set(f"verified_{cache_key}", response, timeout=1800)  # 30 min cache
-        
-        return response
-    
-    def _parallel_platform_verification(self, title: str, year: Optional[int],
-                                       imdb_id: Optional[str], tmdb_id: Optional[int],
-                                       languages: List[str]) -> List[VerifiedStreamingLink]:
-        """Verify availability across all platforms in parallel"""
-        verified_links = []
-        futures = []
-        
-        # Submit verification tasks for each platform
-        for platform_id, config in self.PLATFORM_CONFIGS.items():
-            future = self.executor.submit(
-                self._verify_single_platform,
-                platform_id, config, title, year, imdb_id, tmdb_id, languages
-            )
-            futures.append((platform_id, future))
-        
-        # Collect verified results
-        for platform_id, future in futures:
-            try:
-                result = future.result(timeout=20)
-                if result and result.verification_status == 'verified':
-                    verified_links.append(result)
-                    logger.info(f"✓ Verified on {platform_id}: {result.direct_watch_url}")
-            except Exception as e:
-                logger.error(f"✗ Verification failed for {platform_id}: {e}")
-        
-        return verified_links
-    
-    def _verify_single_platform(self, platform_id: str, config: Dict,
-                               title: str, year: Optional[int],
-                               imdb_id: Optional[str], tmdb_id: Optional[int],
-                               languages: List[str]) -> Optional[VerifiedStreamingLink]:
-        """Verify availability on a single platform with 100% accuracy"""
-        
-        verification_method = config.get('verification_method', 'api')
-        
+    def get_by_id(self, content_type: str, content_id: str, 
+                  country: str = "in") -> Optional[Dict]:
+        """Get streaming availability by content ID"""
         try:
-            if verification_method == 'api':
-                return self._verify_via_api(platform_id, config, title, year, imdb_id)
-            elif verification_method == 'advanced_scrape':
-                # Use basic scraping for Render
-                return self._basic_scraping_fallback(platform_id, config, title, year)
-            elif verification_method == 'api_and_scrape':
-                # Try API first, fallback to basic scraping
-                result = self._verify_via_api(platform_id, config, title, year, imdb_id)
-                if not result or result.verification_status != 'verified':
-                    result = self._basic_scraping_fallback(platform_id, config, title, year)
-                return result
+            url = f"{self.BASE_URL}/shows/{content_type}/{content_id}"
+            params = {"country": country}
+            
+            response = self.session.get(url, params=params, timeout=10)
+            if response.status_code == 200:
+                return response.json()
+            elif response.status_code == 404:
+                logger.info(f"Content {content_id} not found in streaming API")
             else:
-                return self._basic_scraping_fallback(platform_id, config, title, year)
-                
+                logger.warning(f"API returned {response.status_code}: {response.text}")
         except Exception as e:
-            logger.error(f"Platform verification error for {platform_id}: {e}")
-            return None
-    
-    def _verify_via_api(self, platform_id: str, config: Dict,
-                       title: str, year: Optional[int],
-                       imdb_id: Optional[str]) -> Optional[VerifiedStreamingLink]:
-        """Verify using platform's API"""
-        
-        if platform_id == 'netflix':
-            return self._verify_netflix_api(title, year, imdb_id)
-        elif platform_id == 'hotstar':
-            return self._verify_hotstar_api(title, year)
-        elif platform_id == 'jiocinema':
-            return self._verify_jiocinema_api(title, year)
-        elif platform_id == 'zee5':
-            return self._verify_zee5_api(title, year)
-        elif platform_id == 'sonyliv':
-            return self._verify_sonyliv_api(title, year)
-        elif platform_id == 'mxplayer':
-            return self._verify_mxplayer_api(title, year)
-        elif platform_id == 'youtube':
-            return self._verify_youtube_api(title, year)
-        elif platform_id == 'voot':
-            return self._verify_voot_api(title, year)
-        elif platform_id == 'sunnxt':
-            return self._verify_sunnxt_api(title, year)
-        elif platform_id == 'aha':
-            return self._verify_aha_api(title, year)
-        
+            logger.error(f"Streaming API error: {e}")
         return None
     
-    def _verify_netflix_api(self, title: str, year: Optional[int],
-                           imdb_id: Optional[str]) -> Optional[VerifiedStreamingLink]:
-        """Verify Netflix availability using multiple methods"""
+    def search(self, query: str, content_type: str = "both", 
+               country: str = "in") -> Optional[Dict]:
+        """Search for content availability"""
         try:
-            # Method 1: Direct Netflix search URL
-            search_url = f"https://www.netflix.com/search?q={quote(title)}"
-            
-            return VerifiedStreamingLink(
-                platform='Netflix',
-                platform_logo=self.PLATFORM_CONFIGS['netflix']['logo'],
-                direct_watch_url=search_url,
-                verification_status='available',
-                verification_timestamp=datetime.utcnow(),
-                quality=['HD', '4K'],
-                requires_subscription=True,
-                languages_available=['Multiple'],
-                subtitles_available=['Multiple'],
-                audio_tracks=['Multiple'],
-                accuracy_score=85.0
-            )
-            
-        except Exception as e:
-            logger.error(f"Netflix verification error: {e}")
-        
-        return None
-    
-    def _verify_hotstar_api(self, title: str, year: Optional[int]) -> Optional[VerifiedStreamingLink]:
-        """Verify Hotstar availability"""
-        try:
-            # Hotstar Search API
-            search_url = "https://api.hotstar.com/s/v1/scout/search"
-            headers = {
-                'x-country-code': 'IN',
-                'x-platform-code': 'PCTV',
-                'x-client-code': 'LR'
-            }
+            url = f"{self.BASE_URL}/search/title"
             params = {
-                'q': title,
-                'size': 20,
-                'tas': '20'
+                "title": query,
+                "country": country,
+                "type": content_type,
+                "output_language": "en"
             }
             
-            response = self.session.get(search_url, headers=headers, params=params, timeout=10)
-            
+            response = self.session.get(url, params=params, timeout=10)
             if response.status_code == 200:
-                data = response.json()
-                results = data.get('body', {}).get('results', {}).get('items', [])
-                
-                for item in results:
-                    if self._exact_title_match(item.get('title'), title, year):
-                        content_id = item.get('contentId')
-                        asset_type = item.get('assetType')
-                        
-                        # Build direct watch URL
-                        if asset_type == 'MOVIE':
-                            direct_url = f"https://www.hotstar.com/in/movies/{item.get('uri')}/{content_id}"
-                        elif asset_type == 'SHOW':
-                            direct_url = f"https://www.hotstar.com/in/tv/{item.get('uri')}/{content_id}"
-                        else:
-                            direct_url = f"https://www.hotstar.com/in/{content_id}"
-                        
-                        return VerifiedStreamingLink(
-                            platform='Disney+ Hotstar',
-                            platform_logo=self.PLATFORM_CONFIGS['hotstar']['logo'],
-                            direct_watch_url=direct_url,
-                            verification_status='verified',
-                            verification_timestamp=datetime.utcnow(),
-                            quality=['HD', '4K'] if item.get('is4K') else ['HD'],
-                            requires_subscription=not item.get('isFree', False),
-                            is_free=item.get('isFree', False),
-                            languages_available=['Hindi', 'English', 'Telugu', 'Tamil'],
-                            audio_tracks=['Hindi', 'English', 'Telugu', 'Tamil'],
-                            subtitles_available=['English', 'Hindi'],
-                            accuracy_score=100.0
-                        )
-            
+                return response.json()
         except Exception as e:
-            logger.error(f"Hotstar verification error: {e}")
-        
+            logger.error(f"Search API error: {e}")
         return None
+
+class WebScraperFallback:
+    """Fallback web scraping for streaming availability"""
     
-    def _verify_jiocinema_api(self, title: str, year: Optional[int]) -> Optional[VerifiedStreamingLink]:
-        """Verify JioCinema availability"""
+    def __init__(self):
+        self.session = self._create_session()
+    
+    def _create_session(self) -> requests.Session:
+        """Create session with headers to avoid detection"""
+        session = requests.Session()
+        session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        })
+        return session
+    
+    def scrape_justwatch(self, title: str, year: Optional[int] = None,
+                        country: str = "IN") -> List[StreamingOffer]:
+        """Scrape JustWatch for availability"""
+        offers = []
         try:
-            # JioCinema Search API
-            search_url = "https://prod.media.jio.com/apis/common/v3/search"
-            headers = {
-                'User-Agent': self.ua.random,
-                'Origin': 'https://www.jiocinema.com'
-            }
+            # Build search URL
+            search_query = quote(title)
+            url = f"https://www.justwatch.com/{country.lower()}/search?q={search_query}"
             
-            payload = {
-                'q': title,
-                'searchIn': ['MOVIE', 'SHOW', 'SPORT'],
-                'max': 20
-            }
-            
-            response = self.session.post(search_url, json=payload, headers=headers, timeout=10)
-            
+            response = self.session.get(url, timeout=10)
             if response.status_code == 200:
-                data = response.json()
-                results = data.get('result', [])
+                soup = BeautifulSoup(response.content, 'html.parser')
                 
-                for item in results:
-                    if self._exact_title_match(item.get('title'), title, year):
-                        content_id = item.get('id')
-                        direct_url = f"https://www.jiocinema.com/movies/{item.get('seoUrl', title.lower().replace(' ', '-'))}/{content_id}"
+                # Parse streaming offers (simplified example)
+                offer_elements = soup.find_all('div', class_='price-comparison__grid__row')
+                
+                for element in offer_elements:
+                    platform_name = element.find('img', class_='provider-logo')
+                    if platform_name:
+                        platform_name = platform_name.get('alt', '').strip()
                         
-                        return VerifiedStreamingLink(
-                            platform='JioCinema',
-                            platform_logo=self.PLATFORM_CONFIGS['jiocinema']['logo'],
-                            direct_watch_url=direct_url,
-                            verification_status='verified',
-                            verification_timestamp=datetime.utcnow(),
-                            quality=['HD', '4K'] if item.get('is4K') else ['HD'],
-                            is_free=True,
-                            requires_subscription=False,
-                            languages_available=['Hindi', 'English', 'Telugu', 'Tamil'],
-                            audio_tracks=['Hindi', 'English', 'Telugu', 'Tamil'],
-                            subtitles_available=['English', 'Hindi'],
-                            accuracy_score=100.0
-                        )
-            
-        except Exception as e:
-            logger.error(f"JioCinema verification error: {e}")
-        
-        return None
-    
-    def _verify_zee5_api(self, title: str, year: Optional[int]) -> Optional[VerifiedStreamingLink]:
-        """Verify ZEE5 availability"""
-        try:
-            # ZEE5 Search API
-            search_url = "https://catalogapi.zee5.com/v1/search"
-            params = {
-                'q': title,
-                'translation': 'en',
-                'country': 'IN',
-                'version': 2,
-                'page_size': 20
-            }
-            
-            response = self.session.get(search_url, params=params, timeout=10)
-            
-            if response.status_code == 200:
-                data = response.json()
-                
-                for section in ['movies', 'tvshows', 'videos']:
-                    items = data.get(section, [])
-                    for item in items:
-                        if self._exact_title_match(item.get('title'), title, year):
-                            content_id = item.get('id')
-                            asset_type = item.get('asset_type')
+                        # Map to our platform enum
+                        platform = self._map_platform(platform_name)
+                        if platform:
+                            # Extract offer details
+                            offer_type = self._extract_offer_type(element)
+                            link = element.find('a', class_='price-comparison__grid__row__link')
                             
-                            # Build direct URL based on asset type
-                            if asset_type == 'MOVIE':
-                                direct_url = f"https://www.zee5.com/movies/details/{item.get('seo_title', '')}/{content_id}"
-                            elif asset_type == 'TVSHOW':
-                                direct_url = f"https://www.zee5.com/tvshows/details/{item.get('seo_title', '')}/{content_id}"
-                            else:
-                                direct_url = f"https://www.zee5.com/videos/details/{item.get('seo_title', '')}/{content_id}"
-                            
-                            return VerifiedStreamingLink(
-                                platform='ZEE5',
-                                platform_logo=self.PLATFORM_CONFIGS['zee5']['logo'],
-                                direct_watch_url=direct_url,
-                                verification_status='verified',
-                                verification_timestamp=datetime.utcnow(),
-                                quality=['HD'],
-                                is_free=item.get('business_type') == 'free',
-                                requires_subscription=item.get('business_type') != 'free',
-                                languages_available=['Hindi', 'English', 'Telugu', 'Tamil'],
-                                audio_tracks=['Hindi', 'English', 'Telugu', 'Tamil'],
-                                subtitles_available=['English', 'Hindi'],
-                                accuracy_score=100.0
-                            )
-            
+                            if link:
+                                offers.append(StreamingOffer(
+                                    platform=platform,
+                                    offer_type=offer_type,
+                                    url=f"https://www.justwatch.com{link.get('href', '')}",
+                                    region=country
+                                ))
         except Exception as e:
-            logger.error(f"ZEE5 verification error: {e}")
+            logger.error(f"JustWatch scraping error: {e}")
         
-        return None
+        return offers
     
-    def _verify_sonyliv_api(self, title: str, year: Optional[int]) -> Optional[VerifiedStreamingLink]:
-        """Verify SonyLIV availability"""
+    def scrape_google_knowledge_graph(self, title: str, year: Optional[int] = None) -> List[StreamingOffer]:
+        """Scrape Google's knowledge graph for watch options"""
+        offers = []
         try:
-            # Direct search URL for SonyLIV
-            search_url = f"https://www.sonyliv.com/search?q={quote(title)}"
+            query = f"{title} {year if year else ''} watch online"
+            url = f"https://www.google.com/search?q={quote(query)}"
             
-            return VerifiedStreamingLink(
-                platform='SonyLIV',
-                platform_logo=self.PLATFORM_CONFIGS['sonyliv']['logo'],
-                direct_watch_url=search_url,
-                verification_status='available',
-                verification_timestamp=datetime.utcnow(),
-                quality=['HD'],
-                requires_subscription=True,
-                languages_available=['Hindi', 'English', 'Telugu', 'Tamil'],
-                audio_tracks=['Hindi', 'English', 'Telugu', 'Tamil'],
-                subtitles_available=['English', 'Hindi'],
-                accuracy_score=85.0
-            )
-            
-        except Exception as e:
-            logger.error(f"SonyLIV verification error: {e}")
-        
-        return None
-    
-    def _verify_mxplayer_api(self, title: str, year: Optional[int]) -> Optional[VerifiedStreamingLink]:
-        """Verify MX Player availability"""
-        try:
-            # MX Player Search API
-            search_url = "https://api.mxplay.com/v1/web/search"
-            params = {
-                'query': title,
-                'type': 'movie,show',
-                'page': 0,
-                'size': 20
-            }
-            
-            response = self.session.get(search_url, params=params, timeout=10)
-            
+            response = self.session.get(url, timeout=10)
             if response.status_code == 200:
-                data = response.json()
-                
-                # Check movies section
-                movies = data.get('movies', {}).get('items', [])
-                for movie in movies:
-                    if self._exact_title_match(movie.get('title'), title, year):
-                        content_id = movie.get('id')
-                        slug = movie.get('slug', title.lower().replace(' ', '-'))
-                        
-                        direct_url = f"https://www.mxplayer.in/movie/{slug}/watch-online-{content_id}"
-                        
-                        return VerifiedStreamingLink(
-                            platform='MX Player',
-                            platform_logo=self.PLATFORM_CONFIGS['mxplayer']['logo'],
-                            direct_watch_url=direct_url,
-                            verification_status='verified',
-                            verification_timestamp=datetime.utcnow(),
-                            quality=['HD'],
-                            is_free=True,
-                            requires_subscription=False,
-                            languages_available=['Hindi', 'English', 'Telugu', 'Tamil'],
-                            audio_tracks=['Hindi', 'English', 'Telugu', 'Tamil'],
-                            subtitles_available=['English', 'Hindi'],
-                            accuracy_score=100.0
-                        )
-            
-        except Exception as e:
-            logger.error(f"MX Player verification error: {e}")
-        
-        return None
-    
-    def _verify_youtube_api(self, title: str, year: Optional[int]) -> Optional[VerifiedStreamingLink]:
-        """Verify YouTube availability (free movies)"""
-        try:
-            api_key = self.PLATFORM_CONFIGS['youtube']['api_key']
-            search_url = "https://www.googleapis.com/youtube/v3/search"
-            
-            query = f"{title} {year if year else ''} full movie"
-            params = {
-                'key': api_key,
-                'q': query,
-                'part': 'snippet',
-                'type': 'video',
-                'videoDuration': 'long',
-                'videoDefinition': 'high',
-                'maxResults': 10
-            }
-            
-            response = self.session.get(search_url, params=params, timeout=10)
-            
-            if response.status_code == 200:
-                data = response.json()
-                
-                for item in data.get('items', []):
-                    video_id = item.get('id', {}).get('videoId')
-                    video_title = item.get('snippet', {}).get('title', '')
-                    channel_title = item.get('snippet', {}).get('channelTitle', '')
+                # Parse Google's watch now widget
+                # This is simplified - actual implementation would need more robust parsing
+                if "Watch now" in response.text:
+                    # Extract platform links from Google's watch widget
+                    soup = BeautifulSoup(response.content, 'html.parser')
+                    watch_widget = soup.find('div', {'data-attrid': 'kc:/film/film:watch'})
                     
-                    # Check if it's likely an official full movie
-                    if video_id and self._is_official_youtube_movie(video_title, channel_title, title):
-                        direct_url = f"https://www.youtube.com/watch?v={video_id}"
-                        
-                        return VerifiedStreamingLink(
-                            platform='YouTube',
-                            platform_logo=self.PLATFORM_CONFIGS['youtube']['logo'],
-                            direct_watch_url=direct_url,
-                            verification_status='verified',
-                            verification_timestamp=datetime.utcnow(),
-                            quality=['HD', '4K'],
-                            is_free=True,
-                            requires_subscription=False,
-                            languages_available=['Multiple'],
-                            audio_tracks=['Original'],
-                            subtitles_available=['Auto-generated', 'Multiple'],
-                            accuracy_score=95.0
-                        )
-            
+                    if watch_widget:
+                        platforms = watch_widget.find_all('a', class_='watch-link')
+                        for platform in platforms:
+                            # Parse platform details
+                            pass
         except Exception as e:
-            logger.error(f"YouTube verification error: {e}")
+            logger.error(f"Google scraping error: {e}")
         
-        return None
+        return offers
     
-    def _verify_voot_api(self, title: str, year: Optional[int]) -> Optional[VerifiedStreamingLink]:
-        """Verify Voot availability"""
-        try:
-            search_url = f"https://www.voot.com/search/{quote(title)}"
-            
-            return VerifiedStreamingLink(
-                platform='Voot',
-                platform_logo=self.PLATFORM_CONFIGS['voot']['logo'],
-                direct_watch_url=search_url,
-                verification_status='available',
-                verification_timestamp=datetime.utcnow(),
-                quality=['HD'],
-                requires_subscription=True,
-                languages_available=['Hindi', 'English'],
-                audio_tracks=['Hindi', 'English'],
-                subtitles_available=['English', 'Hindi'],
-                accuracy_score=85.0
-            )
-            
-        except Exception as e:
-            logger.error(f"Voot verification error: {e}")
-        
-        return None
-    
-    def _verify_sunnxt_api(self, title: str, year: Optional[int]) -> Optional[VerifiedStreamingLink]:
-        """Verify Sun NXT availability"""
-        try:
-            search_url = f"https://www.sunnxt.com/search?q={quote(title)}"
-            
-            return VerifiedStreamingLink(
-                platform='Sun NXT',
-                platform_logo=self.PLATFORM_CONFIGS['sunnxt']['logo'],
-                direct_watch_url=search_url,
-                verification_status='available',
-                verification_timestamp=datetime.utcnow(),
-                quality=['HD'],
-                requires_subscription=True,
-                languages_available=['Tamil', 'Telugu', 'Malayalam', 'Kannada'],
-                audio_tracks=['Tamil', 'Telugu', 'Malayalam', 'Kannada'],
-                subtitles_available=['English', 'Tamil', 'Telugu'],
-                accuracy_score=85.0
-            )
-            
-        except Exception as e:
-            logger.error(f"Sun NXT verification error: {e}")
-        
-        return None
-    
-    def _verify_aha_api(self, title: str, year: Optional[int]) -> Optional[VerifiedStreamingLink]:
-        """Verify Aha availability"""
-        try:
-            search_url = f"https://www.aha.video/search?q={quote(title)}"
-            
-            return VerifiedStreamingLink(
-                platform='Aha',
-                platform_logo=self.PLATFORM_CONFIGS['aha']['logo'],
-                direct_watch_url=search_url,
-                verification_status='available',
-                verification_timestamp=datetime.utcnow(),
-                quality=['HD'],
-                requires_subscription=True,
-                languages_available=['Telugu', 'Tamil'],
-                audio_tracks=['Telugu', 'Tamil'],
-                subtitles_available=['English', 'Telugu', 'Tamil'],
-                accuracy_score=85.0
-            )
-            
-        except Exception as e:
-            logger.error(f"Aha verification error: {e}")
-        
-        return None
-    
-    def _verify_via_advanced_scraping(self, platform_id: str, config: Dict,
-                                     title: str, year: Optional[int]) -> Optional[VerifiedStreamingLink]:
-        """Use basic scraping for Render deployment (no Selenium)"""
-        return self._basic_scraping_fallback(platform_id, config, title, year)
-    
-    def _basic_scraping_fallback(self, platform_id: str, config: Dict,
-                                title: str, year: Optional[int]) -> Optional[VerifiedStreamingLink]:
-        """Basic scraping fallback when other methods fail"""
-        try:
-            search_url = f"https://www.{config['domains'][0]}/search?q={quote(title)}"
-            
-            return VerifiedStreamingLink(
-                platform=config['name'],
-                platform_logo=config['logo'],
-                direct_watch_url=search_url,
-                verification_status='available',
-                verification_timestamp=datetime.utcnow(),
-                quality=['HD'],
-                requires_subscription=not config.get('is_free', False),
-                is_free=config.get('is_free', False),
-                languages_available=['Multiple'],
-                audio_tracks=['Multiple'],
-                subtitles_available=['Multiple'],
-                accuracy_score=75.0
-            )
-        except:
-            return None
-    
-    def _exact_title_match(self, found_title: str, search_title: str, year: Optional[int]) -> bool:
-        """Exact title matching with year verification"""
-        if not found_title:
-            return False
-        
-        # Normalize titles
-        found_clean = re.sub(r'[^a-zA-Z0-9\s]', '', found_title.lower().strip())
-        search_clean = re.sub(r'[^a-zA-Z0-9\s]', '', search_title.lower().strip())
-        
-        # Check exact match
-        if found_clean == search_clean:
-            # If year provided, try to verify it
-            if year:
-                year_pattern = str(year)
-                if year_pattern in found_title:
-                    return True
-                # Allow 1 year difference for release date variations
-                if str(year - 1) in found_title or str(year + 1) in found_title:
-                    return True
-            else:
-                return True
-        
-        # Check if titles are very similar (allowing for minor variations)
-        from difflib import SequenceMatcher
-        similarity = SequenceMatcher(None, found_clean, search_clean).ratio()
-        
-        if similarity > 0.85:  # 85% similarity threshold
-            return True
-        
-        return False
-    
-    def _is_official_youtube_movie(self, video_title: str, channel_title: str, movie_title: str) -> bool:
-        """Check if YouTube video is likely an official movie"""
-        
-        # Official movie channel patterns
-        official_channels = [
-            'youtube movies', 'movies', 'films', 'sony pictures',
-            'universal pictures', 'warner bros', 'paramount',
-            'disney', 'netflix', 'amazon prime', 'lionsgate',
-            'mgm', '20th century', 'fox', 'dreamworks'
-        ]
-        
-        channel_lower = channel_title.lower()
-        
-        # Check if from official channel
-        for official in official_channels:
-            if official in channel_lower:
-                return True
-        
-        # Check video title patterns
-        video_lower = video_title.lower()
-        movie_lower = movie_title.lower()
-        
-        # Must contain movie title
-        if movie_lower not in video_lower:
-            return False
-        
-        # Check for full movie indicators
-        full_movie_indicators = ['full movie', 'full film', 'complete movie', 'full length']
-        for indicator in full_movie_indicators:
-            if indicator in video_lower:
-                return True
-        
-        # Check for unofficial indicators (to exclude)
-        unofficial_indicators = ['trailer', 'teaser', 'clip', 'scene', 'review', 
-                               'explained', 'recap', 'summary', 'reaction']
-        for indicator in unofficial_indicators:
-            if indicator in video_lower:
-                return False
-        
-        return False
-    
-    def _verify_url_accessibility(self, url: str) -> bool:
-        """Verify if a URL is actually accessible"""
-        try:
-            response = self.session.head(url, timeout=5, allow_redirects=True)
-            return response.status_code == 200
-        except:
-            return False
-    
-    def _generate_cache_key(self, title: str, year: Optional[int],
-                           imdb_id: Optional[str], tmdb_id: Optional[int]) -> str:
-        """Generate unique cache key"""
-        key_parts = [title.lower().strip()]
-        if year:
-            key_parts.append(str(year))
-        if imdb_id:
-            key_parts.append(imdb_id)
-        if tmdb_id:
-            key_parts.append(str(tmdb_id))
-        
-        key_string = '_'.join(key_parts)
-        return hashlib.md5(key_string.encode()).hexdigest()
-    
-    def _is_cache_valid(self, cached_data: Dict) -> bool:
-        """Check if cached data is still valid"""
-        if not cached_data or 'last_updated' not in cached_data:
-            return False
-        
-        last_updated = cached_data.get('last_updated')
-        if isinstance(last_updated, str):
-            last_updated = datetime.fromisoformat(last_updated)
-        
-        # Cache valid for 30 minutes
-        return (datetime.utcnow() - last_updated).total_seconds() < 1800
-    
-    def _build_verified_response(self, title: str, year: Optional[int],
-                                verified_links: List[VerifiedStreamingLink],
-                                languages: List[str]) -> Dict[str, Any]:
-        """Build the final 100% accurate response"""
-        
-        if not verified_links:
-            # No availability - provide alternatives
-            return {
-                'title': title,
-                'year': year,
-                'is_available': False,
-                'verified': True,
-                'accuracy': 100.0,
-                'message': 'Currently not available for streaming on any platform',
-                'checked_platforms': list(self.PLATFORM_CONFIGS.keys()),
-                'alternatives': {
-                    'trailer': self._get_trailer_link(title, year),
-                    'similar_available': self._get_similar_available_titles(title),
-                    'upcoming_platforms': self._check_upcoming_releases(title, year)
-                },
-                'last_checked': datetime.utcnow().isoformat()
-            }
-        
-        # Group by availability type
-        free_platforms = []
-        subscription_platforms = []
-        rental_platforms = []
-        purchase_platforms = []
-        
-        # Group by language
-        language_availability = {}
-        
-        for link in verified_links:
-            # Create platform entry
-            platform_entry = {
-                'platform': link.platform,
-                'logo': link.platform_logo,
-                'direct_url': link.direct_watch_url,
-                'verified': link.verification_status == 'verified',
-                'quality': link.quality,
-                'languages': link.languages_available,
-                'subtitles': link.subtitles_available,
-                'audio_tracks': link.audio_tracks,
-                'accuracy': link.accuracy_score,
-                'last_verified': link.verification_timestamp.isoformat()
-            }
-            
-            # Categorize by type
-            if link.is_free:
-                free_platforms.append(platform_entry)
-            elif link.requires_subscription:
-                subscription_platforms.append(platform_entry)
-            
-            if link.price:
-                if 'rental' in link.price:
-                    rental_entry = platform_entry.copy()
-                    rental_entry['price'] = link.price.get('rental')
-                    rental_platforms.append(rental_entry)
-                if 'purchase' in link.price:
-                    purchase_entry = platform_entry.copy()
-                    purchase_entry['price'] = link.price.get('purchase')
-                    purchase_platforms.append(purchase_entry)
-            
-            # Group by language
-            for lang in link.languages_available:
-                if lang not in language_availability:
-                    language_availability[lang] = []
-                language_availability[lang].append(platform_entry)
-        
-        # Calculate overall accuracy
-        total_accuracy = sum(link.accuracy_score for link in verified_links) / len(verified_links)
-        
-        return {
-            'title': title,
-            'year': year,
-            'is_available': True,
-            'verified': True,
-            'accuracy': round(total_accuracy, 1),
-            'total_platforms': len(verified_links),
-            'availability': {
-                'free': free_platforms,
-                'subscription': subscription_platforms,
-                'rental': rental_platforms,
-                'purchase': purchase_platforms
-            },
-            'languages': language_availability,
-            'best_quality': self._get_best_quality(verified_links),
-            'recommended_platform': self._get_recommended_platform(verified_links),
-            'metadata': {
-                'checked_platforms': list(self.PLATFORM_CONFIGS.keys()),
-                'verification_methods': ['api', 'basic_scraping', 'url_verification'],
-                'confidence_score': 100.0,
-                'deployment_mode': 'render_free_tier'
-            },
-            'last_checked': datetime.utcnow().isoformat()
+    def _map_platform(self, platform_name: str) -> Optional[StreamingPlatform]:
+        """Map platform name to enum"""
+        platform_map = {
+            'netflix': StreamingPlatform.NETFLIX,
+            'amazon prime': StreamingPlatform.AMAZON_PRIME,
+            'prime video': StreamingPlatform.AMAZON_PRIME,
+            'disney+': StreamingPlatform.DISNEY_PLUS,
+            'disney plus': StreamingPlatform.DISNEY_PLUS,
+            'hotstar': StreamingPlatform.HOTSTAR,
+            'hulu': StreamingPlatform.HULU,
+            'youtube': StreamingPlatform.YOUTUBE,
+            'etv win': StreamingPlatform.ETV_WIN,
+            'aha': StreamingPlatform.AHA,
+            'jio cinema': StreamingPlatform.JIO_CINEMA,
+            'mx player': StreamingPlatform.MX_PLAYER,
+            'zee5': StreamingPlatform.ZEE5,
+            'sony liv': StreamingPlatform.SONY_LIV,
+            'voot': StreamingPlatform.VOOT,
+            'alt balaji': StreamingPlatform.ALT_BALAJI,
+            'apple tv': StreamingPlatform.APPLE_TV,
+            'hbo max': StreamingPlatform.HBO_MAX,
+            'paramount+': StreamingPlatform.PARAMOUNT_PLUS,
+            'peacock': StreamingPlatform.PEACOCK,
+            'crunchyroll': StreamingPlatform.CRUNCHYROLL,
+            'funimation': StreamingPlatform.FUNIMATION
         }
+        
+        platform_lower = platform_name.lower()
+        for key, value in platform_map.items():
+            if key in platform_lower:
+                return value
+        return None
     
-    def _get_trailer_link(self, title: str, year: Optional[int]) -> Optional[str]:
-        """Get trailer link from YouTube"""
+    def _extract_offer_type(self, element) -> OfferType:
+        """Extract offer type from element"""
+        text = element.get_text().lower()
+        if 'free' in text:
+            return OfferType.FREE if 'ads' not in text else OfferType.ADS
+        elif 'rent' in text:
+            return OfferType.RENT
+        elif 'buy' in text:
+            return OfferType.BUY
+        else:
+            return OfferType.SUBSCRIPTION
+
+class YouTubeTrailerFetcher:
+    """Fetch YouTube trailers as fallback"""
+    
+    def __init__(self, api_key: Optional[str] = None):
+        self.api_key = api_key
+        self.base_url = "https://www.googleapis.com/youtube/v3"
+    
+    def get_trailer(self, title: str, year: Optional[int] = None,
+                    language: str = "en") -> Optional[str]:
+        """Get YouTube trailer URL"""
+        if not self.api_key:
+            return self._scrape_trailer(title, year)
+        
         try:
-            api_key = self.PLATFORM_CONFIGS['youtube']['api_key']
-            search_url = "https://www.googleapis.com/youtube/v3/search"
+            # Build search query
+            query = f"{title} {year if year else ''} official trailer {language}"
             
-            query = f"{title} {year if year else ''} official trailer"
+            url = f"{self.base_url}/search"
             params = {
-                'key': api_key,
+                'key': self.api_key,
                 'q': query,
                 'part': 'snippet',
                 'type': 'video',
-                'maxResults': 1
+                'maxResults': 3,
+                'order': 'relevance'
             }
             
-            response = self.session.get(search_url, params=params, timeout=10)
+            response = requests.get(url, params=params, timeout=10)
             if response.status_code == 200:
                 data = response.json()
                 if data.get('items'):
+                    # Return first relevant trailer
                     video_id = data['items'][0]['id']['videoId']
                     return f"https://www.youtube.com/watch?v={video_id}"
-        except:
-            pass
+        except Exception as e:
+            logger.error(f"YouTube API error: {e}")
         
+        return self._scrape_trailer(title, year)
+    
+    def _scrape_trailer(self, title: str, year: Optional[int] = None) -> Optional[str]:
+        """Scrape YouTube for trailer without API"""
+        try:
+            query = f"{title} {year if year else ''} official trailer"
+            search_url = f"https://www.youtube.com/results?search_query={quote(query)}"
+            
+            response = requests.get(search_url, timeout=10)
+            if response.status_code == 200:
+                # Extract video ID from response
+                match = re.search(r'"videoId":"([^"]+)"', response.text)
+                if match:
+                    video_id = match.group(1)
+                    return f"https://www.youtube.com/watch?v={video_id}"
+        except Exception as e:
+            logger.error(f"YouTube scraping error: {e}")
         return None
+
+class DeepLinkGenerator:
+    """Generate deep links for streaming platforms"""
     
-    def _get_similar_available_titles(self, title: str) -> List[str]:
-        """Get similar titles that are available"""
-        # This would query your database for similar movies
-        # For now, returning empty list
-        return []
+    @staticmethod
+    def generate(platform: StreamingPlatform, content_id: str,
+                title: str, content_type: str = "movie") -> str:
+        """Generate platform-specific deep link"""
+        
+        # Clean title for URL
+        clean_title = re.sub(r'[^\w\s-]', '', title.lower())
+        clean_title = re.sub(r'[-\s]+', '-', clean_title)
+        
+        deep_links = {
+            StreamingPlatform.NETFLIX: f"https://www.netflix.com/search?q={quote(title)}",
+            StreamingPlatform.AMAZON_PRIME: f"https://www.primevideo.com/search/ref=atv_sr_sug_1?phrase={quote(title)}",
+            StreamingPlatform.DISNEY_PLUS: f"https://www.disneyplus.com/search/{quote(title)}",
+            StreamingPlatform.HOTSTAR: f"https://www.hotstar.com/in/search?q={quote(title)}",
+            StreamingPlatform.HULU: f"https://www.hulu.com/search?q={quote(title)}",
+            StreamingPlatform.YOUTUBE: f"https://www.youtube.com/results?search_query={quote(title)}+full+movie",
+            StreamingPlatform.ETV_WIN: f"https://www.etvwin.com/search?q={quote(title)}",
+            StreamingPlatform.AHA: f"https://www.aha.video/search/{quote(title)}",
+            StreamingPlatform.JIO_CINEMA: f"https://www.jiocinema.com/search/{quote(title)}",
+            StreamingPlatform.MX_PLAYER: f"https://www.mxplayer.in/search?query={quote(title)}",
+            StreamingPlatform.ZEE5: f"https://www.zee5.com/search?q={quote(title)}",
+            StreamingPlatform.SONY_LIV: f"https://www.sonyliv.com/search?q={quote(title)}",
+            StreamingPlatform.VOOT: f"https://www.voot.com/search/{quote(title)}",
+            StreamingPlatform.ALT_BALAJI: f"https://www.altbalaji.com/search/{quote(title)}",
+            StreamingPlatform.APPLE_TV: f"https://tv.apple.com/search?term={quote(title)}",
+            StreamingPlatform.HBO_MAX: f"https://play.hbomax.com/search?q={quote(title)}",
+            StreamingPlatform.PARAMOUNT_PLUS: f"https://www.paramountplus.com/search/?q={quote(title)}",
+            StreamingPlatform.PEACOCK: f"https://www.peacocktv.com/search?q={quote(title)}",
+            StreamingPlatform.CRUNCHYROLL: f"https://www.crunchyroll.com/search?q={quote(title)}",
+            StreamingPlatform.FUNIMATION: f"https://www.funimation.com/search/?q={quote(title)}"
+        }
+        
+        return deep_links.get(platform, f"https://www.google.com/search?q={quote(title)}+watch+online")
+
+class OTTAvailabilityService:
+    """Main OTT Availability Service with all features"""
     
-    def _check_upcoming_releases(self, title: str, year: Optional[int]) -> List[Dict]:
-        """Check if movie is coming soon to any platform"""
-        # This would check upcoming releases
-        # For now, returning empty list
-        return []
-    
-    def _get_best_quality(self, links: List[VerifiedStreamingLink]) -> str:
-        """Get the best available quality"""
-        all_qualities = []
-        for link in links:
-            all_qualities.extend(link.quality)
+    def __init__(self, 
+                 streaming_api_key: str = "6212e018b9mshb44a2716d211c51p1c493ejsn73408baa28be",
+                 youtube_api_key: Optional[str] = None,
+                 redis_url: Optional[str] = None,
+                 cache_ttl: int = 3600):
         
-        if '4K' in all_qualities:
-            return '4K Ultra HD'
-        elif 'HD' in all_qualities:
-            return 'HD (1080p)'
-        else:
-            return 'SD'
-    
-    def _get_recommended_platform(self, links: List[VerifiedStreamingLink]) -> Dict[str, str]:
-        """Get the recommended platform based on various factors"""
-        if not links:
-            return {}
+        self.streaming_api = StreamingAvailabilityAPI(streaming_api_key)
+        self.scraper = WebScraperFallback()
+        self.youtube_fetcher = YouTubeTrailerFetcher(youtube_api_key)
+        self.cache = CacheManager(redis_url, cache_ttl)
+        self.deep_link_gen = DeepLinkGenerator()
         
-        # Prioritize free platforms
-        free_links = [link for link in links if link.is_free]
-        if free_links:
-            best_free = max(free_links, key=lambda x: x.accuracy_score)
-            return {
-                'platform': best_free.platform,
-                'url': best_free.direct_watch_url,
-                'reason': 'Free to watch'
-            }
+        # Multi-language support
+        self.supported_languages = [
+            'English', 'Hindi', 'Telugu', 'Tamil', 'Kannada', 
+            'Malayalam', 'Bengali', 'Marathi', 'Gujarati', 'Punjabi'
+        ]
         
-        # Then subscription platforms with best quality
-        subscription_links = [link for link in links if link.requires_subscription]
-        if subscription_links:
-            best_sub = max(subscription_links, key=lambda x: (len(x.quality), x.accuracy_score))
-            return {
-                'platform': best_sub.platform,
-                'url': best_sub.direct_watch_url,
-                'reason': f'Best quality ({", ".join(best_sub.quality)}) with subscription'
-            }
-        
-        # Finally rental/purchase
-        return {
-            'platform': links[0].platform,
-            'url': links[0].direct_watch_url,
-            'reason': 'Available for rent/purchase'
+        # Regional platform preferences
+        self.regional_preferences = {
+            'IN': [StreamingPlatform.HOTSTAR, StreamingPlatform.AMAZON_PRIME, 
+                   StreamingPlatform.NETFLIX, StreamingPlatform.JIO_CINEMA,
+                   StreamingPlatform.AHA, StreamingPlatform.ETV_WIN],
+            'US': [StreamingPlatform.NETFLIX, StreamingPlatform.HULU, 
+                   StreamingPlatform.AMAZON_PRIME, StreamingPlatform.DISNEY_PLUS,
+                   StreamingPlatform.HBO_MAX, StreamingPlatform.PEACOCK]
         }
     
-    def close(self):
-        """Clean up resources"""
-        if self.driver:
-            try:
-                self.driver.quit()
-            except:
-                pass
-        self.executor.shutdown(wait=False)
-        self.session.close()
-
-
-# Flask route integration
-def register_ott_routes(app, db, cache):
-    """Register OTT availability routes with Flask app"""
+    async def get_availability_async(self, 
+                                    content_id: str,
+                                    title: str,
+                                    content_type: str = "movie",
+                                    year: Optional[int] = None,
+                                    country: str = "IN",
+                                    languages: Optional[List[str]] = None) -> ContentAvailability:
+        """Async method to get content availability"""
+        
+        # Check cache first
+        cache_key = f"ott:{content_id}:{country}:{':'.join(languages or [])}"
+        cached = self.cache.get(cache_key)
+        if cached:
+            return ContentAvailability(**cached)
+        
+        # Initialize result
+        availability = ContentAvailability(
+            content_id=content_id,
+            title=title,
+            content_type=content_type,
+            release_year=year
+        )
+        
+        # Fetch from multiple sources concurrently
+        async with aiohttp.ClientSession() as session:
+            tasks = []
+            
+            # Task 1: Streaming API
+            tasks.append(self._fetch_streaming_api_async(session, content_id, content_type, country))
+            
+            # Task 2: Web scraping fallback
+            tasks.append(self._fetch_scraper_async(title, year, country))
+            
+            # Task 3: YouTube trailer
+            tasks.append(self._fetch_trailer_async(title, year, languages))
+            
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # Process API results
+            if results[0] and not isinstance(results[0], Exception):
+                availability.streaming_offers.extend(self._parse_api_response(results[0], languages))
+            
+            # Process scraping results
+            if results[1] and not isinstance(results[1], Exception):
+                availability.streaming_offers.extend(results[1])
+            
+            # Add trailer
+            if results[2] and not isinstance(results[2], Exception):
+                availability.trailer_url = results[2]
+        
+        # Generate deep links
+        for offer in availability.streaming_offers:
+            if not offer.deep_link:
+                offer.deep_link = self.deep_link_gen.generate(
+                    offer.platform, content_id, title, content_type
+                )
+        
+        # Sort offers by preference
+        availability.streaming_offers = self._sort_offers(
+            availability.streaming_offers, country
+        )
+        
+        # Set not available message if no offers
+        if not availability.streaming_offers:
+            availability.not_available_message = (
+                "Currently not available for streaming. Check back later or watch the trailer."
+            )
+        
+        # Cache the result
+        self.cache.set(cache_key, availability.__dict__, ttl=self.cache.default_ttl)
+        
+        return availability
     
-    # Initialize Ultra Accurate OTT service (Render optimized)
-    ott_service = UltraAccurateOTTService(
-        cache_backend=cache,
-        use_selenium=False,  # Always False for Render
-        headless=True
+    def get_availability(self, 
+                         content_id: str,
+                         title: str,
+                         content_type: str = "movie",
+                         year: Optional[int] = None,
+                         country: str = "IN",
+                         languages: Optional[List[str]] = None) -> ContentAvailability:
+        """Synchronous method to get content availability"""
+        
+        # Check cache first
+        cache_key = f"ott:{content_id}:{country}:{':'.join(languages or [])}"
+        cached = self.cache.get(cache_key)
+        if cached:
+            return ContentAvailability(**cached)
+        
+        # Initialize result
+        availability = ContentAvailability(
+            content_id=content_id,
+            title=title,
+            content_type=content_type,
+            release_year=year
+        )
+        
+        # Use ThreadPoolExecutor for concurrent fetching
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            # Submit tasks
+            api_future = executor.submit(
+                self.streaming_api.get_by_id, content_type, content_id, country.lower()
+            )
+            scraper_future = executor.submit(
+                self.scraper.scrape_justwatch, title, year, country
+            )
+            trailer_future = executor.submit(
+                self.youtube_fetcher.get_trailer, title, year
+            )
+            
+            # Get results
+            try:
+                api_result = api_future.result(timeout=10)
+                if api_result:
+                    availability.streaming_offers.extend(
+                        self._parse_api_response(api_result, languages)
+                    )
+            except Exception as e:
+                logger.error(f"API fetch error: {e}")
+            
+            try:
+                scraper_result = scraper_future.result(timeout=10)
+                if scraper_result:
+                    availability.streaming_offers.extend(scraper_result)
+            except Exception as e:
+                logger.error(f"Scraper error: {e}")
+            
+            try:
+                trailer_result = trailer_future.result(timeout=10)
+                if trailer_result:
+                    availability.trailer_url = trailer_result
+            except Exception as e:
+                logger.error(f"Trailer fetch error: {e}")
+        
+        # Generate deep links
+        for offer in availability.streaming_offers:
+            if not offer.deep_link:
+                offer.deep_link = self.deep_link_gen.generate(
+                    offer.platform, content_id, title, content_type
+                )
+        
+        # Remove duplicate offers
+        availability.streaming_offers = self._deduplicate_offers(availability.streaming_offers)
+        
+        # Sort offers by preference
+        availability.streaming_offers = self._sort_offers(
+            availability.streaming_offers, country
+        )
+        
+        # Set not available message if no offers
+        if not availability.streaming_offers:
+            availability.not_available_message = (
+                "Currently not available for streaming. Check back later or watch the trailer."
+            )
+        
+        # Add metadata
+        availability.metadata = {
+            'total_offers': len(availability.streaming_offers),
+            'platforms': list(set(offer.platform.value[0] for offer in availability.streaming_offers)),
+            'has_free_option': any(offer.offer_type == OfferType.FREE for offer in availability.streaming_offers),
+            'languages_available': list(set(
+                lang for offer in availability.streaming_offers 
+                for lang in offer.languages
+            ))
+        }
+        
+        # Cache the result
+        cache_data = {
+            'content_id': availability.content_id,
+            'title': availability.title,
+            'content_type': availability.content_type,
+            'release_year': availability.release_year,
+            'runtime': availability.runtime,
+            'streaming_offers': [self._offer_to_dict(offer) for offer in availability.streaming_offers],
+            'not_available_message': availability.not_available_message,
+            'trailer_url': availability.trailer_url,
+            'last_updated': availability.last_updated.isoformat(),
+            'metadata': availability.metadata
+        }
+        self.cache.set(cache_key, cache_data, ttl=self.cache.default_ttl)
+        
+        return availability
+    
+    def _parse_api_response(self, response: Dict, languages: Optional[List[str]] = None) -> List[StreamingOffer]:
+        """Parse streaming API response into offers"""
+        offers = []
+        
+        try:
+            # Parse streaming options from response
+            streaming_info = response.get('streamingInfo', {})
+            
+            for country_code, country_info in streaming_info.items():
+                for service in country_info:
+                    platform_name = service.get('service', '').upper()
+                    
+                    # Map to our platform enum
+                    platform = None
+                    for p in StreamingPlatform:
+                        if platform_name in p.value[0].upper():
+                            platform = p
+                            break
+                    
+                    if not platform:
+                        continue
+                    
+                    # Determine offer type
+                    streaming_type = service.get('streamingType', 'subscription')
+                    offer_type_map = {
+                        'subscription': OfferType.SUBSCRIPTION,
+                        'rent': OfferType.RENT,
+                        'buy': OfferType.BUY,
+                        'free': OfferType.FREE,
+                        'ads': OfferType.ADS
+                    }
+                    offer_type = offer_type_map.get(streaming_type, OfferType.SUBSCRIPTION)
+                    
+                    # Extract quality
+                    quality = []
+                    if service.get('quality'):
+                        quality_map = {
+                            'sd': VideoQuality.SD,
+                            'hd': VideoQuality.HD,
+                            'uhd': VideoQuality.UHD_4K,
+                            '4k': VideoQuality.UHD_4K,
+                            'hdr': VideoQuality.HDR
+                        }
+                        for q in service.get('quality', '').lower().split(','):
+                            if q in quality_map:
+                                quality.append(quality_map[q])
+                    
+                    # Extract audio/subtitle languages
+                    audio_langs = service.get('audios', [])
+                    subtitle_langs = service.get('subtitles', [])
+                    
+                    # Filter by requested languages if specified
+                    if languages:
+                        matching_langs = [lang for lang in audio_langs if lang in languages]
+                        if not matching_langs and audio_langs:
+                            matching_langs = audio_langs[:1]  # Default to first available
+                    else:
+                        matching_langs = audio_langs
+                    
+                    # Create offer
+                    offer = StreamingOffer(
+                        platform=platform,
+                        offer_type=offer_type,
+                        url=service.get('link', ''),
+                        price=service.get('price', {}).get('amount'),
+                        currency=service.get('price', {}).get('currency', 'INR'),
+                        quality=quality,
+                        languages=matching_langs,
+                        subtitles=subtitle_langs,
+                        region=country_code.upper()
+                    )
+                    
+                    offers.append(offer)
+        
+        except Exception as e:
+            logger.error(f"Error parsing API response: {e}")
+        
+        return offers
+    
+    def _deduplicate_offers(self, offers: List[StreamingOffer]) -> List[StreamingOffer]:
+        """Remove duplicate offers, keeping best quality/price"""
+        seen = {}
+        
+        for offer in offers:
+            key = (offer.platform, offer.offer_type)
+            
+            if key not in seen:
+                seen[key] = offer
+            else:
+                # Keep better offer (more languages, better quality, lower price)
+                existing = seen[key]
+                
+                # Compare and keep better offer
+                if (len(offer.languages) > len(existing.languages) or
+                    len(offer.quality) > len(existing.quality) or
+                    (offer.price and existing.price and offer.price < existing.price)):
+                    seen[key] = offer
+        
+        return list(seen.values())
+    
+    def _sort_offers(self, offers: List[StreamingOffer], country: str) -> List[StreamingOffer]:
+        """Sort offers by preference (free first, then regional preferences)"""
+        
+        def sort_key(offer: StreamingOffer) -> Tuple:
+            # Priority 1: Free content
+            free_priority = 0 if offer.offer_type in [OfferType.FREE, OfferType.ADS] else 1
+            
+            # Priority 2: Regional platform preference
+            regional_prefs = self.regional_preferences.get(country, [])
+            if offer.platform in regional_prefs:
+                platform_priority = regional_prefs.index(offer.platform)
+            else:
+                platform_priority = 100
+            
+            # Priority 3: Offer type preference
+            offer_type_priority = {
+                OfferType.FREE: 0,
+                OfferType.ADS: 1,
+                OfferType.SUBSCRIPTION: 2,
+                OfferType.RENT: 3,
+                OfferType.BUY: 4
+            }
+            type_priority = offer_type_priority.get(offer.offer_type, 5)
+            
+            # Priority 4: Number of languages
+            lang_priority = -len(offer.languages)
+            
+            return (free_priority, platform_priority, type_priority, lang_priority)
+        
+        return sorted(offers, key=sort_key)
+    
+    def _offer_to_dict(self, offer: StreamingOffer) -> Dict:
+        """Convert offer to dictionary for caching"""
+        return {
+            'platform': offer.platform.value[0],
+            'platform_logo': offer.platform.value[2],
+            'offer_type': offer.offer_type.value,
+            'url': offer.url,
+            'deep_link': offer.deep_link,
+            'price': offer.price,
+            'currency': offer.currency,
+            'quality': [q.value for q in offer.quality],
+            'languages': offer.languages,
+            'subtitles': offer.subtitles,
+            'audio_formats': offer.audio_formats,
+            'expires_at': offer.expires_at.isoformat() if offer.expires_at else None,
+            'region': offer.region,
+            'package_info': offer.package_info
+        }
+    
+    def format_for_response(self, availability: ContentAvailability) -> Dict:
+        """Format availability data for API response"""
+        
+        # Group offers by platform
+        platforms_grouped = {}
+        for offer in availability.streaming_offers:
+            platform_name = offer.platform.value[0]
+            if platform_name not in platforms_grouped:
+                platforms_grouped[platform_name] = {
+                    'platform': platform_name,
+                    'logo': offer.platform.value[2],
+                    'offers': []
+                }
+            
+            # Format offer details
+            offer_detail = {
+                'type': offer.offer_type.value,
+                'url': offer.deep_link or offer.url,
+                'quality': [q.value for q in offer.quality],
+                'languages': offer.languages,
+                'subtitles': offer.subtitles,
+                'display_text': self._format_offer_display(offer),
+                'badge': self._get_offer_badge(offer)
+            }
+            
+            if offer.price:
+                offer_detail['price'] = f"{offer.currency} {offer.price}"
+            
+            platforms_grouped[platform_name]['offers'].append(offer_detail)
+        
+        return {
+            'content_id': availability.content_id,
+            'title': availability.title,
+            'content_type': availability.content_type,
+            'release_year': availability.release_year,
+            'availability': {
+                'available': len(availability.streaming_offers) > 0,
+                'platforms': list(platforms_grouped.values()),
+                'total_offers': len(availability.streaming_offers),
+                'has_free_option': any(
+                    offer.offer_type in [OfferType.FREE, OfferType.ADS] 
+                    for offer in availability.streaming_offers
+                ),
+                'message': availability.not_available_message
+            },
+            'trailer_url': availability.trailer_url,
+            'metadata': availability.metadata,
+            'last_updated': availability.last_updated.isoformat()
+        }
+    
+    def _format_offer_display(self, offer: StreamingOffer) -> str:
+        """Format offer for display"""
+        if offer.offer_type == OfferType.FREE:
+            return "Watch Free"
+        elif offer.offer_type == OfferType.ADS:
+            return "Free with Ads"
+        elif offer.offer_type == OfferType.SUBSCRIPTION:
+            return f"Subscription"
+        elif offer.offer_type == OfferType.RENT:
+            return f"Rent{f' - {offer.currency} {offer.price}' if offer.price else ''}"
+        elif offer.offer_type == OfferType.BUY:
+            return f"Buy{f' - {offer.currency} {offer.price}' if offer.price else ''}"
+        return "Watch Now"
+    
+    def _get_offer_badge(self, offer: StreamingOffer) -> str:
+        """Get badge for offer type"""
+        badges = {
+            OfferType.FREE: "FREE",
+            OfferType.ADS: "FREE",
+            OfferType.SUBSCRIPTION: "SUBSCRIPTION",
+            OfferType.RENT: "RENT",
+            OfferType.BUY: "BUY"
+        }
+        return badges.get(offer.offer_type, "")
+    
+    async def _fetch_streaming_api_async(self, session, content_id, content_type, country):
+        """Async helper for API fetching"""
+        # Implementation would use aiohttp
+        pass
+    
+    async def _fetch_scraper_async(self, title, year, country):
+        """Async helper for scraping"""
+        # Implementation would use aiohttp
+        pass
+    
+    async def _fetch_trailer_async(self, title, year, languages):
+        """Async helper for trailer fetching"""
+        # Implementation would use aiohttp
+        pass
+
+# Flask integration helper
+def init_ott_service(app, cache_backend=None):
+    """Initialize OTT service with Flask app"""
+    
+    redis_url = app.config.get('REDIS_URL')
+    youtube_api_key = app.config.get('YOUTUBE_API_KEY')
+    
+    service = OTTAvailabilityService(
+        youtube_api_key=youtube_api_key,
+        redis_url=redis_url,
+        cache_ttl=3600
     )
     
-    @app.route('/api/ott/availability', methods=['GET'])
-    def get_ott_availability():
-        """Get 100% accurate OTT platform availability"""
+    # Add routes
+    @app.route('/api/ott/availability/<content_id>', methods=['GET'])
+    def get_ott_availability(content_id):
+        """Get OTT availability for content"""
+        from flask import request, jsonify
+        
         try:
             # Get parameters
-            title = request.args.get('title')
+            title = request.args.get('title', '')
+            content_type = request.args.get('type', 'movie')
             year = request.args.get('year', type=int)
-            imdb_id = request.args.get('imdb_id')
-            tmdb_id = request.args.get('tmdb_id', type=int)
+            country = request.args.get('country', 'IN')
             languages = request.args.getlist('languages')
             
             if not title:
-                return jsonify({'error': 'Title parameter is required'}), 400
+                return jsonify({'error': 'Title parameter required'}), 400
             
-            # Get 100% accurate availability
-            result = ott_service.get_100_percent_accurate_availability(
+            # Get availability
+            availability = service.get_availability(
+                content_id=content_id,
                 title=title,
+                content_type=content_type,
                 year=year,
-                imdb_id=imdb_id,
-                tmdb_id=tmdb_id,
-                languages=languages
+                country=country,
+                languages=languages if languages else None
             )
             
-            return jsonify(result), 200
+            # Format response
+            response = service.format_for_response(availability)
+            
+            return jsonify(response), 200
             
         except Exception as e:
             logger.error(f"OTT availability error: {e}")
-            return jsonify({'error': 'Failed to fetch OTT availability'}), 500
+            return jsonify({'error': 'Failed to get OTT availability'}), 500
     
-    @app.route('/api/ott/verify/<platform>', methods=['POST'])
-    def verify_platform_link(platform):
-        """Verify a specific platform link"""
+    @app.route('/api/ott/search', methods=['GET'])
+    def search_ott_availability():
+        """Search for content availability"""
+        from flask import request, jsonify
+        
         try:
-            data = request.get_json()
-            url = data.get('url')
+            query = request.args.get('q', '')
+            content_type = request.args.get('type', 'both')
+            country = request.args.get('country', 'IN')
             
-            if not url:
-                return jsonify({'error': 'URL is required'}), 400
+            if not query:
+                return jsonify({'error': 'Query parameter required'}), 400
             
-            # Verify the URL
-            is_valid = ott_service._verify_url_accessibility(url)
+            # Search using API
+            results = service.streaming_api.search(query, content_type, country.lower())
             
-            return jsonify({
-                'platform': platform,
-                'url': url,
-                'is_valid': is_valid,
-                'verified_at': datetime.utcnow().isoformat()
-            }), 200
+            if results and results.get('results'):
+                formatted_results = []
+                for item in results['results'][:10]:
+                    # Get availability for each result
+                    availability = service.get_availability(
+                        content_id=str(item.get('id', '')),
+                        title=item.get('title', ''),
+                        content_type=item.get('type', 'movie'),
+                        year=item.get('year'),
+                        country=country
+                    )
+                    formatted_results.append(service.format_for_response(availability))
+                
+                return jsonify({'results': formatted_results}), 200
+            
+            return jsonify({'results': [], 'message': 'No results found'}), 200
             
         except Exception as e:
-            logger.error(f"Link verification error: {e}")
-            return jsonify({'error': 'Failed to verify link'}), 500
+            logger.error(f"OTT search error: {e}")
+            return jsonify({'error': 'Search failed'}), 500
     
-    @app.route('/api/ott/platforms', methods=['GET'])
-    def get_supported_platforms():
-        """Get list of supported OTT platforms with details"""
-        platforms = []
-        
-        for platform_id, config in UltraAccurateOTTService.PLATFORM_CONFIGS.items():
-            platforms.append({
-                'id': platform_id,
-                'name': config['name'],
-                'logo': config['logo'],
-                'is_free': config.get('is_free', False),
-                'has_subscription': not config.get('is_free', False),
-                'verification_method': config.get('verification_method', 'api'),
-                'domains': config.get('domains', []),
-                'focus_languages': config.get('focus_languages', ['Multiple']),
-                'accuracy_guarantee': '100%'
-            })
-        
-        return jsonify({
-            'platforms': platforms,
-            'total': len(platforms),
-            'verification_methods': ['api', 'basic_scraping', 'url_verification'],
-            'accuracy_guarantee': '100%',
-            'deployment_mode': 'render_free_tier'
-        }), 200
+    return service
+
+# Example usage
+if __name__ == "__main__":
+    # Initialize service
+    service = OTTAvailabilityService()
     
-    @app.route('/api/ott/content/<int:content_id>', methods=['GET'])
-    def get_ott_for_content(content_id):
-        """Get 100% accurate OTT availability for specific content"""
-        try:
-            from flask import request
-            from app import Content
-            
-            content = Content.query.get(content_id)
-            if not content:
-                return jsonify({'error': 'Content not found'}), 404
-            
-            # Get 100% accurate availability
-            result = ott_service.get_100_percent_accurate_availability(
-                title=content.title,
-                year=content.release_date.year if content.release_date else None,
-                imdb_id=content.imdb_id,
-                tmdb_id=content.tmdb_id
-            )
-            
-            return jsonify(result), 200
-            
-        except Exception as e:
-            logger.error(f"Content OTT search error: {e}")
-            return jsonify({'error': 'Failed to fetch OTT availability'}), 500
+    # Get availability for a movie
+    availability = service.get_availability(
+        content_id="tt0137523",  # Fight Club
+        title="Fight Club",
+        content_type="movie",
+        year=1999,
+        country="IN",
+        languages=["English", "Hindi"]
+    )
     
-    return ott_service
+    # Format for response
+    formatted = service.format_for_response(availability)
+    print(json.dumps(formatted, indent=2))

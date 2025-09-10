@@ -27,6 +27,7 @@ from requests.packages.urllib3.util.retry import Retry
 from flask_mail import Mail
 from services.upcoming import UpcomingContentService, ContentType, LanguagePriority
 import asyncio
+from services.ott import OTTAvailabilityService, init_ott_service
 import services.auth as auth
 from services.auth import init_auth, auth_bp
 from services.admin import admin_bp, init_admin
@@ -105,6 +106,13 @@ http_session = create_http_session()
 
 # Thread pool for concurrent API calls
 executor = ThreadPoolExecutor(max_workers=5)
+
+ott_service = OTTAvailabilityService(
+    streaming_api_key=os.environ.get('STREAMING_API_KEY', '6212e018b9mshb44a2716d211c51p1c493ejsn73408baa28be'),
+    youtube_api_key=YOUTUBE_API_KEY,
+    redis_url=REDIS_URL,
+    cache_ttl=3600
+)
 
 # Regional Language Mapping
 REGIONAL_LANGUAGES = {
@@ -1909,6 +1917,428 @@ def get_public_admin_recommendations():
     except Exception as e:
         logger.error(f"Public admin recommendations error: {e}")
         return jsonify({'error': 'Failed to get admin recommendations'}), 500
+    
+@app.route('/api/ott/availability/<content_id>', methods=['GET'])
+@cache.cached(timeout=3600, key_prefix=make_cache_key)
+def get_ott_availability(content_id):
+    """
+    Get OTT platform availability for specific content.
+    
+    Query Parameters:
+        - title: Content title (required)
+        - type: Content type (movie/series/anime, default: movie)
+        - year: Release year
+        - country: Country code (default: IN)
+        - languages: Comma-separated list of preferred languages
+    """
+    try:
+        # Get parameters
+        title = request.args.get('title', '')
+        content_type = request.args.get('type', 'movie')
+        year = request.args.get('year', type=int)
+        country = request.args.get('country', 'IN')
+        languages = request.args.getlist('languages')
+        
+        if not title:
+            # Try to get title from our database
+            content = Content.query.filter_by(tmdb_id=int(content_id)).first()
+            if content:
+                title = content.title
+                content_type = content.content_type
+                year = content.release_date.year if content.release_date else None
+                
+                # Get languages from content
+                if content.languages and not languages:
+                    content_langs = json.loads(content.languages)
+                    languages = content_langs[:3] if content_langs else []
+            else:
+                return jsonify({'error': 'Title parameter required or content not found'}), 400
+        
+        # Get availability from OTT service
+        availability = ott_service.get_availability(
+            content_id=content_id,
+            title=title,
+            content_type='series' if content_type == 'tv' else content_type,
+            year=year,
+            country=country,
+            languages=languages if languages else None
+        )
+        
+        # Format response
+        response = ott_service.format_for_response(availability)
+        
+        # Track interaction
+        session_id = get_session_id()
+        if content:
+            interaction = AnonymousInteraction(
+                session_id=session_id,
+                content_id=content.id,
+                interaction_type='ott_check',
+                ip_address=request.remote_addr
+            )
+            db.session.add(interaction)
+            db.session.commit()
+        
+        # Add additional metadata
+        response['metadata']['request_info'] = {
+            'country': country,
+            'languages_requested': languages,
+            'cached': False  # Will be true if served from cache
+        }
+        
+        return jsonify(response), 200
+        
+    except Exception as e:
+        logger.error(f"OTT availability error: {e}")
+        return jsonify({'error': 'Failed to get OTT availability'}), 500
+
+@app.route('/api/ott/search', methods=['GET'])
+@cache.cached(timeout=1800, key_prefix=make_cache_key)
+def search_ott_availability():
+    """
+    Search for content and get OTT availability.
+    
+    Query Parameters:
+        - q: Search query (required)
+        - type: Content type (movie/series/both, default: both)
+        - country: Country code (default: IN)
+        - limit: Maximum results (default: 10, max: 20)
+    """
+    try:
+        query = request.args.get('q', '')
+        content_type = request.args.get('type', 'both')
+        country = request.args.get('country', 'IN')
+        limit = min(int(request.args.get('limit', 10)), 20)
+        
+        if not query:
+            return jsonify({'error': 'Query parameter required'}), 400
+        
+        # First, search in our database
+        db_results = []
+        if content_type in ['movie', 'both']:
+            movies = Content.query.filter(
+                Content.title.ilike(f'%{query}%'),
+                Content.content_type == 'movie'
+            ).limit(5).all()
+            db_results.extend(movies)
+        
+        if content_type in ['series', 'both']:
+            series = Content.query.filter(
+                Content.title.ilike(f'%{query}%'),
+                Content.content_type.in_(['tv', 'series'])
+            ).limit(5).all()
+            db_results.extend(series)
+        
+        # Get OTT availability for each result
+        formatted_results = []
+        
+        for content in db_results[:limit]:
+            try:
+                # Get availability
+                availability = ott_service.get_availability(
+                    content_id=str(content.tmdb_id or content.id),
+                    title=content.title,
+                    content_type='series' if content.content_type == 'tv' else content.content_type,
+                    year=content.release_date.year if content.release_date else None,
+                    country=country,
+                    languages=json.loads(content.languages or '[]')[:3]
+                )
+                
+                # Format response
+                ott_data = ott_service.format_for_response(availability)
+                
+                # Combine with content data
+                result_item = {
+                    'content': {
+                        'id': content.id,
+                        'tmdb_id': content.tmdb_id,
+                        'title': content.title,
+                        'content_type': content.content_type,
+                        'genres': json.loads(content.genres or '[]'),
+                        'rating': content.rating,
+                        'release_year': content.release_date.year if content.release_date else None,
+                        'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
+                        'overview': content.overview[:200] + '...' if content.overview else ''
+                    },
+                    'availability': ott_data['availability'],
+                    'trailer_url': ott_data.get('trailer_url')
+                }
+                
+                formatted_results.append(result_item)
+                
+            except Exception as e:
+                logger.warning(f"Failed to get OTT data for {content.title}: {e}")
+                continue
+        
+        # If not enough results from database, search using streaming API
+        if len(formatted_results) < limit:
+            try:
+                # Use streaming API search
+                api_results = ott_service.streaming_api.search(
+                    query, 
+                    'movie' if content_type == 'movie' else 'series' if content_type == 'series' else 'both',
+                    country.lower()
+                )
+                
+                if api_results and api_results.get('results'):
+                    for item in api_results['results'][:(limit - len(formatted_results))]:
+                        # Get full availability
+                        availability = ott_service.get_availability(
+                            content_id=str(item.get('id', '')),
+                            title=item.get('title', ''),
+                            content_type=item.get('type', 'movie'),
+                            year=item.get('year'),
+                            country=country
+                        )
+                        
+                        ott_data = ott_service.format_for_response(availability)
+                        
+                        result_item = {
+                            'content': {
+                                'id': item.get('id'),
+                                'title': item.get('title'),
+                                'content_type': item.get('type'),
+                                'genres': item.get('genres', []),
+                                'rating': item.get('rating'),
+                                'release_year': item.get('year'),
+                                'poster_path': item.get('posterPath'),
+                                'overview': item.get('overview', '')[:200] + '...' if item.get('overview') else ''
+                            },
+                            'availability': ott_data['availability'],
+                            'trailer_url': ott_data.get('trailer_url')
+                        }
+                        
+                        formatted_results.append(result_item)
+                        
+            except Exception as e:
+                logger.warning(f"Streaming API search failed: {e}")
+        
+        return jsonify({
+            'results': formatted_results,
+            'total_results': len(formatted_results),
+            'query': query,
+            'country': country,
+            'message': f"Found {len(formatted_results)} results with OTT availability"
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"OTT search error: {e}")
+        return jsonify({'error': 'Search failed'}), 500
+
+@app.route('/api/ott/platforms', methods=['GET'])
+def get_supported_platforms():
+    """Get list of supported OTT platforms with metadata."""
+    try:
+        from services.ott import StreamingPlatform
+        
+        platforms = []
+        for platform in StreamingPlatform:
+            platforms.append({
+                'id': platform.name,
+                'name': platform.value[0],
+                'url': platform.value[1],
+                'logo': platform.value[2],
+                'supported_regions': ['IN', 'US', 'UK', 'CA', 'AU']  # Example regions
+            })
+        
+        return jsonify({
+            'platforms': platforms,
+            'total': len(platforms),
+            'categories': {
+                'international': ['NETFLIX', 'AMAZON_PRIME', 'DISNEY_PLUS', 'HULU', 'HBO_MAX', 'APPLE_TV', 'PARAMOUNT_PLUS', 'PEACOCK'],
+                'indian': ['HOTSTAR', 'JIO_CINEMA', 'ZEE5', 'SONY_LIV', 'VOOT', 'ALT_BALAJI', 'MX_PLAYER'],
+                'regional': ['ETV_WIN', 'AHA'],
+                'anime': ['CRUNCHYROLL', 'FUNIMATION'],
+                'free': ['YOUTUBE', 'MX_PLAYER']
+            }
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Get platforms error: {e}")
+        return jsonify({'error': 'Failed to get platforms'}), 500
+
+@app.route('/api/ott/content/<int:content_id>/watch-options', methods=['GET'])
+def get_content_watch_options(content_id):
+    """
+    Get all watch options for a specific content from our database.
+    This is optimized for content already in our system.
+    """
+    try:
+        # Get content from database
+        content = Content.query.get_or_404(content_id)
+        
+        # Get user's country
+        country = request.args.get('country', 'IN')
+        preferred_languages = request.args.getlist('languages')
+        
+        # If no preferred languages, use content's original languages
+        if not preferred_languages and content.languages:
+            preferred_languages = json.loads(content.languages)[:3]
+        
+        # Get OTT availability
+        availability = ott_service.get_availability(
+            content_id=str(content.tmdb_id or content.id),
+            title=content.title,
+            content_type='series' if content.content_type == 'tv' else content.content_type,
+            year=content.release_date.year if content.release_date else None,
+            country=country,
+            languages=preferred_languages
+        )
+        
+        # Format response with enhanced data
+        ott_data = ott_service.format_for_response(availability)
+        
+        # Track this as a watch intent
+        session_id = get_session_id()
+        interaction = AnonymousInteraction(
+            session_id=session_id,
+            content_id=content.id,
+            interaction_type='watch_intent',
+            ip_address=request.remote_addr
+        )
+        db.session.add(interaction)
+        db.session.commit()
+        
+        # Prepare comprehensive response
+        response = {
+            'content': {
+                'id': content.id,
+                'title': content.title,
+                'original_title': content.original_title,
+                'content_type': content.content_type,
+                'genres': json.loads(content.genres or '[]'),
+                'languages': json.loads(content.languages or '[]'),
+                'rating': content.rating,
+                'runtime': content.runtime,
+                'release_date': content.release_date.isoformat() if content.release_date else None,
+                'poster_path': f"https://image.tmdb.org/t/p/w500{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
+                'backdrop_path': f"https://image.tmdb.org/t/p/w1280{content.backdrop_path}" if content.backdrop_path and not content.backdrop_path.startswith('http') else content.backdrop_path
+            },
+            'watch_options': ott_data['availability'],
+            'trailer': {
+                'youtube_id': content.youtube_trailer_id,
+                'youtube_url': f"https://www.youtube.com/watch?v={content.youtube_trailer_id}" if content.youtube_trailer_id else ott_data.get('trailer_url'),
+                'embedded_url': f"https://www.youtube.com/embed/{content.youtube_trailer_id}" if content.youtube_trailer_id else None
+            },
+            'recommendations': {
+                'watch_next': [],  # Could add similar content here
+                'same_platform': []  # Could add content from same platforms
+            },
+            'metadata': {
+                'country': country,
+                'preferred_languages': preferred_languages,
+                'last_updated': ott_data.get('last_updated'),
+                'data_quality': 'high' if ott_data['availability']['platforms'] else 'low'
+            }
+        }
+        
+        # Add platform-specific recommendations if available
+        if ott_data['availability']['platforms']:
+            # Get the first available platform
+            first_platform = ott_data['availability']['platforms'][0]['platform']
+            
+            # Find other content available on the same platform
+            similar_on_platform = Content.query.filter(
+                Content.id != content.id,
+                Content.content_type == content.content_type,
+                Content.rating >= 7.0
+            ).limit(5).all()
+            
+            for similar in similar_on_platform:
+                response['recommendations']['same_platform'].append({
+                    'id': similar.id,
+                    'title': similar.title,
+                    'poster_path': f"https://image.tmdb.org/t/p/w200{similar.poster_path}" if similar.poster_path and not similar.poster_path.startswith('http') else similar.poster_path,
+                    'rating': similar.rating
+                })
+        
+        return jsonify(response), 200
+        
+    except Exception as e:
+        logger.error(f"Get watch options error: {e}")
+        return jsonify({'error': 'Failed to get watch options'}), 500
+
+@app.route('/api/ott/trending-on-platforms', methods=['GET'])
+@cache.cached(timeout=1800, key_prefix=make_cache_key)
+def get_trending_on_platforms():
+    """
+    Get trending content grouped by OTT platforms.
+    Shows what's popular on each platform.
+    """
+    try:
+        country = request.args.get('country', 'IN')
+        limit = min(int(request.args.get('limit', 5)), 10)
+        
+        # Get trending content
+        trending_content = Content.query.filter(
+            or_(
+                Content.is_trending == True,
+                Content.popularity > 50
+            )
+        ).order_by(Content.popularity.desc()).limit(50).all()
+        
+        # Group by platform availability
+        platform_content = {}
+        
+        for content in trending_content:
+            try:
+                # Get OTT availability
+                availability = ott_service.get_availability(
+                    content_id=str(content.tmdb_id or content.id),
+                    title=content.title,
+                    content_type='series' if content.content_type == 'tv' else content.content_type,
+                    year=content.release_date.year if content.release_date else None,
+                    country=country
+                )
+                
+                # Add to platform groups
+                for offer in availability.streaming_offers:
+                    platform_name = offer.platform.value[0]
+                    platform_logo = offer.platform.value[2]
+                    
+                    if platform_name not in platform_content:
+                        platform_content[platform_name] = {
+                            'platform': platform_name,
+                            'logo': platform_logo,
+                            'content': []
+                        }
+                    
+                    if len(platform_content[platform_name]['content']) < limit:
+                        platform_content[platform_name]['content'].append({
+                            'id': content.id,
+                            'title': content.title,
+                            'content_type': content.content_type,
+                            'rating': content.rating,
+                            'poster_path': f"https://image.tmdb.org/t/p/w200{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
+                            'offer_type': offer.offer_type.value,
+                            'watch_url': offer.deep_link or offer.url
+                        })
+                        
+            except Exception as e:
+                logger.warning(f"Failed to get OTT data for trending content {content.title}: {e}")
+                continue
+        
+        # Sort platforms by content count
+        sorted_platforms = sorted(
+            platform_content.values(),
+            key=lambda x: len(x['content']),
+            reverse=True
+        )
+        
+        return jsonify({
+            'platforms': sorted_platforms,
+            'total_platforms': len(sorted_platforms),
+            'country': country,
+            'metadata': {
+                'total_content_analyzed': len(trending_content),
+                'timestamp': datetime.utcnow().isoformat()
+            }
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Trending on platforms error: {e}")
+        return jsonify({'error': 'Failed to get trending on platforms'}), 500
+
 
 # Health check endpoint
 @app.route('/api/health', methods=['GET'])
