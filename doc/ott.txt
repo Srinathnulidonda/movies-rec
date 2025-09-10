@@ -1,0 +1,20 @@
+in the separate backend/services/ott.py file 
+
+Build a system that, automatically retrieves and displays:
+1.	Availability Information
+o	Show on which platforms (Netflix, Amazon Prime, Disney+, Hotstar, Hulu, YouTube, etv win, aha, jio cinemas, mxplayer, etc.) the movie is available.
+o	Include both streaming and rental/purchase links if available.
+o	Show whether it’s free, subscription-based, or pay-per-view.
+2.	Direct Watch Links
+o	Provide verified and working direct watch/play links to the movie on those platforms.
+o	If multiple sources exist, list them all clearly with platform names and icons.
+3.	Multi-Language Support
+o	If the movie is available in multiple languages, dubs, or audio tracks, show separate watch links for each.
+o	Example: RRR (2022) → Telugu, Hindi, Tamil, Kannada, Malayalam, English versions.
+4.	User-Friendly Presentation
+o	Display links in a clean, card/grid format (platform logo + language + “Watch Now” button).
+o	Include metadata: resolution (HD/4K), subtitles availability, release year, and runtime.
+5.	Fallback Handling
+o	If a movie is not available online, show: “Currently not available for streaming. Check back later.”
+o	Optionally provide a trailer link from YouTube.
+6.  each platform, also display whether the movie is Free or Paid/Subscription content.
