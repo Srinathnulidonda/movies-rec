@@ -19,7 +19,7 @@ geopy
 gunicorn
 python-dotenv
 python-dateutil
-networkx 
+networkx
 httpx
 pytz
 schedule
@@ -28,4 +28,3 @@ fake-useragent
 beautifulsoup4
 selenium
 undetected-chromedriver
-distutils
