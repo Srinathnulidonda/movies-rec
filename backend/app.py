@@ -31,6 +31,7 @@ import services.auth as auth
 from services.auth import init_auth, auth_bp
 from services.admin import admin_bp, init_admin
 from services.users import users_bp, init_users
+from services.detail import detail_service, SlugGenerator
 from services.algorithms import (
     RecommendationOrchestrator,
     PopularityRanking,
@@ -80,6 +81,11 @@ TMDB_API_KEY = os.environ.get('TMDB_API_KEY', '1cf86635f20bb2aff8e70940e7c3ddd5'
 OMDB_API_KEY = os.environ.get('OMDB_API_KEY', '52260795')
 YOUTUBE_API_KEY = os.environ.get('YOUTUBE_API_KEY', 'AIzaSyDU-JLASTdIdoLOmlpWuJYLTZDUspqw2T4')
 ML_SERVICE_URL = os.environ.get('ML_SERVICE_URL', 'https://movies-rec-xmf5.onrender.com')
+
+# Configuration for detail service
+app.config['TMDB_API_KEY'] = TMDB_API_KEY
+app.config['OMDB_API_KEY'] = OMDB_API_KEY
+app.config['YOUTUBE_API_KEY'] = YOUTUBE_API_KEY
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -168,6 +174,7 @@ class User(db.Model):
     username = db.Column(db.String(80), unique=True, nullable=False)
     email = db.Column(db.String(120), unique=True, nullable=False)
     password_hash = db.Column(db.String(255), nullable=False)
+    avatar_url = db.Column(db.String(255))
     is_admin = db.Column(db.Boolean, default=False)
     preferred_languages = db.Column(db.Text)  # JSON string
     preferred_genres = db.Column(db.Text)  # JSON string
@@ -177,31 +184,154 @@ class User(db.Model):
 
 class Content(db.Model):
     id = db.Column(db.Integer, primary_key=True)
+    slug = db.Column(db.String(150), unique=True, index=True)
     tmdb_id = db.Column(db.Integer, unique=True)
     imdb_id = db.Column(db.String(20))
     mal_id = db.Column(db.Integer)  # For anime
     title = db.Column(db.String(255), nullable=False)
     original_title = db.Column(db.String(255))
+    tagline = db.Column(db.String(500))
     content_type = db.Column(db.String(20), nullable=False)  # movie, tv, anime
     genres = db.Column(db.Text)  # JSON string
     anime_genres = db.Column(db.Text)  # JSON string for anime-specific genres
     languages = db.Column(db.Text)  # JSON string
+    spoken_languages = db.Column(db.Text)
+    production_companies = db.Column(db.Text)
+    production_countries = db.Column(db.Text)
     release_date = db.Column(db.Date)
     runtime = db.Column(db.Integer)
     rating = db.Column(db.Float)
     vote_count = db.Column(db.Integer)
     popularity = db.Column(db.Float)
     overview = db.Column(db.Text)
+    plot_summary = db.Column(db.Text)
     poster_path = db.Column(db.String(255))
     backdrop_path = db.Column(db.String(255))
+    logo_path = db.Column(db.String(255))
     trailer_url = db.Column(db.String(255))
     youtube_trailer_id = db.Column(db.String(255))
+    
+    # Content ratings
+    imdb_rating = db.Column(db.Float)
+    imdb_votes = db.Column(db.Integer)
+    rt_critics_score = db.Column(db.Integer)
+    rt_audience_score = db.Column(db.Integer)
+    metacritic_score = db.Column(db.Integer)
+    mal_score = db.Column(db.Float)
+    user_rating = db.Column(db.Float)
+    
+    # Content metadata
+    status = db.Column(db.String(50))
+    original_language = db.Column(db.String(10))
+    budget = db.Column(db.BigInteger)
+    revenue = db.Column(db.BigInteger)
+    keywords = db.Column(db.Text)
+    content_rating = db.Column(db.String(20))
+    content_rating_reason = db.Column(db.Text)
+    content_warnings = db.Column(db.Text)
+    themes = db.Column(db.Text)
+    mood = db.Column(db.String(50))
+    pacing = db.Column(db.String(50))
+    
+    # Quality flags
+    is_4k = db.Column(db.Boolean, default=False)
+    is_hdr = db.Column(db.Boolean, default=False)
+    is_dolby_vision = db.Column(db.Boolean, default=False)
+    is_dolby_atmos = db.Column(db.Boolean, default=False)
+    is_imax = db.Column(db.Boolean, default=False)
+    
+    # Availability
+    streaming_platforms = db.Column(db.Text)
+    rental_platforms = db.Column(db.Text)
+    purchase_platforms = db.Column(db.Text)
+    
+    # Statistics
+    review_count = db.Column(db.Integer, default=0)
+    watchlist_count = db.Column(db.Integer, default=0)
+    favorites_count = db.Column(db.Integer, default=0)
+    
     is_trending = db.Column(db.Boolean, default=False)
     is_new_release = db.Column(db.Boolean, default=False)
     is_critics_choice = db.Column(db.Boolean, default=False)
     critics_score = db.Column(db.Float)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+class Person(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    slug = db.Column(db.String(150), unique=True, index=True)
+    tmdb_id = db.Column(db.Integer, unique=True)
+    imdb_id = db.Column(db.String(20))
+    name = db.Column(db.String(255), nullable=False)
+    biography = db.Column(db.Text)
+    profile_image = db.Column(db.String(255))
+    birthday = db.Column(db.Date)
+    deathday = db.Column(db.Date)
+    place_of_birth = db.Column(db.String(255))
+    known_for_department = db.Column(db.String(100))
+    primary_role = db.Column(db.String(100))
+    popularity = db.Column(db.Float)
+    
+    # Social media
+    twitter_id = db.Column(db.String(100))
+    instagram_id = db.Column(db.String(100))
+    facebook_id = db.Column(db.String(100))
+    
+    # Statistics
+    movie_count = db.Column(db.Integer, default=0)
+    tv_count = db.Column(db.Integer, default=0)
+    filmography_count = db.Column(db.Integer, default=0)
+    awards_count = db.Column(db.Integer, default=0)
+    career_start_year = db.Column(db.Integer)
+    
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+class CastMember(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    content_id = db.Column(db.Integer, db.ForeignKey('content.id'), nullable=False)
+    person_id = db.Column(db.Integer, db.ForeignKey('person.id'), nullable=False)
+    character = db.Column(db.String(255))
+    order = db.Column(db.Integer)
+    
+    content = db.relationship('Content', backref='cast_members')
+    person = db.relationship('Person', backref='cast_roles')
+
+class CrewMember(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    content_id = db.Column(db.Integer, db.ForeignKey('content.id'), nullable=False)
+    person_id = db.Column(db.Integer, db.ForeignKey('person.id'), nullable=False)
+    job = db.Column(db.String(100))
+    department = db.Column(db.String(100))
+    
+    content = db.relationship('Content', backref='crew_members')
+    person = db.relationship('Person', backref='crew_roles')
+
+class Review(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    content_id = db.Column(db.Integer, db.ForeignKey('content.id'), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    rating = db.Column(db.Float, nullable=False)
+    title = db.Column(db.String(255))
+    content = db.Column(db.Text, nullable=False)
+    has_spoilers = db.Column(db.Boolean, default=False)
+    helpful_votes = db.Column(db.Integer, default=0)
+    total_votes = db.Column(db.Integer, default=0)
+    verified_purchase = db.Column(db.Boolean, default=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime)
+    
+    user = db.relationship('User', backref='reviews')
+
+class UserList(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    content_id = db.Column(db.Integer, db.ForeignKey('content.id'), nullable=False)
+    list_type = db.Column(db.String(50))  # 'watchlist', 'favorites'
+    added_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    user = db.relationship('User')
+    content = db.relationship('Content')
 
 class UserInteraction(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -640,7 +770,7 @@ class YouTubeService:
             logger.error(f"YouTube search error: {e}")
         return None
 
-# Enhanced Content Management Service with caching
+# Enhanced Content Management Service with slug generation
 class ContentService:
     @staticmethod
     def save_content_from_tmdb(tmdb_data, content_type):
@@ -652,6 +782,27 @@ class ContentService:
                 if existing.updated_at < datetime.utcnow() - timedelta(hours=24):
                     ContentService.update_content_from_tmdb(existing, tmdb_data)
                 return existing
+            
+            # Generate slug
+            title = tmdb_data.get('title') or tmdb_data.get('name')
+            year = None
+            if tmdb_data.get('release_date'):
+                try:
+                    year = datetime.strptime(tmdb_data['release_date'], '%Y-%m-%d').year
+                except:
+                    pass
+            elif tmdb_data.get('first_air_date'):
+                try:
+                    year = datetime.strptime(tmdb_data['first_air_date'], '%Y-%m-%d').year
+                except:
+                    pass
+            
+            slug = SlugGenerator.create_slug(title, year, content_type)
+            
+            # Check for duplicate slugs
+            existing_slugs = [c.slug for c in Content.query.filter(Content.slug.like(f"{slug}%")).all()]
+            if existing_slugs:
+                slug = SlugGenerator.resolve_duplicate(slug, existing_slugs)
             
             # Extract genres
             genres = []
@@ -690,11 +841,13 @@ class ContentService:
             # Get YouTube trailer
             youtube_trailer_id = ContentService.get_youtube_trailer(tmdb_data.get('title') or tmdb_data.get('name'))
             
-            # Create content object
+            # Create content object with slug
             content = Content(
+                slug=slug,
                 tmdb_id=tmdb_data['id'],
-                title=tmdb_data.get('title') or tmdb_data.get('name'),
+                title=title,
                 original_title=tmdb_data.get('original_title') or tmdb_data.get('original_name'),
+                tagline=tmdb_data.get('tagline'),
                 content_type=content_type,
                 genres=json.dumps(genres),
                 languages=json.dumps(languages),
@@ -709,7 +862,11 @@ class ContentService:
                 youtube_trailer_id=youtube_trailer_id,
                 is_new_release=is_new_release,
                 is_critics_choice=is_critics_choice,
-                critics_score=critics_score
+                critics_score=critics_score,
+                status=tmdb_data.get('status'),
+                original_language=tmdb_data.get('original_language'),
+                budget=tmdb_data.get('budget'),
+                revenue=tmdb_data.get('revenue')
             )
             
             db.session.add(content)
@@ -752,6 +909,22 @@ class ContentService:
             if existing:
                 return existing
             
+            # Generate slug
+            title = anime_data.get('title')
+            year = None
+            if anime_data.get('aired', {}).get('from'):
+                try:
+                    year = datetime.strptime(anime_data['aired']['from'][:10], '%Y-%m-%d').year
+                except:
+                    pass
+            
+            slug = SlugGenerator.create_slug(title, year, 'anime')
+            
+            # Check for duplicate slugs
+            existing_slugs = [c.slug for c in Content.query.filter(Content.slug.like(f"{slug}%")).all()]
+            if existing_slugs:
+                slug = SlugGenerator.resolve_duplicate(slug, existing_slugs)
+            
             # Extract anime genres
             genres = [genre['name'] for genre in anime_data.get('genres', [])]
             
@@ -778,6 +951,7 @@ class ContentService:
             
             # Create anime content
             content = Content(
+                slug=slug,
                 mal_id=anime_data['mal_id'],
                 title=anime_data.get('title'),
                 original_title=anime_data.get('title_japanese'),
@@ -791,7 +965,9 @@ class ContentService:
                 popularity=anime_data.get('popularity'),
                 overview=anime_data.get('synopsis'),
                 poster_path=anime_data.get('images', {}).get('jpg', {}).get('image_url'),
-                youtube_trailer_id=youtube_trailer_id
+                youtube_trailer_id=youtube_trailer_id,
+                mal_score=anime_data.get('score'),
+                status=anime_data.get('status')
             )
             
             db.session.add(content)
@@ -860,7 +1036,7 @@ class AnonymousRecommendationEngine:
                 genre_counts = Counter(all_genres)
                 top_genres = [genre for genre, _ in genre_counts.most_common(3)]
                 
-                # Get recommendations based on top genres (would use algorithms here)
+                # Get recommendations based on top genres
                 for genre in top_genres:
                     genre_content = Content.query.filter(
                         Content.genres.contains(genre)
@@ -901,7 +1077,12 @@ models = {
     'User': User,
     'Content': Content,
     'UserInteraction': UserInteraction,
-    'AdminRecommendation': AdminRecommendation
+    'AdminRecommendation': AdminRecommendation,
+    'Person': Person,
+    'CastMember': CastMember,
+    'CrewMember': CrewMember,
+    'Review': Review,
+    'UserList': UserList
 }
 
 services = {
@@ -916,6 +1097,9 @@ services = {
 
 init_admin(app, db, models, services)
 init_users(app, db, models, services)
+
+# Initialize detail service after database models are defined
+detail_service.init_app(app, db, cache)
 
 # API Routes
 
@@ -972,6 +1156,7 @@ def search_content():
                     
                     results.append({
                         'id': content.id,
+                        'slug': content.slug,
                         'tmdb_id': content.tmdb_id,
                         'title': content.title,
                         'content_type': content.content_type,
@@ -996,6 +1181,7 @@ def search_content():
                     
                     results.append({
                         'id': content.id,
+                        'slug': content.slug,
                         'mal_id': content.mal_id,
                         'title': content.title,
                         'content_type': 'anime',
@@ -1022,124 +1208,14 @@ def search_content():
         return jsonify({'error': 'Search failed'}), 500
 
 @app.route('/api/content/<int:content_id>', methods=['GET'])
-def get_content_details(content_id):
+def get_content_by_id(content_id):
+    """Legacy endpoint - redirects to slug-based detail"""
     try:
-        # Check cache first
-        cache_key = content_cache_key(content_id)
-        cached_content = cache.get(cache_key)
-        
-        if cached_content:
-            content = cached_content
-        else:
-            content = Content.query.get_or_404(content_id)
-            cache.set(cache_key, content, timeout=7200)
-        
-        # Record view interaction
-        session_id = get_session_id()
-        interaction = AnonymousInteraction(
-            session_id=session_id,
-            content_id=content.id,
-            interaction_type='view',
-            ip_address=request.remote_addr
-        )
-        db.session.add(interaction)
-        
-        # Get additional details
-        additional_details = None
-        cast = []
-        crew = []
-        
-        if content.content_type == 'anime' and content.mal_id:
-            # Get anime details
-            additional_details = JikanService.get_anime_details(content.mal_id)
-            if additional_details:
-                anime_data = additional_details.get('data', {})
-                # Extract voice actors as cast
-                if 'voices' in anime_data:
-                    cast = anime_data['voices'][:10]
-                # Extract staff as crew
-                if 'staff' in anime_data:
-                    crew = anime_data['staff'][:5]
-        elif content.tmdb_id:
-            # Get TMDB details
-            additional_details = TMDBService.get_content_details(content.tmdb_id, content.content_type)
-            if additional_details:
-                cast = additional_details.get('credits', {}).get('cast', [])[:10]
-                crew = additional_details.get('credits', {}).get('crew', [])[:5]
-        
-        # Get similar content using ultra-powerful similarity engine
-        content_pool = Content.query.filter(
-            Content.id != content_id,
-            Content.content_type == content.content_type
-        ).limit(500).all()
-        
-        similar_content = recommendation_orchestrator.get_ultra_similar_content(
-            content_id,
-            content_pool,
-            limit=10,
-            strict_mode=True,
-            min_similarity=0.5
-        )
-        
-        # Format similar content for response
-        similar_formatted = []
-        for similar in similar_content:
-            youtube_url = None
-            if similar.get('youtube_trailer_id'):
-                youtube_url = f"https://www.youtube.com/watch?v={similar['youtube_trailer_id']}"
-            
-            similar_formatted.append({
-                'id': similar['id'],
-                'title': similar['title'],
-                'poster_path': similar['poster_path'],
-                'rating': similar['rating'],
-                'content_type': similar['content_type'],
-                'youtube_trailer': youtube_url,
-                'similarity_score': similar['similarity_score'],
-                'match_type': similar['match_type']
-            })
-        
-        db.session.commit()
-        
-        # Get YouTube trailer URL
-        youtube_trailer_url = None
-        if content.youtube_trailer_id:
-            youtube_trailer_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
-        
-        response_data = {
-            'id': content.id,
-            'tmdb_id': content.tmdb_id,
-            'mal_id': content.mal_id,
-            'title': content.title,
-            'original_title': content.original_title,
-            'content_type': content.content_type,
-            'genres': json.loads(content.genres or '[]'),
-            'languages': json.loads(content.languages or '[]'),
-            'release_date': content.release_date.isoformat() if content.release_date else None,
-            'runtime': content.runtime,
-            'rating': content.rating,
-            'vote_count': content.vote_count,
-            'overview': content.overview,
-            'poster_path': f"https://image.tmdb.org/t/p/w500{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
-            'backdrop_path': f"https://image.tmdb.org/t/p/w1280{content.backdrop_path}" if content.backdrop_path and not content.backdrop_path.startswith('http') else content.backdrop_path,
-            'youtube_trailer': youtube_trailer_url,
-            'similar_content': similar_formatted,
-            'cast': cast,
-            'crew': crew,
-            'is_trending': content.is_trending,
-            'is_new_release': content.is_new_release,
-            'is_critics_choice': content.is_critics_choice
-        }
-        
-        # Add anime-specific data
-        if content.content_type == 'anime':
-            response_data['anime_genres'] = json.loads(content.anime_genres or '[]')
-        
-        return jsonify(response_data), 200
-        
+        content = Content.query.get_or_404(content_id)
+        return jsonify({'redirect': f'/api/details/{content.slug}'}), 301
     except Exception as e:
-        logger.error(f"Content details error: {e}")
-        return jsonify({'error': 'Failed to get content details'}), 500
+        logger.error(f"Content redirect error: {e}")
+        return jsonify({'error': 'Content not found'}), 404
 
 @app.route('/api/recommendations/trending', methods=['GET'])
 @cache.cached(timeout=300, key_prefix=make_cache_key)
@@ -1242,17 +1318,14 @@ def get_trending():
         # Calculate and add metrics
         if category != 'all' and selected_category in categories and categories[selected_category]:
             try:
-                # Get all content items from the selected category
                 content_items = categories[selected_category]
                 if content_items and len(content_items) > 0:
-                    # Extract content IDs properly
                     content_ids = []
                     for item in content_items:
                         if isinstance(item, dict) and 'id' in item:
                             content_ids.append(item['id'])
                     
                     if content_ids:
-                        # Get content objects for diversity calculation
                         contents = Content.query.filter(Content.id.in_(content_ids)).all()
                         
                         response['metadata']['metrics'] = {
@@ -1327,6 +1400,12 @@ def get_new_releases():
             unique_releases,
             limit=limit
         )
+        
+        # Add slug to recommendations
+        for rec in recommendations:
+            content = Content.query.get(rec['id'])
+            if content:
+                rec['slug'] = content.slug
         
         # Group by language for response
         language_groups = {
@@ -1421,19 +1500,11 @@ def get_new_releases():
     except Exception as e:
         logger.error(f"New releases error: {e}")
         return jsonify({'error': 'Failed to get new releases'}), 500
-    
 
 @app.route('/api/upcoming', methods=['GET'])
 async def get_upcoming_releases():
     """
     Advanced upcoming releases endpoint with strict Telugu priority.
-    
-    Query Parameters:
-        - region: ISO 3166-1 alpha-2 country code (default: IN)
-        - timezone: Timezone name (default: Asia/Kolkata)
-        - categories: Comma-separated list (movies,tv,anime)
-        - use_cache: Use caching (default: true)
-        - include_analytics: Include anticipation scores (default: true)
     """
     try:
         # Get parameters
@@ -1558,6 +1629,7 @@ def get_critics_choice():
                     
                     recommendations.append({
                         'id': content.id,
+                        'slug': content.slug,
                         'title': content.title,
                         'content_type': content.content_type,
                         'genres': json.loads(content.genres or '[]'),
@@ -1608,6 +1680,7 @@ def get_genre_recommendations(genre):
                         
                         recommendations.append({
                             'id': content.id,
+                            'slug': content.slug,
                             'title': content.title,
                             'content_type': content.content_type,
                             'genres': json.loads(content.genres or '[]'),
@@ -1647,6 +1720,7 @@ def get_regional(language):
                         
                         recommendations.append({
                             'id': content.id,
+                            'slug': content.slug,
                             'title': content.title,
                             'content_type': content.content_type,
                             'genres': json.loads(content.genres or '[]'),
@@ -1688,6 +1762,7 @@ def get_anime():
                             
                             recommendations.append({
                                 'id': content.id,
+                                'slug': content.slug,
                                 'mal_id': content.mal_id,
                                 'title': content.title,
                                 'original_title': content.original_title,
@@ -1714,6 +1789,7 @@ def get_anime():
                         
                         recommendations.append({
                             'id': content.id,
+                            'slug': content.slug,
                             'mal_id': content.mal_id,
                             'title': content.title,
                             'original_title': content.original_title,
@@ -1777,10 +1853,17 @@ def get_similar_recommendations(content_id):
         db.session.add(interaction)
         db.session.commit()
         
+        # Add slug to similar content
+        for item in similar_content:
+            content = Content.query.get(item['id'])
+            if content:
+                item['slug'] = content.slug
+        
         # Prepare response
         response = {
             'base_content': {
                 'id': base_content.id,
+                'slug': base_content.slug,
                 'title': base_content.title,
                 'content_type': base_content.content_type,
                 'genres': json.loads(base_content.genres or '[]'),
@@ -1839,6 +1922,7 @@ def get_anonymous_recommendations():
             
             result.append({
                 'id': content.id,
+                'slug': content.slug,
                 'title': content.title,
                 'content_type': content.content_type,
                 'genres': json.loads(content.genres or '[]'),
@@ -1879,6 +1963,7 @@ def get_public_admin_recommendations():
                 
                 result.append({
                     'id': content.id,
+                    'slug': content.slug,
                     'title': content.title,
                     'content_type': content.content_type,
                     'genres': json.loads(content.genres or '[]'),
@@ -1897,6 +1982,166 @@ def get_public_admin_recommendations():
         logger.error(f"Public admin recommendations error: {e}")
         return jsonify({'error': 'Failed to get admin recommendations'}), 500
 
+# Content Collection Endpoints
+@app.route('/api/collections/<collection_type>', methods=['GET'])
+@cache.cached(timeout=600, key_prefix=make_cache_key)
+def get_collection(collection_type):
+    """Get various content collections"""
+    try:
+        limit = int(request.args.get('limit', 20))
+        page = int(request.args.get('page', 1))
+        
+        collections = {
+            'award_winners': {
+                'filter': Content.awards_count > 0,
+                'order': desc(Content.awards_count)
+            },
+            'box_office_hits': {
+                'filter': Content.revenue > 100000000,
+                'order': desc(Content.revenue)
+            },
+            'cult_classics': {
+                'filter': and_(
+                    Content.rating >= 7,
+                    Content.release_date < datetime.now().date() - timedelta(days=3650)
+                ),
+                'order': desc(Content.rating)
+            },
+            'hidden_gems': {
+                'filter': and_(
+                    Content.rating >= 7,
+                    Content.vote_count < 10000,
+                    Content.vote_count > 100
+                ),
+                'order': desc(Content.rating)
+            },
+            '4k_hdr': {
+                'filter': or_(Content.is_4k == True, Content.is_hdr == True),
+                'order': desc(Content.popularity)
+            },
+            'imax_enhanced': {
+                'filter': Content.is_imax == True,
+                'order': desc(Content.release_date)
+            }
+        }
+        
+        if collection_type not in collections:
+            return jsonify({'error': 'Invalid collection type'}), 400
+        
+        collection_config = collections[collection_type]
+        
+        # Build query
+        query = Content.query.filter(collection_config['filter']).order_by(collection_config['order'])
+        
+        # Paginate
+        paginated = query.paginate(page=page, per_page=limit, error_out=False)
+        
+        results = []
+        for content in paginated.items:
+            youtube_url = None
+            if content.youtube_trailer_id:
+                youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
+            
+            results.append({
+                'id': content.id,
+                'slug': content.slug,
+                'title': content.title,
+                'content_type': content.content_type,
+                'genres': json.loads(content.genres or '[]'),
+                'rating': content.rating,
+                'release_date': content.release_date.isoformat() if content.release_date else None,
+                'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
+                'overview': content.overview[:150] + '...' if content.overview else '',
+                'youtube_trailer': youtube_url,
+                'quality_badges': {
+                    '4k': content.is_4k,
+                    'hdr': content.is_hdr,
+                    'dolby_vision': content.is_dolby_vision,
+                    'dolby_atmos': content.is_dolby_atmos,
+                    'imax': content.is_imax
+                }
+            })
+        
+        return jsonify({
+            'collection_type': collection_type,
+            'results': results,
+            'pagination': {
+                'page': page,
+                'per_page': limit,
+                'total_pages': paginated.pages,
+                'total_items': paginated.total,
+                'has_next': paginated.has_next,
+                'has_prev': paginated.has_prev
+            }
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Collection error: {e}")
+        return jsonify({'error': 'Failed to get collection'}), 500
+
+# Browse by Platform
+@app.route('/api/browse/platform/<platform>', methods=['GET'])
+@cache.cached(timeout=600, key_prefix=make_cache_key)
+def browse_by_platform(platform):
+    """Browse content available on specific streaming platforms"""
+    try:
+        limit = int(request.args.get('limit', 20))
+        page = int(request.args.get('page', 1))
+        content_type = request.args.get('type', 'all')
+        
+        # Build query based on platform
+        query = Content.query.filter(
+            Content.streaming_platforms.contains(platform)
+        )
+        
+        if content_type != 'all':
+            query = query.filter(Content.content_type == content_type)
+        
+        # Order by popularity
+        query = query.order_by(desc(Content.popularity))
+        
+        # Paginate
+        paginated = query.paginate(page=page, per_page=limit, error_out=False)
+        
+        results = []
+        for content in paginated.items:
+            youtube_url = None
+            if content.youtube_trailer_id:
+                youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
+            
+            # Parse streaming platforms
+            streaming_platforms = json.loads(content.streaming_platforms or '[]')
+            
+            results.append({
+                'id': content.id,
+                'slug': content.slug,
+                'title': content.title,
+                'content_type': content.content_type,
+                'genres': json.loads(content.genres or '[]'),
+                'rating': content.rating,
+                'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
+                'overview': content.overview[:150] + '...' if content.overview else '',
+                'youtube_trailer': youtube_url,
+                'available_on': streaming_platforms
+            })
+        
+        return jsonify({
+            'platform': platform,
+            'results': results,
+            'pagination': {
+                'page': page,
+                'per_page': limit,
+                'total_pages': paginated.pages,
+                'total_items': paginated.total,
+                'has_next': paginated.has_next,
+                'has_prev': paginated.has_prev
+            }
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Platform browse error: {e}")
+        return jsonify({'error': 'Failed to browse platform'}), 500
+
 # Health check endpoint
 @app.route('/api/health', methods=['GET'])
 def health_check():
@@ -1906,7 +2151,7 @@ def health_check():
         health_info = {
             'status': 'healthy',
             'timestamp': datetime.utcnow().isoformat(),
-            'version': '4.0.0'  # Updated version with ultra-powerful algorithms
+            'version': '5.0.0'  # Updated version with detail service
         }
         
         # Check database connectivity
@@ -1935,8 +2180,20 @@ def health_check():
             'omdb': bool(OMDB_API_KEY),
             'youtube': bool(YOUTUBE_API_KEY),
             'ml_service': bool(ML_SERVICE_URL),
-            'algorithms': 'ultra_powerful_enabled'
+            'algorithms': 'ultra_powerful_enabled',
+            'detail_service': 'active'
         }
+        
+        # Count database records
+        try:
+            health_info['database_stats'] = {
+                'content_count': Content.query.count(),
+                'user_count': User.query.count(),
+                'review_count': Review.query.count(),
+                'person_count': Person.query.count()
+            }
+        except:
+            pass
         
         return jsonify(health_info), 200
         
@@ -1946,6 +2203,67 @@ def health_check():
             'error': str(e),
             'timestamp': datetime.utcnow().isoformat()
         }), 500
+
+# Stats endpoint
+@app.route('/api/stats', methods=['GET'])
+@cache.cached(timeout=300, key_prefix='stats')
+def get_stats():
+    """Get platform statistics"""
+    try:
+        stats = {
+            'content': {
+                'total': Content.query.count(),
+                'movies': Content.query.filter_by(content_type='movie').count(),
+                'tv_shows': Content.query.filter_by(content_type='tv').count(),
+                'anime': Content.query.filter_by(content_type='anime').count(),
+                'trending': Content.query.filter_by(is_trending=True).count(),
+                'new_releases': Content.query.filter_by(is_new_release=True).count(),
+                'critics_choice': Content.query.filter_by(is_critics_choice=True).count(),
+                '4k_content': Content.query.filter_by(is_4k=True).count(),
+                'hdr_content': Content.query.filter_by(is_hdr=True).count()
+            },
+            'users': {
+                'total': User.query.count(),
+                'active_today': User.query.filter(
+                    User.last_active >= datetime.utcnow() - timedelta(days=1)
+                ).count(),
+                'admins': User.query.filter_by(is_admin=True).count()
+            },
+            'engagement': {
+                'total_reviews': Review.query.count(),
+                'total_interactions': UserInteraction.query.count(),
+                'anonymous_interactions': AnonymousInteraction.query.count(),
+                'watchlist_items': UserList.query.filter_by(list_type='watchlist').count(),
+                'favorite_items': UserList.query.filter_by(list_type='favorites').count()
+            },
+            'people': {
+                'total': Person.query.count(),
+                'cast_members': CastMember.query.distinct(CastMember.person_id).count(),
+                'crew_members': CrewMember.query.distinct(CrewMember.person_id).count()
+            },
+            'quality': {
+                'average_rating': db.session.query(func.avg(Content.rating)).scalar() or 0,
+                'high_rated_content': Content.query.filter(Content.rating >= 8).count(),
+                'content_with_trailers': Content.query.filter(Content.youtube_trailer_id != None).count()
+            }
+        }
+        
+        # Calculate percentages
+        total_content = stats['content']['total']
+        if total_content > 0:
+            stats['content']['percentages'] = {
+                'movies': round(stats['content']['movies'] / total_content * 100, 1),
+                'tv_shows': round(stats['content']['tv_shows'] / total_content * 100, 1),
+                'anime': round(stats['content']['anime'] / total_content * 100, 1)
+            }
+        
+        stats['timestamp'] = datetime.utcnow().isoformat()
+        
+        return jsonify(stats), 200
+        
+    except Exception as e:
+        logger.error(f"Stats error: {e}")
+        return jsonify({'error': 'Failed to get statistics'}), 500
 
 # Initialize database
 def create_tables():
@@ -1965,6 +2283,12 @@ def create_tables():
                 db.session.add(admin)
                 db.session.commit()
                 logger.info("Admin user created with username: admin, password: admin123")
+            
+            # Log database initialization
+            logger.info("Database tables created successfully")
+            logger.info(f"Content count: {Content.query.count()}")
+            logger.info(f"User count: {User.query.count()}")
+            
     except Exception as e:
         logger.error(f"Database initialization error: {e}")
 

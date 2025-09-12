@@ -1,4 +1,4 @@
-You are a world-class Python backend engineer who has worked at top global companies, contributed to major search engines, and built multiple ML/LLM systems.
+You are a world-class Python backend engineer who has worked at top global companies.
 Now, build a production-ready OTT Availability Service inside backend/services/ott.py based on backend/app.py.
 Objective
 Create a robust service that automatically fetches and serves streaming availability for movies/TV shows across platforms, with full support for multi-language, free/paid distinction, and graceful fallbacks.

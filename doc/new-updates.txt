@@ -1,0 +1,50 @@
+New Features Added:
+1. SEO-Friendly Slug Support
+•	All content now has unique slugs (e.g., inception-2010, the-dark-knight-2008)
+•	Automatic slug generation with year and content type
+•	Duplicate slug handling
+•	Multilingual title support
+2. Enhanced Database Models
+•	Person model for cast and crew
+•	CastMember and CrewMember relationship models
+•	Review model with spoiler tags and helpful votes
+•	UserList model for watchlist and favorites
+•	Extended Content model with comprehensive metadata
+3. Detail Service Integration
+•	All detail endpoints registered via detail_service
+•	/api/details/<slug> - Full content details
+•	/api/details/<slug>/reviews - Paginated reviews
+•	/api/details/<slug>/lists - Watchlist/Favorites management
+•	/api/details/<slug>/ratings - Composite ratings
+•	/api/details/<slug>/gallery - Media gallery
+•	/api/details/person/<person_slug> - Person details
+•	/api/details/person/<person_slug>/works - Filmography
+•	/api/details/person/<person_slug>/upcoming - Upcoming projects
+4. New Collection Endpoints
+•	/api/collections/<collection_type> - Various content collections
+•	award_winners - Award-winning content
+•	box_office_hits - High-grossing films
+•	cult_classics - Older highly-rated content
+•	hidden_gems - Underrated quality content
+•	4k_hdr - Premium quality content
+•	imax_enhanced - IMAX content
+5. Platform Browsing
+•	/api/browse/platform/<platform> - Browse by streaming service
+•	Filter by Netflix, Prime Video, Disney+, etc.
+6. Enhanced Stats & Health
+•	/api/stats - Comprehensive platform statistics
+•	Enhanced health check with service status
+•	Database record counts
+•	Engagement metrics
+7. Content Enrichment
+•	Additional metadata fields (budget, revenue, keywords)
+•	Content ratings from multiple sources (IMDB, RT, Metacritic)
+•	Quality flags (4K, HDR, Dolby Vision, IMAX)
+•	Streaming platform availability
+•	Content warnings and themes
+8. Improved Response Format
+•	All responses now include slug for SEO-friendly URLs
+•	Consistent data structure across endpoints
+•	Rich metadata in responses
+•	Quality badges for premium content
+
