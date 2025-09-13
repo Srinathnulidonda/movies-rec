@@ -27,8 +27,6 @@ from requests.packages.urllib3.util.retry import Retry
 from flask_mail import Mail
 from services.upcoming import UpcomingContentService, ContentType, LanguagePriority
 import asyncio
-import os
-from flask_migrate import init, migrate, upgrade
 import services.auth as auth
 from services.auth import init_auth, auth_bp
 from services.admin import admin_bp, init_admin
