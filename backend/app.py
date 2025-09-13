@@ -249,7 +249,7 @@ class UserInteraction(db.Model):
     content_id = db.Column(db.Integer, db.ForeignKey('content.id'), nullable=False)
     interaction_type = db.Column(db.String(20), nullable=False)  # view, like, favorite, watchlist, search, watch_status, rating
     rating = db.Column(db.Float)
-    metadata = db.Column(db.JSON)  # Additional data like watch status
+    interaction_metadata = db.Column(db.JSON)  # Additional data like watch status
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
 
 class AdminRecommendation(db.Model):

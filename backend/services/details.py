@@ -1022,7 +1022,7 @@ class DetailsService:
             ).first()
             
             if status_item:
-                user_data['watch_status'] = status_item.metadata.get('status') if status_item.metadata else None
+                user_data['watch_status'] = status_item.interaction_metadata.get('status') if status_item.interaction_metadata else None
             
             return user_data
             
