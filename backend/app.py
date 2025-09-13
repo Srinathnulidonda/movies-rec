@@ -2266,9 +2266,6 @@ def get_stats():
     except Exception as e:
         logger.error(f"Stats error: {e}")
         return jsonify({'error': 'Failed to get statistics'}), 500
-    
-
-    
 def create_tables():
     try:
         with app.app_context():
@@ -2280,10 +2277,13 @@ def create_tables():
             
             inspector = inspect(db.engine)
             
-            # Define all columns that should exist in content table
+            # Define ALL columns that should exist in content table
             required_content_columns = {
                 'slug': 'VARCHAR(150)',
                 'tagline': 'VARCHAR(500)',
+                'spoken_languages': 'TEXT',
+                'production_companies': 'TEXT',
+                'production_countries': 'TEXT',
                 'plot_summary': 'TEXT',
                 'logo_path': 'VARCHAR(255)',
                 'imdb_rating': 'FLOAT',
@@ -2293,6 +2293,7 @@ def create_tables():
                 'metacritic_score': 'INTEGER',
                 'mal_score': 'FLOAT',
                 'user_rating': 'FLOAT',
+                'keywords': 'TEXT',
                 'content_rating': 'VARCHAR(20)',
                 'content_rating_reason': 'TEXT',
                 'content_warnings': 'TEXT',
@@ -2310,7 +2311,12 @@ def create_tables():
                 'review_count': 'INTEGER DEFAULT 0',
                 'watchlist_count': 'INTEGER DEFAULT 0',
                 'favorites_count': 'INTEGER DEFAULT 0',
-                'critics_score': 'FLOAT'
+                'critics_score': 'FLOAT',
+                'anime_genres': 'TEXT',
+                'status': 'VARCHAR(50)',
+                'original_language': 'VARCHAR(10)',
+                'budget': 'BIGINT',
+                'revenue': 'BIGINT'
             }
             
             # Check and add missing columns to content table
@@ -2329,10 +2335,10 @@ def create_tables():
                 
                 # Add unique index for slug if it doesn't exist
                 existing_indexes = [idx['name'] for idx in inspector.get_indexes('content')]
-                if 'ix_content_slug' not in existing_indexes and 'slug' not in existing_columns:
+                if 'ix_content_slug' not in existing_indexes:
                     try:
                         with db.engine.begin() as conn:
-                            conn.execute(text('CREATE UNIQUE INDEX ix_content_slug ON content (slug)'))
+                            conn.execute(text('CREATE UNIQUE INDEX IF NOT EXISTS ix_content_slug ON content (slug)'))
                         logger.info("Added unique index for slug column")
                     except Exception as idx_error:
                         logger.warning(f"Could not add slug index: {idx_error}")
@@ -2354,13 +2360,13 @@ def create_tables():
             if 'person' in inspector.get_table_names():
                 person_columns = [col['name'] for col in inspector.get_columns('person')]
                 if 'slug' not in person_columns:
-                    with db.engine.begin() as conn:
-                        conn.execute(text('ALTER TABLE person ADD COLUMN slug VARCHAR(150)'))
-                        conn.execute(text('CREATE UNIQUE INDEX ix_person_slug ON person (slug)'))
-                    logger.info("Added slug column to person table")
-                    
-                    # Generate slugs for existing persons
                     try:
+                        with db.engine.begin() as conn:
+                            conn.execute(text('ALTER TABLE person ADD COLUMN slug VARCHAR(150)'))
+                            conn.execute(text('CREATE UNIQUE INDEX IF NOT EXISTS ix_person_slug ON person (slug)'))
+                        logger.info("Added slug column to person table")
+                        
+                        # Generate slugs for existing persons
                         persons = Person.query.all()
                         for person in persons:
                             if not person.slug:
