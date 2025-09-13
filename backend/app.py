@@ -27,7 +27,8 @@ from requests.packages.urllib3.util.retry import Retry
 from flask_mail import Mail
 from services.upcoming import UpcomingContentService, ContentType, LanguagePriority
 import asyncio
-from flask_migrate import Migrate
+import os
+from flask_migrate import init, migrate, upgrade
 import services.auth as auth
 from services.auth import init_auth, auth_bp
 from services.admin import admin_bp, init_admin
@@ -2269,11 +2270,46 @@ def get_stats():
 migrate = Migrate(app, db)
 
     
-# Initialize database
 def create_tables():
     try:
         with app.app_context():
+            # First, create all tables that don't exist
             db.create_all()
+            
+            # Then add missing columns to existing tables
+            from sqlalchemy import inspect, text
+            
+            inspector = inspect(db.engine)
+            
+            # Check and add slug to content table
+            content_columns = [col['name'] for col in inspector.get_columns('content')]
+            if 'slug' not in content_columns:
+                with db.engine.begin() as conn:
+                    conn.execute(text('ALTER TABLE content ADD COLUMN slug VARCHAR(150)'))
+                    conn.execute(text('CREATE UNIQUE INDEX ix_content_slug ON content (slug)'))
+                logger.info("Added slug column to content table")
+                
+                # Generate slugs for existing content
+                contents = Content.query.all()
+                for content in contents:
+                    year = content.release_date.year if content.release_date else None
+                    content.slug = SlugGenerator.create_slug(content.title, year, content.content_type)
+                db.session.commit()
+            
+            # Check and add slug to person table if it exists
+            if 'person' in inspector.get_table_names():
+                person_columns = [col['name'] for col in inspector.get_columns('person')]
+                if 'slug' not in person_columns:
+                    with db.engine.begin() as conn:
+                        conn.execute(text('ALTER TABLE person ADD COLUMN slug VARCHAR(150)'))
+                        conn.execute(text('CREATE UNIQUE INDEX ix_person_slug ON person (slug)'))
+                    logger.info("Added slug column to person table")
+                    
+                    # Generate slugs for existing persons
+                    persons = Person.query.all()
+                    for person in persons:
+                        person.slug = SlugGenerator.create_person_slug(person.name)
+                    db.session.commit()
             
             # Create admin user if not exists
             admin = User.query.filter_by(username='admin').first()
@@ -2286,16 +2322,15 @@ def create_tables():
                 )
                 db.session.add(admin)
                 db.session.commit()
-                logger.info("Admin user created with username: admin, password: admin123")
+                logger.info("Admin user created")
             
             # Log database initialization
-            logger.info("Database tables created successfully")
+            logger.info("Database tables created/updated successfully")
             logger.info(f"Content count: {Content.query.count()}")
             logger.info(f"User count: {User.query.count()}")
             
     except Exception as e:
         logger.error(f"Database initialization error: {e}")
-
 # Initialize database when app starts
 create_tables()
 
