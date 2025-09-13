@@ -28,6 +28,7 @@ from flask_mail import Mail
 from services.upcoming import UpcomingContentService, ContentType, LanguagePriority
 import asyncio
 import services.auth as auth
+from services.detail import init_detail_service, SlugService
 from services.auth import init_auth, auth_bp
 from services.admin import admin_bp, init_admin
 from services.users import users_bp, init_users
@@ -202,6 +203,7 @@ class Content(db.Model):
     critics_score = db.Column(db.Float)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    slug = db.Column(db.String(255), unique=True, index=True)
 
 class UserInteraction(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -690,10 +692,20 @@ class ContentService:
             # Get YouTube trailer
             youtube_trailer_id = ContentService.get_youtube_trailer(tmdb_data.get('title') or tmdb_data.get('name'))
             
+            # Generate slug
+            title = tmdb_data.get('title') or tmdb_data.get('name')
+            year = release_date.year if release_date else None
+            slug = SlugService.generate_unique_slug(
+                db, Content,
+                title,
+                year,
+                content_type
+            )
+            
             # Create content object
             content = Content(
                 tmdb_id=tmdb_data['id'],
-                title=tmdb_data.get('title') or tmdb_data.get('name'),
+                title=title,
                 original_title=tmdb_data.get('original_title') or tmdb_data.get('original_name'),
                 content_type=content_type,
                 genres=json.dumps(genres),
@@ -709,7 +721,8 @@ class ContentService:
                 youtube_trailer_id=youtube_trailer_id,
                 is_new_release=is_new_release,
                 is_critics_choice=is_critics_choice,
-                critics_score=critics_score
+                critics_score=critics_score,
+                slug=slug  # Add the generated slug
             )
             
             db.session.add(content)
@@ -723,8 +736,7 @@ class ContentService:
         except Exception as e:
             logger.error(f"Error saving content: {e}")
             db.session.rollback()
-            return None
-    
+            return None    
     @staticmethod
     def update_content_from_tmdb(content, tmdb_data):
         """Update existing content with new TMDB data"""
@@ -774,12 +786,22 @@ class ContentService:
                     pass
             
             # Get YouTube trailer for anime
-            youtube_trailer_id = ContentService.get_youtube_trailer(anime_data.get('title'), 'anime')
+            title = anime_data.get('title')
+            youtube_trailer_id = ContentService.get_youtube_trailer(title, 'anime')
+            
+            # Generate slug
+            year = release_date.year if release_date else None
+            slug = SlugService.generate_unique_slug(
+                db, Content,
+                title,
+                year,
+                'anime'
+            )
             
             # Create anime content
             content = Content(
                 mal_id=anime_data['mal_id'],
-                title=anime_data.get('title'),
+                title=title,
                 original_title=anime_data.get('title_japanese'),
                 content_type='anime',
                 genres=json.dumps(genres),
@@ -791,7 +813,8 @@ class ContentService:
                 popularity=anime_data.get('popularity'),
                 overview=anime_data.get('synopsis'),
                 poster_path=anime_data.get('images', {}).get('jpg', {}).get('image_url'),
-                youtube_trailer_id=youtube_trailer_id
+                youtube_trailer_id=youtube_trailer_id,
+                slug=slug  # Add the generated slug
             )
             
             db.session.add(content)
@@ -805,8 +828,7 @@ class ContentService:
         except Exception as e:
             logger.error(f"Error saving anime content: {e}")
             db.session.rollback()
-            return None
-    
+            return None    
     @staticmethod
     def get_youtube_trailer(title, content_type='movie'):
         """Get YouTube trailer ID for content"""
@@ -916,6 +938,7 @@ services = {
 
 init_admin(app, db, models, services)
 init_users(app, db, models, services)
+detail_service = init_detail_service(app, db, cache, models, services)
 
 # API Routes
 

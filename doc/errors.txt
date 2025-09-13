@@ -1,8 +1,0 @@
-ERROR:app:Trending recommendations error: Instance <Content at 0x75a7f8bd3c50> is not bound to a Session; attribute refresh operation cannot proceed (Background on this error at: https://sqlalche.me/e/20/bhk3)
-ERROR:app:Trending recommendations error: Instance <Content at 0x75a7f8bd3ed0> is not bound to a Session; attribute refresh operation cannot proceed (Background on this error at: https://sqlalche.me/e/20/bhk3)
-ERROR:app:Critics choice error: Instance <Content at 0x75a7f828ed50> is not bound to a Session; attribute refresh operation cannot proceed (Background on this error at: https://sqlalche.me/e/20/bhk3)
-WARNING:urllib3.connectionpool:Retrying (Retry(total=2, connect=3, read=2, redirect=None, status=None)) after connection broken by 'ConnectionResetError(104, 'Connection reset by peer')': /api/trending?limit=20&content_type=movie
-ERROR:app:New releases error: Instance <Content at 0x75a7f8bd1bd0> is not bound to a Session; attribute refresh operation cannot proceed (Background on this error at: https://sqlalche.me/e/20/bhk3)
-WARNING:urllib3.connectionpool:Retrying (Retry(total=2, connect=3, read=2, redirect=None, status=None)) after connection broken by 'ConnectionResetError(104, 'Connection reset by peer')': /api/trending?limit=20&content_type=tv
-ERROR:app:Critics choice error: Instance <Content at 0x75a7f8b7b890> is not bound to a Session; attribute refresh operation cannot proceed (Background on this error at: https://sqlalche.me/e/20/bhk3)
-ERROR:app:Anime recommendations error: Instance <Content at 0x75a7f8b7b890> is not bound to a Session; attribute refresh operation cannot proceed (Background on this error at: https://sqlalche.me/e/20/bhk3)
