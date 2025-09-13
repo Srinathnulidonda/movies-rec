@@ -2280,22 +2280,77 @@ def create_tables():
             
             inspector = inspect(db.engine)
             
-            # Check and add slug to content table
-            content_columns = [col['name'] for col in inspector.get_columns('content')]
-            if 'slug' not in content_columns:
-                with db.engine.begin() as conn:
-                    conn.execute(text('ALTER TABLE content ADD COLUMN slug VARCHAR(150)'))
-                    conn.execute(text('CREATE UNIQUE INDEX ix_content_slug ON content (slug)'))
-                logger.info("Added slug column to content table")
-                
-                # Generate slugs for existing content
-                contents = Content.query.all()
-                for content in contents:
-                    year = content.release_date.year if content.release_date else None
-                    content.slug = SlugGenerator.create_slug(content.title, year, content.content_type)
-                db.session.commit()
+            # Define all columns that should exist in content table
+            required_content_columns = {
+                'slug': 'VARCHAR(150)',
+                'tagline': 'VARCHAR(500)',
+                'plot_summary': 'TEXT',
+                'logo_path': 'VARCHAR(255)',
+                'imdb_rating': 'FLOAT',
+                'imdb_votes': 'INTEGER',
+                'rt_critics_score': 'INTEGER',
+                'rt_audience_score': 'INTEGER',
+                'metacritic_score': 'INTEGER',
+                'mal_score': 'FLOAT',
+                'user_rating': 'FLOAT',
+                'content_rating': 'VARCHAR(20)',
+                'content_rating_reason': 'TEXT',
+                'content_warnings': 'TEXT',
+                'themes': 'TEXT',
+                'mood': 'VARCHAR(50)',
+                'pacing': 'VARCHAR(50)',
+                'is_4k': 'BOOLEAN DEFAULT FALSE',
+                'is_hdr': 'BOOLEAN DEFAULT FALSE',
+                'is_dolby_vision': 'BOOLEAN DEFAULT FALSE',
+                'is_dolby_atmos': 'BOOLEAN DEFAULT FALSE',
+                'is_imax': 'BOOLEAN DEFAULT FALSE',
+                'streaming_platforms': 'TEXT',
+                'rental_platforms': 'TEXT',
+                'purchase_platforms': 'TEXT',
+                'review_count': 'INTEGER DEFAULT 0',
+                'watchlist_count': 'INTEGER DEFAULT 0',
+                'favorites_count': 'INTEGER DEFAULT 0',
+                'critics_score': 'FLOAT'
+            }
             
-            # Check and add slug to person table if it exists
+            # Check and add missing columns to content table
+            if 'content' in inspector.get_table_names():
+                existing_columns = [col['name'] for col in inspector.get_columns('content')]
+                
+                with db.engine.begin() as conn:
+                    for column_name, column_type in required_content_columns.items():
+                        if column_name not in existing_columns:
+                            try:
+                                alter_query = f'ALTER TABLE content ADD COLUMN {column_name} {column_type}'
+                                conn.execute(text(alter_query))
+                                logger.info(f"Added column {column_name} to content table")
+                            except Exception as col_error:
+                                logger.warning(f"Could not add column {column_name}: {col_error}")
+                
+                # Add unique index for slug if it doesn't exist
+                existing_indexes = [idx['name'] for idx in inspector.get_indexes('content')]
+                if 'ix_content_slug' not in existing_indexes and 'slug' not in existing_columns:
+                    try:
+                        with db.engine.begin() as conn:
+                            conn.execute(text('CREATE UNIQUE INDEX ix_content_slug ON content (slug)'))
+                        logger.info("Added unique index for slug column")
+                    except Exception as idx_error:
+                        logger.warning(f"Could not add slug index: {idx_error}")
+                
+                # Now safely generate slugs for existing content
+                try:
+                    contents = Content.query.all()
+                    for content in contents:
+                        if not content.slug:
+                            year = content.release_date.year if content.release_date else None
+                            content.slug = SlugGenerator.create_slug(content.title, year, content.content_type)
+                    db.session.commit()
+                    logger.info(f"Generated slugs for {len(contents)} content items")
+                except Exception as slug_error:
+                    logger.warning(f"Could not generate slugs: {slug_error}")
+                    db.session.rollback()
+            
+            # Similar checks for person table
             if 'person' in inspector.get_table_names():
                 person_columns = [col['name'] for col in inspector.get_columns('person')]
                 if 'slug' not in person_columns:
@@ -2305,28 +2360,40 @@ def create_tables():
                     logger.info("Added slug column to person table")
                     
                     # Generate slugs for existing persons
-                    persons = Person.query.all()
-                    for person in persons:
-                        person.slug = SlugGenerator.create_person_slug(person.name)
-                    db.session.commit()
+                    try:
+                        persons = Person.query.all()
+                        for person in persons:
+                            if not person.slug:
+                                person.slug = SlugGenerator.create_person_slug(person.name)
+                        db.session.commit()
+                    except Exception as person_error:
+                        logger.warning(f"Could not generate person slugs: {person_error}")
+                        db.session.rollback()
             
             # Create admin user if not exists
-            admin = User.query.filter_by(username='admin').first()
-            if not admin:
-                admin = User(
-                    username='admin',
-                    email='admin@example.com',
-                    password_hash=generate_password_hash('admin123'),
-                    is_admin=True
-                )
-                db.session.add(admin)
-                db.session.commit()
-                logger.info("Admin user created")
+            try:
+                admin = User.query.filter_by(username='admin').first()
+                if not admin:
+                    admin = User(
+                        username='admin',
+                        email='admin@example.com',
+                        password_hash=generate_password_hash('admin123'),
+                        is_admin=True
+                    )
+                    db.session.add(admin)
+                    db.session.commit()
+                    logger.info("Admin user created")
+            except Exception as admin_error:
+                logger.warning(f"Could not create admin user: {admin_error}")
+                db.session.rollback()
             
             # Log database initialization
             logger.info("Database tables created/updated successfully")
-            logger.info(f"Content count: {Content.query.count()}")
-            logger.info(f"User count: {User.query.count()}")
+            try:
+                logger.info(f"Content count: {Content.query.count()}")
+                logger.info(f"User count: {User.query.count()}")
+            except:
+                logger.info("Could not count records - tables may be empty")
             
     except Exception as e:
         logger.error(f"Database initialization error: {e}")
