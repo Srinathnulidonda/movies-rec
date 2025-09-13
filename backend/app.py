@@ -15,7 +15,7 @@ from collections import defaultdict, Counter
 import random
 import hashlib
 import time
-from sqlalchemy import func, and_, or_, desc, text
+from sqlalchemy import func, and_, or_, desc, text, inspect
 import telebot
 import threading
 from geopy.geocoders import Nominatim
@@ -27,6 +27,7 @@ from requests.packages.urllib3.util.retry import Retry
 from flask_mail import Mail
 from services.upcoming import UpcomingContentService, ContentType, LanguagePriority
 import asyncio
+from flask_migrate import Migrate
 import services.auth as auth
 from services.auth import init_auth, auth_bp
 from services.admin import admin_bp, init_admin
@@ -75,6 +76,7 @@ else:
 db = SQLAlchemy(app)
 CORS(app)
 cache = Cache(app)
+migrate = Migrate(app, db)  # Flask-Migrate for database migrations
 
 # API Keys - Set these in your environment
 TMDB_API_KEY = os.environ.get('TMDB_API_KEY', '1cf86635f20bb2aff8e70940e7c3ddd5')
@@ -2265,7 +2267,6 @@ def get_stats():
         logger.error(f"Stats error: {e}")
         return jsonify({'error': 'Failed to get statistics'}), 500
     
-migrate = Migrate(app, db)
 
     
 def create_tables():
