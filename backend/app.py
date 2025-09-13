@@ -23,7 +23,6 @@ import jwt
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import redis
 from requests.adapters import HTTPAdapter
-from flask_migrate import Migrate
 from requests.packages.urllib3.util.retry import Retry
 from flask_mail import Mail
 from services.upcoming import UpcomingContentService, ContentType, LanguagePriority
@@ -2265,6 +2264,19 @@ def get_stats():
     except Exception as e:
         logger.error(f"Stats error: {e}")
         return jsonify({'error': 'Failed to get statistics'}), 500
+    
+def reset_database():
+    try:
+        with app.app_context():
+            # Drop all tables
+            db.drop_all()
+            # Recreate all tables
+            db.create_all()
+            # Create admin user
+            create_admin_user()
+            logger.info("Database reset completed")
+    except Exception as e:
+        logger.error(f"Database reset error: {e}")
 
 # Initialize database
 def create_tables():
@@ -2295,39 +2307,6 @@ def create_tables():
 
 # Initialize database when app starts
 create_tables()
-
-migrate = Migrate(app, db)
-
-
-def update_database_schema():
-    """Update database schema to add missing columns"""
-    try:
-        with app.app_context():
-            # Check and add missing columns
-            from sqlalchemy import inspect, text
-            
-            inspector = inspect(db.engine)
-            
-            # Check if user table exists
-            if 'user' in inspector.get_table_names():
-                columns = [col['name'] for col in inspector.get_columns('user')]
-                
-                # Add missing columns
-                if 'avatar_url' not in columns:
-                    db.session.execute(text('ALTER TABLE "user" ADD COLUMN avatar_url VARCHAR(255)'))
-                    logger.info("Added avatar_url column to user table")
-                
-                db.session.commit()
-            
-            # Now create all tables (will skip existing ones)
-            db.create_all()
-            
-    except Exception as e:
-        logger.error(f"Schema update error: {e}")
-        db.session.rollback()
-
-# Call this before create_tables()
-update_database_schema()
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
