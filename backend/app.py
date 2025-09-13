@@ -23,6 +23,7 @@ import jwt
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import redis
 from requests.adapters import HTTPAdapter
+from flask_migrate import Migrate
 from requests.packages.urllib3.util.retry import Retry
 from flask_mail import Mail
 from services.upcoming import UpcomingContentService, ContentType, LanguagePriority
@@ -2294,6 +2295,8 @@ def create_tables():
 
 # Initialize database when app starts
 create_tables()
+
+migrate = Migrate(app, db)
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
