@@ -2298,6 +2298,37 @@ create_tables()
 
 migrate = Migrate(app, db)
 
+
+def update_database_schema():
+    """Update database schema to add missing columns"""
+    try:
+        with app.app_context():
+            # Check and add missing columns
+            from sqlalchemy import inspect, text
+            
+            inspector = inspect(db.engine)
+            
+            # Check if user table exists
+            if 'user' in inspector.get_table_names():
+                columns = [col['name'] for col in inspector.get_columns('user')]
+                
+                # Add missing columns
+                if 'avatar_url' not in columns:
+                    db.session.execute(text('ALTER TABLE "user" ADD COLUMN avatar_url VARCHAR(255)'))
+                    logger.info("Added avatar_url column to user table")
+                
+                db.session.commit()
+            
+            # Now create all tables (will skip existing ones)
+            db.create_all()
+            
+    except Exception as e:
+        logger.error(f"Schema update error: {e}")
+        db.session.rollback()
+
+# Call this before create_tables()
+update_database_schema()
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('FLASK_ENV') == 'development'
