@@ -31,7 +31,6 @@ import services.auth as auth
 from services.auth import init_auth, auth_bp
 from services.admin import admin_bp, init_admin
 from services.users import users_bp, init_users
-from services.detail import details_bp, init_details, SlugManager
 from services.algorithms import (
     RecommendationOrchestrator,
     PopularityRanking,
@@ -175,7 +174,6 @@ class User(db.Model):
     location = db.Column(db.String(100))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     last_active = db.Column(db.DateTime, default=datetime.utcnow)
-    avatar_url = db.Column(db.String(500))
 
 class Content(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -204,47 +202,14 @@ class Content(db.Model):
     critics_score = db.Column(db.Float)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
-    # New fields for detail service
-    slug = db.Column(db.String(255), unique=True, index=True)
-    tagline = db.Column(db.String(500))
-    plot_summary = db.Column(db.Text)
-    content_rating = db.Column(db.String(10))  # PG, PG-13, R, etc.
-    keywords = db.Column(db.Text)  # JSON string
-    production_companies = db.Column(db.Text)  # JSON string
-    production_countries = db.Column(db.Text)  # JSON string
-    budget = db.Column(db.BigInteger)
-    revenue = db.Column(db.BigInteger)
-    has_4k = db.Column(db.Boolean, default=False)
-    has_hdr = db.Column(db.Boolean, default=False)
-    has_dolby_vision = db.Column(db.Boolean, default=False)
-    has_dolby_atmos = db.Column(db.Boolean, default=False)
-    has_imax = db.Column(db.Boolean, default=False)
-    audio_languages = db.Column(db.Text)  # JSON string
-    subtitle_languages = db.Column(db.Text)  # JSON string
-    certifications = db.Column(db.Text)  # JSON string
-    networks = db.Column(db.Text)  # JSON string for TV shows
-    seasons = db.Column(db.Integer)
-    episodes = db.Column(db.Integer)
-    studios = db.Column(db.Text)  # JSON string for anime
-    airing_status = db.Column(db.String(50))  # For anime
-    status = db.Column(db.String(50))  # Released, In Production, etc.
-    logo_path = db.Column(db.String(255))
-    next_episode = db.Column(db.Text)  # JSON string
-    last_episode = db.Column(db.Text)  # JSON string
 
 class UserInteraction(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     content_id = db.Column(db.Integer, db.ForeignKey('content.id'), nullable=False)
-    interaction_type = db.Column(db.String(20), nullable=False)  # view, like, favorite, watchlist, search, review, rating
+    interaction_type = db.Column(db.String(20), nullable=False)  # view, like, favorite, watchlist, search
     rating = db.Column(db.Float)
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
-    
-    # New fields for reviews
-    review_text = db.Column(db.Text)
-    helpful_count = db.Column(db.Integer, default=0)
-    has_spoiler = db.Column(db.Boolean, default=False)
 
 class AdminRecommendation(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -262,6 +227,12 @@ class AnonymousInteraction(db.Model):
     interaction_type = db.Column(db.String(20), nullable=False)
     ip_address = db.Column(db.String(45))
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+
+# Register blueprints
+app.register_blueprint(auth_bp)
+app.register_blueprint(admin_bp)
+app.register_blueprint(users_bp)
+init_auth(app, db, User)
 
 # Helper Functions
 def get_session_id():
@@ -409,7 +380,7 @@ class TMDBService:
         url = f"{TMDBService.BASE_URL}/{content_type}/{content_id}"
         params = {
             'api_key': TMDB_API_KEY,
-            'append_to_response': 'credits,videos,similar,reviews,recommendations,keywords'
+            'append_to_response': 'credits,videos,similar,reviews,recommendations'
         }
         
         try:
@@ -696,34 +667,6 @@ class ContentService:
             elif 'original_language' in tmdb_data:
                 languages = [tmdb_data['original_language']]
             
-            # Extract keywords
-            keywords = []
-            if 'keywords' in tmdb_data:
-                if 'keywords' in tmdb_data['keywords']:
-                    keywords = [kw['name'] for kw in tmdb_data['keywords']['keywords']]
-                elif 'results' in tmdb_data['keywords']:
-                    keywords = [kw['name'] for kw in tmdb_data['keywords']['results']]
-            
-            # Extract production info
-            production_companies = []
-            if 'production_companies' in tmdb_data:
-                production_companies = [pc['name'] for pc in tmdb_data['production_companies']]
-            
-            production_countries = []
-            if 'production_countries' in tmdb_data:
-                production_countries = [pc['name'] for pc in tmdb_data['production_countries']]
-            
-            # Generate slug
-            title = tmdb_data.get('title') or tmdb_data.get('name')
-            year = None
-            if tmdb_data.get('release_date'):
-                year = tmdb_data.get('release_date')[:4]
-            elif tmdb_data.get('first_air_date'):
-                year = tmdb_data.get('first_air_date')[:4]
-            
-            slug = SlugManager.generate_slug(title, year, content_type)
-            slug = SlugManager.ensure_unique_slug(slug)
-            
             # Determine if it's a new release
             is_new_release = False
             release_date = None
@@ -747,22 +690,6 @@ class ContentService:
             # Get YouTube trailer
             youtube_trailer_id = ContentService.get_youtube_trailer(tmdb_data.get('title') or tmdb_data.get('name'))
             
-            # Extract additional metadata
-            budget = tmdb_data.get('budget', 0)
-            revenue = tmdb_data.get('revenue', 0)
-            tagline = tmdb_data.get('tagline', '')
-            status = tmdb_data.get('status', 'Released')
-            
-            # TV show specific
-            seasons = None
-            episodes = None
-            networks = []
-            if content_type == 'tv':
-                seasons = tmdb_data.get('number_of_seasons')
-                episodes = tmdb_data.get('number_of_episodes')
-                if 'networks' in tmdb_data:
-                    networks = [n['name'] for n in tmdb_data['networks']]
-            
             # Create content object
             content = Content(
                 tmdb_id=tmdb_data['id'],
@@ -782,18 +709,7 @@ class ContentService:
                 youtube_trailer_id=youtube_trailer_id,
                 is_new_release=is_new_release,
                 is_critics_choice=is_critics_choice,
-                critics_score=critics_score,
-                slug=slug,
-                tagline=tagline,
-                keywords=json.dumps(keywords),
-                production_companies=json.dumps(production_companies),
-                production_countries=json.dumps(production_countries),
-                budget=budget,
-                revenue=revenue,
-                status=status,
-                seasons=seasons,
-                episodes=episodes,
-                networks=json.dumps(networks)
+                critics_score=critics_score
             )
             
             db.session.add(content)
@@ -818,12 +734,6 @@ class ContentService:
             content.vote_count = tmdb_data.get('vote_count', content.vote_count)
             content.popularity = tmdb_data.get('popularity', content.popularity)
             content.updated_at = datetime.utcnow()
-            
-            # Update slug if missing
-            if not content.slug:
-                year = content.release_date.year if content.release_date else None
-                slug = SlugManager.generate_slug(content.title, year, content.content_type)
-                content.slug = SlugManager.ensure_unique_slug(slug, content.id)
             
             db.session.commit()
             
@@ -863,17 +773,8 @@ class ContentService:
                 except:
                     pass
             
-            # Generate slug
-            title = anime_data.get('title')
-            year = release_date.year if release_date else None
-            slug = SlugManager.generate_slug(title, year, 'anime')
-            slug = SlugManager.ensure_unique_slug(slug)
-            
             # Get YouTube trailer for anime
             youtube_trailer_id = ContentService.get_youtube_trailer(anime_data.get('title'), 'anime')
-            
-            # Extract studios
-            studios = [studio['name'] for studio in anime_data.get('studios', [])]
             
             # Create anime content
             content = Content(
@@ -890,11 +791,7 @@ class ContentService:
                 popularity=anime_data.get('popularity'),
                 overview=anime_data.get('synopsis'),
                 poster_path=anime_data.get('images', {}).get('jpg', {}).get('image_url'),
-                youtube_trailer_id=youtube_trailer_id,
-                slug=slug,
-                episodes=anime_data.get('episodes'),
-                airing_status=anime_data.get('status'),
-                studios=json.dumps(studios)
+                youtube_trailer_id=youtube_trailer_id
             )
             
             db.session.add(content)
@@ -963,7 +860,7 @@ class AnonymousRecommendationEngine:
                 genre_counts = Counter(all_genres)
                 top_genres = [genre for genre, _ in genre_counts.most_common(3)]
                 
-                # Get recommendations based on top genres
+                # Get recommendations based on top genres (would use algorithms here)
                 for genre in top_genres:
                     genre_content = Content.query.filter(
                         Content.genres.contains(genre)
@@ -1014,26 +911,13 @@ services = {
     'MLServiceClient': MLServiceClient,
     'http_session': http_session,
     'ML_SERVICE_URL': ML_SERVICE_URL,
-    'cache': cache,
-    'recommendation_orchestrator': recommendation_orchestrator,
-    'TMDB_API_KEY': TMDB_API_KEY,
-    'OMDB_API_KEY': OMDB_API_KEY,
-    'YOUTUBE_API_KEY': YOUTUBE_API_KEY
+    'cache': cache
 }
 
-# Register blueprints
-app.register_blueprint(auth_bp)
-app.register_blueprint(admin_bp)
-app.register_blueprint(users_bp)
-app.register_blueprint(details_bp)
-
-# Initialize modules
-init_auth(app, db, User)
 init_admin(app, db, models, services)
 init_users(app, db, models, services)
-init_details(app, db, cache, models, services)
 
-# ===================== API ROUTES =====================
+# API Routes
 
 # Enhanced Content Discovery Routes with caching
 @app.route('/api/search', methods=['GET'])
@@ -1089,7 +973,6 @@ def search_content():
                     results.append({
                         'id': content.id,
                         'tmdb_id': content.tmdb_id,
-                        'slug': content.slug,
                         'title': content.title,
                         'content_type': content.content_type,
                         'genres': json.loads(content.genres or '[]'),
@@ -1114,7 +997,6 @@ def search_content():
                     results.append({
                         'id': content.id,
                         'mal_id': content.mal_id,
-                        'slug': content.slug,
                         'title': content.title,
                         'content_type': 'anime',
                         'genres': json.loads(content.genres or '[]'),
@@ -1140,19 +1022,17 @@ def search_content():
         return jsonify({'error': 'Search failed'}), 500
 
 @app.route('/api/content/<int:content_id>', methods=['GET'])
-def get_content_by_id(content_id):
-    """Legacy endpoint - redirects to slug-based endpoint"""
+def get_content_details(content_id):
     try:
-        content = Content.query.get(content_id)
-        if not content:
-            return jsonify({'error': 'Content not found'}), 404
+        # Check cache first
+        cache_key = content_cache_key(content_id)
+        cached_content = cache.get(cache_key)
         
-        # Ensure content has slug
-        if not content.slug:
-            year = content.release_date.year if content.release_date else None
-            slug = SlugManager.generate_slug(content.title, year, content.content_type)
-            content.slug = SlugManager.ensure_unique_slug(slug, content.id)
-            db.session.commit()
+        if cached_content:
+            content = cached_content
+        else:
+            content = Content.query.get_or_404(content_id)
+            cache.set(cache_key, content, timeout=7200)
         
         # Record view interaction
         session_id = get_session_id()
@@ -1163,17 +1043,103 @@ def get_content_by_id(content_id):
             ip_address=request.remote_addr
         )
         db.session.add(interaction)
+        
+        # Get additional details
+        additional_details = None
+        cast = []
+        crew = []
+        
+        if content.content_type == 'anime' and content.mal_id:
+            # Get anime details
+            additional_details = JikanService.get_anime_details(content.mal_id)
+            if additional_details:
+                anime_data = additional_details.get('data', {})
+                # Extract voice actors as cast
+                if 'voices' in anime_data:
+                    cast = anime_data['voices'][:10]
+                # Extract staff as crew
+                if 'staff' in anime_data:
+                    crew = anime_data['staff'][:5]
+        elif content.tmdb_id:
+            # Get TMDB details
+            additional_details = TMDBService.get_content_details(content.tmdb_id, content.content_type)
+            if additional_details:
+                cast = additional_details.get('credits', {}).get('cast', [])[:10]
+                crew = additional_details.get('credits', {}).get('crew', [])[:5]
+        
+        # Get similar content using ultra-powerful similarity engine
+        content_pool = Content.query.filter(
+            Content.id != content_id,
+            Content.content_type == content.content_type
+        ).limit(500).all()
+        
+        similar_content = recommendation_orchestrator.get_ultra_similar_content(
+            content_id,
+            content_pool,
+            limit=10,
+            strict_mode=True,
+            min_similarity=0.5
+        )
+        
+        # Format similar content for response
+        similar_formatted = []
+        for similar in similar_content:
+            youtube_url = None
+            if similar.get('youtube_trailer_id'):
+                youtube_url = f"https://www.youtube.com/watch?v={similar['youtube_trailer_id']}"
+            
+            similar_formatted.append({
+                'id': similar['id'],
+                'title': similar['title'],
+                'poster_path': similar['poster_path'],
+                'rating': similar['rating'],
+                'content_type': similar['content_type'],
+                'youtube_trailer': youtube_url,
+                'similarity_score': similar['similarity_score'],
+                'match_type': similar['match_type']
+            })
+        
         db.session.commit()
         
-        return jsonify({
-            'redirect': f'/api/details/{content.slug}',
-            'slug': content.slug,
-            'message': 'Please use the slug-based endpoint for better SEO'
-        }), 301
+        # Get YouTube trailer URL
+        youtube_trailer_url = None
+        if content.youtube_trailer_id:
+            youtube_trailer_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
+        
+        response_data = {
+            'id': content.id,
+            'tmdb_id': content.tmdb_id,
+            'mal_id': content.mal_id,
+            'title': content.title,
+            'original_title': content.original_title,
+            'content_type': content.content_type,
+            'genres': json.loads(content.genres or '[]'),
+            'languages': json.loads(content.languages or '[]'),
+            'release_date': content.release_date.isoformat() if content.release_date else None,
+            'runtime': content.runtime,
+            'rating': content.rating,
+            'vote_count': content.vote_count,
+            'overview': content.overview,
+            'poster_path': f"https://image.tmdb.org/t/p/w500{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
+            'backdrop_path': f"https://image.tmdb.org/t/p/w1280{content.backdrop_path}" if content.backdrop_path and not content.backdrop_path.startswith('http') else content.backdrop_path,
+            'youtube_trailer': youtube_trailer_url,
+            'similar_content': similar_formatted,
+            'cast': cast,
+            'crew': crew,
+            'is_trending': content.is_trending,
+            'is_new_release': content.is_new_release,
+            'is_critics_choice': content.is_critics_choice
+        }
+        
+        # Add anime-specific data
+        if content.content_type == 'anime':
+            response_data['anime_genres'] = json.loads(content.anime_genres or '[]')
+        
+        return jsonify(response_data), 200
         
     except Exception as e:
-        logger.error(f"Content by ID error: {e}")
-        return jsonify({'error': 'Failed to get content'}), 500
+        logger.error(f"Content details error: {e}")
+        return jsonify({'error': 'Failed to get content details'}), 500
 
 @app.route('/api/recommendations/trending', methods=['GET'])
 @cache.cached(timeout=300, key_prefix=make_cache_key)
@@ -1238,14 +1204,6 @@ def get_trending():
             apply_language_priority=apply_language_priority
         )
         
-        # Add slugs to all recommendations
-        for cat_name, cat_items in categories.items():
-            for item in cat_items:
-                if 'id' in item and 'slug' not in item:
-                    content = Content.query.get(item['id'])
-                    if content:
-                        item['slug'] = content.slug
-        
         # Format response based on category
         if category == 'all':
             response = {
@@ -1284,14 +1242,17 @@ def get_trending():
         # Calculate and add metrics
         if category != 'all' and selected_category in categories and categories[selected_category]:
             try:
+                # Get all content items from the selected category
                 content_items = categories[selected_category]
                 if content_items and len(content_items) > 0:
+                    # Extract content IDs properly
                     content_ids = []
                     for item in content_items:
                         if isinstance(item, dict) and 'id' in item:
                             content_ids.append(item['id'])
                     
                     if content_ids:
+                        # Get content objects for diversity calculation
                         contents = Content.query.filter(Content.id.in_(content_ids)).all()
                         
                         response['metadata']['metrics'] = {
@@ -1366,13 +1327,6 @@ def get_new_releases():
             unique_releases,
             limit=limit
         )
-        
-        # Add slug to recommendations
-        for rec in recommendations:
-            if 'slug' not in rec and 'id' in rec:
-                content = Content.query.get(rec['id'])
-                if content:
-                    rec['slug'] = content.slug
         
         # Group by language for response
         language_groups = {
@@ -1467,6 +1421,7 @@ def get_new_releases():
     except Exception as e:
         logger.error(f"New releases error: {e}")
         return jsonify({'error': 'Failed to get new releases'}), 500
+    
 
 @app.route('/api/upcoming', methods=['GET'])
 async def get_upcoming_releases():
@@ -1603,7 +1558,6 @@ def get_critics_choice():
                     
                     recommendations.append({
                         'id': content.id,
-                        'slug': content.slug,
                         'title': content.title,
                         'content_type': content.content_type,
                         'genres': json.loads(content.genres or '[]'),
@@ -1654,7 +1608,6 @@ def get_genre_recommendations(genre):
                         
                         recommendations.append({
                             'id': content.id,
-                            'slug': content.slug,
                             'title': content.title,
                             'content_type': content.content_type,
                             'genres': json.loads(content.genres or '[]'),
@@ -1694,7 +1647,6 @@ def get_regional(language):
                         
                         recommendations.append({
                             'id': content.id,
-                            'slug': content.slug,
                             'title': content.title,
                             'content_type': content.content_type,
                             'genres': json.loads(content.genres or '[]'),
@@ -1737,7 +1689,6 @@ def get_anime():
                             recommendations.append({
                                 'id': content.id,
                                 'mal_id': content.mal_id,
-                                'slug': content.slug,
                                 'title': content.title,
                                 'original_title': content.original_title,
                                 'content_type': content.content_type,
@@ -1764,7 +1715,6 @@ def get_anime():
                         recommendations.append({
                             'id': content.id,
                             'mal_id': content.mal_id,
-                            'slug': content.slug,
                             'title': content.title,
                             'original_title': content.original_title,
                             'content_type': content.content_type,
@@ -1816,13 +1766,6 @@ def get_similar_recommendations(content_id):
             min_similarity=min_similarity
         )
         
-        # Add slugs to similar content
-        for item in similar_content:
-            if 'id' in item and 'slug' not in item:
-                content = Content.query.get(item['id'])
-                if content:
-                    item['slug'] = content.slug
-        
         # Track interaction
         session_id = get_session_id()
         interaction = AnonymousInteraction(
@@ -1838,7 +1781,6 @@ def get_similar_recommendations(content_id):
         response = {
             'base_content': {
                 'id': base_content.id,
-                'slug': base_content.slug,
                 'title': base_content.title,
                 'content_type': base_content.content_type,
                 'genres': json.loads(base_content.genres or '[]'),
@@ -1897,7 +1839,6 @@ def get_anonymous_recommendations():
             
             result.append({
                 'id': content.id,
-                'slug': content.slug,
                 'title': content.title,
                 'content_type': content.content_type,
                 'genres': json.loads(content.genres or '[]'),
@@ -1938,7 +1879,6 @@ def get_public_admin_recommendations():
                 
                 result.append({
                     'id': content.id,
-                    'slug': content.slug,
                     'title': content.title,
                     'content_type': content.content_type,
                     'genres': json.loads(content.genres or '[]'),
@@ -1957,56 +1897,6 @@ def get_public_admin_recommendations():
         logger.error(f"Public admin recommendations error: {e}")
         return jsonify({'error': 'Failed to get admin recommendations'}), 500
 
-# Slug migration endpoint
-@app.route('/api/admin/migrate-slugs', methods=['POST'])
-def migrate_slugs():
-    """One-time migration to add slugs to existing content"""
-    try:
-        # Check if user is admin
-        auth_header = request.headers.get('Authorization')
-        if not auth_header:
-            return jsonify({'error': 'Authentication required'}), 401
-        
-        try:
-            token = auth_header.replace('Bearer ', '')
-            data = jwt.decode(token, app.secret_key, algorithms=['HS256'])
-            user = User.query.get(data['user_id'])
-            if not user or not user.is_admin:
-                return jsonify({'error': 'Admin access required'}), 403
-        except:
-            return jsonify({'error': 'Invalid token'}), 401
-        
-        # Migrate slugs
-        contents = Content.query.filter(
-            or_(Content.slug == None, Content.slug == '')
-        ).all()
-        
-        migrated = 0
-        errors = []
-        
-        for content in contents:
-            try:
-                year = content.release_date.year if content.release_date else None
-                slug = SlugManager.generate_slug(content.title, year, content.content_type)
-                content.slug = SlugManager.ensure_unique_slug(slug, content.id)
-                migrated += 1
-            except Exception as e:
-                errors.append(f"Error migrating {content.title}: {str(e)}")
-        
-        db.session.commit()
-        
-        return jsonify({
-            'message': f'Migrated {migrated} content items',
-            'total_processed': len(contents),
-            'success': migrated,
-            'errors': errors
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"Slug migration error: {e}")
-        db.session.rollback()
-        return jsonify({'error': 'Migration failed'}), 500
-
 # Health check endpoint
 @app.route('/api/health', methods=['GET'])
 def health_check():
@@ -2016,7 +1906,7 @@ def health_check():
         health_info = {
             'status': 'healthy',
             'timestamp': datetime.utcnow().isoformat(),
-            'version': '5.0.0'  # Updated version with detail service
+            'version': '4.0.0'  # Updated version with ultra-powerful algorithms
         }
         
         # Check database connectivity
@@ -2045,9 +1935,7 @@ def health_check():
             'omdb': bool(OMDB_API_KEY),
             'youtube': bool(YOUTUBE_API_KEY),
             'ml_service': bool(ML_SERVICE_URL),
-            'algorithms': 'ultra_powerful_enabled',
-            'detail_service': 'enabled',
-            'slug_support': 'enabled'
+            'algorithms': 'ultra_powerful_enabled'
         }
         
         return jsonify(health_info), 200
