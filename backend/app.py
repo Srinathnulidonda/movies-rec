@@ -27,6 +27,7 @@ from requests.packages.urllib3.util.retry import Retry
 from flask_mail import Mail
 from services.upcoming import UpcomingContentService, ContentType, LanguagePriority
 import asyncio
+from flask_migrate import Migrate
 import services.auth as auth
 from services.auth import init_auth, auth_bp
 from services.admin import admin_bp, init_admin
@@ -59,7 +60,7 @@ else:
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 # Cache configuration with Redis
-REDIS_URL = os.environ.get('REDIS_URL', 'redis://red-d2qlbuje5dus73c71qog:xp7inVzgblGCbo9I4taSGLdKUg0xY91I@red-d2qlbuje5dus73c71qog:6379')
+REDIS_URL = 'redis://red-d2qlbuje5dus73c71qog:xp7inVzgblGCbo9I4taSGLdKUg0xY91I@red-d2qlbuje5dus73c71qog:6379'
 
 if REDIS_URL and REDIS_URL.startswith(('redis://', 'rediss://')):
     # Production - Redis
@@ -2265,19 +2266,9 @@ def get_stats():
         logger.error(f"Stats error: {e}")
         return jsonify({'error': 'Failed to get statistics'}), 500
     
-def reset_database():
-    try:
-        with app.app_context():
-            # Drop all tables
-            db.drop_all()
-            # Recreate all tables
-            db.create_all()
-            # Create admin user
-            create_admin_user()
-            logger.info("Database reset completed")
-    except Exception as e:
-        logger.error(f"Database reset error: {e}")
+migrate = Migrate(app, db)
 
+    
 # Initialize database
 def create_tables():
     try:
