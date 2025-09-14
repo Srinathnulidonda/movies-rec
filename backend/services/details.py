@@ -110,54 +110,52 @@ class SlugManager:
     @staticmethod
     def generate_slug(title: str, year: Optional[int] = None, content_type: str = 'movie') -> str:
         """
-        Generate URL-safe slug from title - PYTHON 3 COMPATIBLE VERSION
+        Generate URL-safe slug from title - FIXED VERSION
         Examples:
         - "The Dark Knight" (2008) → "the-dark-knight-2008"
         - "Attack on Titan" → "attack-on-titan"
         """
         if not title:
-            return f"content-{int(time.time())}"
+            return ""
         
         try:
-            # Use slugify with default settings
+            # Clean and slugify title - FIXED: Remove lowercase parameter and use manual conversion
             slug = slugify(title)
             if slug:
-                slug = slug.lower()
+                slug = slug.lower()  # Manual lowercase conversion
             else:
-                # Manual fallback if slugify returns empty
-                slug = title.lower()
-                # Replace non-alphanumeric characters with hyphens
-                slug = re.sub(r'[^a-z0-9]+', '-', slug)
-                # Remove leading/trailing hyphens
-                slug = slug.strip('-')
+                # Fallback if slugify fails
+                slug = re.sub(r'[^a-zA-Z0-9\s\-]', '', title)
+                slug = re.sub(r'\s+', '-', slug)
+                slug = slug.lower()
             
-            # Ensure slug is not empty after processing
-            if not slug:
-                slug = f"content-{int(time.time())}"
+            # Remove any remaining problematic characters
+            slug = re.sub(r'[^a-z0-9\-]', '', slug)
+            slug = re.sub(r'-+', '-', slug)  # Replace multiple hyphens with single
+            slug = slug.strip('-')  # Remove leading/trailing hyphens
             
-            # Add year if available (for movies)
+            # Add year if available (common practice for movies)
             if year and content_type == 'movie':
                 slug = f"{slug}-{year}"
             
             # Ensure slug is not too long
             if len(slug) > 100:
-                # Try to cut at word boundary
-                parts = slug[:100].split('-')
-                if len(parts) > 1:
-                    slug = '-'.join(parts[:-1])
-                else:
-                    slug = slug[:100]
+                slug = slug[:100].rsplit('-', 1)[0]
+            
+            # Ensure slug is not empty
+            if not slug:
+                slug = f"content-{int(time.time())}"
             
             return slug
             
         except Exception as e:
             logger.error(f"Error generating slug for title '{title}': {e}")
-            # Ultimate fallback - guaranteed to work
-            safe_title = ''.join(c for c in title.lower() if c.isalnum())
+            # Fallback slug generation
+            safe_title = re.sub(r'[^a-zA-Z0-9\s]', '', title or '')
+            safe_title = re.sub(r'\s+', '-', safe_title).lower()
             if not safe_title:
-                return f"content-{int(time.time())}"
-            return safe_title[:50]  # Truncate if too long
-
+                safe_title = f"content-{int(time.time())}"
+            return safe_title
     
     @staticmethod
     def generate_unique_slug(db, model, title: str, year: Optional[int] = None, 
@@ -368,7 +366,7 @@ class DetailsService:
         """Calculate string similarity score"""
         try:
             from difflib import SequenceMatcher
-            return SequenceMatcher(None, str1.lower(), str2.lower()).ratio()
+            return SequenceMatcher(None, str1.lower(), str2.lower()).ratio
         except Exception:
             return 0.0
     
