@@ -1,4 +1,5 @@
 # backend/app.py
+from typing import Optional
 from flask import Flask, request, jsonify, session, render_template
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
@@ -43,7 +44,7 @@ from services.algorithms import (
     UltraPowerfulSimilarityEngine
 )
 # New imports for details service
-from services.details import init_details_service, SlugManager
+from services.details import init_details_service
 from slugify import slugify
 import re
 
