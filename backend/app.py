@@ -246,9 +246,18 @@ class Content(db.Model):
     def ensure_slug(self):
         """Ensure this content has a slug"""
         if not self.slug and self.title:
-            year = self.release_date.year if self.release_date else None
-            self.slug = SlugManager.generate_unique_slug(db, Content, self.title, year, self.content_type)
-            db.session.commit()
+            try:
+                year = self.release_date.year if self.release_date else None
+                self.slug = SlugManager.generate_unique_slug(db, Content, self.title, year, self.content_type)
+                db.session.commit()
+            except Exception as e:
+                logger.error(f"Error ensuring slug for content {self.id}: {e}")
+                self.slug = f"content-{self.id}-{int(time.time())}"
+                try:
+                    db.session.commit()
+                except Exception as commit_error:
+                    logger.error(f"Error committing slug for content {self.id}: {commit_error}")
+                    db.session.rollback()
         return self.slug
 
 class UserInteraction(db.Model):
@@ -746,7 +755,99 @@ class YouTubeService:
             logger.error(f"YouTube search error: {e}")
         return None
 
-# Enhanced Content Management Service with slug support
+# FIXED SlugManager Class with error handling
+class FixedSlugManager:
+    """Fixed slug manager for app.py"""
+    
+    @staticmethod
+    def generate_slug(title: str, year: Optional[int] = None, content_type: str = 'movie') -> str:
+        """
+        Generate URL-safe slug from title - FIXED VERSION
+        Examples:
+        - "The Dark Knight" (2008) → "the-dark-knight-2008"
+        - "Attack on Titan" → "attack-on-titan"
+        """
+        if not title:
+            return ""
+        
+        try:
+            # Clean and slugify title - FIXED: Remove lowercase parameter and use manual conversion
+            slug = slugify(title, separator='-')
+            if slug:
+                slug = slug.lower()  # Manual lowercase conversion
+            else:
+                # Fallback if slugify fails
+                slug = re.sub(r'[^a-zA-Z0-9\s\-]', '', title)
+                slug = re.sub(r'\s+', '-', slug)
+                slug = slug.lower()
+            
+            # Remove any remaining problematic characters
+            slug = re.sub(r'[^a-z0-9\-]', '', slug)
+            slug = re.sub(r'-+', '-', slug)  # Replace multiple hyphens with single
+            slug = slug.strip('-')  # Remove leading/trailing hyphens
+            
+            # Add year if available (common practice for movies)
+            if year and content_type == 'movie':
+                slug = f"{slug}-{year}"
+            
+            # Ensure slug is not too long
+            if len(slug) > 100:
+                slug = slug[:100].rsplit('-', 1)[0]
+            
+            # Ensure slug is not empty
+            if not slug:
+                slug = f"content-{int(time.time())}"
+            
+            return slug
+            
+        except Exception as e:
+            logger.error(f"Error generating slug for title '{title}': {e}")
+            # Fallback slug generation
+            safe_title = re.sub(r'[^a-zA-Z0-9\s]', '', title or '')
+            safe_title = re.sub(r'\s+', '-', safe_title).lower()
+            if not safe_title:
+                safe_title = f"content-{int(time.time())}"
+            return safe_title
+    
+    @staticmethod
+    def generate_unique_slug(db, model, title: str, year: Optional[int] = None, 
+                           content_type: str = 'movie') -> str:
+        """Generate unique slug, adding suffix if necessary"""
+        try:
+            base_slug = FixedSlugManager.generate_slug(title, year, content_type)
+            
+            # Ensure base_slug is not empty
+            if not base_slug:
+                base_slug = f"content-{int(time.time())}"
+            
+            slug = base_slug
+            counter = 1
+            
+            # Keep trying until we find a unique slug
+            while True:
+                try:
+                    existing = db.session.query(model).filter_by(slug=slug).first()
+                    if not existing:
+                        break
+                    slug = f"{base_slug}-{counter}"
+                    counter += 1
+                    
+                    # Prevent infinite loop
+                    if counter > 1000:
+                        slug = f"{base_slug}-{int(time.time())}"
+                        break
+                except Exception as e:
+                    logger.error(f"Error checking slug uniqueness: {e}")
+                    slug = f"{base_slug}-{int(time.time())}"
+                    break
+            
+            return slug
+            
+        except Exception as e:
+            logger.error(f"Error generating unique slug: {e}")
+            return f"content-{int(time.time())}"
+
+# Enhanced Content Management Service with slug support - FIXED
 class ContentService:
     @staticmethod
     def save_content_from_tmdb(tmdb_data, content_type):
@@ -798,12 +899,16 @@ class ContentService:
             # Get YouTube trailer
             youtube_trailer_id = ContentService.get_youtube_trailer(tmdb_data.get('title') or tmdb_data.get('name'))
             
-            # Generate unique slug - ENSURE THIS ALWAYS WORKS
+            # Generate unique slug - FIXED with error handling
             title = tmdb_data.get('title') or tmdb_data.get('name')
             if not title:
                 title = f"Unknown Title {tmdb_data.get('id', '')}"
             
-            slug = SlugManager.generate_unique_slug(db, Content, title, year, content_type)
+            try:
+                slug = FixedSlugManager.generate_unique_slug(db, Content, title, year, content_type)
+            except Exception as e:
+                logger.error(f"Error generating slug for '{title}': {e}")
+                slug = f"content-{tmdb_data.get('id', int(time.time()))}"
             
             # Ensure slug is not None
             if not slug:
@@ -917,7 +1022,11 @@ class ContentService:
             
             # Create new person
             name = person_data.get('name')
-            slug = SlugManager.generate_unique_slug(db, Person, name)
+            try:
+                slug = FixedSlugManager.generate_unique_slug(db, Person, name)
+            except Exception as e:
+                logger.error(f"Error generating slug for person '{name}': {e}")
+                slug = f"person-{person_data['id']}-{int(time.time())}"
             
             person = Person(
                 slug=slug,
@@ -939,7 +1048,7 @@ class ContentService:
     
     @staticmethod
     def update_content_from_tmdb(content, tmdb_data):
-        """Update existing content with new TMDB data"""
+        """Update existing content with new TMDB data - FIXED"""
         try:
             # Update fields
             content.rating = tmdb_data.get('vote_average', content.rating)
@@ -947,12 +1056,16 @@ class ContentService:
             content.popularity = tmdb_data.get('popularity', content.popularity)
             content.updated_at = datetime.utcnow()
             
-            # Ensure slug exists - if missing, generate one
+            # Ensure slug exists - if missing, generate one with error handling
             if not content.slug:
                 year = content.release_date.year if content.release_date else None
                 title = content.title or tmdb_data.get('title') or tmdb_data.get('name')
                 if title:
-                    content.slug = SlugManager.generate_unique_slug(db, Content, title, year, content.content_type)
+                    try:
+                        content.slug = FixedSlugManager.generate_unique_slug(db, Content, title, year, content.content_type)
+                    except Exception as e:
+                        logger.error(f"Error generating slug for content update '{title}': {e}")
+                        content.slug = f"content-{content.id}-{int(time.time())}"
                 else:
                     content.slug = f"content-{content.id}-{int(time.time())}"
             
@@ -999,12 +1112,16 @@ class ContentService:
             # Get YouTube trailer for anime
             youtube_trailer_id = ContentService.get_youtube_trailer(anime_data.get('title'), 'anime')
             
-            # Generate unique slug for anime
+            # Generate unique slug for anime - FIXED
             title = anime_data.get('title')
             if not title:
                 title = f"Anime {anime_data.get('mal_id', '')}"
             
-            slug = SlugManager.generate_unique_slug(db, Content, title, year, 'anime')
+            try:
+                slug = FixedSlugManager.generate_unique_slug(db, Content, title, year, 'anime')
+            except Exception as e:
+                logger.error(f"Error generating slug for anime '{title}': {e}")
+                slug = f"anime-{anime_data.get('mal_id', int(time.time()))}"
             
             # Ensure slug is not None
             if not slug:
@@ -1089,7 +1206,10 @@ class AnonymousRecommendationEngine:
                 all_genres = []
                 for content in viewed_contents:
                     if content.genres:
-                        all_genres.extend(json.loads(content.genres))
+                        try:
+                            all_genres.extend(json.loads(content.genres))
+                        except (json.JSONDecodeError, TypeError):
+                            pass
                 
                 # Get most common genres
                 genre_counts = Counter(all_genres)
@@ -1155,12 +1275,17 @@ services = {
 init_admin(app, db, models, services)
 init_users(app, db, models, services)
 
-# Initialize details service
-details_service = init_details_service(app, db, models, cache)
+# Initialize details service with error handling
+details_service = None
+try:
+    details_service = init_details_service(app, db, models, cache)
+    logger.info("Details service initialized successfully")
+except Exception as e:
+    logger.error(f"Failed to initialize details service: {e}")
 
 # API Routes
 
-# NEW: Slug-based details endpoint
+# NEW: Slug-based details endpoint - FIXED
 @app.route('/api/details/<slug>', methods=['GET'])
 def get_content_details_by_slug(slug):
     """Get content details by slug"""
@@ -1177,7 +1302,11 @@ def get_content_details_by_slug(slug):
                 pass
         
         # Get details using the details service
-        details = details_service.get_details_by_slug(slug, user_id)
+        if details_service:
+            details = details_service.get_details_by_slug(slug, user_id)
+        else:
+            logger.error("Details service not available")
+            return jsonify({'error': 'Service unavailable'}), 503
         
         if not details:
             return jsonify({'error': 'Content not found'}), 404
@@ -2188,7 +2317,10 @@ def get_public_admin_recommendations():
 def get_person_details(slug):
     """Get person details by slug"""
     try:
-        person_details = details_service.get_person_details(slug)
+        if details_service:
+            person_details = details_service.get_person_details(slug)
+        else:
+            return jsonify({'error': 'Service unavailable'}), 503
         
         if not person_details:
             return jsonify({'error': 'Person not found'}), 404
@@ -2217,7 +2349,10 @@ def add_review(slug):
         review_data = request.json
         
         # Add review
-        result = details_service.add_review(content.id, user_id, review_data)
+        if details_service:
+            result = details_service.add_review(content.id, user_id, review_data)
+        else:
+            return jsonify({'error': 'Service unavailable'}), 503
         
         if result['success']:
             return jsonify(result), 201
@@ -2236,7 +2371,10 @@ def vote_review_helpful(review_id):
         user_id = request.user_id
         is_helpful = request.json.get('is_helpful', True)
         
-        success = details_service.vote_review_helpful(review_id, user_id, is_helpful)
+        if details_service:
+            success = details_service.vote_review_helpful(review_id, user_id, is_helpful)
+        else:
+            return jsonify({'error': 'Service unavailable'}), 503
         
         if success:
             return jsonify({'success': True}), 200
@@ -2317,7 +2455,7 @@ def health_check():
         health_info = {
             'status': 'healthy',
             'timestamp': datetime.utcnow().isoformat(),
-            'version': '4.0.0'  # Updated version with slug support
+            'version': '4.0.1'  # Updated version with all fixes
         }
         
         # Check database connectivity
@@ -2347,7 +2485,8 @@ def health_check():
             'youtube': bool(YOUTUBE_API_KEY),
             'ml_service': bool(ML_SERVICE_URL),
             'algorithms': 'ultra_powerful_enabled',
-            'slug_support': 'enabled'
+            'slug_support': 'enabled',
+            'details_service': 'enabled' if details_service else 'disabled'
         }
         
         return jsonify(health_info), 200
@@ -2359,7 +2498,7 @@ def health_check():
             'timestamp': datetime.utcnow().isoformat()
         }), 500
 
-# ENHANCED: CLI command for generating slugs
+# FIXED: CLI command for generating slugs
 @app.cli.command('generate-slugs')
 def generate_slugs():
     """Generate slugs for existing content"""
@@ -2378,7 +2517,12 @@ def generate_slugs():
                 year = content.release_date.year if content.release_date else None
                 title = content.title or f"Content {content.id}"
                 
-                slug = SlugManager.generate_unique_slug(db, Content, title, year, content.content_type)
+                try:
+                    slug = FixedSlugManager.generate_unique_slug(db, Content, title, year, content.content_type)
+                except Exception as e:
+                    logger.error(f"Error generating slug for content {content.id}: {e}")
+                    slug = f"content-{content.id}-{int(time.time())}"
+                
                 content.slug = slug
                 
                 print(f"[{i+1}/{len(contents)}] Generated slug for '{title}': {slug}")
@@ -2402,7 +2546,12 @@ def generate_slugs():
         for i, person in enumerate(persons):
             try:
                 name = person.name or f"Person {person.id}"
-                slug = SlugManager.generate_unique_slug(db, Person, name)
+                try:
+                    slug = FixedSlugManager.generate_unique_slug(db, Person, name)
+                except Exception as e:
+                    logger.error(f"Error generating slug for person {person.id}: {e}")
+                    slug = f"person-{person.id}-{int(time.time())}"
+                
                 person.slug = slug
                 
                 print(f"[{i+1}/{len(persons)}] Generated slug for '{name}': {slug}")
@@ -2460,7 +2609,22 @@ def create_tables():
 # Initialize database when app starts
 create_tables()
 
+# Application startup logging
 if __name__ == '__main__':
+    print("=== Running Flask in development mode ===")
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('FLASK_ENV') == 'development'
     app.run(host='0.0.0.0', port=port, debug=debug)
+else:
+    # This runs when imported by Gunicorn
+    print("=== Flask app imported by Gunicorn ===")
+    print(f"App name: {app.name}")
+    print(f"Database URI configured: {'Yes' if app.config.get('SQLALCHEMY_DATABASE_URI') else 'No'}")
+    print(f"Cache type: {app.config.get('CACHE_TYPE', 'Not configured')}")
+    print(f"Details service status: {'Initialized' if details_service else 'Failed to initialize'}")
+    
+    # Log all registered routes
+    print("\n=== Registered Routes ===")
+    for rule in app.url_map.iter_rules():
+        print(f"{rule.endpoint}: {rule.rule} [{', '.join(rule.methods)}]")
+    print("=== End of Routes ===\n")
