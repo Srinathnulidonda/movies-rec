@@ -762,53 +762,37 @@ class FixedSlugManager:
     
     @staticmethod
     def generate_slug(title: str, year: Optional[int] = None, content_type: str = 'movie') -> str:
-        """
-        Generate URL-safe slug from title - FIXED VERSION
-        Examples:
-        - "The Dark Knight" (2008) → "the-dark-knight-2008"
-        - "Attack on Titan" → "attack-on-titan"
-        """
+        """Generate URL-safe slug from title - PYTHON 3 COMPATIBLE"""
         if not title:
-            return ""
+            return f"content-{int(time.time())}"
         
         try:
-            # Clean and slugify title - FIXED: Remove separator parameter completely
-            slug = slugify(title)  # CHANGED: Removed separator parameter
-            if slug:
-                slug = slug.lower()  # Manual lowercase conversion
-            else:
-                # Fallback if slugify fails
-                slug = re.sub(r'[^a-zA-Z0-9\s\-]', '', title)
-                slug = re.sub(r'\s+', '-', slug)
-                slug = slug.lower()
+            # Convert to lowercase and clean
+            slug = str(title).lower()
             
-            # Remove any remaining problematic characters
-            slug = re.sub(r'[^a-z0-9\-]', '', slug)
-            slug = re.sub(r'-+', '-', slug)  # Replace multiple hyphens with single
-            slug = slug.strip('-')  # Remove leading/trailing hyphens
+            # Replace spaces and special characters with hyphens
+            slug = re.sub(r'[^a-z0-9\s]', '', slug)  # Keep only alphanumeric and spaces
+            slug = re.sub(r'\s+', '-', slug)         # Replace spaces with hyphens
+            slug = re.sub(r'-+', '-', slug)          # Replace multiple hyphens with single
+            slug = slug.strip('-')                   # Remove leading/trailing hyphens
             
-            # Add year if available (common practice for movies)
+            # Ensure not empty
+            if not slug:
+                slug = f"content-{int(time.time())}"
+            
+            # Add year for movies
             if year and content_type == 'movie':
                 slug = f"{slug}-{year}"
             
-            # Ensure slug is not too long
+            # Limit length
             if len(slug) > 100:
-                slug = slug[:100].rsplit('-', 1)[0]
-            
-            # Ensure slug is not empty
-            if not slug:
-                slug = f"content-{int(time.time())}"
+                slug = slug[:100].rstrip('-')
             
             return slug
             
         except Exception as e:
             logger.error(f"Error generating slug for title '{title}': {e}")
-            # Fallback slug generation
-            safe_title = re.sub(r'[^a-zA-Z0-9\s]', '', title or '')
-            safe_title = re.sub(r'\s+', '-', safe_title).lower()
-            if not safe_title:
-                safe_title = f"content-{int(time.time())}"
-            return safe_title
+            return f"content-{int(time.time())}"
     
     @staticmethod
     def generate_unique_slug(db, model, title: str, year: Optional[int] = None, 
@@ -817,7 +801,6 @@ class FixedSlugManager:
         try:
             base_slug = FixedSlugManager.generate_slug(title, year, content_type)
             
-            # Ensure base_slug is not empty
             if not base_slug:
                 base_slug = f"content-{int(time.time())}"
             
@@ -835,18 +818,18 @@ class FixedSlugManager:
                     
                     # Prevent infinite loop
                     if counter > 1000:
-                        slug = f"{base_slug}-{int(time.time())}"
+                        slug = f"content-{int(time.time())}"
                         break
                 except Exception as e:
                     logger.error(f"Error checking slug uniqueness: {e}")
-                    slug = f"{base_slug}-{int(time.time())}"
+                    slug = f"content-{int(time.time())}"
                     break
             
             return slug
             
         except Exception as e:
             logger.error(f"Error generating unique slug: {e}")
-            return f"content-{int(time.time())}"
+            return f"content-{int(time.time())}"    
 
 # Enhanced Content Management Service with slug support - FIXED
 class ContentService:
