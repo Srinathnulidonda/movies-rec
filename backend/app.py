@@ -212,7 +212,7 @@ class Content(db.Model):
     __tablename__ = 'content'
     
     id = db.Column(db.Integer, primary_key=True)
-    slug = db.Column(db.String(150), unique=True, nullable=False, index=True)  # NEW: Added slug field
+    slug = db.Column(db.String(150), unique=True, nullable=False, index=True)  # Slug field
     tmdb_id = db.Column(db.Integer, unique=True)
     imdb_id = db.Column(db.String(20))
     mal_id = db.Column(db.Integer)  # For anime
@@ -243,6 +243,14 @@ class Content(db.Model):
     reviews = db.relationship('Review', backref='content', lazy='dynamic')
     cast_crew = db.relationship('ContentPerson', backref='content', lazy='dynamic')
 
+    def ensure_slug(self):
+        """Ensure this content has a slug"""
+        if not self.slug and self.title:
+            year = self.release_date.year if self.release_date else None
+            self.slug = SlugManager.generate_unique_slug(db, Content, self.title, year, self.content_type)
+            db.session.commit()
+        return self.slug
+
 class UserInteraction(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
@@ -269,7 +277,7 @@ class AnonymousInteraction(db.Model):
     ip_address = db.Column(db.String(45))
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
 
-# NEW: Additional models for details service
+# Additional models for details service
 class Person(db.Model):
     __tablename__ = 'persons'
     
@@ -790,13 +798,20 @@ class ContentService:
             # Get YouTube trailer
             youtube_trailer_id = ContentService.get_youtube_trailer(tmdb_data.get('title') or tmdb_data.get('name'))
             
-            # Generate unique slug
+            # Generate unique slug - ENSURE THIS ALWAYS WORKS
             title = tmdb_data.get('title') or tmdb_data.get('name')
+            if not title:
+                title = f"Unknown Title {tmdb_data.get('id', '')}"
+            
             slug = SlugManager.generate_unique_slug(db, Content, title, year, content_type)
+            
+            # Ensure slug is not None
+            if not slug:
+                slug = f"content-{tmdb_data.get('id', int(time.time()))}"
             
             # Create content object
             content = Content(
-                slug=slug,  # NEW: Add slug
+                slug=slug,
                 tmdb_id=tmdb_data['id'],
                 title=title,
                 original_title=tmdb_data.get('original_title') or tmdb_data.get('original_name'),
@@ -932,10 +947,14 @@ class ContentService:
             content.popularity = tmdb_data.get('popularity', content.popularity)
             content.updated_at = datetime.utcnow()
             
-            # Update slug if missing
+            # Ensure slug exists - if missing, generate one
             if not content.slug:
                 year = content.release_date.year if content.release_date else None
-                content.slug = SlugManager.generate_unique_slug(db, Content, content.title, year, content.content_type)
+                title = content.title or tmdb_data.get('title') or tmdb_data.get('name')
+                if title:
+                    content.slug = SlugManager.generate_unique_slug(db, Content, title, year, content.content_type)
+                else:
+                    content.slug = f"content-{content.id}-{int(time.time())}"
             
             db.session.commit()
             
@@ -980,13 +999,20 @@ class ContentService:
             # Get YouTube trailer for anime
             youtube_trailer_id = ContentService.get_youtube_trailer(anime_data.get('title'), 'anime')
             
-            # Generate unique slug
+            # Generate unique slug for anime
             title = anime_data.get('title')
+            if not title:
+                title = f"Anime {anime_data.get('mal_id', '')}"
+            
             slug = SlugManager.generate_unique_slug(db, Content, title, year, 'anime')
+            
+            # Ensure slug is not None
+            if not slug:
+                slug = f"anime-{anime_data.get('mal_id', int(time.time()))}"
             
             # Create anime content
             content = Content(
-                slug=slug,  # NEW: Add slug
+                slug=slug,
                 mal_id=anime_data['mal_id'],
                 title=title,
                 original_title=anime_data.get('title_japanese'),
@@ -1111,9 +1137,9 @@ models = {
     'Content': Content,
     'UserInteraction': UserInteraction,
     'AdminRecommendation': AdminRecommendation,
-    'Review': Review,  # NEW
-    'Person': Person,  # NEW
-    'ContentPerson': ContentPerson  # NEW
+    'Review': Review,
+    'Person': Person,
+    'ContentPerson': ContentPerson
 }
 
 services = {
@@ -1129,10 +1155,38 @@ services = {
 init_admin(app, db, models, services)
 init_users(app, db, models, services)
 
-# NEW: Initialize details service
+# Initialize details service
 details_service = init_details_service(app, db, models, cache)
 
 # API Routes
+
+# NEW: Slug-based details endpoint
+@app.route('/api/details/<slug>', methods=['GET'])
+def get_content_details_by_slug(slug):
+    """Get content details by slug"""
+    try:
+        # Get user ID if authenticated
+        user_id = None
+        auth_header = request.headers.get('Authorization')
+        if auth_header and auth_header.startswith('Bearer '):
+            token = auth_header.split(' ')[1]
+            try:
+                payload = jwt.decode(token, app.config['SECRET_KEY'], algorithms=['HS256'])
+                user_id = payload.get('user_id')
+            except:
+                pass
+        
+        # Get details using the details service
+        details = details_service.get_details_by_slug(slug, user_id)
+        
+        if not details:
+            return jsonify({'error': 'Content not found'}), 404
+        
+        return jsonify(details), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting details for slug {slug}: {e}")
+        return jsonify({'error': 'Failed to get content details'}), 500
 
 # Enhanced Content Discovery Routes with caching
 @app.route('/api/search', methods=['GET'])
@@ -1187,7 +1241,7 @@ def search_content():
                     
                     results.append({
                         'id': content.id,
-                        'slug': content.slug,  # NEW: Add slug
+                        'slug': content.slug,
                         'tmdb_id': content.tmdb_id,
                         'title': content.title,
                         'content_type': content.content_type,
@@ -1212,7 +1266,7 @@ def search_content():
                     
                     results.append({
                         'id': content.id,
-                        'slug': content.slug,  # NEW: Add slug
+                        'slug': content.slug,
                         'mal_id': content.mal_id,
                         'title': content.title,
                         'content_type': 'anime',
@@ -1238,96 +1292,6 @@ def search_content():
         logger.error(f"Search error: {e}")
         return jsonify({'error': 'Search failed'}), 500
 
-# NEW: Details routes with slug support
-@app.route('/api/details/<slug>', methods=['GET'])
-def get_content_details_by_slug(slug):
-    """Get content details by slug"""
-    try:
-        # Get user ID if authenticated
-        user_id = None
-        auth_header = request.headers.get('Authorization')
-        if auth_header and auth_header.startswith('Bearer '):
-            token = auth_header.split(' ')[1]
-            try:
-                payload = jwt.decode(token, app.config['SECRET_KEY'], algorithms=['HS256'])
-                user_id = payload.get('user_id')
-            except:
-                pass
-        
-        # Get details
-        details = details_service.get_details_by_slug(slug, user_id)
-        
-        if not details:
-            return jsonify({'error': 'Content not found'}), 404
-        
-        return jsonify(details), 200
-        
-    except Exception as e:
-        logger.error(f"Error getting details for slug {slug}: {e}")
-        return jsonify({'error': 'Failed to get content details'}), 500
-
-@app.route('/api/person/<slug>', methods=['GET'])
-def get_person_details(slug):
-    """Get person details by slug"""
-    try:
-        person_details = details_service.get_person_details(slug)
-        
-        if not person_details:
-            return jsonify({'error': 'Person not found'}), 404
-        
-        return jsonify(person_details), 200
-        
-    except Exception as e:
-        logger.error(f"Error getting person details for slug {slug}: {e}")
-        return jsonify({'error': 'Failed to get person details'}), 500
-
-@app.route('/api/details/<slug>/reviews', methods=['POST'])
-@auth_required
-def add_review(slug):
-    """Add a review for content"""
-    try:
-        # Get content by slug
-        content = Content.query.filter_by(slug=slug).first()
-        if not content:
-            return jsonify({'error': 'Content not found'}), 404
-        
-        # Get user ID from token
-        user_id = request.user_id  # Set by auth_required decorator
-        
-        # Get review data
-        review_data = request.json
-        
-        # Add review
-        result = details_service.add_review(content.id, user_id, review_data)
-        
-        if result['success']:
-            return jsonify(result), 201
-        else:
-            return jsonify(result), 400
-            
-    except Exception as e:
-        logger.error(f"Error adding review: {e}")
-        return jsonify({'error': 'Failed to add review'}), 500
-
-@app.route('/api/reviews/<int:review_id>/helpful', methods=['POST'])
-@auth_required
-def vote_review_helpful(review_id):
-    """Vote on review helpfulness"""
-    try:
-        user_id = request.user_id
-        is_helpful = request.json.get('is_helpful', True)
-        
-        success = details_service.vote_review_helpful(review_id, user_id, is_helpful)
-        
-        if success:
-            return jsonify({'success': True}), 200
-        else:
-            return jsonify({'error': 'Failed to vote'}), 400
-            
-    except Exception as e:
-        logger.error(f"Error voting on review: {e}")
-        return jsonify({'error': 'Failed to vote'}), 500
-
 # Existing content route (keep for backward compatibility, but also return slug)
 @app.route('/api/content/<int:content_id>', methods=['GET'])
 def get_content_details(content_id):
@@ -1341,6 +1305,10 @@ def get_content_details(content_id):
         else:
             content = Content.query.get_or_404(content_id)
             cache.set(cache_key, content, timeout=7200)
+        
+        # Ensure content has slug
+        if not content.slug:
+            content.ensure_slug()
         
         # Record view interaction
         session_id = get_session_id()
@@ -1398,7 +1366,7 @@ def get_content_details(content_id):
             
             similar_formatted.append({
                 'id': similar['id'],
-                'slug': similar.get('slug'),  # NEW: Add slug
+                'slug': similar.get('slug'),
                 'title': similar['title'],
                 'poster_path': similar['poster_path'],
                 'rating': similar['rating'],
@@ -1417,7 +1385,7 @@ def get_content_details(content_id):
         
         response_data = {
             'id': content.id,
-            'slug': content.slug,  # NEW: Add slug
+            'slug': content.slug,
             'tmdb_id': content.tmdb_id,
             'mal_id': content.mal_id,
             'title': content.title,
@@ -1868,6 +1836,7 @@ def get_critics_choice():
                     
                     recommendations.append({
                         'id': content.id,
+                        'slug': content.slug,
                         'title': content.title,
                         'content_type': content.content_type,
                         'genres': json.loads(content.genres or '[]'),
@@ -1918,6 +1887,7 @@ def get_genre_recommendations(genre):
                         
                         recommendations.append({
                             'id': content.id,
+                            'slug': content.slug,
                             'title': content.title,
                             'content_type': content.content_type,
                             'genres': json.loads(content.genres or '[]'),
@@ -1957,6 +1927,7 @@ def get_regional(language):
                         
                         recommendations.append({
                             'id': content.id,
+                            'slug': content.slug,
                             'title': content.title,
                             'content_type': content.content_type,
                             'genres': json.loads(content.genres or '[]'),
@@ -1998,6 +1969,7 @@ def get_anime():
                             
                             recommendations.append({
                                 'id': content.id,
+                                'slug': content.slug,
                                 'mal_id': content.mal_id,
                                 'title': content.title,
                                 'original_title': content.original_title,
@@ -2024,6 +1996,7 @@ def get_anime():
                         
                         recommendations.append({
                             'id': content.id,
+                            'slug': content.slug,
                             'mal_id': content.mal_id,
                             'title': content.title,
                             'original_title': content.original_title,
@@ -2091,6 +2064,7 @@ def get_similar_recommendations(content_id):
         response = {
             'base_content': {
                 'id': base_content.id,
+                'slug': base_content.slug,
                 'title': base_content.title,
                 'content_type': base_content.content_type,
                 'genres': json.loads(base_content.genres or '[]'),
@@ -2149,6 +2123,7 @@ def get_anonymous_recommendations():
             
             result.append({
                 'id': content.id,
+                'slug': content.slug,
                 'title': content.title,
                 'content_type': content.content_type,
                 'genres': json.loads(content.genres or '[]'),
@@ -2189,6 +2164,7 @@ def get_public_admin_recommendations():
                 
                 result.append({
                     'id': content.id,
+                    'slug': content.slug,
                     'title': content.title,
                     'content_type': content.content_type,
                     'genres': json.loads(content.genres or '[]'),
@@ -2207,6 +2183,131 @@ def get_public_admin_recommendations():
         logger.error(f"Public admin recommendations error: {e}")
         return jsonify({'error': 'Failed to get admin recommendations'}), 500
 
+# Person details endpoint
+@app.route('/api/person/<slug>', methods=['GET'])
+def get_person_details(slug):
+    """Get person details by slug"""
+    try:
+        person_details = details_service.get_person_details(slug)
+        
+        if not person_details:
+            return jsonify({'error': 'Person not found'}), 404
+        
+        return jsonify(person_details), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting person details for slug {slug}: {e}")
+        return jsonify({'error': 'Failed to get person details'}), 500
+
+# Review endpoints
+@app.route('/api/details/<slug>/reviews', methods=['POST'])
+@auth_required
+def add_review(slug):
+    """Add a review for content"""
+    try:
+        # Get content by slug
+        content = Content.query.filter_by(slug=slug).first()
+        if not content:
+            return jsonify({'error': 'Content not found'}), 404
+        
+        # Get user ID from token
+        user_id = request.user_id  # Set by auth_required decorator
+        
+        # Get review data
+        review_data = request.json
+        
+        # Add review
+        result = details_service.add_review(content.id, user_id, review_data)
+        
+        if result['success']:
+            return jsonify(result), 201
+        else:
+            return jsonify(result), 400
+            
+    except Exception as e:
+        logger.error(f"Error adding review: {e}")
+        return jsonify({'error': 'Failed to add review'}), 500
+
+@app.route('/api/reviews/<int:review_id>/helpful', methods=['POST'])
+@auth_required
+def vote_review_helpful(review_id):
+    """Vote on review helpfulness"""
+    try:
+        user_id = request.user_id
+        is_helpful = request.json.get('is_helpful', True)
+        
+        success = details_service.vote_review_helpful(review_id, user_id, is_helpful)
+        
+        if success:
+            return jsonify({'success': True}), 200
+        else:
+            return jsonify({'error': 'Failed to vote'}), 400
+            
+    except Exception as e:
+        logger.error(f"Error voting on review: {e}")
+        return jsonify({'error': 'Failed to vote'}), 500
+
+# TEMPORARY: Debug endpoints to test slug functionality
+@app.route('/api/debug/test-slug/<slug>')
+def test_slug(slug):
+    """Test slug lookup"""
+    try:
+        content = Content.query.filter_by(slug=slug).first()
+        if content:
+            return jsonify({
+                'found': True,
+                'content': {
+                    'id': content.id,
+                    'title': content.title,
+                    'slug': content.slug,
+                    'content_type': content.content_type
+                }
+            })
+        else:
+            return jsonify({'found': False, 'slug': slug})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# TEMPORARY: Get sample slugs for testing
+@app.route('/api/debug/sample-slugs')
+def get_sample_slugs():
+    """Get sample slugs for testing"""
+    try:
+        contents = Content.query.filter(Content.slug != None).limit(10).all()
+        samples = []
+        for content in contents:
+            samples.append({
+                'id': content.id,
+                'title': content.title,
+                'slug': content.slug,
+                'url': f"/content/details.html?{content.slug}"
+            })
+        return jsonify({'samples': samples})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/debug/check-slugs')
+def check_slugs():
+    """Check slug status in database"""
+    try:
+        total_content = Content.query.count()
+        content_with_slugs = Content.query.filter(Content.slug != None, Content.slug != '').count()
+        content_without_slugs = total_content - content_with_slugs
+        
+        return jsonify({
+            'total_content': total_content,
+            'with_slugs': content_with_slugs,
+            'without_slugs': content_without_slugs,
+            'sample_without_slugs': [
+                {'id': c.id, 'title': c.title} 
+                for c in Content.query.filter(
+                    or_(Content.slug == None, Content.slug == '')
+                ).limit(5).all()
+            ]
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 # Health check endpoint
 @app.route('/api/health', methods=['GET'])
 def health_check():
@@ -2216,7 +2317,7 @@ def health_check():
         health_info = {
             'status': 'healthy',
             'timestamp': datetime.utcnow().isoformat(),
-            'version': '4.0.0'  # Updated version with ultra-powerful algorithms
+            'version': '4.0.0'  # Updated version with slug support
         }
         
         # Check database connectivity
@@ -2245,7 +2346,8 @@ def health_check():
             'omdb': bool(OMDB_API_KEY),
             'youtube': bool(YOUTUBE_API_KEY),
             'ml_service': bool(ML_SERVICE_URL),
-            'algorithms': 'ultra_powerful_enabled'
+            'algorithms': 'ultra_powerful_enabled',
+            'slug_support': 'enabled'
         }
         
         return jsonify(health_info), 200
@@ -2256,34 +2358,78 @@ def health_check():
             'error': str(e),
             'timestamp': datetime.utcnow().isoformat()
         }), 500
-# NEW: Migration command to generate slugs for existing content
+
+# ENHANCED: CLI command for generating slugs
 @app.cli.command('generate-slugs')
 def generate_slugs():
     """Generate slugs for existing content"""
     try:
+        print("Starting slug generation...")
+        
         # Generate slugs for content without them
         contents = Content.query.filter(
             or_(Content.slug == None, Content.slug == '')
         ).all()
         
-        for content in contents:
-            year = content.release_date.year if content.release_date else None
-            slug = SlugManager.generate_unique_slug(db, Content, content.title, year, content.content_type)
-            content.slug = slug
-            logger.info(f"Generated slug for content '{content.title}': {slug}")
+        print(f"Found {len(contents)} content items without slugs")
+        
+        for i, content in enumerate(contents):
+            try:
+                year = content.release_date.year if content.release_date else None
+                title = content.title or f"Content {content.id}"
+                
+                slug = SlugManager.generate_unique_slug(db, Content, title, year, content.content_type)
+                content.slug = slug
+                
+                print(f"[{i+1}/{len(contents)}] Generated slug for '{title}': {slug}")
+                
+                # Commit in batches
+                if (i + 1) % 50 == 0:
+                    db.session.commit()
+                    print(f"Committed batch of 50 items...")
+                    
+            except Exception as e:
+                print(f"Error generating slug for content {content.id}: {e}")
+                continue
         
         # Generate slugs for persons without them
         persons = Person.query.filter(
             or_(Person.slug == None, Person.slug == '')
         ).all()
         
-        for person in persons:
-            slug = SlugManager.generate_unique_slug(db, Person, person.name)
-            person.slug = slug
-            logger.info(f"Generated slug for person '{person.name}': {slug}")
+        print(f"Found {len(persons)} person items without slugs")
         
+        for i, person in enumerate(persons):
+            try:
+                name = person.name or f"Person {person.id}"
+                slug = SlugManager.generate_unique_slug(db, Person, name)
+                person.slug = slug
+                
+                print(f"[{i+1}/{len(persons)}] Generated slug for '{name}': {slug}")
+                
+                # Commit in batches
+                if (i + 1) % 50 == 0:
+                    db.session.commit()
+                    print(f"Committed batch of 50 persons...")
+                    
+            except Exception as e:
+                print(f"Error generating slug for person {person.id}: {e}")
+                continue
+        
+        # Final commit
         db.session.commit()
         print(f"Successfully generated slugs for {len(contents)} contents and {len(persons)} persons")
+        
+        # Verify results
+        remaining_content = Content.query.filter(
+            or_(Content.slug == None, Content.slug == '')
+        ).count()
+        
+        remaining_persons = Person.query.filter(
+            or_(Person.slug == None, Person.slug == '')
+        ).count()
+        
+        print(f"Remaining items without slugs: {remaining_content} contents, {remaining_persons} persons")
         
     except Exception as e:
         logger.error(f"Error generating slugs: {e}")

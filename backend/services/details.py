@@ -1,9 +1,4 @@
 # backend/services/details.py
-"""
-Details Service Module - Production-Ready with Slug-Based Routing
-Handles all details page logic including content, cast, reviews, and recommendations
-"""
-
 import re
 import json
 import logging
@@ -21,6 +16,7 @@ from flask import current_app
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +77,11 @@ class SlugManager:
         # Clean and slugify title
         slug = slugify(title, lowercase=True, separator='-')
         
+        # Remove any remaining problematic characters
+        slug = re.sub(r'[^a-z0-9\-]', '', slug)
+        slug = re.sub(r'-+', '-', slug)  # Replace multiple hyphens with single
+        slug = slug.strip('-')  # Remove leading/trailing hyphens
+        
         # Add year if available (common practice for movies)
         if year and content_type == 'movie':
             slug = f"{slug}-{year}"
@@ -89,6 +90,10 @@ class SlugManager:
         if len(slug) > 100:
             slug = slug[:100].rsplit('-', 1)[0]
         
+        # Ensure slug is not empty
+        if not slug:
+            slug = f"content-{int(time.time())}"
+        
         return slug
     
     @staticmethod
@@ -96,12 +101,23 @@ class SlugManager:
                            content_type: str = 'movie') -> str:
         """Generate unique slug, adding suffix if necessary"""
         base_slug = SlugManager.generate_slug(title, year, content_type)
+        
+        # Ensure base_slug is not empty
+        if not base_slug:
+            base_slug = f"content-{int(time.time())}"
+        
         slug = base_slug
         counter = 1
         
+        # Keep trying until we find a unique slug
         while db.session.query(model).filter_by(slug=slug).first():
             slug = f"{base_slug}-{counter}"
             counter += 1
+            
+            # Prevent infinite loop
+            if counter > 1000:
+                slug = f"{base_slug}-{int(time.time())}"
+                break
         
         return slug
     
@@ -166,14 +182,14 @@ class DetailsService:
         session.mount('https://', adapter)
         return session
     
-    def get_details_by_slug(self, slug: str, user_id: Optional[int] = None) -> Dict:
+    def get_details_by_slug(self, slug: str, user_id: Optional[int] = None) -> Optional[Dict]:
         """
         Main method to get all content details by slug
         Returns comprehensive details for the details page
         """
         try:
             # Try cache first
-            cache_key = f"details:{slug}"
+            cache_key = f"details:slug:{slug}"
             if self.cache:
                 cached = self.cache.get(cache_key)
                 if cached:
@@ -187,7 +203,7 @@ class DetailsService:
             content = self.Content.query.filter_by(slug=slug).first()
             
             if not content:
-                # Try to find by alternative slug patterns or fuzzy matching
+                # Try fuzzy matching if exact slug not found
                 content = self._find_content_fuzzy(slug)
                 
                 if not content:
@@ -233,6 +249,7 @@ class DetailsService:
             if results:
                 # Return best match (highest similarity)
                 best_match = max(results, key=lambda x: self._calculate_similarity(x.title, title))
+                logger.info(f"Found fuzzy match for '{slug}': {best_match.title} (slug: {best_match.slug})")
                 return best_match
             
             return None
@@ -486,7 +503,11 @@ class DetailsService:
             'revenue': tmdb_data.get('revenue', 0),
             'advisories': {},
             'certifications': {},
-            'awards': omdb_data.get('Awards', '')
+            'awards': omdb_data.get('Awards', ''),
+            'popularity': content.popularity,
+            'is_critics_choice': content.is_critics_choice,
+            'is_trending': content.is_trending,
+            'is_new_release': content.is_new_release
         }
         
         # Languages
@@ -573,11 +594,11 @@ class DetailsService:
                         'slug': person.slug
                     }
                     
-                    if cp.department == 'Directing':
+                    if cp.department == 'Directing' or cp.job == 'Director':
                         cast_crew['crew']['directors'].append(crew_data)
-                    elif cp.department == 'Writing':
+                    elif cp.department == 'Writing' or cp.job in ['Writer', 'Screenplay']:
                         cast_crew['crew']['writers'].append(crew_data)
-                    elif cp.department == 'Production' and 'Producer' in cp.job:
+                    elif cp.department == 'Production' or 'Producer' in (cp.job or ''):
                         cast_crew['crew']['producers'].append(crew_data)
             
             return cast_crew
@@ -616,6 +637,12 @@ class DetailsService:
             }
             
             for cp, content in filmography:
+                # Ensure content has slug
+                if not content.slug:
+                    year = content.release_date.year if content.release_date else None
+                    content.slug = SlugManager.generate_unique_slug(self.db, self.Content, content.title, year, content.content_type)
+                    self.db.session.commit()
+                
                 work = {
                     'id': content.id,
                     'slug': content.slug,
@@ -633,9 +660,9 @@ class DetailsService:
                     works['upcoming'].append(work)
                 elif cp.role_type == 'cast':
                     works['as_actor'].append(work)
-                elif cp.department == 'Directing':
+                elif cp.department == 'Directing' or cp.job == 'Director':
                     works['as_director'].append(work)
-                elif cp.department == 'Writing':
+                elif cp.department == 'Writing' or cp.job in ['Writer', 'Screenplay']:
                     works['as_writer'].append(work)
                 elif 'Producer' in (cp.job or ''):
                     works['as_producer'].append(work)
@@ -744,7 +771,7 @@ class DetailsService:
             return []
     
     def _get_similar_content(self, content_id: int, limit: int = 12) -> List[Dict]:
-        """Get similar/recommended content"""
+        """Get similar/recommended content with slug support"""
         try:
             similar = []
             
@@ -776,15 +803,24 @@ class DetailsService:
             ).limit(limit).all()
             
             for item in similar_content:
+                # Ensure each item has a slug
+                if not item.slug:
+                    year = item.release_date.year if item.release_date else None
+                    item.slug = SlugManager.generate_unique_slug(self.db, self.Content, item.title, year, item.content_type)
+                    self.db.session.commit()
+                
                 similar.append({
                     'id': item.id,
                     'slug': item.slug,
                     'title': item.title,
                     'content_type': item.content_type,
                     'poster_path': self._format_image_url(item.poster_path, 'poster'),
+                    'poster_url': self._format_image_url(item.poster_path, 'poster'),
                     'rating': item.rating,
+                    'release_date': item.release_date.isoformat() if item.release_date else None,
                     'year': item.release_date.year if item.release_date else None,
-                    'genres': json.loads(item.genres) if item.genres else []
+                    'genres': json.loads(item.genres) if item.genres else [],
+                    'runtime': item.runtime
                 })
             
             return similar
@@ -875,6 +911,7 @@ class DetailsService:
                 providers = tmdb_data['watch/providers'].get('results', {})
                 
                 # Get providers for user's region (defaulting to US)
+                # Could be enhanced to detect user's actual region
                 region_data = providers.get('US', {})
                 
                 if region_data.get('flatrate'):
@@ -1067,6 +1104,18 @@ class DetailsService:
     def add_review(self, content_id: int, user_id: int, review_data: Dict) -> Dict:
         """Add a new review for content"""
         try:
+            # Check if user already has a review for this content
+            existing_review = self.Review.query.filter_by(
+                content_id=content_id,
+                user_id=user_id
+            ).first()
+            
+            if existing_review:
+                return {
+                    'success': False,
+                    'message': 'You have already reviewed this content'
+                }
+            
             review = self.Review(
                 content_id=content_id,
                 user_id=user_id,
@@ -1083,7 +1132,7 @@ class DetailsService:
             # Invalidate cache
             content = self.Content.query.get(content_id)
             if content and self.cache:
-                cache_key = f"details:{content.slug}"
+                cache_key = f"details:slug:{content.slug}"
                 self.cache.delete(cache_key)
             
             return {
@@ -1118,7 +1167,7 @@ class DetailsService:
             # Invalidate cache
             content = self.Content.query.get(review.content_id)
             if content and self.cache:
-                cache_key = f"details:{content.slug}"
+                cache_key = f"details:slug:{content.slug}"
                 self.cache.delete(cache_key)
             
             return True
