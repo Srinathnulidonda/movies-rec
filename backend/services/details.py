@@ -120,7 +120,7 @@ class SlugManager:
         
         try:
             # Clean and slugify title - FIXED: Remove lowercase parameter and use manual conversion
-            slug = slugify(title, separator='-')
+            slug = slugify(title)
             if slug:
                 slug = slug.lower()  # Manual lowercase conversion
             else:

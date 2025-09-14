@@ -772,8 +772,8 @@ class FixedSlugManager:
             return ""
         
         try:
-            # Clean and slugify title - FIXED: Remove lowercase parameter and use manual conversion
-            slug = slugify(title, separator='-')
+            # Clean and slugify title - FIXED: Remove separator parameter completely
+            slug = slugify(title)  # CHANGED: Removed separator parameter
             if slug:
                 slug = slug.lower()  # Manual lowercase conversion
             else:
