@@ -192,81 +192,6 @@ def auth_required(f):
     
     return decorated_function
 
-# FIXED SlugManager Class with error handling
-class FixedSlugManager:
-    """Fixed slug manager for app.py"""
-    
-    @staticmethod
-    def generate_slug(title: str, year: Optional[int] = None, content_type: str = 'movie') -> str:
-        """Generate URL-safe slug from title - PYTHON 3 COMPATIBLE"""
-        if not title:
-            return f"content-{int(time.time())}"
-        
-        try:
-            # Convert to lowercase and clean
-            slug = str(title).lower()
-            
-            # Replace spaces and special characters with hyphens
-            slug = re.sub(r'[^a-z0-9\s]', '', slug)  # Keep only alphanumeric and spaces
-            slug = re.sub(r'\s+', '-', slug)         # Replace spaces with hyphens
-            slug = re.sub(r'-+', '-', slug)          # Replace multiple hyphens with single
-            slug = slug.strip('-')                   # Remove leading/trailing hyphens
-            
-            # Ensure not empty
-            if not slug:
-                slug = f"content-{int(time.time())}"
-            
-            # Add year for movies
-            if year and content_type == 'movie':
-                slug = f"{slug}-{year}"
-            
-            # Limit length
-            if len(slug) > 100:
-                slug = slug[:100].rstrip('-')
-            
-            return slug
-            
-        except Exception as e:
-            logger.error(f"Error generating slug for title '{title}': {e}")
-            return f"content-{int(time.time())}"
-    
-    @staticmethod
-    def generate_unique_slug(db, model, title: str, year: Optional[int] = None, 
-                           content_type: str = 'movie') -> str:
-        """Generate unique slug, adding suffix if necessary"""
-        try:
-            base_slug = FixedSlugManager.generate_slug(title, year, content_type)
-            
-            if not base_slug:
-                base_slug = f"content-{int(time.time())}"
-            
-            slug = base_slug
-            counter = 1
-            
-            # Keep trying until we find a unique slug
-            while True:
-                try:
-                    existing = db.session.query(model).filter_by(slug=slug).first()
-                    if not existing:
-                        break
-                    slug = f"{base_slug}-{counter}"
-                    counter += 1
-                    
-                    # Prevent infinite loop
-                    if counter > 1000:
-                        slug = f"content-{int(time.time())}"
-                        break
-                except Exception as e:
-                    logger.error(f"Error checking slug uniqueness: {e}")
-                    slug = f"content-{int(time.time())}"
-                    break
-            
-            return slug
-            
-        except Exception as e:
-            logger.error(f"Error generating unique slug: {e}")
-            return f"content-{int(time.time())}"
-
 # Database Models
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -324,8 +249,7 @@ class Content(db.Model):
         if not self.slug and self.title:
             try:
                 year = self.release_date.year if self.release_date else None
-                # FIXED: Use FixedSlugManager instead of SlugManager
-                self.slug = FixedSlugManager.generate_unique_slug(db, Content, self.title, year, self.content_type)
+                self.slug = SlugManager.generate_unique_slug(db, Content, self.title, year, self.content_type)
                 db.session.commit()
             except Exception as e:
                 logger.error(f"Error ensuring slug for content {self.id}: {e}")
@@ -831,6 +755,81 @@ class YouTubeService:
         except Exception as e:
             logger.error(f"YouTube search error: {e}")
         return None
+
+# FIXED SlugManager Class with error handling
+class FixedSlugManager:
+    """Fixed slug manager for app.py"""
+    
+    @staticmethod
+    def generate_slug(title: str, year: Optional[int] = None, content_type: str = 'movie') -> str:
+        """Generate URL-safe slug from title - PYTHON 3 COMPATIBLE"""
+        if not title:
+            return f"content-{int(time.time())}"
+        
+        try:
+            # Convert to lowercase and clean
+            slug = str(title).lower()
+            
+            # Replace spaces and special characters with hyphens
+            slug = re.sub(r'[^a-z0-9\s]', '', slug)  # Keep only alphanumeric and spaces
+            slug = re.sub(r'\s+', '-', slug)         # Replace spaces with hyphens
+            slug = re.sub(r'-+', '-', slug)          # Replace multiple hyphens with single
+            slug = slug.strip('-')                   # Remove leading/trailing hyphens
+            
+            # Ensure not empty
+            if not slug:
+                slug = f"content-{int(time.time())}"
+            
+            # Add year for movies
+            if year and content_type == 'movie':
+                slug = f"{slug}-{year}"
+            
+            # Limit length
+            if len(slug) > 100:
+                slug = slug[:100].rstrip('-')
+            
+            return slug
+            
+        except Exception as e:
+            logger.error(f"Error generating slug for title '{title}': {e}")
+            return f"content-{int(time.time())}"
+    
+    @staticmethod
+    def generate_unique_slug(db, model, title: str, year: Optional[int] = None, 
+                           content_type: str = 'movie') -> str:
+        """Generate unique slug, adding suffix if necessary"""
+        try:
+            base_slug = FixedSlugManager.generate_slug(title, year, content_type)
+            
+            if not base_slug:
+                base_slug = f"content-{int(time.time())}"
+            
+            slug = base_slug
+            counter = 1
+            
+            # Keep trying until we find a unique slug
+            while True:
+                try:
+                    existing = db.session.query(model).filter_by(slug=slug).first()
+                    if not existing:
+                        break
+                    slug = f"{base_slug}-{counter}"
+                    counter += 1
+                    
+                    # Prevent infinite loop
+                    if counter > 1000:
+                        slug = f"content-{int(time.time())}"
+                        break
+                except Exception as e:
+                    logger.error(f"Error checking slug uniqueness: {e}")
+                    slug = f"content-{int(time.time())}"
+                    break
+            
+            return slug
+            
+        except Exception as e:
+            logger.error(f"Error generating unique slug: {e}")
+            return f"content-{int(time.time())}"    
 
 # Enhanced Content Management Service with slug support - FIXED
 class ContentService:
@@ -2440,7 +2439,7 @@ def health_check():
         health_info = {
             'status': 'healthy',
             'timestamp': datetime.utcnow().isoformat(),
-            'version': '4.0.2'  # Updated version with all fixes
+            'version': '4.0.1'  # Updated version with all fixes
         }
         
         # Check database connectivity
