@@ -28,4 +28,4 @@ fake-useragent
 beautifulsoup4
 aiohttp
 Flask-Migrate
-slugify
+python-slugify==8.0.4
