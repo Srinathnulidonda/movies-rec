@@ -865,65 +865,12 @@ init_auth(app, db, User)
 init_admin(app, db, models, services)
 init_users(app, db, models, services)
 
-# PRODUCTION GRADE BACKGROUND SLUG MIGRATION
-def background_slug_migration():
-    """Background job to ensure all content has slugs"""
-    with app.app_context():
-        while True:
-            try:
-                # Check every 6 hours
-                logger.info("Starting background slug migration check")
-                
-                # Count content without slugs
-                missing_slugs = Content.query.filter(
-                    or_(Content.slug == None, Content.slug == '')
-                ).count()
-                
-                if missing_slugs > 0:
-                    logger.info(f"Found {missing_slugs} content items without slugs")
-                    if details_service:
-                        stats = details_service.migrate_all_slugs(batch_size=25)
-                        logger.info(f"Migration completed: {stats}")
-                else:
-                    logger.info("All content has slugs")
-                
-                # Sleep for 6 hours
-                time.sleep(21600)
-                
-            except Exception as e:
-                logger.error(f"Background migration error: {e}")
-                time.sleep(3600)  # Retry in 1 hour on error
-
-# Start background thread only if not already running
-if not any(thread.name == 'slug_migration' for thread in threading.enumerate()):
-    migration_thread = threading.Thread(target=background_slug_migration, name='slug_migration', daemon=True)
-    migration_thread.start()
-    logger.info("Started background slug migration thread")
-
-# PRODUCTION GRADE STARTUP MIGRATION
-def run_startup_migration():
-    """Run slug migration on app startup"""
-    try:
-        with app.app_context():
-            # Check if migration needed
-            missing_slugs = Content.query.filter(
-                or_(Content.slug == None, Content.slug == '')
-            ).count()
-            
-            if missing_slugs > 0:
-                logger.info(f"Running startup migration for {missing_slugs} items")
-                if details_service:
-                    stats = details_service.migrate_all_slugs(batch_size=50)
-                    logger.info(f"Startup migration completed: {stats}")
-    except Exception as e:
-        logger.error(f"Startup migration error: {e}")
-
 # API Routes
 
-# NEW: Slug-based details endpoint WITH AUTO-HEALING
+# NEW: Slug-based details endpoint
 @app.route('/api/details/<slug>', methods=['GET'])
 def get_content_details_by_slug(slug):
-    """Get content details by slug with smart auto-healing"""
+    """Get content details by slug"""
     try:
         # Get user ID if authenticated
         user_id = None
@@ -936,20 +883,6 @@ def get_content_details_by_slug(slug):
             except:
                 pass
         
-        # Check cache first
-        cache_key = f"details:slug:{slug}"
-        if cache:
-            try:
-                cached = cache.get(cache_key)
-                if cached:
-                    logger.info(f"Cache hit for slug: {slug}")
-                    # Add user-specific data if authenticated
-                    if user_id and details_service:
-                        cached = details_service._add_user_data(cached, user_id)
-                    return jsonify(cached), 200
-            except Exception as e:
-                logger.warning(f"Cache error for slug {slug}: {e}")
-        
         # Get details using the details service
         if details_service:
             details = details_service.get_details_by_slug(slug, user_id)
@@ -957,76 +890,10 @@ def get_content_details_by_slug(slug):
             logger.error("Details service not available")
             return jsonify({'error': 'Service unavailable'}), 503
         
-        if details:
-            return jsonify(details), 200
+        if not details:
+            return jsonify({'error': 'Content not found'}), 404
         
-        # AUTO-HEALING: If not found, check if content exists without slug
-        potential_title = slug.replace('-', ' ').replace('anime-', '').strip()
-        year_match = re.search(r'-(\d{4})$', slug)
-        year = int(year_match.group(1)) if year_match else None
-        
-        # Try to find content by title
-        query = Content.query.filter(
-            func.lower(Content.title).like(f"%{potential_title.lower()}%")
-        )
-        
-        if year:
-            query = query.filter(func.extract('year', Content.release_date) == year)
-        
-        content = query.first()
-        
-        if content:
-            # Fix the slug
-            content.slug = slug
-            try:
-                db.session.commit()
-                logger.info(f"Auto-healed slug for content {content.id}: {slug}")
-                
-                # Get details with the fixed slug
-                details = details_service.get_details_by_slug(slug, user_id)
-                if details:
-                    return jsonify(details), 200
-            except Exception as e:
-                logger.error(f"Failed to auto-heal slug: {e}")
-                db.session.rollback()
-        
-        # If still not found, try searching external sources
-        logger.info(f"Content not found locally, searching external sources for: {potential_title}")
-        
-        # Search TMDB
-        search_results = TMDBService.search_content(potential_title, 'multi')
-        
-        if search_results and search_results.get('results'):
-            # Save first result
-            first_result = search_results['results'][0]
-            content_type = 'movie' if 'title' in first_result else 'tv'
-            
-            # Save content with slug
-            if content_service:
-                content = content_service.save_content_from_tmdb(first_result, content_type)
-                
-                if content:
-                    # Ensure it has the expected slug
-                    content.slug = slug
-                    try:
-                        db.session.commit()
-                        logger.info(f"Created new content from TMDB with slug: {slug}")
-                        
-                        # Now get details
-                        details = details_service.get_details_by_slug(slug, user_id)
-                        if details:
-                            return jsonify(details), 200
-                    except Exception as e:
-                        logger.error(f"Failed to save new content: {e}")
-                        db.session.rollback()
-        
-        # If all else fails, return 404 with helpful info
-        return jsonify({
-            'error': 'Content not found',
-            'slug': slug,
-            'suggestion': 'Try searching for this content first',
-            'search_url': f"/api/search?query={potential_title}"
-        }), 404
+        return jsonify(details), 200
         
     except Exception as e:
         logger.error(f"Error getting details for slug {slug}: {e}")
@@ -2335,9 +2202,7 @@ def performance_check():
                 'thread_pool_workers': 3,
                 'api_timeouts': '5s',
                 'cache_timeout': '15min-30min',
-                'optimization_level': 'high',
-                'auto_healing': 'enabled',
-                'background_migration': 'enabled'
+                'optimization_level': 'high'
             }
         }
         
@@ -2360,7 +2225,7 @@ def health_check():
         health_info = {
             'status': 'healthy',
             'timestamp': datetime.utcnow().isoformat(),
-            'version': '5.2.0',  # Updated version with production features
+            'version': '5.1.0',  # Updated version with all fixes
             'python_version': '3.13.4'
         }
         
@@ -2391,10 +2256,9 @@ def health_check():
             'youtube': bool(YOUTUBE_API_KEY),
             'ml_service': bool(ML_SERVICE_URL),
             'algorithms': 'optimized_enabled',
-            'slug_support': 'comprehensive_with_auto_healing',
+            'slug_support': 'comprehensive_enabled',
             'details_service': 'enabled' if details_service else 'disabled',
-            'content_service': 'enabled' if content_service else 'disabled',
-            'background_migration': 'running' if any(thread.name == 'slug_migration' for thread in threading.enumerate()) else 'stopped'
+            'content_service': 'enabled' if content_service else 'disabled'
         }
         
         # Check slug status
@@ -2420,14 +2284,10 @@ def health_check():
                 'reduced_api_timeouts', 
                 'optimized_thread_pools',
                 'enhanced_caching',
-                'error_handling_improvements',
-                'auto_healing_slugs',
-                'background_migration',
-                'smart_404_handler'
+                'error_handling_improvements'
             ],
             'memory_optimizations': 'enabled',
-            'unicode_fixes': 'applied',
-            'production_features': 'enabled'
+            'unicode_fixes': 'applied'
         }
         
         return jsonify(health_info), 200
@@ -2502,15 +2362,8 @@ def create_tables():
                 logger.info("Admin user created with username: admin, password: admin123")
     except Exception as e:
         logger.error(f"Database initialization error: {e}")
-        
 # Initialize database when app starts
 create_tables()
-
-# Run startup migration in production
-if __name__ != '__main__':  # Only in production (Gunicorn)
-    startup_thread = threading.Thread(target=run_startup_migration, daemon=True)
-    startup_thread.start()
-    logger.info("Started startup migration thread")
 
 # Application startup logging
 if __name__ == '__main__':
@@ -2520,7 +2373,7 @@ if __name__ == '__main__':
     app.run(host='0.0.0.0', port=port, debug=debug)
 else:
     # This runs when imported by Gunicorn
-    print("=== Flask app imported by Gunicorn - PRODUCTION OPTIMIZED VERSION ===")
+    print("=== Flask app imported by Gunicorn - OPTIMIZED VERSION ===")
     print(f"App name: {app.name}")
     print(f"Python version: 3.13.4")
     print(f"Database URI configured: {'Yes' if app.config.get('SQLALCHEMY_DATABASE_URI') else 'No'}")
@@ -2529,8 +2382,6 @@ else:
     print(f"Content service status: {'Initialized' if content_service else 'Failed to initialize'}")
     print(f"Performance optimizations: Applied")
     print(f"Unicode fixes: Applied")
-    print(f"Auto-healing: Enabled")
-    print(f"Background migration: Enabled")
     
     # Log all registered routes
     print("\n=== Registered Routes ===")
