@@ -2052,9 +2052,22 @@ def get_public_admin_recommendations():
 def get_person_details(slug):
     """Get person details by slug"""
     try:
+        # Get user ID if authenticated
+        user_id = None
+        auth_header = request.headers.get('Authorization')
+        if auth_header and auth_header.startswith('Bearer '):
+            token = auth_header.split(' ')[1]
+            try:
+                payload = jwt.decode(token, app.config['SECRET_KEY'], algorithms=['HS256'])
+                user_id = payload.get('user_id')
+            except:
+                pass
+        
+        # Get details using the details service
         if details_service:
             person_details = details_service.get_person_details(slug)
         else:
+            logger.error("Details service not available")
             return jsonify({'error': 'Service unavailable'}), 503
         
         if not person_details:
@@ -2173,6 +2186,76 @@ def update_content_slug(content_id):
         logger.error(f"Error updating content slug: {e}")
         return jsonify({'error': 'Failed to update slug'}), 500
 
+# Cast/crew population endpoints
+@app.route('/api/content/<int:content_id>/refresh-cast-crew', methods=['POST'])
+def refresh_cast_crew(content_id):
+    """Manually refresh cast/crew data for specific content"""
+    try:
+        content = Content.query.get_or_404(content_id)
+        
+        if not content.tmdb_id:
+            return jsonify({'error': 'No TMDB ID available'}), 400
+        
+        # Initialize details service
+        if details_service:
+            cast_crew = details_service._fetch_and_save_all_cast_crew(content)
+            return jsonify({
+                'success': True,
+                'cast_count': len(cast_crew['cast']),
+                'crew_count': sum(len(crew_list) for crew_list in cast_crew['crew'].values())
+            })
+        else:
+            return jsonify({'error': 'Details service not available'}), 503
+            
+    except Exception as e:
+        logger.error(f"Error refreshing cast/crew: {e}")
+        return jsonify({'error': 'Failed to refresh cast/crew data'}), 500
+
+@app.route('/api/admin/populate-cast-crew', methods=['POST'])
+@auth_required
+def populate_all_cast_crew():
+    """Populate cast/crew for all content (admin only)"""
+    try:
+        # Check if user is admin
+        user = User.query.get(request.user_id)
+        if not user or not user.is_admin:
+            return jsonify({'error': 'Admin access required'}), 403
+        
+        batch_size = int(request.json.get('batch_size', 10))
+        
+        # Get content without cast/crew
+        content_items = Content.query.filter(
+            Content.tmdb_id.isnot(None),
+            ~Content.id.in_(
+                db.session.query(ContentPerson.content_id).distinct()
+            )
+        ).limit(batch_size).all()
+        
+        processed = 0
+        errors = 0
+        
+        for content in content_items:
+            try:
+                if details_service:
+                    cast_crew = details_service._fetch_and_save_all_cast_crew(content)
+                    processed += 1
+                    logger.info(f"Populated cast/crew for {content.title}")
+            except Exception as e:
+                logger.error(f"Error processing {content.title}: {e}")
+                errors += 1
+        
+        return jsonify({
+            'success': True,
+            'processed': processed,
+            'errors': errors,
+            'total_available': len(content_items),
+            'message': f"Successfully populated cast/crew for {processed} content items"
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error in bulk cast/crew population: {e}")
+        return jsonify({'error': 'Failed to populate cast/crew'}), 500
+
 # NEW: Performance monitoring endpoint
 @app.route('/api/performance', methods=['GET'])
 def performance_check():
@@ -2225,7 +2308,7 @@ def health_check():
         health_info = {
             'status': 'healthy',
             'timestamp': datetime.utcnow().isoformat(),
-            'version': '5.1.0',  # Updated version with all fixes
+            'version': '5.2.0',  # Updated version with cast/crew features
             'python_version': '3.13.4'
         }
         
@@ -2258,7 +2341,8 @@ def health_check():
             'algorithms': 'optimized_enabled',
             'slug_support': 'comprehensive_enabled',
             'details_service': 'enabled' if details_service else 'disabled',
-            'content_service': 'enabled' if content_service else 'disabled'
+            'content_service': 'enabled' if content_service else 'disabled',
+            'cast_crew': 'fully_enabled'
         }
         
         # Check slug status
@@ -2277,6 +2361,19 @@ def health_check():
         except Exception as e:
             health_info['slug_status'] = {'error': str(e)}
         
+        # Check cast/crew status
+        try:
+            total_content_persons = ContentPerson.query.count()
+            total_persons = Person.query.count()
+            
+            health_info['cast_crew_status'] = {
+                'total_relations': total_content_persons,
+                'total_persons': total_persons,
+                'content_with_cast': db.session.query(ContentPerson.content_id).distinct().count()
+            }
+        except Exception as e:
+            health_info['cast_crew_status'] = {'error': str(e)}
+        
         # Performance metrics
         health_info['performance'] = {
             'optimizations_applied': [
@@ -2284,7 +2381,8 @@ def health_check():
                 'reduced_api_timeouts', 
                 'optimized_thread_pools',
                 'enhanced_caching',
-                'error_handling_improvements'
+                'error_handling_improvements',
+                'cast_crew_optimization'
             ],
             'memory_optimizations': 'enabled',
             'unicode_fixes': 'applied'
@@ -2342,6 +2440,48 @@ def generate_slugs():
         print(f"Failed to generate slugs: {e}")
         logger.error(f"CLI slug generation error: {e}")
 
+# CLI command for populating cast/crew
+@app.cli.command('populate-cast-crew')
+def populate_cast_crew_cli():
+    """Populate cast/crew data for all content"""
+    try:
+        print("Starting cast/crew population...")
+        
+        if not details_service:
+            print("Error: Details service not available")
+            return
+        
+        # Get content without cast/crew
+        content_items = Content.query.filter(
+            Content.tmdb_id.isnot(None),
+            ~Content.id.in_(
+                db.session.query(ContentPerson.content_id).distinct()
+            )
+        ).all()
+        
+        print(f"Found {len(content_items)} content items without cast/crew")
+        
+        processed = 0
+        errors = 0
+        
+        for i, content in enumerate(content_items):
+            try:
+                print(f"Processing {i+1}/{len(content_items)}: {content.title}")
+                cast_crew = details_service._fetch_and_save_all_cast_crew(content)
+                processed += 1
+                print(f"  Added {len(cast_crew['cast'])} cast members and crew")
+            except Exception as e:
+                print(f"  Error: {e}")
+                errors += 1
+        
+        print(f"\nCast/crew population completed!")
+        print(f"Processed: {processed}")
+        print(f"Errors: {errors}")
+        
+    except Exception as e:
+        print(f"Failed to populate cast/crew: {e}")
+        logger.error(f"CLI cast/crew population error: {e}")
+
 # Initialize database
 def create_tables():
     try:
@@ -2362,6 +2502,7 @@ def create_tables():
                 logger.info("Admin user created with username: admin, password: admin123")
     except Exception as e:
         logger.error(f"Database initialization error: {e}")
+
 # Initialize database when app starts
 create_tables()
 
@@ -2373,7 +2514,7 @@ if __name__ == '__main__':
     app.run(host='0.0.0.0', port=port, debug=debug)
 else:
     # This runs when imported by Gunicorn
-    print("=== Flask app imported by Gunicorn - OPTIMIZED VERSION ===")
+    print("=== Flask app imported by Gunicorn - OPTIMIZED VERSION WITH CAST/CREW ===")
     print(f"App name: {app.name}")
     print(f"Python version: 3.13.4")
     print(f"Database URI configured: {'Yes' if app.config.get('SQLALCHEMY_DATABASE_URI') else 'No'}")
@@ -2382,6 +2523,7 @@ else:
     print(f"Content service status: {'Initialized' if content_service else 'Failed to initialize'}")
     print(f"Performance optimizations: Applied")
     print(f"Unicode fixes: Applied")
+    print(f"Cast/Crew support: Fully enabled")
     
     # Log all registered routes
     print("\n=== Registered Routes ===")

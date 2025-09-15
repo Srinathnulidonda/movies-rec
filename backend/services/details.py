@@ -60,6 +60,32 @@ class ContentDetails:
     def to_dict(self):
         return asdict(self)
 
+@dataclass
+class PersonDetails:
+    """Data class for person details"""
+    slug: str
+    id: int
+    name: str
+    biography: str
+    birthday: Optional[str]
+    deathday: Optional[str]
+    place_of_birth: Optional[str]
+    profile_url: Optional[str]
+    popularity: float
+    known_for_department: Optional[str]
+    also_known_as: List[str]
+    gender: Optional[int]
+    filmography: Dict
+    images: List[str]
+    social_media: Dict
+    total_works: int
+    awards: List[Dict]
+    personal_info: Dict
+    career_highlights: Dict
+    
+    def to_dict(self):
+        return asdict(self)
+
 def ensure_app_context(func):
     """Decorator to ensure Flask app context for database operations"""
     @wraps(func)
@@ -320,6 +346,9 @@ class SlugManager:
             elif slug.startswith('series-') or '-series-' in slug:
                 content_type = 'tv'
                 clean_slug = slug.replace('series-', '').replace('-series-', '-')
+            elif slug.startswith('person-'):
+                content_type = 'person'
+                clean_slug = slug[7:]  # Remove 'person-' prefix
             
             # Check if slug ends with a year (4 digits)
             year_match = re.search(r'-(\d{4})$', clean_slug)
@@ -370,6 +399,8 @@ class SlugManager:
             
             # Determine content type
             content_type = getattr(content, 'content_type', 'movie')
+            if hasattr(content, '__tablename__') and content.__tablename__ == 'persons':
+                content_type = 'person'
             
             # Get title and year
             title = getattr(content, 'title', '') or getattr(content, 'name', '')
@@ -378,6 +409,11 @@ class SlugManager:
             if hasattr(content, 'release_date') and content.release_date:
                 try:
                     year = content.release_date.year
+                except:
+                    pass
+            elif hasattr(content, 'birthday') and content.birthday:
+                try:
+                    year = content.birthday.year
                 except:
                     pass
             
@@ -743,7 +779,7 @@ class ContentService:
         return [genre_map.get(gid, 'Unknown') for gid in genre_ids if gid in genre_map]
 
 class DetailsService:
-    """Main service for handling content details with comprehensive slug support"""
+    """Main service for handling content details with comprehensive slug support and enhanced person details"""
     
     def __init__(self, db, models, cache=None):
         self.db = db
@@ -763,7 +799,7 @@ class DetailsService:
         self.session = self._create_http_session()
         
         # Thread pool for concurrent API calls - optimized for Python 3.13
-        self.executor = ThreadPoolExecutor(max_workers=3)
+        self.executor = ThreadPoolExecutor(max_workers=5)
         
         # Initialize API keys from environment or config
         self._init_api_keys()
@@ -784,13 +820,13 @@ class DetailsService:
         """Create HTTP session with retry strategy - optimized"""
         session = requests.Session()
         retry = Retry(
-            total=2,  # Reduced retries for performance
-            read=2,
-            connect=2,
+            total=3,
+            read=3,
+            connect=3,
             backoff_factor=0.3,
             status_forcelist=(500, 502, 504)
         )
-        adapter = HTTPAdapter(max_retries=retry, pool_connections=5, pool_maxsize=5)  # Reduced pool size
+        adapter = HTTPAdapter(max_retries=retry, pool_connections=10, pool_maxsize=10)
         session.mount('http://', adapter)
         session.mount('https://', adapter)
         return session
@@ -967,27 +1003,27 @@ class DetailsService:
             from flask import current_app
             app = current_app._get_current_object() if has_app_context() else None
             
-            # Prepare futures for concurrent API calls - reduced for performance
+            # Prepare futures for concurrent API calls
             futures = {}
             
-            with ThreadPoolExecutor(max_workers=2) as executor:  # Reduced workers
-                # External API calls - only essential ones
+            with ThreadPoolExecutor(max_workers=4) as executor:
+                # External API calls
                 if content.tmdb_id and TMDB_API_KEY:
                     futures['tmdb'] = executor.submit(self._fetch_tmdb_details, content.tmdb_id, content.content_type)
                 if content.imdb_id and OMDB_API_KEY:
                     futures['omdb'] = executor.submit(self._fetch_omdb_details, content.imdb_id)
                 
-                # Internal data fetching with app context - reduced limits
+                # Internal data fetching with app context
                 if app:
                     futures['cast_crew'] = executor.submit(self._with_app_context, app, self._get_cast_crew, content.id)
-                    futures['reviews'] = executor.submit(self._with_app_context, app, self._get_reviews, content.id, 5)
-                    futures['similar'] = executor.submit(self._with_app_context, app, self._get_similar_content, content.id, 8)
+                    futures['reviews'] = executor.submit(self._with_app_context, app, self._get_reviews, content.id, 10)
+                    futures['similar'] = executor.submit(self._with_app_context, app, self._get_similar_content, content.id, 12)
                     futures['gallery'] = executor.submit(self._with_app_context, app, self._get_gallery, content.id)
                 else:
                     # Fallback to direct calls if no app context
                     futures['cast_crew'] = executor.submit(self._get_cast_crew, content.id)
-                    futures['reviews'] = executor.submit(self._get_reviews, content.id, 5)
-                    futures['similar'] = executor.submit(self._get_similar_content, content.id, 8)
+                    futures['reviews'] = executor.submit(self._get_reviews, content.id, 10)
+                    futures['similar'] = executor.submit(self._get_similar_content, content.id, 12)
                     futures['gallery'] = executor.submit(self._get_gallery, content.id)
                 
                 futures['trailer'] = executor.submit(self._get_trailer, content.title, content.content_type)
@@ -1004,38 +1040,38 @@ class DetailsService:
             # Process results with timeout protection
             try:
                 if 'tmdb' in futures:
-                    tmdb_data = futures['tmdb'].result(timeout=5) or {}
+                    tmdb_data = futures['tmdb'].result(timeout=10) or {}
             except Exception as e:
                 logger.warning(f"TMDB fetch error/timeout: {e}")
             
             try:
                 if 'omdb' in futures:
-                    omdb_data = futures['omdb'].result(timeout=5) or {}
+                    omdb_data = futures['omdb'].result(timeout=8) or {}
             except Exception as e:
                 logger.warning(f"OMDB fetch error/timeout: {e}")
             
             try:
-                cast_crew = futures['cast_crew'].result(timeout=3) or cast_crew
+                cast_crew = futures['cast_crew'].result(timeout=15) or cast_crew
             except Exception as e:
                 logger.warning(f"Cast/crew fetch error/timeout: {e}")
             
             try:
-                reviews = futures['reviews'].result(timeout=3) or []
+                reviews = futures['reviews'].result(timeout=5) or []
             except Exception as e:
                 logger.warning(f"Reviews fetch error/timeout: {e}")
             
             try:
-                similar = futures['similar'].result(timeout=3) or []
+                similar = futures['similar'].result(timeout=8) or []
             except Exception as e:
                 logger.warning(f"Similar content fetch error/timeout: {e}")
             
             try:
-                gallery = futures['gallery'].result(timeout=3) or gallery
+                gallery = futures['gallery'].result(timeout=8) or gallery
             except Exception as e:
                 logger.warning(f"Gallery fetch error/timeout: {e}")
             
             try:
-                trailer = futures['trailer'].result(timeout=5)
+                trailer = futures['trailer'].result(timeout=8)
             except Exception as e:
                 logger.warning(f"Trailer fetch error/timeout: {e}")
             
@@ -1094,6 +1130,748 @@ class DetailsService:
             # Return minimal details to prevent complete failure
             return self._get_minimal_details(content)
 
+    @ensure_app_context
+    def _get_cast_crew(self, content_id: int) -> Dict:
+        """Get cast and crew information with comprehensive data and fallback to TMDB"""
+        try:
+            cast_crew = {
+                'cast': [],
+                'crew': {
+                    'directors': [],
+                    'writers': [],
+                    'producers': []
+                }
+            }
+            
+            # Get content to check for TMDB ID
+            content = self.Content.query.get(content_id) if content_id else None
+            if not content:
+                logger.warning(f"Content not found for ID: {content_id}")
+                return cast_crew
+            
+            # First, try to get from database
+            if self.ContentPerson and self.Person:
+                cast_crew = self._get_cast_crew_from_db(content_id)
+                
+                # If we have substantial data in database, return it
+                total_cast_crew = len(cast_crew['cast']) + sum(len(crew_list) for crew_list in cast_crew['crew'].values())
+                if total_cast_crew >= 5:  # Threshold for "enough" data
+                    logger.info(f"Found {total_cast_crew} cast/crew members in database for content {content_id}")
+                    return cast_crew
+            
+            # If no/insufficient data in database and we have TMDB ID, fetch from TMDB
+            if content.tmdb_id and TMDB_API_KEY:
+                logger.info(f"Fetching comprehensive cast/crew from TMDB for content {content_id}")
+                cast_crew = self._fetch_and_save_all_cast_crew(content)
+            
+            return cast_crew
+            
+        except Exception as e:
+            logger.error(f"Error getting cast/crew: {e}")
+            return {'cast': [], 'crew': {'directors': [], 'writers': [], 'producers': []}}
+
+    def _get_cast_crew_from_db(self, content_id: int) -> Dict:
+        """Get ALL cast and crew from database without limits"""
+        cast_crew = {
+            'cast': [],
+            'crew': {
+                'directors': [],
+                'writers': [],
+                'producers': []
+            }
+        }
+        
+        try:
+            # Get ALL cast from database (no limit)
+            cast_entries = self.db.session.query(
+                self.ContentPerson, self.Person
+            ).join(
+                self.Person
+            ).filter(
+                self.ContentPerson.content_id == content_id,
+                self.ContentPerson.role_type == 'cast'
+            ).order_by(
+                self.ContentPerson.order.asc()
+            ).all()  # No limit - get all cast
+            
+            for cp, person in cast_entries:
+                # Ensure person has slug
+                if not person.slug:
+                    try:
+                        SlugManager.update_content_slug(self.db, person)
+                    except Exception:
+                        person.slug = f"person-{person.id}"
+                
+                cast_crew['cast'].append({
+                    'id': person.id,
+                    'name': person.name,
+                    'character': cp.character,
+                    'profile_path': self._format_image_url(person.profile_path, 'profile'),
+                    'slug': person.slug,
+                    'popularity': person.popularity or 0,
+                    'order': cp.order or 999
+                })
+            
+            # Get ALL crew from database (no limit)
+            crew_entries = self.db.session.query(
+                self.ContentPerson, self.Person
+            ).join(
+                self.Person
+            ).filter(
+                self.ContentPerson.content_id == content_id,
+                self.ContentPerson.role_type == 'crew'
+            ).all()  # No limit - get all crew
+            
+            for cp, person in crew_entries:
+                # Ensure person has slug
+                if not person.slug:
+                    try:
+                        SlugManager.update_content_slug(self.db, person)
+                    except Exception:
+                        person.slug = f"person-{person.id}"
+                
+                crew_data = {
+                    'id': person.id,
+                    'name': person.name,
+                    'job': cp.job,
+                    'department': cp.department,
+                    'profile_path': self._format_image_url(person.profile_path, 'profile'),
+                    'slug': person.slug
+                }
+                
+                # Categorize crew members
+                if cp.department == 'Directing' or cp.job == 'Director':
+                    cast_crew['crew']['directors'].append(crew_data)
+                elif cp.department == 'Writing' or cp.job in ['Writer', 'Screenplay', 'Story', 'Novel', 'Characters']:
+                    cast_crew['crew']['writers'].append(crew_data)
+                elif cp.department == 'Production' or 'Producer' in (cp.job or ''):
+                    cast_crew['crew']['producers'].append(crew_data)
+            
+            return cast_crew
+            
+        except Exception as e:
+            logger.error(f"Error getting cast/crew from database: {e}")
+            return cast_crew
+
+    def _fetch_and_save_all_cast_crew(self, content) -> Dict:
+        """Fetch ALL cast/crew from TMDB and save to database"""
+        cast_crew = {
+            'cast': [],
+            'crew': {
+                'directors': [],
+                'writers': [],
+                'producers': []
+            }
+        }
+        
+        try:
+            # Determine TMDB endpoint
+            endpoint = 'movie' if content.content_type == 'movie' else 'tv'
+            url = f"{TMDB_BASE_URL}/{endpoint}/{content.tmdb_id}/credits"
+            
+            params = {
+                'api_key': TMDB_API_KEY
+            }
+            
+            response = self.session.get(url, params=params, timeout=15)
+            
+            if response.status_code == 200:
+                data = response.json()
+                
+                # Process ALL cast (remove any limits)
+                cast_data = data.get('cast', [])  # Get ALL cast members
+                logger.info(f"Processing {len(cast_data)} cast members for {content.title}")
+                
+                for i, cast_member in enumerate(cast_data):
+                    try:
+                        # Create or get person
+                        person = self._get_or_create_person(cast_member)
+                        if person:
+                            # Create content-person relationship
+                            content_person = self._get_or_create_content_person(
+                                content.id, person.id, 'cast', 
+                                character=cast_member.get('character'),
+                                order=i
+                            )
+                            
+                            # Add to response
+                            cast_crew['cast'].append({
+                                'id': person.id,
+                                'name': person.name,
+                                'character': cast_member.get('character', ''),
+                                'profile_path': self._format_image_url(person.profile_path, 'profile'),
+                                'slug': person.slug,
+                                'popularity': person.popularity or 0,
+                                'order': i
+                            })
+                    except Exception as e:
+                        logger.warning(f"Error processing cast member: {e}")
+                        continue
+                
+                # Process ALL crew (remove any limits)
+                crew_data = data.get('crew', [])  # Get ALL crew members
+                logger.info(f"Processing {len(crew_data)} crew members for {content.title}")
+                
+                directors = []
+                writers = []
+                producers = []
+                
+                for crew_member in crew_data:
+                    try:
+                        # Create or get person
+                        person = self._get_or_create_person(crew_member)
+                        if person:
+                            # Create content-person relationship
+                            content_person = self._get_or_create_content_person(
+                                content.id, person.id, 'crew',
+                                job=crew_member.get('job'),
+                                department=crew_member.get('department')
+                            )
+                            
+                            crew_data_item = {
+                                'id': person.id,
+                                'name': person.name,
+                                'job': crew_member.get('job', ''),
+                                'department': crew_member.get('department', ''),
+                                'profile_path': self._format_image_url(person.profile_path, 'profile'),
+                                'slug': person.slug
+                            }
+                            
+                            # Categorize crew members (more comprehensive)
+                            job = crew_member.get('job', '').lower()
+                            department = crew_member.get('department', '').lower()
+                            
+                            if department == 'directing' or job == 'director':
+                                directors.append(crew_data_item)
+                            elif department == 'writing' or job in ['writer', 'screenplay', 'story', 'novel', 'characters']:
+                                writers.append(crew_data_item)
+                            elif department == 'production' or 'producer' in job:
+                                producers.append(crew_data_item)
+                                
+                    except Exception as e:
+                        logger.warning(f"Error processing crew member: {e}")
+                        continue
+                
+                # Store ALL crew members (no limits)
+                cast_crew['crew']['directors'] = directors
+                cast_crew['crew']['writers'] = writers
+                cast_crew['crew']['producers'] = producers
+                
+                # Commit all changes
+                self.db.session.commit()
+                
+                total_saved = len(cast_crew['cast']) + len(directors) + len(writers) + len(producers)
+                logger.info(f"Successfully saved {total_saved} cast/crew members for content {content.id} ({content.title})")
+                
+            else:
+                logger.warning(f"TMDB credits API returned {response.status_code} for {content.title}")
+                
+        except Exception as e:
+            logger.error(f"Error fetching cast/crew from TMDB: {e}")
+            self.db.session.rollback()
+        
+        return cast_crew
+
+    def _get_or_create_person(self, person_data) -> Any:
+        """Get or create person from TMDB data with enhanced information"""
+        try:
+            tmdb_id = person_data.get('id')
+            if not tmdb_id:
+                return None
+            
+            # Check if person exists
+            person = self.Person.query.filter_by(tmdb_id=tmdb_id).first()
+            
+            if not person:
+                # Create new person
+                name = person_data.get('name', 'Unknown')
+                slug = SlugManager.generate_unique_slug(
+                    self.db, self.Person, name, content_type='person'
+                )
+                
+                person = self.Person(
+                    slug=slug,
+                    tmdb_id=tmdb_id,
+                    name=name,
+                    profile_path=person_data.get('profile_path'),
+                    popularity=person_data.get('popularity', 0),
+                    known_for_department=person_data.get('known_for_department'),
+                    gender=person_data.get('gender')
+                )
+                
+                self.db.session.add(person)
+                self.db.session.flush()  # Get the ID
+            else:
+                # Update existing person if needed
+                if not person.slug:
+                    person.slug = SlugManager.generate_unique_slug(
+                        self.db, self.Person, person.name, content_type='person',
+                        existing_id=person.id
+                    )
+                
+                # Update basic info if missing
+                if not person.popularity and person_data.get('popularity'):
+                    person.popularity = person_data.get('popularity')
+                if not person.known_for_department and person_data.get('known_for_department'):
+                    person.known_for_department = person_data.get('known_for_department')
+            
+            return person
+            
+        except Exception as e:
+            logger.error(f"Error creating/getting person: {e}")
+            return None
+
+    def _get_or_create_content_person(self, content_id, person_id, role_type, 
+                                     character=None, job=None, department=None, order=None):
+        """Get or create content-person relationship"""
+        try:
+            # Check if relationship exists
+            existing = None
+            
+            if role_type == 'cast' and character:
+                existing = self.ContentPerson.query.filter_by(
+                    content_id=content_id,
+                    person_id=person_id,
+                    role_type=role_type,
+                    character=character
+                ).first()
+            elif role_type == 'crew' and job:
+                existing = self.ContentPerson.query.filter_by(
+                    content_id=content_id,
+                    person_id=person_id,
+                    role_type=role_type,
+                    job=job
+                ).first()
+            else:
+                existing = self.ContentPerson.query.filter_by(
+                    content_id=content_id,
+                    person_id=person_id,
+                    role_type=role_type
+                ).first()
+            
+            if not existing:
+                content_person = self.ContentPerson(
+                    content_id=content_id,
+                    person_id=person_id,
+                    role_type=role_type,
+                    character=character,
+                    job=job,
+                    department=department,
+                    order=order
+                )
+                
+                self.db.session.add(content_person)
+                return content_person
+            
+            return existing
+            
+        except Exception as e:
+            logger.error(f"Error creating content-person relationship: {e}")
+            return None
+
+    @ensure_app_context
+    def get_person_details(self, person_slug: str) -> Optional[Dict]:
+        """Get comprehensive person details by slug with complete filmography and career information"""
+        try:
+            # Find person by slug
+            person = self.Person.query.filter_by(slug=person_slug).first()
+            
+            if not person:
+                # Try fuzzy matching
+                person = self._find_person_fuzzy(person_slug)
+                
+                if not person:
+                    return None
+            
+            # Ensure person has slug
+            if not person.slug:
+                try:
+                    SlugManager.update_content_slug(self.db, person)
+                    self.db.session.commit()
+                except Exception as e:
+                    logger.warning(f"Failed to update person slug: {e}")
+            
+            # Fetch complete person data from TMDB if available
+            tmdb_data = {}
+            if person.tmdb_id and TMDB_API_KEY:
+                tmdb_data = self._fetch_complete_person_details(person.tmdb_id)
+            
+            # Get complete filmography from database
+            filmography = self._get_complete_filmography(person.id)
+            
+            # Update person record with TMDB data if needed
+            self._update_person_from_tmdb(person, tmdb_data)
+            
+            # Parse also_known_as safely
+            also_known_as = []
+            try:
+                if person.also_known_as:
+                    also_known_as = json.loads(person.also_known_as)
+            except (json.JSONDecodeError, TypeError):
+                pass
+            
+            if not also_known_as and tmdb_data.get('also_known_as'):
+                also_known_as = tmdb_data['also_known_as']
+            
+            # Build comprehensive person details
+            person_details = {
+                'id': person.id,
+                'slug': person.slug,
+                'name': person.name,
+                'biography': person.biography or tmdb_data.get('biography', ''),
+                'birthday': person.birthday.isoformat() if person.birthday else tmdb_data.get('birthday'),
+                'deathday': person.deathday.isoformat() if person.deathday else tmdb_data.get('deathday'),
+                'place_of_birth': person.place_of_birth or tmdb_data.get('place_of_birth'),
+                'profile_path': self._format_image_url(person.profile_path, 'profile'),
+                'popularity': person.popularity or tmdb_data.get('popularity', 0),
+                'known_for_department': person.known_for_department or tmdb_data.get('known_for_department'),
+                'also_known_as': also_known_as,
+                'gender': person.gender,
+                'filmography': filmography,
+                'images': self._get_person_images(tmdb_data),
+                'social_media': self._get_person_social_media(tmdb_data),
+                'total_works': self._calculate_total_works(filmography),
+                'awards': [],  # Could be expanded with awards data
+                'personal_info': self._build_personal_info(person, tmdb_data),
+                'career_highlights': self._build_career_highlights(filmography),
+                'external_ids': tmdb_data.get('external_ids', {}),
+                'tmdb_id': person.tmdb_id
+            }
+            
+            return person_details
+            
+        except Exception as e:
+            logger.error(f"Error getting person details: {e}")
+            return None
+
+    def _fetch_complete_person_details(self, tmdb_id: int) -> Dict:
+        """Fetch complete person details from TMDB including all career information"""
+        try:
+            url = f"{TMDB_BASE_URL}/person/{tmdb_id}"
+            params = {
+                'api_key': TMDB_API_KEY,
+                'append_to_response': 'images,external_ids,combined_credits,movie_credits,tv_credits'
+            }
+            
+            response = self.session.get(url, params=params, timeout=10)
+            
+            if response.status_code == 200:
+                return response.json()
+            else:
+                logger.warning(f"TMDB person API returned {response.status_code} for person {tmdb_id}")
+                return {}
+                
+        except Exception as e:
+            logger.error(f"Error fetching complete person details from TMDB: {e}")
+            return {}
+
+    def _update_person_from_tmdb(self, person: Any, tmdb_data: Dict):
+        """Update person record with comprehensive TMDB data"""
+        try:
+            if not tmdb_data:
+                return
+            
+            updated = False
+            
+            # Update biography
+            if not person.biography and tmdb_data.get('biography'):
+                person.biography = tmdb_data['biography']
+                updated = True
+            
+            # Update birthday
+            if not person.birthday and tmdb_data.get('birthday'):
+                try:
+                    person.birthday = datetime.strptime(tmdb_data['birthday'], '%Y-%m-%d').date()
+                    updated = True
+                except:
+                    pass
+            
+            # Update deathday
+            if not person.deathday and tmdb_data.get('deathday'):
+                try:
+                    person.deathday = datetime.strptime(tmdb_data['deathday'], '%Y-%m-%d').date()
+                    updated = True
+                except:
+                    pass
+            
+            # Update place of birth
+            if not person.place_of_birth and tmdb_data.get('place_of_birth'):
+                person.place_of_birth = tmdb_data['place_of_birth']
+                updated = True
+            
+            # Update also known as
+            if not person.also_known_as and tmdb_data.get('also_known_as'):
+                person.also_known_as = json.dumps(tmdb_data['also_known_as'])
+                updated = True
+            
+            # Update popularity
+            if tmdb_data.get('popularity') and tmdb_data['popularity'] > (person.popularity or 0):
+                person.popularity = tmdb_data['popularity']
+                updated = True
+            
+            if updated:
+                self.db.session.commit()
+                logger.info(f"Updated person {person.name} with TMDB data")
+                
+        except Exception as e:
+            logger.error(f"Error updating person from TMDB: {e}")
+            self.db.session.rollback()
+
+    def _get_complete_filmography(self, person_id: int) -> Dict:
+        """Get complete filmography for a person organized by role and type"""
+        try:
+            filmography = {
+                'as_actor': [],
+                'as_director': [],
+                'as_writer': [],
+                'as_producer': [],
+                'upcoming': [],
+                'by_year': {},
+                'statistics': {
+                    'total_projects': 0,
+                    'years_active': 0,
+                    'highest_rated': None,
+                    'most_popular': None
+                }
+            }
+            
+            # Get ALL filmography entries (no limit)
+            filmography_entries = self.db.session.query(
+                self.ContentPerson, self.Content
+            ).join(
+                self.Content
+            ).filter(
+                self.ContentPerson.person_id == person_id
+            ).order_by(
+                self.Content.release_date.desc()
+            ).all()  # Get ALL entries
+            
+            years = set()
+            all_ratings = []
+            all_popularity = []
+            
+            for cp, content in filmography_entries:
+                # Ensure content has slug
+                if not content.slug:
+                    try:
+                        SlugManager.update_content_slug(self.db, content)
+                    except Exception:
+                        content.slug = f"content-{content.id}"
+                
+                work = {
+                    'id': content.id,
+                    'slug': content.slug,
+                    'title': content.title,
+                    'year': content.release_date.year if content.release_date else None,
+                    'content_type': content.content_type,
+                    'poster_path': self._format_image_url(content.poster_path, 'poster'),
+                    'rating': content.rating,
+                    'popularity': content.popularity,
+                    'character': cp.character,
+                    'job': cp.job,
+                    'department': cp.department,
+                    'release_date': content.release_date.isoformat() if content.release_date else None
+                }
+                
+                # Track statistics
+                if content.release_date:
+                    years.add(content.release_date.year)
+                if content.rating:
+                    all_ratings.append((content.rating, work))
+                if content.popularity:
+                    all_popularity.append((content.popularity, work))
+                
+                # Organize by year
+                year_key = work['year'] or 'Unknown'
+                if year_key not in filmography['by_year']:
+                    filmography['by_year'][year_key] = []
+                filmography['by_year'][year_key].append(work)
+                
+                # Check if upcoming
+                if content.release_date and content.release_date > datetime.now().date():
+                    filmography['upcoming'].append(work)
+                elif cp.role_type == 'cast':
+                    filmography['as_actor'].append(work)
+                elif cp.department == 'Directing' or cp.job == 'Director':
+                    filmography['as_director'].append(work)
+                elif cp.department == 'Writing' or cp.job in ['Writer', 'Screenplay', 'Story']:
+                    filmography['as_writer'].append(work)
+                elif 'Producer' in (cp.job or ''):
+                    filmography['as_producer'].append(work)
+            
+            # Calculate statistics
+            filmography['statistics']['total_projects'] = len(filmography_entries)
+            if years:
+                filmography['statistics']['years_active'] = max(years) - min(years) + 1
+            
+            if all_ratings:
+                filmography['statistics']['highest_rated'] = max(all_ratings, key=lambda x: x[0])[1]
+            
+            if all_popularity:
+                filmography['statistics']['most_popular'] = max(all_popularity, key=lambda x: x[0])[1]
+            
+            logger.info(f"Retrieved complete filmography: {filmography['statistics']['total_projects']} projects")
+            return filmography
+            
+        except Exception as e:
+            logger.error(f"Error getting complete filmography: {e}")
+            return {
+                'as_actor': [], 'as_director': [], 'as_writer': [], 'as_producer': [],
+                'upcoming': [], 'by_year': {}, 'statistics': {}
+            }
+
+    def _build_personal_info(self, person: Any, tmdb_data: Dict) -> Dict:
+        """Build comprehensive personal information"""
+        try:
+            personal_info = {
+                'age': None,
+                'zodiac_sign': None,
+                'nationality': None,
+                'height': None,
+                'awards_count': 0,
+                'trivia': []
+            }
+            
+            # Calculate age
+            if person.birthday:
+                today = datetime.now().date()
+                if person.deathday:
+                    end_date = person.deathday
+                else:
+                    end_date = today
+                
+                personal_info['age'] = end_date.year - person.birthday.year
+                if end_date.month < person.birthday.month or (end_date.month == person.birthday.month and end_date.day < person.birthday.day):
+                    personal_info['age'] -= 1
+            
+            # Determine nationality from place of birth
+            if person.place_of_birth:
+                # Simple nationality extraction (could be enhanced with a proper mapping)
+                place_parts = person.place_of_birth.split(',')
+                if len(place_parts) > 0:
+                    country = place_parts[-1].strip()
+                    personal_info['nationality'] = country
+            
+            return personal_info
+            
+        except Exception as e:
+            logger.error(f"Error building personal info: {e}")
+            return {}
+
+    def _build_career_highlights(self, filmography: Dict) -> Dict:
+        """Build career highlights and milestones"""
+        try:
+            highlights = {
+                'debut_year': None,
+                'breakthrough_role': None,
+                'most_successful_decade': None,
+                'collaboration_frequency': {},
+                'genre_distribution': {},
+                'career_phases': []
+            }
+            
+            # Find debut year
+            all_years = []
+            for role_type in ['as_actor', 'as_director', 'as_writer', 'as_producer']:
+                for work in filmography.get(role_type, []):
+                    if work.get('year'):
+                        all_years.append(work['year'])
+            
+            if all_years:
+                highlights['debut_year'] = min(all_years)
+            
+            # Analyze decades
+            decade_count = {}
+            for year in all_years:
+                decade = (year // 10) * 10
+                decade_count[decade] = decade_count.get(decade, 0) + 1
+            
+            if decade_count:
+                most_successful_decade = max(decade_count.items(), key=lambda x: x[1])
+                highlights['most_successful_decade'] = f"{most_successful_decade[0]}s"
+            
+            return highlights
+            
+        except Exception as e:
+            logger.error(f"Error building career highlights: {e}")
+            return {}
+
+    def _calculate_total_works(self, filmography: Dict) -> int:
+        """Calculate total number of works across all roles"""
+        try:
+            total = 0
+            for role_type in ['as_actor', 'as_director', 'as_writer', 'as_producer']:
+                total += len(filmography.get(role_type, []))
+            return total
+        except:
+            return 0
+
+    def _find_person_fuzzy(self, slug: str) -> Optional[Any]:
+        """Find person using fuzzy matching"""
+        try:
+            # Extract name from slug
+            info = SlugManager.extract_info_from_slug(slug)
+            name = info['title']  # For persons, title is the name
+            
+            # Build query and apply limit at the end
+            results = self.Person.query.filter(
+                func.lower(self.Person.name).like(f"%{name.lower()}%")
+            ).limit(10).all()
+            
+            if results:
+                # Return best match
+                best_match = max(results, key=lambda x: self._calculate_similarity(x.name, name))
+                logger.info(f"Found fuzzy match for person '{slug}': {best_match.name}")
+                return best_match
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error in fuzzy person search: {e}")
+            return None
+
+    def _get_person_images(self, tmdb_data: Dict) -> List[Dict]:
+        """Get person images from TMDB data"""
+        try:
+            images = []
+            if tmdb_data.get('images', {}).get('profiles'):
+                for img in tmdb_data['images']['profiles'][:20]:  # Get more images
+                    images.append({
+                        'url': self._format_image_url(img['file_path'], 'profile'),
+                        'width': img.get('width'),
+                        'height': img.get('height'),
+                        'aspect_ratio': img.get('aspect_ratio')
+                    })
+            return images
+        except Exception as e:
+            logger.error(f"Error getting person images: {e}")
+            return []
+
+    def _get_person_social_media(self, tmdb_data: Dict) -> Dict:
+        """Get person's social media links"""
+        try:
+            social = {}
+            if tmdb_data.get('external_ids'):
+                ids = tmdb_data['external_ids']
+                if ids.get('twitter_id'):
+                    social['twitter'] = f"https://twitter.com/{ids['twitter_id']}"
+                if ids.get('instagram_id'):
+                    social['instagram'] = f"https://instagram.com/{ids['instagram_id']}"
+                if ids.get('facebook_id'):
+                    social['facebook'] = f"https://facebook.com/{ids['facebook_id']}"
+                if ids.get('imdb_id'):
+                    social['imdb'] = f"https://www.imdb.com/name/{ids['imdb_id']}"
+                if ids.get('tiktok_id'):
+                    social['tiktok'] = f"https://tiktok.com/@{ids['tiktok_id']}"
+                if ids.get('youtube_id'):
+                    social['youtube'] = f"https://youtube.com/channel/{ids['youtube_id']}"
+                if ids.get('wikidata_id'):
+                    social['wikidata'] = f"https://www.wikidata.org/wiki/{ids['wikidata_id']}"
+            return social
+        except Exception as e:
+            logger.error(f"Error getting person social media: {e}")
+            return {}
+
     def _get_gallery(self, content_id: int) -> Dict:
         """Get content gallery (posters, backdrops, stills) with performance optimization"""
         try:
@@ -1123,13 +1901,13 @@ class DetailsService:
                     'api_key': TMDB_API_KEY
                 }
                 
-                response = self.session.get(url, params=params, timeout=5)  # Reduced timeout
+                response = self.session.get(url, params=params, timeout=8)
                 
                 if response.status_code == 200:
                     data = response.json()
                     
-                    # Add posters - reduced limit
-                    for img in data.get('posters', [])[:5]:  # Reduced from 10
+                    # Add posters
+                    for img in data.get('posters', [])[:15]:  # Get more images
                         gallery['posters'].append({
                             'url': self._format_image_url(img['file_path'], 'poster'),
                             'thumbnail': self._format_image_url(img['file_path'], 'thumbnail'),
@@ -1138,8 +1916,8 @@ class DetailsService:
                             'height': img.get('height')
                         })
                     
-                    # Add backdrops - reduced limit
-                    for img in data.get('backdrops', [])[:5]:  # Reduced from 10
+                    # Add backdrops
+                    for img in data.get('backdrops', [])[:15]:  # Get more images
                         gallery['backdrops'].append({
                             'url': self._format_image_url(img['file_path'], 'backdrop'),
                             'thumbnail': self._format_image_url(img['file_path'], 'still'),
@@ -1148,9 +1926,9 @@ class DetailsService:
                             'height': img.get('height')
                         })
                     
-                    # Add stills for TV shows - reduced limit
+                    # Add stills for TV shows
                     if content.content_type == 'tv' and data.get('stills'):
-                        for img in data.get('stills', [])[:5]:  # Reduced from 10
+                        for img in data.get('stills', [])[:15]:  # Get more images
                             gallery['stills'].append({
                                 'url': self._format_image_url(img['file_path'], 'still'),
                                 'thumbnail': self._format_image_url(img['file_path'], 'thumbnail'),
@@ -1241,10 +2019,10 @@ class DetailsService:
             
             params = {
                 'api_key': TMDB_API_KEY,
-                'append_to_response': 'videos,images,credits,similar,recommendations,reviews,external_ids,watch/providers,content_ratings,release_dates'
+                'append_to_response': 'videos,images,credits,similar,recommendations,reviews,external_ids,watch/providers,content_ratings,release_dates,keywords'
             }
             
-            response = self.session.get(url, params=params, timeout=5)  # Reduced timeout
+            response = self.session.get(url, params=params, timeout=10)
             
             if response.status_code == 200:
                 return response.json()
@@ -1267,7 +2045,7 @@ class DetailsService:
                 'plot': 'full'
             }
             
-            response = self.session.get(OMDB_BASE_URL, params=params, timeout=5)  # Reduced timeout
+            response = self.session.get(OMDB_BASE_URL, params=params, timeout=8)
             
             if response.status_code == 200:
                 return response.json()
@@ -1295,11 +2073,11 @@ class DetailsService:
                 'q': search_query,
                 'part': 'snippet',
                 'type': 'video',
-                'maxResults': 3,  # Reduced for performance
+                'maxResults': 5,
                 'order': 'relevance'
             }
             
-            response = self.session.get(url, params=params, timeout=5)  # Reduced timeout
+            response = self.session.get(url, params=params, timeout=8)
             
             if response.status_code == 200:
                 data = response.json()
@@ -1344,7 +2122,7 @@ class DetailsService:
             # Extract keywords/themes
             if tmdb_data.get('keywords'):
                 keywords = tmdb_data['keywords'].get('keywords', []) or tmdb_data['keywords'].get('results', [])
-                synopsis['keywords'] = [kw['name'] for kw in keywords[:10]]
+                synopsis['keywords'] = [kw['name'] for kw in keywords[:15]]
             
             return synopsis
         except Exception as e:
@@ -1449,7 +2227,7 @@ class DetailsService:
                     for lang in tmdb_data['spoken_languages']
                 ]
             
-            # Production info - limited for performance
+            # Production info
             if tmdb_data.get('production_companies'):
                 metadata['production_companies'] = [
                     {
@@ -1457,7 +2235,7 @@ class DetailsService:
                         'name': company['name'],
                         'logo': self._format_image_url(company.get('logo_path'), 'logo') if company.get('logo_path') else None
                     }
-                    for company in tmdb_data['production_companies'][:3]  # Reduced limit
+                    for company in tmdb_data['production_companies'][:5]
                 ]
             
             # Certifications
@@ -1493,268 +2271,7 @@ class DetailsService:
             }
     
     @ensure_app_context
-    def _get_cast_crew(self, content_id: int) -> Dict:
-        """Get cast and crew information with performance optimization"""
-        try:
-            cast_crew = {
-                'cast': [],
-                'crew': {
-                    'directors': [],
-                    'writers': [],
-                    'producers': []
-                }
-            }
-            
-            # Query from database if we have person data
-            if self.ContentPerson and self.Person:
-                # Get cast - reduced limit
-                cast_entries = self.db.session.query(
-                    self.ContentPerson, self.Person
-                ).join(
-                    self.Person
-                ).filter(
-                    self.ContentPerson.content_id == content_id,
-                    self.ContentPerson.role_type == 'cast'
-                ).order_by(
-                    self.ContentPerson.order
-                ).limit(15).all()  # Reduced from 20
-                
-                for cp, person in cast_entries:
-                    # Ensure person has slug
-                    if not person.slug:
-                        try:
-                            SlugManager.update_content_slug(self.db, person)
-                        except Exception:
-                            person.slug = f"person-{person.id}"
-                    
-                    cast_crew['cast'].append({
-                        'id': person.id,
-                        'name': person.name,
-                        'character': cp.character,
-                        'profile_path': self._format_image_url(person.profile_path, 'profile'),
-                        'slug': person.slug,
-                        'popularity': person.popularity
-                    })
-                
-                # Get crew - reduced limit
-                crew_entries = self.db.session.query(
-                    self.ContentPerson, self.Person
-                ).join(
-                    self.Person
-                ).filter(
-                    self.ContentPerson.content_id == content_id,
-                    self.ContentPerson.role_type == 'crew'
-                ).limit(10).all()  # Reduced limit
-                
-                for cp, person in crew_entries:
-                    # Ensure person has slug
-                    if not person.slug:
-                        try:
-                            SlugManager.update_content_slug(self.db, person)
-                        except Exception:
-                            person.slug = f"person-{person.id}"
-                    
-                    crew_data = {
-                        'id': person.id,
-                        'name': person.name,
-                        'job': cp.job,
-                        'profile_path': self._format_image_url(person.profile_path, 'profile'),
-                        'slug': person.slug
-                    }
-                    
-                    if cp.department == 'Directing' or cp.job == 'Director':
-                        cast_crew['crew']['directors'].append(crew_data)
-                    elif cp.department == 'Writing' or cp.job in ['Writer', 'Screenplay']:
-                        cast_crew['crew']['writers'].append(crew_data)
-                    elif cp.department == 'Production' or 'Producer' in (cp.job or ''):
-                        cast_crew['crew']['producers'].append(crew_data)
-            
-            return cast_crew
-            
-        except Exception as e:
-            logger.error(f"Error getting cast/crew: {e}")
-            return {'cast': [], 'crew': {'directors': [], 'writers': [], 'producers': []}}
-    
-    @ensure_app_context
-    def get_person_details(self, person_slug: str) -> Optional[Dict]:
-        """Get comprehensive person details by slug"""
-        try:
-            # Find person by slug
-            person = self.Person.query.filter_by(slug=person_slug).first()
-            
-            if not person:
-                # Try fuzzy matching
-                person = self._find_person_fuzzy(person_slug)
-                
-                if not person:
-                    return None
-            
-            # Ensure person has slug
-            if not person.slug:
-                try:
-                    SlugManager.update_content_slug(self.db, person)
-                    self.db.session.commit()
-                except Exception as e:
-                    logger.warning(f"Failed to update person slug: {e}")
-            
-            # Get filmography - with limit for performance
-            filmography = self.db.session.query(
-                self.ContentPerson, self.Content
-            ).join(
-                self.Content
-            ).filter(
-                self.ContentPerson.person_id == person.id
-            ).order_by(
-                self.Content.release_date.desc()
-            ).limit(50).all()  # Added limit for performance
-            
-            # Organize filmography
-            works = {
-                'as_actor': [],
-                'as_director': [],
-                'as_writer': [],
-                'as_producer': [],
-                'upcoming': []
-            }
-            
-            for cp, content in filmography:
-                # Ensure content has slug
-                if not content.slug:
-                    try:
-                        SlugManager.update_content_slug(self.db, content)
-                    except Exception:
-                        content.slug = f"content-{content.id}"
-                
-                work = {
-                    'id': content.id,
-                    'slug': content.slug,
-                    'title': content.title,
-                    'year': content.release_date.year if content.release_date else None,
-                    'content_type': content.content_type,
-                    'poster_path': self._format_image_url(content.poster_path, 'poster'),
-                    'rating': content.rating,
-                    'character': cp.character,
-                    'job': cp.job
-                }
-                
-                # Check if upcoming
-                if content.release_date and content.release_date > datetime.now().date():
-                    works['upcoming'].append(work)
-                elif cp.role_type == 'cast':
-                    works['as_actor'].append(work)
-                elif cp.department == 'Directing' or cp.job == 'Director':
-                    works['as_director'].append(work)
-                elif cp.department == 'Writing' or cp.job in ['Writer', 'Screenplay']:
-                    works['as_writer'].append(work)
-                elif 'Producer' in (cp.job or ''):
-                    works['as_producer'].append(work)
-            
-            # Fetch additional data from TMDB if available
-            tmdb_data = {}
-            if person.tmdb_id and TMDB_API_KEY:
-                try:
-                    url = f"{TMDB_BASE_URL}/person/{person.tmdb_id}"
-                    params = {
-                        'api_key': TMDB_API_KEY,
-                        'append_to_response': 'images,external_ids,combined_credits'
-                    }
-                    response = self.session.get(url, params=params, timeout=5)  # Reduced timeout
-                    if response.status_code == 200:
-                        tmdb_data = response.json()
-                except Exception as e:
-                    logger.error(f"Error fetching person from TMDB: {e}")
-            
-            # Parse also_known_as safely
-            also_known_as = []
-            try:
-                if person.also_known_as:
-                    also_known_as = json.loads(person.also_known_as)
-            except (json.JSONDecodeError, TypeError):
-                pass
-            
-            if not also_known_as and tmdb_data.get('also_known_as'):
-                also_known_as = tmdb_data['also_known_as']
-            
-            return {
-                'id': person.id,
-                'slug': person.slug,
-                'name': person.name,
-                'biography': person.biography or tmdb_data.get('biography', ''),
-                'birthday': person.birthday.isoformat() if person.birthday else tmdb_data.get('birthday'),
-                'deathday': person.deathday.isoformat() if person.deathday else tmdb_data.get('deathday'),
-                'place_of_birth': person.place_of_birth or tmdb_data.get('place_of_birth'),
-                'profile_path': self._format_image_url(person.profile_path, 'profile'),
-                'popularity': person.popularity or tmdb_data.get('popularity', 0),
-                'known_for_department': person.known_for_department or tmdb_data.get('known_for_department'),
-                'also_known_as': also_known_as,
-                'gender': person.gender,
-                'filmography': works,
-                'images': self._get_person_images(tmdb_data),
-                'social_media': self._get_person_social_media(tmdb_data),
-                'total_works': len(filmography),
-                'awards': []  # Could be expanded with awards data
-            }
-            
-        except Exception as e:
-            logger.error(f"Error getting person details: {e}")
-            return None
-    
-    def _find_person_fuzzy(self, slug: str) -> Optional[Any]:
-        """Find person using fuzzy matching"""
-        try:
-            # Extract name from slug
-            name = slug.replace('-', ' ').title()
-            
-            # Build query and apply limit at the end
-            results = self.Person.query.filter(
-                func.lower(self.Person.name).like(f"%{name.lower()}%")
-            ).limit(5).all()  # Apply limit after filter
-            
-            if results:
-                # Return best match
-                best_match = max(results, key=lambda x: self._calculate_similarity(x.name, name))
-                logger.info(f"Found fuzzy match for person '{slug}': {best_match.name}")
-                return best_match
-            
-            return None
-            
-        except Exception as e:
-            logger.error(f"Error in fuzzy person search: {e}")
-            return None
-            
-    def _get_person_images(self, tmdb_data: Dict) -> List[str]:
-        """Get person images from TMDB data"""
-        try:
-            images = []
-            if tmdb_data.get('images', {}).get('profiles'):
-                for img in tmdb_data['images']['profiles'][:5]:  # Reduced limit
-                    images.append(self._format_image_url(img['file_path'], 'profile'))
-            return images
-        except Exception as e:
-            logger.error(f"Error getting person images: {e}")
-            return []
-    
-    def _get_person_social_media(self, tmdb_data: Dict) -> Dict:
-        """Get person's social media links"""
-        try:
-            social = {}
-            if tmdb_data.get('external_ids'):
-                ids = tmdb_data['external_ids']
-                if ids.get('twitter_id'):
-                    social['twitter'] = f"https://twitter.com/{ids['twitter_id']}"
-                if ids.get('instagram_id'):
-                    social['instagram'] = f"https://instagram.com/{ids['instagram_id']}"
-                if ids.get('facebook_id'):
-                    social['facebook'] = f"https://facebook.com/{ids['facebook_id']}"
-                if ids.get('imdb_id'):
-                    social['imdb'] = f"https://www.imdb.com/name/{ids['imdb_id']}"
-            return social
-        except Exception as e:
-            logger.error(f"Error getting person social media: {e}")
-            return {}
-    
-    @ensure_app_context
-    def _get_reviews(self, content_id: int, limit: int = 5) -> List[Dict]:
+    def _get_reviews(self, content_id: int, limit: int = 10) -> List[Dict]:
         """Get user reviews for content with performance optimization"""
         try:
             reviews = []
@@ -1796,7 +2313,7 @@ class DetailsService:
             return []
     
     @ensure_app_context
-    def _get_similar_content(self, content_id: int, limit: int = 8) -> List[Dict]:
+    def _get_similar_content(self, content_id: int, limit: int = 12) -> List[Dict]:
         """Get similar/recommended content with slug support and performance optimization"""
         try:
             similar = []
@@ -1863,77 +2380,6 @@ class DetailsService:
             logger.error(f"Error getting similar content: {e}")
             return []
     
-    def _get_gallery(self, content_id: int) -> Dict:
-        """Get content gallery (posters, backdrops, stills) with performance optimization"""
-        try:
-            gallery = {
-                'posters': [],
-                'backdrops': [],
-                'stills': []
-            }
-            
-            # Get from TMDB if available
-            if not has_app_context():
-                return gallery
-            
-            content = self.Content.query.get(content_id)
-            if content and content.tmdb_id and TMDB_API_KEY:
-                endpoint = 'movie' if content.content_type == 'movie' else 'tv'
-                url = f"{TMDB_BASE_URL}/{endpoint}/{content.tmdb_id}/images"
-                
-                params = {
-                    'api_key': TMDB_API_KEY
-                }
-                
-                response = self.session.get(url, params=params, timeout=5)  # Reduced timeout
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    
-                    # Add posters - reduced limit
-                    for img in data.get('posters', [])[:5]:  # Reduced from 10
-                        gallery['posters'].append({
-                            'url': self._format_image_url(img['file_path'], 'poster'),
-                            'thumbnail': self._format_image_url(img['file_path'], 'thumbnail'),
-                            'aspect_ratio': img.get('aspect_ratio'),
-                            'width': img.get('width'),
-                            'height': img.get('height')
-                        })
-                    
-                    # Add backdrops - reduced limit
-                    for img in data.get('backdrops', [])[:5]:  # Reduced from 10
-                        gallery['backdrops'].append({
-                            'url': self._format_image_url(img['file_path'], 'backdrop'),
-                            'thumbnail': self._format_image_url(img['file_path'], 'still'),
-                            'aspect_ratio': img.get('aspect_ratio'),
-                            'width': img.get('width'),
-                            'height': img.get('height')
-                        })
-                    
-                    # Add stills for TV shows - reduced limit
-                    if content.content_type == 'tv' and data.get('stills'):
-                        for img in data.get('stills', [])[:5]:  # Reduced from 10
-                            gallery['stills'].append({
-                                'url': self._format_image_url(img['file_path'], 'still'),
-                                'thumbnail': self._format_image_url(img['file_path'], 'thumbnail'),
-                                'aspect_ratio': img.get('aspect_ratio'),
-                                'width': img.get('width'),
-                                'height': img.get('height')
-                            })
-            
-            # Add default poster if no gallery images
-            if not gallery['posters'] and content and content.poster_path:
-                gallery['posters'].append({
-                    'url': self._format_image_url(content.poster_path, 'poster'),
-                    'thumbnail': self._format_image_url(content.poster_path, 'thumbnail')
-                })
-            
-            return gallery
-            
-        except Exception as e:
-            logger.error(f"Error getting gallery: {e}")
-            return {'posters': [], 'backdrops': [], 'stills': []}
-    
     def _get_streaming_info(self, content: Any, tmdb_data: Dict) -> Optional[Dict]:
         """Get streaming availability information"""
         try:
@@ -1951,7 +2397,7 @@ class DetailsService:
                 region_data = providers.get('US', {})
                 
                 if region_data.get('flatrate'):
-                    for provider in region_data['flatrate'][:5]:  # Limit for performance
+                    for provider in region_data['flatrate'][:8]:
                         streaming['stream'].append({
                             'provider_id': provider['provider_id'],
                             'provider_name': provider['provider_name'],
@@ -1959,7 +2405,7 @@ class DetailsService:
                         })
                 
                 if region_data.get('rent'):
-                    for provider in region_data['rent'][:5]:  # Limit for performance
+                    for provider in region_data['rent'][:8]:
                         streaming['rent'].append({
                             'provider_id': provider['provider_id'],
                             'provider_name': provider['provider_name'],
@@ -1967,7 +2413,7 @@ class DetailsService:
                         })
                 
                 if region_data.get('buy'):
-                    for provider in region_data['buy'][:5]:  # Limit for performance
+                    for provider in region_data['buy'][:8]:
                         streaming['buy'].append({
                             'provider_id': provider['provider_id'],
                             'provider_name': provider['provider_name'],
@@ -1975,7 +2421,7 @@ class DetailsService:
                         })
                 
                 if region_data.get('free'):
-                    for provider in region_data['free'][:5]:  # Limit for performance
+                    for provider in region_data['free'][:8]:
                         streaming['free'].append({
                             'provider_id': provider['provider_id'],
                             'provider_name': provider['provider_name'],
@@ -2004,9 +2450,9 @@ class DetailsService:
                 'seasons': []
             }
             
-            # Get season details - limit for performance
+            # Get season details
             if tmdb_data.get('seasons'):
-                for season in tmdb_data['seasons'][:10]:  # Limit seasons
+                for season in tmdb_data['seasons'][:15]:  # Get more seasons
                     # Skip specials (season 0) unless it's the only season
                     if season['season_number'] == 0 and len(tmdb_data['seasons']) > 1:
                         continue
