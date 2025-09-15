@@ -345,12 +345,6 @@ class Review(db.Model):
         db.UniqueConstraint('content_id', 'user_id'),
     )
 
-# Register blueprints
-app.register_blueprint(auth_bp)
-app.register_blueprint(admin_bp)
-app.register_blueprint(users_bp)
-init_auth(app, db, User)
-
 # Helper Functions
 def get_session_id():
     if 'session_id' not in session:
@@ -832,7 +826,7 @@ class AnonymousRecommendationEngine:
             logger.error(f"Error getting anonymous recommendations: {e}")
             return []
 
-# Initialize modules with models and services
+# Initialize modules with models and services - FIXED
 models = {
     'User': User,
     'Content': Content,
@@ -843,27 +837,37 @@ models = {
     'ContentPerson': ContentPerson
 }
 
+# Initialize details service first
+details_service = None
+content_service = None
+try:
+    with app.app_context():
+        details_service = init_details_service(app, db, models, cache)
+        content_service = ContentService(db, models)
+        logger.info("Details and Content services initialized successfully")
+except Exception as e:
+    logger.error(f"Failed to initialize details/content services: {e}")
+
+# Now build services dictionary with ContentService
 services = {
     'TMDBService': TMDBService,
     'JikanService': JikanService,
+    'ContentService': content_service,  # Add ContentService here
     'MLServiceClient': MLServiceClient,
     'http_session': http_session,
     'ML_SERVICE_URL': ML_SERVICE_URL,
     'cache': cache
 }
 
+# Register blueprints
+app.register_blueprint(auth_bp)
+app.register_blueprint(admin_bp)
+app.register_blueprint(users_bp)
+init_auth(app, db, User)
+
+# Initialize other services
 init_admin(app, db, models, services)
 init_users(app, db, models, services)
-
-# Initialize details service with error handling
-details_service = None
-content_service = None
-try:
-    details_service = init_details_service(app, db, models, cache)
-    content_service = ContentService(db, models)
-    logger.info("Details service initialized successfully")
-except Exception as e:
-    logger.error(f"Failed to initialize details service: {e}")
 
 # API Routes
 
