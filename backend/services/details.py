@@ -898,11 +898,23 @@ class DetailsService:
         except Exception:
             return 0.0
     
+    def _with_app_context(self, app, func, *args, **kwargs):
+        """Execute function with Flask app context in thread"""
+        if app:
+            with app.app_context():
+                return func(*args, **kwargs)
+        else:
+            return func(*args, **kwargs)
+
     def _build_content_details(self, content: Any, user_id: Optional[int] = None) -> Dict:
         """Build comprehensive content details - optimized for performance"""
         try:
             # Initialize API keys if not already done
             self._init_api_keys()
+            
+            # Capture the current app for thread context
+            from flask import current_app
+            app = current_app._get_current_object() if has_app_context() else None
             
             # Prepare futures for concurrent API calls - reduced for performance
             futures = {}
@@ -914,11 +926,19 @@ class DetailsService:
                 if content.imdb_id and OMDB_API_KEY:
                     futures['omdb'] = executor.submit(self._fetch_omdb_details, content.imdb_id)
                 
-                # Internal data fetching - reduced limits
-                futures['cast_crew'] = executor.submit(self._get_cast_crew, content.id)
-                futures['reviews'] = executor.submit(self._get_reviews, content.id, 5)  # Reduced limit
-                futures['similar'] = executor.submit(self._get_similar_content, content.id, 8)  # Reduced limit
-                futures['gallery'] = executor.submit(self._get_gallery, content.id)
+                # Internal data fetching with app context - reduced limits
+                if app:
+                    futures['cast_crew'] = executor.submit(self._with_app_context, app, self._get_cast_crew, content.id)
+                    futures['reviews'] = executor.submit(self._with_app_context, app, self._get_reviews, content.id, 5)
+                    futures['similar'] = executor.submit(self._with_app_context, app, self._get_similar_content, content.id, 8)
+                    futures['gallery'] = executor.submit(self._with_app_context, app, self._get_gallery, content.id)
+                else:
+                    # Fallback to direct calls if no app context
+                    futures['cast_crew'] = executor.submit(self._get_cast_crew, content.id)
+                    futures['reviews'] = executor.submit(self._get_reviews, content.id, 5)
+                    futures['similar'] = executor.submit(self._get_similar_content, content.id, 8)
+                    futures['gallery'] = executor.submit(self._get_gallery, content.id)
+                
                 futures['trailer'] = executor.submit(self._get_trailer, content.title, content.content_type)
             
             # Collect results with error handling and timeouts
@@ -1009,7 +1029,12 @@ class DetailsService:
             
             # Add user-specific data if authenticated
             if user_id:
-                details['user_data'] = self._get_user_data(content.id, user_id)
+                if app:
+                    # Get user data with app context
+                    with app.app_context():
+                        details['user_data'] = self._get_user_data(content.id, user_id)
+                else:
+                    details['user_data'] = self._get_user_data(content.id, user_id)
             
             return details
             
