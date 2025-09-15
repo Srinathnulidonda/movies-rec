@@ -2342,30 +2342,6 @@ def generate_slugs():
         print(f"Failed to generate slugs: {e}")
         logger.error(f"CLI slug generation error: {e}")
 
-
-def ensure_database_schema():
-    """Ensure all required columns exist"""
-    try:
-        with app.app_context():
-            # Check and add missing columns
-            from sqlalchemy import inspect, text
-            
-            inspector = inspect(db.engine)
-            
-            # Check if interaction_metadata column exists
-            columns = [col['name'] for col in inspector.get_columns('user_interaction')]
-            
-            if 'interaction_metadata' not in columns:
-                with db.engine.connect() as conn:
-                    conn.execute(text(
-                        "ALTER TABLE user_interaction ADD COLUMN interaction_metadata JSON"
-                    ))
-                    conn.commit()
-                logger.info("Added missing interaction_metadata column")
-                
-    except Exception as e:
-        logger.error(f"Schema update error: {e}")
-
 # Initialize database
 def create_tables():
     try:
@@ -2386,10 +2362,8 @@ def create_tables():
                 logger.info("Admin user created with username: admin, password: admin123")
     except Exception as e:
         logger.error(f"Database initialization error: {e}")
-
-# Call after create_tables()
+# Initialize database when app starts
 create_tables()
-ensure_database_schema()
 
 # Application startup logging
 if __name__ == '__main__':
