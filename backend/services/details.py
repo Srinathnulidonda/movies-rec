@@ -1042,7 +1042,85 @@ class DetailsService:
             logger.error(f"Error building content details: {e}")
             # Return minimal details to prevent complete failure
             return self._get_minimal_details(content)
-    
+
+    def _get_gallery(self, content_id: int) -> Dict:
+        """Get content gallery (posters, backdrops, stills) with performance optimization"""
+        try:
+            gallery = {
+                'posters': [],
+                'backdrops': [],
+                'stills': []
+            }
+            
+            # Get content from database within app context
+            content = None
+            try:
+                if has_app_context():
+                    content = self.Content.query.get(content_id)
+                else:
+                    # If no app context, return basic gallery
+                    return gallery
+            except Exception as e:
+                logger.warning(f"Error getting content for gallery: {e}")
+                return gallery
+            
+            if content and content.tmdb_id and TMDB_API_KEY:
+                endpoint = 'movie' if content.content_type == 'movie' else 'tv'
+                url = f"{TMDB_BASE_URL}/{endpoint}/{content.tmdb_id}/images"
+                
+                params = {
+                    'api_key': TMDB_API_KEY
+                }
+                
+                response = self.session.get(url, params=params, timeout=5)  # Reduced timeout
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    
+                    # Add posters - reduced limit
+                    for img in data.get('posters', [])[:5]:  # Reduced from 10
+                        gallery['posters'].append({
+                            'url': self._format_image_url(img['file_path'], 'poster'),
+                            'thumbnail': self._format_image_url(img['file_path'], 'thumbnail'),
+                            'aspect_ratio': img.get('aspect_ratio'),
+                            'width': img.get('width'),
+                            'height': img.get('height')
+                        })
+                    
+                    # Add backdrops - reduced limit
+                    for img in data.get('backdrops', [])[:5]:  # Reduced from 10
+                        gallery['backdrops'].append({
+                            'url': self._format_image_url(img['file_path'], 'backdrop'),
+                            'thumbnail': self._format_image_url(img['file_path'], 'still'),
+                            'aspect_ratio': img.get('aspect_ratio'),
+                            'width': img.get('width'),
+                            'height': img.get('height')
+                        })
+                    
+                    # Add stills for TV shows - reduced limit
+                    if content.content_type == 'tv' and data.get('stills'):
+                        for img in data.get('stills', [])[:5]:  # Reduced from 10
+                            gallery['stills'].append({
+                                'url': self._format_image_url(img['file_path'], 'still'),
+                                'thumbnail': self._format_image_url(img['file_path'], 'thumbnail'),
+                                'aspect_ratio': img.get('aspect_ratio'),
+                                'width': img.get('width'),
+                                'height': img.get('height')
+                            })
+            
+            # Add default poster if no gallery images
+            if not gallery['posters'] and content and content.poster_path:
+                gallery['posters'].append({
+                    'url': self._format_image_url(content.poster_path, 'poster'),
+                    'thumbnail': self._format_image_url(content.poster_path, 'thumbnail')
+                })
+            
+            return gallery
+            
+        except Exception as e:
+            logger.error(f"Error getting gallery: {e}")
+            return {'posters': [], 'backdrops': [], 'stills': []}
+
     def _get_minimal_details(self, content: Any) -> Dict:
         """Return minimal details as fallback"""
         try:
