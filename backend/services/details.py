@@ -113,7 +113,7 @@ class SlugManager:
     @staticmethod
     def generate_slug(title: str, year: Optional[int] = None, content_type: str = 'movie') -> str:
         """
-        Generate URL-safe slug from title - Python 3.13 compatible version with proper slugify usage
+        Generate URL-safe slug from title - Python 3.13 compatible version
         
         Args:
             title: Content title
@@ -137,15 +137,9 @@ class SlugManager:
             if not clean_title:
                 return f"content-{int(time.time())}"
             
-            # Use slugify with only supported parameters
+            # Use slugify with correct parameters - Python 3.13 compatible
             try:
-                # Basic slugify call - most compatible
-                slug = slugify(
-                    clean_title,
-                    lowercase=True,
-                    separator='-',
-                    allow_unicode=False
-                )
+                slug = slugify(clean_title, max_length=80, word_boundary=True, save_order=True)
             except Exception as slugify_error:
                 logger.warning(f"Slugify failed for '{clean_title}': {slugify_error}")
                 slug = None
@@ -171,7 +165,7 @@ class SlugManager:
                 }.get(content_type, 'content')
                 return f"{type_prefix}-{int(time.time())}"
             
-            # Manual length truncation (since max_length is not supported)
+            # Truncate if too long (manual truncation since max_length isn't always supported)
             if len(slug) > 80:
                 # Try to cut at word boundary
                 truncated = slug[:80]
