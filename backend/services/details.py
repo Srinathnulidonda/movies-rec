@@ -860,10 +860,10 @@ class DetailsService:
             year = info['year']
             content_type = info['content_type']
             
-            # Try to find by title similarity - limit results for performance
+            # Build query with all filters FIRST
             query = self.Content.query.filter(
                 func.lower(self.Content.title).like(f"%{title.lower()}%")
-            ).limit(10)  # Limit for performance
+            )
             
             # Filter by content type if detected
             if content_type:
@@ -875,7 +875,8 @@ class DetailsService:
                     func.extract('year', self.Content.release_date) == year
                 )
             
-            results = query.all()
+            # Apply limit AFTER all filters
+            results = query.limit(10).all()
             
             if results:
                 # Return best match (highest similarity)
@@ -888,7 +889,7 @@ class DetailsService:
         except Exception as e:
             logger.error(f"Error in fuzzy content search: {e}")
             return None
-    
+            
     def _calculate_similarity(self, str1: str, str2: str) -> float:
         """Calculate string similarity score"""
         try:
@@ -1550,10 +1551,10 @@ class DetailsService:
             # Extract name from slug
             name = slug.replace('-', ' ').title()
             
-            # Try to find by name similarity - limit for performance
+            # Build query and apply limit at the end
             results = self.Person.query.filter(
                 func.lower(self.Person.name).like(f"%{name.lower()}%")
-            ).limit(5).all()  # Added limit
+            ).limit(5).all()  # Apply limit after filter
             
             if results:
                 # Return best match
@@ -1566,7 +1567,7 @@ class DetailsService:
         except Exception as e:
             logger.error(f"Error in fuzzy person search: {e}")
             return None
-    
+            
     def _get_person_images(self, tmdb_data: Dict) -> List[str]:
         """Get person images from TMDB data"""
         try:
