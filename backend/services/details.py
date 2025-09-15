@@ -106,14 +106,14 @@ def ensure_app_context(func):
 
 class SlugManager:
     """
-    Centralized slug management for all content types
+    Centralized slug management for all content types - Python 3.13 Compatible
     Handles movies, TV shows, anime, and persons
     """
     
     @staticmethod
     def generate_slug(title: str, year: Optional[int] = None, content_type: str = 'movie') -> str:
         """
-        Generate URL-safe slug from title - Production-ready version
+        Generate URL-safe slug from title - Python 3.13 compatible version
         
         Args:
             title: Content title
@@ -133,20 +133,24 @@ class SlugManager:
         
         try:
             # Clean the title first
-            clean_title = title.strip()
+            clean_title = str(title).strip()
             if not clean_title:
                 return f"content-{int(time.time())}"
             
-            # Use slugify with correct parameters
-            # For python-slugify library
-            slug = slugify(clean_title)
+            # Use slugify with correct parameters - Python 3.13 compatible
+            try:
+                slug = slugify(clean_title, max_length=80, word_boundary=True, save_order=True)
+            except Exception as slugify_error:
+                logger.warning(f"Slugify failed for '{clean_title}': {slugify_error}")
+                slug = None
             
             # If slugify returns empty or None, use manual fallback
             if not slug:
-                # Manual cleaning as fallback
+                # Manual cleaning as fallback - Python 3.13 compatible
                 slug = clean_title.lower()
                 # Remove special characters and replace with hyphens
-                slug = re.sub(r'[^\w\s-]', '', slug)
+                # Use re.ASCII flag for Python 3 compatibility
+                slug = re.sub(r'[^\w\s-]', '', slug, flags=re.ASCII)
                 slug = re.sub(r'[-\s]+', '-', slug)
                 slug = slug.strip('-')
             
@@ -161,7 +165,7 @@ class SlugManager:
                 }.get(content_type, 'content')
                 return f"{type_prefix}-{int(time.time())}"
             
-            # Truncate if too long (manual truncation since max_length isn't supported)
+            # Truncate if too long (manual truncation since max_length isn't always supported)
             if len(slug) > 80:
                 # Try to cut at word boundary
                 truncated = slug[:80]
@@ -195,7 +199,7 @@ class SlugManager:
             
         except Exception as e:
             logger.error(f"Error generating slug for title '{title}': {e}")
-            # Ultimate fallback - guaranteed to work
+            # Ultimate fallback - guaranteed to work for Python 3.13
             # Use only ASCII characters for safety
             safe_slug = ''
             for c in str(title):
@@ -220,7 +224,7 @@ class SlugManager:
     def generate_unique_slug(db, model, title: str, year: Optional[int] = None, 
                         content_type: str = 'movie', existing_id: Optional[int] = None) -> str:
         """
-        Generate unique slug, adding suffix if necessary
+        Generate unique slug, adding suffix if necessary - Optimized for Python 3.13
         
         Args:
             db: Database session
@@ -248,20 +252,20 @@ class SlugManager:
             
             slug = base_slug
             counter = 1
-            max_attempts = 100  # Reduced from 1000 for performance
+            max_attempts = 50  # Reduced from 100 for better performance
             
             # Keep trying until we find a unique slug
             while counter <= max_attempts:
                 try:
-                    # Check if slug exists
-                    query = db.session.query(model).filter_by(slug=slug)
+                    # Check if slug exists - optimized query
+                    query = db.session.query(model.id).filter_by(slug=slug)
                     
                     # Exclude existing record if updating
                     if existing_id:
                         query = query.filter(model.id != existing_id)
                     
-                    # Use exists() for better performance
-                    exists = db.session.query(query.exists()).scalar()
+                    # Use first() instead of exists() for better performance in some cases
+                    exists = query.first() is not None
                     
                     if not exists:
                         break
@@ -294,6 +298,7 @@ class SlugManager:
             }.get(content_type, 'content')
             # Use timestamp and a small hash for uniqueness
             return f"{type_prefix}-{int(time.time())}-{abs(hash(str(title)))[:6]}"    
+    
     @staticmethod
     def extract_info_from_slug(slug: str) -> Dict:
         """Extract potential title and year from slug"""
@@ -341,7 +346,7 @@ class SlugManager:
     @staticmethod
     def update_content_slug(db, content, force_update: bool = False) -> str:
         """
-        Update content slug if missing or if forced
+        Update content slug if missing or if forced - Optimized version
         
         Args:
             db: Database session
@@ -397,7 +402,7 @@ class SlugManager:
     @staticmethod
     def migrate_slugs(db, models, batch_size: int = 50) -> Dict:
         """
-        Migrate all content without slugs
+        Migrate all content without slugs - Optimized for large datasets
         
         Args:
             db: Database session
@@ -415,73 +420,102 @@ class SlugManager:
         }
         
         try:
-            # Migrate content
+            # Migrate content in batches
             if 'Content' in models:
                 Content = models['Content']
                 
-                # Find content without slugs
-                content_items = Content.query.filter(
-                    or_(Content.slug == None, Content.slug == '')
-                ).all()
+                # Process in smaller batches to avoid memory issues
+                offset = 0
+                batch_count = 0
                 
-                logger.info(f"Found {len(content_items)} content items without slugs")
-                
-                for i, content in enumerate(content_items):
-                    try:
-                        SlugManager.update_content_slug(db, content)
-                        stats['content_updated'] += 1
-                        
-                        # Commit in batches
-                        if (i + 1) % batch_size == 0:
-                            db.session.commit()
-                            logger.info(f"Committed batch: {i + 1}/{len(content_items)}")
+                while True:
+                    # Find content without slugs in batches
+                    content_items = Content.query.filter(
+                        or_(Content.slug == None, Content.slug == '')
+                    ).offset(offset).limit(batch_size).all()
+                    
+                    if not content_items:
+                        break
+                    
+                    batch_count += 1
+                    logger.info(f"Processing content batch {batch_count}, items: {len(content_items)}")
+                    
+                    for i, content in enumerate(content_items):
+                        try:
+                            SlugManager.update_content_slug(db, content)
+                            stats['content_updated'] += 1
                             
+                        except Exception as e:
+                            logger.error(f"Error updating content {getattr(content, 'id', 'unknown')}: {e}")
+                            stats['errors'] += 1
+                    
+                    # Commit batch
+                    try:
+                        db.session.commit()
+                        logger.info(f"Committed content batch {batch_count}: {stats['content_updated']} total updated")
                     except Exception as e:
-                        logger.error(f"Error updating content {getattr(content, 'id', 'unknown')}: {e}")
-                        stats['errors'] += 1
-                
-                # Final commit for content
-                db.session.commit()
+                        logger.error(f"Batch commit failed: {e}")
+                        db.session.rollback()
+                        stats['errors'] += len(content_items)
+                    
+                    offset += batch_size
+                    
+                    # Add small delay to prevent overwhelming the system
+                    time.sleep(0.1)
             
-            # Migrate persons
+            # Migrate persons in batches
             if 'Person' in models:
                 Person = models['Person']
                 
-                # Find persons without slugs
-                person_items = Person.query.filter(
-                    or_(Person.slug == None, Person.slug == '')
-                ).all()
+                offset = 0
+                batch_count = 0
                 
-                logger.info(f"Found {len(person_items)} person items without slugs")
-                
-                for i, person in enumerate(person_items):
-                    try:
-                        name = getattr(person, 'name', '')
-                        if not name:
-                            name = f"Person {getattr(person, 'id', 'Unknown')}"
-                        
-                        new_slug = SlugManager.generate_unique_slug(
-                            db, 
-                            Person, 
-                            name, 
-                            content_type='person',
-                            existing_id=getattr(person, 'id', None)
-                        )
-                        
-                        person.slug = new_slug
-                        stats['persons_updated'] += 1
-                        
-                        # Commit in batches
-                        if (i + 1) % batch_size == 0:
-                            db.session.commit()
-                            logger.info(f"Committed person batch: {i + 1}/{len(person_items)}")
+                while True:
+                    # Find persons without slugs in batches
+                    person_items = Person.query.filter(
+                        or_(Person.slug == None, Person.slug == '')
+                    ).offset(offset).limit(batch_size).all()
+                    
+                    if not person_items:
+                        break
+                    
+                    batch_count += 1
+                    logger.info(f"Processing person batch {batch_count}, items: {len(person_items)}")
+                    
+                    for i, person in enumerate(person_items):
+                        try:
+                            name = getattr(person, 'name', '')
+                            if not name:
+                                name = f"Person {getattr(person, 'id', 'Unknown')}"
                             
+                            new_slug = SlugManager.generate_unique_slug(
+                                db, 
+                                Person, 
+                                name, 
+                                content_type='person',
+                                existing_id=getattr(person, 'id', None)
+                            )
+                            
+                            person.slug = new_slug
+                            stats['persons_updated'] += 1
+                            
+                        except Exception as e:
+                            logger.error(f"Error updating person {getattr(person, 'id', 'unknown')}: {e}")
+                            stats['errors'] += 1
+                    
+                    # Commit batch
+                    try:
+                        db.session.commit()
+                        logger.info(f"Committed person batch {batch_count}: {stats['persons_updated']} total updated")
                     except Exception as e:
-                        logger.error(f"Error updating person {getattr(person, 'id', 'unknown')}: {e}")
-                        stats['errors'] += 1
-                
-                # Final commit for persons
-                db.session.commit()
+                        logger.error(f"Person batch commit failed: {e}")
+                        db.session.rollback()
+                        stats['errors'] += len(person_items)
+                    
+                    offset += batch_size
+                    
+                    # Add small delay
+                    time.sleep(0.1)
             
             stats['total_processed'] = stats['content_updated'] + stats['persons_updated']
             logger.info(f"Slug migration completed: {stats}")
@@ -514,8 +548,11 @@ class ContentService:
             if existing:
                 # Update existing content slug if missing
                 if not existing.slug:
-                    SlugManager.update_content_slug(self.db, existing)
-                    self.db.session.commit()
+                    try:
+                        SlugManager.update_content_slug(self.db, existing)
+                        self.db.session.commit()
+                    except Exception as e:
+                        logger.warning(f"Failed to update existing content slug: {e}")
                 return existing
             
             # Extract basic info
@@ -583,8 +620,11 @@ class ContentService:
             if existing:
                 # Update existing anime slug if missing
                 if not existing.slug:
-                    SlugManager.update_content_slug(self.db, existing)
-                    self.db.session.commit()
+                    try:
+                        SlugManager.update_content_slug(self.db, existing)
+                        self.db.session.commit()
+                    except Exception as e:
+                        logger.warning(f"Failed to update existing anime slug: {e}")
                 return existing
             
             # Extract basic info
@@ -646,13 +686,16 @@ class ContentService:
             if existing:
                 # Update slug if missing
                 if not existing.slug:
-                    name = existing.name or f"Person {existing.id}"
-                    slug = SlugManager.generate_unique_slug(
-                        self.db, self.Person, name, content_type='person',
-                        existing_id=existing.id
-                    )
-                    existing.slug = slug
-                    self.db.session.commit()
+                    try:
+                        name = existing.name or f"Person {existing.id}"
+                        slug = SlugManager.generate_unique_slug(
+                            self.db, self.Person, name, content_type='person',
+                            existing_id=existing.id
+                        )
+                        existing.slug = slug
+                        self.db.session.commit()
+                    except Exception as e:
+                        logger.warning(f"Failed to update person slug: {e}")
                 return existing
             
             # Create new person
@@ -712,8 +755,8 @@ class DetailsService:
         # Setup HTTP session with retry
         self.session = self._create_http_session()
         
-        # Thread pool for concurrent API calls
-        self.executor = ThreadPoolExecutor(max_workers=5)
+        # Thread pool for concurrent API calls - optimized for Python 3.13
+        self.executor = ThreadPoolExecutor(max_workers=3)
         
         # Initialize API keys from environment or config
         self._init_api_keys()
@@ -731,16 +774,16 @@ class DetailsService:
             logger.warning(f"Could not initialize API keys: {e}")
     
     def _create_http_session(self) -> requests.Session:
-        """Create HTTP session with retry strategy"""
+        """Create HTTP session with retry strategy - optimized"""
         session = requests.Session()
         retry = Retry(
-            total=3,
-            read=3,
-            connect=3,
+            total=2,  # Reduced retries for performance
+            read=2,
+            connect=2,
             backoff_factor=0.3,
             status_forcelist=(500, 502, 504)
         )
-        adapter = HTTPAdapter(max_retries=retry, pool_connections=10, pool_maxsize=10)
+        adapter = HTTPAdapter(max_retries=retry, pool_connections=5, pool_maxsize=5)  # Reduced pool size
         session.mount('http://', adapter)
         session.mount('https://', adapter)
         return session
@@ -783,8 +826,11 @@ class DetailsService:
             
             # Ensure content has slug
             if not content.slug:
-                SlugManager.update_content_slug(self.db, content)
-                self.db.session.commit()
+                try:
+                    SlugManager.update_content_slug(self.db, content)
+                    self.db.session.commit()
+                except Exception as e:
+                    logger.warning(f"Failed to update content slug: {e}")
             
             # Build comprehensive details
             details = self._build_content_details(content, user_id)
@@ -795,7 +841,7 @@ class DetailsService:
                     cache_data = details.copy()
                     # Remove user-specific fields before caching
                     cache_data.pop('user_data', None)
-                    self.cache.set(cache_key, cache_data, timeout=3600)  # 1 hour
+                    self.cache.set(cache_key, cache_data, timeout=1800)  # 30 minutes
                 except Exception as e:
                     logger.warning(f"Cache set error for slug {slug}: {e}")
             
@@ -814,10 +860,10 @@ class DetailsService:
             year = info['year']
             content_type = info['content_type']
             
-            # Try to find by title similarity
+            # Try to find by title similarity - limit results for performance
             query = self.Content.query.filter(
                 func.lower(self.Content.title).like(f"%{title.lower()}%")
-            )
+            ).limit(10)  # Limit for performance
             
             # Filter by content type if detected
             if content_type:
@@ -852,29 +898,29 @@ class DetailsService:
             return 0.0
     
     def _build_content_details(self, content: Any, user_id: Optional[int] = None) -> Dict:
-        """Build comprehensive content details"""
+        """Build comprehensive content details - optimized for performance"""
         try:
             # Initialize API keys if not already done
             self._init_api_keys()
             
-            # Prepare futures for concurrent API calls
+            # Prepare futures for concurrent API calls - reduced for performance
             futures = {}
             
-            with self.executor as executor:
-                # External API calls
+            with ThreadPoolExecutor(max_workers=2) as executor:  # Reduced workers
+                # External API calls - only essential ones
                 if content.tmdb_id and TMDB_API_KEY:
                     futures['tmdb'] = executor.submit(self._fetch_tmdb_details, content.tmdb_id, content.content_type)
                 if content.imdb_id and OMDB_API_KEY:
                     futures['omdb'] = executor.submit(self._fetch_omdb_details, content.imdb_id)
                 
-                # Internal data fetching
+                # Internal data fetching - reduced limits
                 futures['cast_crew'] = executor.submit(self._get_cast_crew, content.id)
-                futures['reviews'] = executor.submit(self._get_reviews, content.id)
-                futures['similar'] = executor.submit(self._get_similar_content, content.id)
+                futures['reviews'] = executor.submit(self._get_reviews, content.id, 5)  # Reduced limit
+                futures['similar'] = executor.submit(self._get_similar_content, content.id, 8)  # Reduced limit
                 futures['gallery'] = executor.submit(self._get_gallery, content.id)
                 futures['trailer'] = executor.submit(self._get_trailer, content.title, content.content_type)
             
-            # Collect results with error handling
+            # Collect results with error handling and timeouts
             tmdb_data = {}
             omdb_data = {}
             cast_crew = {'cast': [], 'crew': {'directors': [], 'writers': [], 'producers': []}}
@@ -883,42 +929,43 @@ class DetailsService:
             gallery = {'posters': [], 'backdrops': [], 'stills': []}
             trailer = None
             
+            # Process results with timeout protection
             try:
                 if 'tmdb' in futures:
-                    tmdb_data = futures['tmdb'].result() or {}
+                    tmdb_data = futures['tmdb'].result(timeout=5) or {}
             except Exception as e:
-                logger.error(f"Error getting TMDB data: {e}")
+                logger.warning(f"TMDB fetch error/timeout: {e}")
             
             try:
                 if 'omdb' in futures:
-                    omdb_data = futures['omdb'].result() or {}
+                    omdb_data = futures['omdb'].result(timeout=5) or {}
             except Exception as e:
-                logger.error(f"Error getting OMDB data: {e}")
+                logger.warning(f"OMDB fetch error/timeout: {e}")
             
             try:
-                cast_crew = futures['cast_crew'].result() or cast_crew
+                cast_crew = futures['cast_crew'].result(timeout=3) or cast_crew
             except Exception as e:
-                logger.error(f"Error getting cast/crew: {e}")
+                logger.warning(f"Cast/crew fetch error/timeout: {e}")
             
             try:
-                reviews = futures['reviews'].result() or []
+                reviews = futures['reviews'].result(timeout=3) or []
             except Exception as e:
-                logger.error(f"Error getting reviews: {e}")
+                logger.warning(f"Reviews fetch error/timeout: {e}")
             
             try:
-                similar = futures['similar'].result() or []
+                similar = futures['similar'].result(timeout=3) or []
             except Exception as e:
-                logger.error(f"Error getting similar content: {e}")
+                logger.warning(f"Similar content fetch error/timeout: {e}")
             
             try:
-                gallery = futures['gallery'].result() or gallery
+                gallery = futures['gallery'].result(timeout=3) or gallery
             except Exception as e:
-                logger.error(f"Error getting gallery: {e}")
+                logger.warning(f"Gallery fetch error/timeout: {e}")
             
             try:
-                trailer = futures['trailer'].result()
+                trailer = futures['trailer'].result(timeout=5)
             except Exception as e:
-                logger.error(f"Error getting trailer: {e}")
+                logger.warning(f"Trailer fetch error/timeout: {e}")
             
             # Build synopsis
             synopsis = self._build_synopsis(content, tmdb_data, omdb_data)
@@ -1029,7 +1076,7 @@ class DetailsService:
             return {'error': 'Failed to create content details'}
     
     def _fetch_tmdb_details(self, tmdb_id: int, content_type: str) -> Dict:
-        """Fetch comprehensive details from TMDB"""
+        """Fetch comprehensive details from TMDB with timeout"""
         try:
             if not TMDB_API_KEY:
                 return {}
@@ -1042,7 +1089,7 @@ class DetailsService:
                 'append_to_response': 'videos,images,credits,similar,recommendations,reviews,external_ids,watch/providers,content_ratings,release_dates'
             }
             
-            response = self.session.get(url, params=params, timeout=10)
+            response = self.session.get(url, params=params, timeout=5)  # Reduced timeout
             
             if response.status_code == 200:
                 return response.json()
@@ -1054,7 +1101,7 @@ class DetailsService:
             return {}
     
     def _fetch_omdb_details(self, imdb_id: str) -> Dict:
-        """Fetch details from OMDB"""
+        """Fetch details from OMDB with timeout"""
         try:
             if not OMDB_API_KEY:
                 return {}
@@ -1065,7 +1112,7 @@ class DetailsService:
                 'plot': 'full'
             }
             
-            response = self.session.get(OMDB_BASE_URL, params=params, timeout=10)
+            response = self.session.get(OMDB_BASE_URL, params=params, timeout=5)  # Reduced timeout
             
             if response.status_code == 200:
                 return response.json()
@@ -1077,7 +1124,7 @@ class DetailsService:
             return {}
     
     def _get_trailer(self, title: str, content_type: str) -> Optional[Dict]:
-        """Get trailer information from YouTube"""
+        """Get trailer information from YouTube with timeout"""
         try:
             if not YOUTUBE_API_KEY:
                 return None
@@ -1093,11 +1140,11 @@ class DetailsService:
                 'q': search_query,
                 'part': 'snippet',
                 'type': 'video',
-                'maxResults': 5,
+                'maxResults': 3,  # Reduced for performance
                 'order': 'relevance'
             }
             
-            response = self.session.get(url, params=params, timeout=10)
+            response = self.session.get(url, params=params, timeout=5)  # Reduced timeout
             
             if response.status_code == 200:
                 data = response.json()
@@ -1247,7 +1294,7 @@ class DetailsService:
                     for lang in tmdb_data['spoken_languages']
                 ]
             
-            # Production info
+            # Production info - limited for performance
             if tmdb_data.get('production_companies'):
                 metadata['production_companies'] = [
                     {
@@ -1255,7 +1302,7 @@ class DetailsService:
                         'name': company['name'],
                         'logo': self._format_image_url(company.get('logo_path'), 'logo') if company.get('logo_path') else None
                     }
-                    for company in tmdb_data['production_companies'][:5]
+                    for company in tmdb_data['production_companies'][:3]  # Reduced limit
                 ]
             
             # Certifications
@@ -1292,7 +1339,7 @@ class DetailsService:
     
     @ensure_app_context
     def _get_cast_crew(self, content_id: int) -> Dict:
-        """Get cast and crew information"""
+        """Get cast and crew information with performance optimization"""
         try:
             cast_crew = {
                 'cast': [],
@@ -1305,7 +1352,7 @@ class DetailsService:
             
             # Query from database if we have person data
             if self.ContentPerson and self.Person:
-                # Get cast
+                # Get cast - reduced limit
                 cast_entries = self.db.session.query(
                     self.ContentPerson, self.Person
                 ).join(
@@ -1315,13 +1362,15 @@ class DetailsService:
                     self.ContentPerson.role_type == 'cast'
                 ).order_by(
                     self.ContentPerson.order
-                ).limit(20).all()
+                ).limit(15).all()  # Reduced from 20
                 
                 for cp, person in cast_entries:
                     # Ensure person has slug
                     if not person.slug:
-                        SlugManager.update_content_slug(self.db, person)
-                        self.db.session.commit()
+                        try:
+                            SlugManager.update_content_slug(self.db, person)
+                        except Exception:
+                            person.slug = f"person-{person.id}"
                     
                     cast_crew['cast'].append({
                         'id': person.id,
@@ -1332,7 +1381,7 @@ class DetailsService:
                         'popularity': person.popularity
                     })
                 
-                # Get crew
+                # Get crew - reduced limit
                 crew_entries = self.db.session.query(
                     self.ContentPerson, self.Person
                 ).join(
@@ -1340,13 +1389,15 @@ class DetailsService:
                 ).filter(
                     self.ContentPerson.content_id == content_id,
                     self.ContentPerson.role_type == 'crew'
-                ).all()
+                ).limit(10).all()  # Reduced limit
                 
                 for cp, person in crew_entries:
                     # Ensure person has slug
                     if not person.slug:
-                        SlugManager.update_content_slug(self.db, person)
-                        self.db.session.commit()
+                        try:
+                            SlugManager.update_content_slug(self.db, person)
+                        except Exception:
+                            person.slug = f"person-{person.id}"
                     
                     crew_data = {
                         'id': person.id,
@@ -1385,10 +1436,13 @@ class DetailsService:
             
             # Ensure person has slug
             if not person.slug:
-                SlugManager.update_content_slug(self.db, person)
-                self.db.session.commit()
+                try:
+                    SlugManager.update_content_slug(self.db, person)
+                    self.db.session.commit()
+                except Exception as e:
+                    logger.warning(f"Failed to update person slug: {e}")
             
-            # Get filmography
+            # Get filmography - with limit for performance
             filmography = self.db.session.query(
                 self.ContentPerson, self.Content
             ).join(
@@ -1397,7 +1451,7 @@ class DetailsService:
                 self.ContentPerson.person_id == person.id
             ).order_by(
                 self.Content.release_date.desc()
-            ).all()
+            ).limit(50).all()  # Added limit for performance
             
             # Organize filmography
             works = {
@@ -1411,8 +1465,10 @@ class DetailsService:
             for cp, content in filmography:
                 # Ensure content has slug
                 if not content.slug:
-                    SlugManager.update_content_slug(self.db, content)
-                    self.db.session.commit()
+                    try:
+                        SlugManager.update_content_slug(self.db, content)
+                    except Exception:
+                        content.slug = f"content-{content.id}"
                 
                 work = {
                     'id': content.id,
@@ -1447,7 +1503,7 @@ class DetailsService:
                         'api_key': TMDB_API_KEY,
                         'append_to_response': 'images,external_ids,combined_credits'
                     }
-                    response = self.session.get(url, params=params, timeout=10)
+                    response = self.session.get(url, params=params, timeout=5)  # Reduced timeout
                     if response.status_code == 200:
                         tmdb_data = response.json()
                 except Exception as e:
@@ -1494,10 +1550,10 @@ class DetailsService:
             # Extract name from slug
             name = slug.replace('-', ' ').title()
             
-            # Try to find by name similarity
+            # Try to find by name similarity - limit for performance
             results = self.Person.query.filter(
                 func.lower(self.Person.name).like(f"%{name.lower()}%")
-            ).all()
+            ).limit(5).all()  # Added limit
             
             if results:
                 # Return best match
@@ -1516,7 +1572,7 @@ class DetailsService:
         try:
             images = []
             if tmdb_data.get('images', {}).get('profiles'):
-                for img in tmdb_data['images']['profiles'][:10]:
+                for img in tmdb_data['images']['profiles'][:5]:  # Reduced limit
                     images.append(self._format_image_url(img['file_path'], 'profile'))
             return images
         except Exception as e:
@@ -1543,8 +1599,8 @@ class DetailsService:
             return {}
     
     @ensure_app_context
-    def _get_reviews(self, content_id: int, limit: int = 10) -> List[Dict]:
-        """Get user reviews for content"""
+    def _get_reviews(self, content_id: int, limit: int = 5) -> List[Dict]:
+        """Get user reviews for content with performance optimization"""
         try:
             reviews = []
             
@@ -1585,8 +1641,8 @@ class DetailsService:
             return []
     
     @ensure_app_context
-    def _get_similar_content(self, content_id: int, limit: int = 12) -> List[Dict]:
-        """Get similar/recommended content with slug support"""
+    def _get_similar_content(self, content_id: int, limit: int = 8) -> List[Dict]:
+        """Get similar/recommended content with slug support and performance optimization"""
         try:
             similar = []
             
@@ -1601,20 +1657,18 @@ class DetailsService:
             except (json.JSONDecodeError, TypeError):
                 genres = []
             
-            # Find similar content based on genres and type
+            # Find similar content based on genres and type - optimized query
             query = self.Content.query.filter(
                 self.Content.id != content_id,
                 self.Content.content_type == content.content_type
             )
             
-            # Filter by genres if available
+            # Filter by genres if available - use only primary genre for performance
             if genres:
-                genre_filters = []
-                for genre in genres[:3]:  # Use top 3 genres
-                    genre_filters.append(self.Content.genres.contains(genre))
-                query = query.filter(or_(*genre_filters))
+                primary_genre = genres[0]
+                query = query.filter(self.Content.genres.contains(primary_genre))
             
-            # Order by rating and popularity
+            # Order by rating and popularity with limit
             similar_content = query.order_by(
                 self.Content.rating.desc(),
                 self.Content.popularity.desc()
@@ -1623,8 +1677,10 @@ class DetailsService:
             for item in similar_content:
                 # Ensure each item has a slug
                 if not item.slug:
-                    SlugManager.update_content_slug(self.db, item)
-                    self.db.session.commit()
+                    try:
+                        SlugManager.update_content_slug(self.db, item)
+                    except Exception:
+                        item.slug = f"content-{item.id}"
                 
                 # Parse genres safely
                 try:
@@ -1653,7 +1709,7 @@ class DetailsService:
             return []
     
     def _get_gallery(self, content_id: int) -> Dict:
-        """Get content gallery (posters, backdrops, stills)"""
+        """Get content gallery (posters, backdrops, stills) with performance optimization"""
         try:
             gallery = {
                 'posters': [],
@@ -1674,13 +1730,13 @@ class DetailsService:
                     'api_key': TMDB_API_KEY
                 }
                 
-                response = self.session.get(url, params=params, timeout=10)
+                response = self.session.get(url, params=params, timeout=5)  # Reduced timeout
                 
                 if response.status_code == 200:
                     data = response.json()
                     
-                    # Add posters
-                    for img in data.get('posters', [])[:10]:
+                    # Add posters - reduced limit
+                    for img in data.get('posters', [])[:5]:  # Reduced from 10
                         gallery['posters'].append({
                             'url': self._format_image_url(img['file_path'], 'poster'),
                             'thumbnail': self._format_image_url(img['file_path'], 'thumbnail'),
@@ -1689,8 +1745,8 @@ class DetailsService:
                             'height': img.get('height')
                         })
                     
-                    # Add backdrops
-                    for img in data.get('backdrops', [])[:10]:
+                    # Add backdrops - reduced limit
+                    for img in data.get('backdrops', [])[:5]:  # Reduced from 10
                         gallery['backdrops'].append({
                             'url': self._format_image_url(img['file_path'], 'backdrop'),
                             'thumbnail': self._format_image_url(img['file_path'], 'still'),
@@ -1699,9 +1755,9 @@ class DetailsService:
                             'height': img.get('height')
                         })
                     
-                    # Add stills for TV shows
+                    # Add stills for TV shows - reduced limit
                     if content.content_type == 'tv' and data.get('stills'):
-                        for img in data.get('stills', [])[:10]:
+                        for img in data.get('stills', [])[:5]:  # Reduced from 10
                             gallery['stills'].append({
                                 'url': self._format_image_url(img['file_path'], 'still'),
                                 'thumbnail': self._format_image_url(img['file_path'], 'thumbnail'),
@@ -1740,7 +1796,7 @@ class DetailsService:
                 region_data = providers.get('US', {})
                 
                 if region_data.get('flatrate'):
-                    for provider in region_data['flatrate']:
+                    for provider in region_data['flatrate'][:5]:  # Limit for performance
                         streaming['stream'].append({
                             'provider_id': provider['provider_id'],
                             'provider_name': provider['provider_name'],
@@ -1748,7 +1804,7 @@ class DetailsService:
                         })
                 
                 if region_data.get('rent'):
-                    for provider in region_data['rent']:
+                    for provider in region_data['rent'][:5]:  # Limit for performance
                         streaming['rent'].append({
                             'provider_id': provider['provider_id'],
                             'provider_name': provider['provider_name'],
@@ -1756,7 +1812,7 @@ class DetailsService:
                         })
                 
                 if region_data.get('buy'):
-                    for provider in region_data['buy']:
+                    for provider in region_data['buy'][:5]:  # Limit for performance
                         streaming['buy'].append({
                             'provider_id': provider['provider_id'],
                             'provider_name': provider['provider_name'],
@@ -1764,7 +1820,7 @@ class DetailsService:
                         })
                 
                 if region_data.get('free'):
-                    for provider in region_data['free']:
+                    for provider in region_data['free'][:5]:  # Limit for performance
                         streaming['free'].append({
                             'provider_id': provider['provider_id'],
                             'provider_name': provider['provider_name'],
@@ -1793,9 +1849,9 @@ class DetailsService:
                 'seasons': []
             }
             
-            # Get season details
+            # Get season details - limit for performance
             if tmdb_data.get('seasons'):
-                for season in tmdb_data['seasons']:
+                for season in tmdb_data['seasons'][:10]:  # Limit seasons
                     # Skip specials (season 0) unless it's the only season
                     if season['season_number'] == 0 and len(tmdb_data['seasons']) > 1:
                         continue
@@ -1838,7 +1894,7 @@ class DetailsService:
     
     @ensure_app_context
     def _get_user_data(self, content_id: int, user_id: int) -> Dict:
-        """Get user-specific data for content"""
+        """Get user-specific data for content with performance optimization"""
         try:
             user_data = {
                 'in_watchlist': False,
@@ -1850,45 +1906,22 @@ class DetailsService:
             if not self.UserInteraction:
                 return user_data
             
-            # Check watchlist
-            watchlist_item = self.UserInteraction.query.filter_by(
+            # Efficient single query for all interactions
+            interactions = self.UserInteraction.query.filter_by(
                 user_id=user_id,
-                content_id=content_id,
-                interaction_type='watchlist'
-            ).first()
+                content_id=content_id
+            ).all()
             
-            if watchlist_item:
-                user_data['in_watchlist'] = True
-            
-            # Check favorites
-            favorite_item = self.UserInteraction.query.filter_by(
-                user_id=user_id,
-                content_id=content_id,
-                interaction_type='favorite'
-            ).first()
-            
-            if favorite_item:
-                user_data['in_favorites'] = True
-            
-            # Get user rating
-            rating_item = self.UserInteraction.query.filter_by(
-                user_id=user_id,
-                content_id=content_id,
-                interaction_type='rating'
-            ).first()
-            
-            if rating_item:
-                user_data['user_rating'] = rating_item.rating
-            
-            # Get watch status
-            status_item = self.UserInteraction.query.filter_by(
-                user_id=user_id,
-                content_id=content_id,
-                interaction_type='watch_status'
-            ).first()
-            
-            if status_item and status_item.interaction_metadata:
-                user_data['watch_status'] = status_item.interaction_metadata.get('status')
+            # Process all interactions at once
+            for interaction in interactions:
+                if interaction.interaction_type == 'watchlist':
+                    user_data['in_watchlist'] = True
+                elif interaction.interaction_type == 'favorite':
+                    user_data['in_favorites'] = True
+                elif interaction.interaction_type == 'rating':
+                    user_data['user_rating'] = interaction.rating
+                elif interaction.interaction_type == 'watch_status' and interaction.interaction_metadata:
+                    user_data['watch_status'] = interaction.interaction_metadata.get('status')
             
             return user_data
             
