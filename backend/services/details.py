@@ -3,7 +3,7 @@ import re
 import json
 import logging
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any, Tuple, Union
 from dataclasses import dataclass, asdict
 from functools import wraps
 from slugify import slugify
@@ -105,122 +105,583 @@ def ensure_app_context(func):
     return wrapper
 
 class SlugManager:
-    """Manages slug generation and lookup"""
+    """
+    Centralized slug management for all content types
+    Handles movies, TV shows, anime, and persons
+    """
     
     @staticmethod
     def generate_slug(title: str, year: Optional[int] = None, content_type: str = 'movie') -> str:
         """
-        Generate URL-safe slug from title - PYTHON 3 COMPATIBLE VERSION
+        Generate URL-safe slug from title - Production-ready version
+        
+        Args:
+            title: Content title
+            year: Release year (for movies)
+            content_type: Type of content (movie, tv, anime, person)
+            
+        Returns:
+            URL-safe slug string
+            
         Examples:
-        - "The Dark Knight" (2008) → "the-dark-knight-2008"
-        - "Attack on Titan" → "attack-on-titan"
+            - "The Dark Knight" (2008) → "the-dark-knight-2008"
+            - "Attack on Titan" → "attack-on-titan"
+            - "Christopher Nolan" → "christopher-nolan"
         """
-        if not title:
+        if not title or not isinstance(title, str):
             return f"content-{int(time.time())}"
         
         try:
-            # Use slugify with default settings
-            slug = slugify(title)
-            if slug:
-                slug = slug.lower()
-            else:
-                # Manual fallback if slugify returns empty
-                slug = title.lower()
-                # Replace non-alphanumeric characters with hyphens
-                slug = re.sub(r'[^a-z0-9]+', '-', slug)
-                # Remove leading/trailing hyphens
+            # Clean the title first
+            clean_title = title.strip()
+            if not clean_title:
+                return f"content-{int(time.time())}"
+            
+            # Use slugify for robust slug generation
+            slug = slugify(
+                clean_title,
+                max_length=80,  # Reasonable length limit
+                word_boundary=True,
+                save_order=True,
+                lowercase=True
+            )
+            
+            # Fallback if slugify fails or returns empty
+            if not slug:
+                # Manual cleaning as fallback
+                slug = clean_title.lower()
+                # Remove special characters and replace with hyphens
+                slug = re.sub(r'[^\w\s-]', '', slug)
+                slug = re.sub(r'[-\s]+', '-', slug)
                 slug = slug.strip('-')
             
-            # Ensure slug is not empty after processing
-            if not slug:
-                slug = f"content-{int(time.time())}"
+            # Ensure we have a valid slug
+            if not slug or len(slug) < 1:
+                # Generate based on content type and timestamp
+                type_prefix = {
+                    'movie': 'movie',
+                    'tv': 'tv-show',
+                    'anime': 'anime',
+                    'person': 'person'
+                }.get(content_type, 'content')
+                return f"{type_prefix}-{int(time.time())}"
             
-            # Add year if available (for movies)
-            if year and content_type == 'movie':
-                slug = f"{slug}-{year}"
+            # Add year suffix for movies to avoid conflicts
+            if year and content_type == 'movie' and isinstance(year, int):
+                if 1800 <= year <= 2100:  # Reasonable year range
+                    slug = f"{slug}-{year}"
             
-            # Ensure slug is not too long
+            # Add content type prefix for disambiguation if needed
+            if content_type == 'anime':
+                # Only add prefix if not already present
+                if not slug.startswith('anime-'):
+                    slug = f"anime-{slug}"
+            
+            # Final length check
             if len(slug) > 100:
-                # Try to cut at word boundary
-                parts = slug[:100].split('-')
+                # Truncate at word boundary if possible
+                parts = slug[:97].split('-')
                 if len(parts) > 1:
                     slug = '-'.join(parts[:-1])
                 else:
-                    slug = slug[:100]
+                    slug = slug[:97]
+                # Add ellipsis indicator
+                slug = f"{slug}..."
             
             return slug
             
         except Exception as e:
             logger.error(f"Error generating slug for title '{title}': {e}")
             # Ultimate fallback - guaranteed to work
-            safe_title = ''.join(c for c in title.lower() if c.isalnum())
-            if not safe_title:
-                return f"content-{int(time.time())}"
-            return safe_title[:50]  # Truncate if too long
-
+            safe_slug = ''.join(c.lower() if c.isalnum() else '-' for c in str(title))
+            safe_slug = re.sub(r'-+', '-', safe_slug).strip('-')
+            if not safe_slug:
+                type_prefix = {
+                    'movie': 'movie',
+                    'tv': 'tv-show', 
+                    'anime': 'anime',
+                    'person': 'person'
+                }.get(content_type, 'content')
+                return f"{type_prefix}-{int(time.time())}"
+            return safe_slug[:50]  # Limit length
     
     @staticmethod
     def generate_unique_slug(db, model, title: str, year: Optional[int] = None, 
-                           content_type: str = 'movie') -> str:
-        """Generate unique slug, adding suffix if necessary"""
+                           content_type: str = 'movie', existing_id: Optional[int] = None) -> str:
+        """
+        Generate unique slug, adding suffix if necessary
+        
+        Args:
+            db: Database session
+            model: SQLAlchemy model class
+            title: Content title
+            year: Release year
+            content_type: Type of content
+            existing_id: ID to exclude from uniqueness check (for updates)
+            
+        Returns:
+            Unique slug string
+        """
         try:
             base_slug = SlugManager.generate_slug(title, year, content_type)
             
-            # Ensure base_slug is not empty
+            # Ensure base_slug is valid
             if not base_slug:
-                base_slug = f"content-{int(time.time())}"
+                type_prefix = {
+                    'movie': 'movie',
+                    'tv': 'tv-show',
+                    'anime': 'anime', 
+                    'person': 'person'
+                }.get(content_type, 'content')
+                base_slug = f"{type_prefix}-{int(time.time())}"
             
             slug = base_slug
             counter = 1
+            max_attempts = 1000  # Prevent infinite loops
             
             # Keep trying until we find a unique slug
-            while True:
+            while counter <= max_attempts:
                 try:
-                    existing = db.session.query(model).filter_by(slug=slug).first()
+                    # Check if slug exists
+                    query = db.session.query(model).filter_by(slug=slug)
+                    
+                    # Exclude existing record if updating
+                    if existing_id:
+                        query = query.filter(model.id != existing_id)
+                    
+                    existing = query.first()
+                    
                     if not existing:
                         break
+                    
+                    # Generate new slug with counter
                     slug = f"{base_slug}-{counter}"
                     counter += 1
                     
-                    # Prevent infinite loop
-                    if counter > 1000:
-                        slug = f"{base_slug}-{int(time.time())}"
-                        break
                 except Exception as e:
                     logger.error(f"Error checking slug uniqueness: {e}")
+                    # Fallback to timestamp-based slug
                     slug = f"{base_slug}-{int(time.time())}"
                     break
+            
+            # If we hit max attempts, use timestamp
+            if counter > max_attempts:
+                slug = f"{base_slug}-{int(time.time())}"
+                logger.warning(f"Hit max attempts for slug generation, using timestamp: {slug}")
             
             return slug
             
         except Exception as e:
             logger.error(f"Error generating unique slug: {e}")
-            return f"content-{int(time.time())}"
+            # Emergency fallback
+            type_prefix = {
+                'movie': 'movie',
+                'tv': 'tv-show',
+                'anime': 'anime',
+                'person': 'person'
+            }.get(content_type, 'content')
+            return f"{type_prefix}-{int(time.time())}-{hash(str(title))}"
     
     @staticmethod
     def extract_info_from_slug(slug: str) -> Dict:
         """Extract potential title and year from slug"""
         try:
+            if not slug:
+                return {'title': 'Unknown', 'year': None, 'content_type': 'movie'}
+            
+            # Handle anime prefix
+            content_type = 'movie'
+            clean_slug = slug
+            
+            if slug.startswith('anime-'):
+                content_type = 'anime'
+                clean_slug = slug[6:]  # Remove 'anime-' prefix
+            elif 'tv-show' in slug:
+                content_type = 'tv'
+            
             # Check if slug ends with a year (4 digits)
-            match = re.match(r'^(.+)-(\d{4})$', slug)
-            if match:
-                return {
-                    'title': match.group(1).replace('-', ' ').title(),
-                    'year': int(match.group(2))
-                }
+            year_match = re.search(r'-(\d{4})$', clean_slug)
+            if year_match:
+                year = int(year_match.group(1))
+                title_slug = clean_slug[:year_match.start()]
+                if content_type == 'movie' and 1800 <= year <= 2100:
+                    return {
+                        'title': title_slug.replace('-', ' ').title(),
+                        'year': year,
+                        'content_type': content_type
+                    }
+            
+            # No year found or invalid year
             return {
-                'title': slug.replace('-', ' ').title(),
-                'year': None
+                'title': clean_slug.replace('-', ' ').title(),
+                'year': None,
+                'content_type': content_type
             }
+            
         except Exception as e:
             logger.error(f"Error extracting info from slug '{slug}': {e}")
             return {
                 'title': slug.replace('-', ' ').title() if slug else 'Unknown',
-                'year': None
+                'year': None,
+                'content_type': 'movie'
             }
+    
+    @staticmethod
+    def update_content_slug(db, content, force_update: bool = False) -> str:
+        """
+        Update content slug if missing or if forced
+        
+        Args:
+            db: Database session
+            content: Content object
+            force_update: Whether to update even if slug exists
+            
+        Returns:
+            Updated slug
+        """
+        try:
+            # Check if update is needed
+            if content.slug and not force_update:
+                return content.slug
+            
+            # Determine content type
+            content_type = getattr(content, 'content_type', 'movie')
+            
+            # Get title and year
+            title = getattr(content, 'title', '') or getattr(content, 'name', '')
+            year = None
+            
+            if hasattr(content, 'release_date') and content.release_date:
+                try:
+                    year = content.release_date.year
+                except:
+                    pass
+            
+            if not title:
+                title = f"Content {getattr(content, 'id', 'Unknown')}"
+            
+            # Generate new slug
+            new_slug = SlugManager.generate_unique_slug(
+                db, 
+                content.__class__, 
+                title, 
+                year, 
+                content_type,
+                existing_id=getattr(content, 'id', None)
+            )
+            
+            # Update content
+            content.slug = new_slug
+            
+            return new_slug
+            
+        except Exception as e:
+            logger.error(f"Error updating content slug: {e}")
+            # Fallback slug
+            fallback = f"content-{getattr(content, 'id', int(time.time()))}"
+            content.slug = fallback
+            return fallback
+    
+    @staticmethod
+    def migrate_slugs(db, models, batch_size: int = 50) -> Dict:
+        """
+        Migrate all content without slugs
+        
+        Args:
+            db: Database session
+            models: Dictionary of model classes
+            batch_size: Number of items to process per batch
+            
+        Returns:
+            Migration statistics
+        """
+        stats = {
+            'content_updated': 0,
+            'persons_updated': 0,
+            'errors': 0,
+            'total_processed': 0
+        }
+        
+        try:
+            # Migrate content
+            if 'Content' in models:
+                Content = models['Content']
+                
+                # Find content without slugs
+                content_items = Content.query.filter(
+                    or_(Content.slug == None, Content.slug == '')
+                ).all()
+                
+                logger.info(f"Found {len(content_items)} content items without slugs")
+                
+                for i, content in enumerate(content_items):
+                    try:
+                        SlugManager.update_content_slug(db, content)
+                        stats['content_updated'] += 1
+                        
+                        # Commit in batches
+                        if (i + 1) % batch_size == 0:
+                            db.session.commit()
+                            logger.info(f"Committed batch: {i + 1}/{len(content_items)}")
+                            
+                    except Exception as e:
+                        logger.error(f"Error updating content {getattr(content, 'id', 'unknown')}: {e}")
+                        stats['errors'] += 1
+                
+                # Final commit for content
+                db.session.commit()
+            
+            # Migrate persons
+            if 'Person' in models:
+                Person = models['Person']
+                
+                # Find persons without slugs
+                person_items = Person.query.filter(
+                    or_(Person.slug == None, Person.slug == '')
+                ).all()
+                
+                logger.info(f"Found {len(person_items)} person items without slugs")
+                
+                for i, person in enumerate(person_items):
+                    try:
+                        name = getattr(person, 'name', '')
+                        if not name:
+                            name = f"Person {getattr(person, 'id', 'Unknown')}"
+                        
+                        new_slug = SlugManager.generate_unique_slug(
+                            db, 
+                            Person, 
+                            name, 
+                            content_type='person',
+                            existing_id=getattr(person, 'id', None)
+                        )
+                        
+                        person.slug = new_slug
+                        stats['persons_updated'] += 1
+                        
+                        # Commit in batches
+                        if (i + 1) % batch_size == 0:
+                            db.session.commit()
+                            logger.info(f"Committed person batch: {i + 1}/{len(person_items)}")
+                            
+                    except Exception as e:
+                        logger.error(f"Error updating person {getattr(person, 'id', 'unknown')}: {e}")
+                        stats['errors'] += 1
+                
+                # Final commit for persons
+                db.session.commit()
+            
+            stats['total_processed'] = stats['content_updated'] + stats['persons_updated']
+            logger.info(f"Slug migration completed: {stats}")
+            
+            return stats
+            
+        except Exception as e:
+            logger.error(f"Error in slug migration: {e}")
+            db.session.rollback()
+            stats['errors'] += 1
+            return stats
+
+class ContentService:
+    """Enhanced content service with comprehensive slug support"""
+    
+    def __init__(self, db, models):
+        self.db = db
+        self.models = models
+        self.Content = models.get('Content')
+        self.Person = models.get('Person')
+    
+    def save_content_from_tmdb(self, tmdb_data: Dict, content_type: str) -> Any:
+        """Save content from TMDB with proper slug generation"""
+        try:
+            # Check if content already exists
+            existing = None
+            if self.Content and tmdb_data.get('id'):
+                existing = self.Content.query.filter_by(tmdb_id=tmdb_data['id']).first()
+            
+            if existing:
+                # Update existing content slug if missing
+                if not existing.slug:
+                    SlugManager.update_content_slug(self.db, existing)
+                    self.db.session.commit()
+                return existing
+            
+            # Extract basic info
+            title = tmdb_data.get('title') or tmdb_data.get('name') or 'Unknown Title'
+            
+            # Extract release date and year
+            release_date = None
+            year = None
+            date_str = tmdb_data.get('release_date') or tmdb_data.get('first_air_date')
+            if date_str:
+                try:
+                    release_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+                    year = release_date.year
+                except:
+                    pass
+            
+            # Generate unique slug
+            slug = SlugManager.generate_unique_slug(
+                self.db, self.Content, title, year, content_type
+            )
+            
+            # Extract other data
+            genres = []
+            if 'genres' in tmdb_data:
+                genres = [genre['name'] for genre in tmdb_data['genres']]
+            elif 'genre_ids' in tmdb_data:
+                genres = self._map_genre_ids(tmdb_data['genre_ids'])
+            
+            # Create content object
+            content_data = {
+                'slug': slug,
+                'tmdb_id': tmdb_data['id'],
+                'title': title,
+                'original_title': tmdb_data.get('original_title') or tmdb_data.get('original_name'),
+                'content_type': content_type,
+                'genres': json.dumps(genres) if genres else None,
+                'release_date': release_date,
+                'rating': tmdb_data.get('vote_average'),
+                'vote_count': tmdb_data.get('vote_count'),
+                'popularity': tmdb_data.get('popularity'),
+                'overview': tmdb_data.get('overview'),
+                'poster_path': tmdb_data.get('poster_path'),
+                'backdrop_path': tmdb_data.get('backdrop_path')
+            }
+            
+            content = self.Content(**content_data)
+            self.db.session.add(content)
+            self.db.session.commit()
+            
+            return content
+            
+        except Exception as e:
+            logger.error(f"Error saving content from TMDB: {e}")
+            self.db.session.rollback()
+            return None
+    
+    def save_anime_content(self, anime_data: Dict) -> Any:
+        """Save anime content with proper slug generation"""
+        try:
+            # Check if anime already exists
+            existing = None
+            if self.Content and anime_data.get('mal_id'):
+                existing = self.Content.query.filter_by(mal_id=anime_data['mal_id']).first()
+            
+            if existing:
+                # Update existing anime slug if missing
+                if not existing.slug:
+                    SlugManager.update_content_slug(self.db, existing)
+                    self.db.session.commit()
+                return existing
+            
+            # Extract basic info
+            title = anime_data.get('title') or 'Unknown Anime'
+            
+            # Extract release date and year
+            release_date = None
+            year = None
+            if anime_data.get('aired', {}).get('from'):
+                try:
+                    release_date = datetime.strptime(anime_data['aired']['from'][:10], '%Y-%m-%d').date()
+                    year = release_date.year
+                except:
+                    pass
+            
+            # Generate unique slug for anime
+            slug = SlugManager.generate_unique_slug(
+                self.db, self.Content, title, year, 'anime'
+            )
+            
+            # Extract genres
+            genres = [genre['name'] for genre in anime_data.get('genres', [])]
+            
+            # Create anime content
+            content_data = {
+                'slug': slug,
+                'mal_id': anime_data['mal_id'],
+                'title': title,
+                'original_title': anime_data.get('title_japanese'),
+                'content_type': 'anime',
+                'genres': json.dumps(genres) if genres else None,
+                'release_date': release_date,
+                'rating': anime_data.get('score'),
+                'vote_count': anime_data.get('scored_by'),
+                'popularity': anime_data.get('popularity'),
+                'overview': anime_data.get('synopsis'),
+                'poster_path': anime_data.get('images', {}).get('jpg', {}).get('image_url')
+            }
+            
+            content = self.Content(**content_data)
+            self.db.session.add(content)
+            self.db.session.commit()
+            
+            return content
+            
+        except Exception as e:
+            logger.error(f"Error saving anime content: {e}")
+            self.db.session.rollback()
+            return None
+    
+    def get_or_create_person(self, person_data: Dict) -> Any:
+        """Get or create person with proper slug"""
+        try:
+            # Check if person exists
+            existing = None
+            if self.Person and person_data.get('id'):
+                existing = self.Person.query.filter_by(tmdb_id=person_data['id']).first()
+            
+            if existing:
+                # Update slug if missing
+                if not existing.slug:
+                    name = existing.name or f"Person {existing.id}"
+                    slug = SlugManager.generate_unique_slug(
+                        self.db, self.Person, name, content_type='person',
+                        existing_id=existing.id
+                    )
+                    existing.slug = slug
+                    self.db.session.commit()
+                return existing
+            
+            # Create new person
+            name = person_data.get('name') or 'Unknown Person'
+            slug = SlugManager.generate_unique_slug(
+                self.db, self.Person, name, content_type='person'
+            )
+            
+            person_data_clean = {
+                'slug': slug,
+                'tmdb_id': person_data['id'],
+                'name': name,
+                'profile_path': person_data.get('profile_path'),
+                'popularity': person_data.get('popularity'),
+                'known_for_department': person_data.get('known_for_department'),
+                'gender': person_data.get('gender')
+            }
+            
+            person = self.Person(**person_data_clean)
+            self.db.session.add(person)
+            self.db.session.flush()
+            
+            return person
+            
+        except Exception as e:
+            logger.error(f"Error creating person: {e}")
+            return None
+    
+    def _map_genre_ids(self, genre_ids: List[int]) -> List[str]:
+        """Map TMDB genre IDs to names"""
+        genre_map = {
+            28: 'Action', 12: 'Adventure', 16: 'Animation', 35: 'Comedy',
+            80: 'Crime', 99: 'Documentary', 18: 'Drama', 10751: 'Family',
+            14: 'Fantasy', 36: 'History', 27: 'Horror', 10402: 'Music',
+            9648: 'Mystery', 10749: 'Romance', 878: 'Science Fiction',
+            10770: 'TV Movie', 53: 'Thriller', 10752: 'War', 37: 'Western'
+        }
+        return [genre_map.get(gid, 'Unknown') for gid in genre_ids if gid in genre_map]
 
 class DetailsService:
-    """Main service for handling content details"""
+    """Main service for handling content details with comprehensive slug support"""
     
     def __init__(self, db, models, cache=None):
         self.db = db
@@ -231,6 +692,10 @@ class DetailsService:
         self.Person = models.get('Person')
         self.ContentPerson = models.get('ContentPerson')
         self.cache = cache
+        self.models = models
+        
+        # Initialize content service
+        self.content_service = ContentService(db, models)
         
         # Setup HTTP session with retry
         self.session = self._create_http_session()
@@ -306,12 +771,8 @@ class DetailsService:
             
             # Ensure content has slug
             if not content.slug:
-                try:
-                    year = content.release_date.year if content.release_date else None
-                    content.slug = SlugManager.generate_unique_slug(self.db, self.Content, content.title, year, content.content_type)
-                    self.db.session.commit()
-                except Exception as e:
-                    logger.error(f"Error generating slug for content {content.id}: {e}")
+                SlugManager.update_content_slug(self.db, content)
+                self.db.session.commit()
             
             # Build comprehensive details
             details = self._build_content_details(content, user_id)
@@ -339,12 +800,18 @@ class DetailsService:
             info = SlugManager.extract_info_from_slug(slug)
             title = info['title']
             year = info['year']
+            content_type = info['content_type']
             
             # Try to find by title similarity
             query = self.Content.query.filter(
                 func.lower(self.Content.title).like(f"%{title.lower()}%")
             )
             
+            # Filter by content type if detected
+            if content_type:
+                query = query.filter(self.Content.content_type == content_type)
+            
+            # Filter by year if available
             if year:
                 query = query.filter(
                     func.extract('year', self.Content.release_date) == year
@@ -489,6 +956,11 @@ class DetailsService:
         except Exception as e:
             logger.error(f"Error building content details: {e}")
             # Return minimal details to prevent complete failure
+            return self._get_minimal_details(content)
+    
+    def _get_minimal_details(self, content: Any) -> Dict:
+        """Return minimal details as fallback"""
+        try:
             return {
                 'slug': getattr(content, 'slug', ''),
                 'id': getattr(content, 'id', 0),
@@ -499,16 +971,50 @@ class DetailsService:
                 'poster_url': self._format_image_url(getattr(content, 'poster_path', None), 'poster'),
                 'backdrop_url': self._format_image_url(getattr(content, 'backdrop_path', None), 'backdrop'),
                 'trailer': None,
-                'synopsis': {'overview': getattr(content, 'overview', ''), 'plot': '', 'tagline': '', 'content_warnings': [], 'themes': [], 'keywords': []},
+                'synopsis': {
+                    'overview': getattr(content, 'overview', ''),
+                    'plot': '',
+                    'tagline': '',
+                    'content_warnings': [],
+                    'themes': [],
+                    'keywords': []
+                },
                 'cast_crew': {'cast': [], 'crew': {'directors': [], 'writers': [], 'producers': []}},
-                'ratings': {'tmdb': {'score': 0, 'count': 0}, 'imdb': {'score': 0, 'votes': 'N/A'}, 'composite_score': 0, 'critics': [], 'audience_score': None},
-                'metadata': {'genres': [], 'release_date': None, 'runtime': None, 'status': 'Released', 'original_language': None, 'spoken_languages': [], 'production_companies': [], 'production_countries': [], 'budget': 0, 'revenue': 0, 'advisories': {}, 'certifications': {}, 'awards': '', 'popularity': 0, 'is_critics_choice': False, 'is_trending': False, 'is_new_release': False},
+                'ratings': {
+                    'tmdb': {'score': getattr(content, 'rating', 0), 'count': getattr(content, 'vote_count', 0)},
+                    'imdb': {'score': 0, 'votes': 'N/A'},
+                    'composite_score': getattr(content, 'rating', 0),
+                    'critics': [],
+                    'audience_score': None
+                },
+                'metadata': {
+                    'genres': [],
+                    'release_date': getattr(content, 'release_date', None),
+                    'runtime': getattr(content, 'runtime', None),
+                    'status': 'Released',
+                    'original_language': None,
+                    'spoken_languages': [],
+                    'production_companies': [],
+                    'production_countries': [],
+                    'budget': 0,
+                    'revenue': 0,
+                    'advisories': {},
+                    'certifications': {},
+                    'awards': '',
+                    'popularity': getattr(content, 'popularity', 0),
+                    'is_critics_choice': getattr(content, 'is_critics_choice', False),
+                    'is_trending': getattr(content, 'is_trending', False),
+                    'is_new_release': getattr(content, 'is_new_release', False)
+                },
                 'more_like_this': [],
                 'reviews': [],
                 'gallery': {'posters': [], 'backdrops': [], 'stills': []},
                 'streaming_info': None,
                 'seasons_episodes': None
             }
+        except Exception as e:
+            logger.error(f"Error creating minimal details: {e}")
+            return {'error': 'Failed to create content details'}
     
     def _fetch_tmdb_details(self, tmdb_id: int, content_type: str) -> Dict:
         """Fetch comprehensive details from TMDB"""
@@ -800,6 +1306,11 @@ class DetailsService:
                 ).limit(20).all()
                 
                 for cp, person in cast_entries:
+                    # Ensure person has slug
+                    if not person.slug:
+                        SlugManager.update_content_slug(self.db, person)
+                        self.db.session.commit()
+                    
                     cast_crew['cast'].append({
                         'id': person.id,
                         'name': person.name,
@@ -820,6 +1331,11 @@ class DetailsService:
                 ).all()
                 
                 for cp, person in crew_entries:
+                    # Ensure person has slug
+                    if not person.slug:
+                        SlugManager.update_content_slug(self.db, person)
+                        self.db.session.commit()
+                    
                     crew_data = {
                         'id': person.id,
                         'name': person.name,
@@ -842,14 +1358,23 @@ class DetailsService:
             return {'cast': [], 'crew': {'directors': [], 'writers': [], 'producers': []}}
     
     @ensure_app_context
-    def get_person_details(self, person_slug: str) -> Dict:
-        """Get comprehensive person details"""
+    def get_person_details(self, person_slug: str) -> Optional[Dict]:
+        """Get comprehensive person details by slug"""
         try:
             # Find person by slug
             person = self.Person.query.filter_by(slug=person_slug).first()
             
             if not person:
-                return None
+                # Try fuzzy matching
+                person = self._find_person_fuzzy(person_slug)
+                
+                if not person:
+                    return None
+            
+            # Ensure person has slug
+            if not person.slug:
+                SlugManager.update_content_slug(self.db, person)
+                self.db.session.commit()
             
             # Get filmography
             filmography = self.db.session.query(
@@ -874,12 +1399,8 @@ class DetailsService:
             for cp, content in filmography:
                 # Ensure content has slug
                 if not content.slug:
-                    try:
-                        year = content.release_date.year if content.release_date else None
-                        content.slug = SlugManager.generate_unique_slug(self.db, self.Content, content.title, year, content.content_type)
-                        self.db.session.commit()
-                    except Exception as e:
-                        logger.error(f"Error generating slug for content {content.id}: {e}")
+                    SlugManager.update_content_slug(self.db, content)
+                    self.db.session.commit()
                 
                 work = {
                     'id': content.id,
@@ -953,6 +1474,29 @@ class DetailsService:
             
         except Exception as e:
             logger.error(f"Error getting person details: {e}")
+            return None
+    
+    def _find_person_fuzzy(self, slug: str) -> Optional[Any]:
+        """Find person using fuzzy matching"""
+        try:
+            # Extract name from slug
+            name = slug.replace('-', ' ').title()
+            
+            # Try to find by name similarity
+            results = self.Person.query.filter(
+                func.lower(self.Person.name).like(f"%{name.lower()}%")
+            ).all()
+            
+            if results:
+                # Return best match
+                best_match = max(results, key=lambda x: self._calculate_similarity(x.name, name))
+                logger.info(f"Found fuzzy match for person '{slug}': {best_match.name}")
+                return best_match
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error in fuzzy person search: {e}")
             return None
     
     def _get_person_images(self, tmdb_data: Dict) -> List[str]:
@@ -1067,12 +1611,8 @@ class DetailsService:
             for item in similar_content:
                 # Ensure each item has a slug
                 if not item.slug:
-                    try:
-                        year = item.release_date.year if item.release_date else None
-                        item.slug = SlugManager.generate_unique_slug(self.db, self.Content, item.title, year, item.content_type)
-                        self.db.session.commit()
-                    except Exception as e:
-                        logger.error(f"Error generating slug for content {item.id}: {e}")
+                    SlugManager.update_content_slug(self.db, item)
+                    self.db.session.commit()
                 
                 # Parse genres safely
                 try:
@@ -1185,7 +1725,6 @@ class DetailsService:
                 providers = tmdb_data['watch/providers'].get('results', {})
                 
                 # Get providers for user's region (defaulting to US)
-                # Could be enhanced to detect user's actual region
                 region_data = providers.get('US', {})
                 
                 if region_data.get('flatrate'):
@@ -1479,6 +2018,49 @@ class DetailsService:
             logger.error(f"Error voting on review: {e}")
             self.db.session.rollback()
             return False
+    
+    # Slug management methods
+    def migrate_all_slugs(self, batch_size: int = 50) -> Dict:
+        """Migrate all content and persons without slugs"""
+        return SlugManager.migrate_slugs(self.db, self.models, batch_size)
+    
+    def update_content_slug(self, content_id: int, force_update: bool = False) -> Optional[str]:
+        """Update slug for specific content"""
+        try:
+            content = self.Content.query.get(content_id)
+            if content:
+                new_slug = SlugManager.update_content_slug(self.db, content, force_update)
+                self.db.session.commit()
+                
+                # Invalidate cache
+                if self.cache:
+                    try:
+                        cache_key = f"details:slug:{new_slug}"
+                        self.cache.delete(cache_key)
+                    except Exception as e:
+                        logger.warning(f"Cache invalidation error: {e}")
+                
+                return new_slug
+            return None
+        except Exception as e:
+            logger.error(f"Error updating content slug: {e}")
+            self.db.session.rollback()
+            return None
+    
+    def get_content_by_slug_or_id(self, identifier: Union[str, int]) -> Optional[Any]:
+        """Get content by slug or ID"""
+        try:
+            if isinstance(identifier, int):
+                return self.Content.query.get(identifier)
+            else:
+                content = self.Content.query.filter_by(slug=identifier).first()
+                if not content:
+                    # Try fuzzy matching
+                    content = self._find_content_fuzzy(identifier)
+                return content
+        except Exception as e:
+            logger.error(f"Error getting content by slug/id: {e}")
+            return None
 
 def init_details_service(app, db, models, cache):
     """Initialize the details service with app context"""

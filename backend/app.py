@@ -43,9 +43,8 @@ from services.algorithms import (
     HybridRecommendationEngine,
     UltraPowerfulSimilarityEngine
 )
-# New imports for details service
-from services.details import init_details_service
-from slugify import slugify
+# Import details service
+from services.details import init_details_service, SlugManager, ContentService
 import re
 
 # Initialize Flask app
@@ -245,11 +244,13 @@ class Content(db.Model):
     cast_crew = db.relationship('ContentPerson', backref='content', lazy='dynamic')
 
     def ensure_slug(self):
-        """Ensure this content has a slug"""
+        """Ensure this content has a slug using details service"""
         if not self.slug and self.title:
             try:
                 year = self.release_date.year if self.release_date else None
-                self.slug = SlugManager.generate_unique_slug(db, Content, self.title, year, self.content_type)
+                self.slug = SlugManager.generate_unique_slug(
+                    db, Content, self.title, year, self.content_type, existing_id=self.id
+                )
                 db.session.commit()
             except Exception as e:
                 logger.error(f"Error ensuring slug for content {self.id}: {e}")
@@ -453,6 +454,10 @@ class MLServiceClient:
                 content = content_dict.get(content_id)
                 
                 if content:
+                    # Ensure content has slug
+                    if not content.slug:
+                        content.ensure_slug()
+                    
                     content_data = {
                         'content': content,
                         'ml_score': rec.get('score', 0) if isinstance(rec, dict) else 0,
@@ -756,417 +761,6 @@ class YouTubeService:
             logger.error(f"YouTube search error: {e}")
         return None
 
-# FIXED SlugManager Class with error handling
-class FixedSlugManager:
-    """Fixed slug manager for app.py"""
-    
-    @staticmethod
-    def generate_slug(title: str, year: Optional[int] = None, content_type: str = 'movie') -> str:
-        """Generate URL-safe slug from title - PYTHON 3 COMPATIBLE"""
-        if not title:
-            return f"content-{int(time.time())}"
-        
-        try:
-            # Convert to lowercase and clean
-            slug = str(title).lower()
-            
-            # Replace spaces and special characters with hyphens
-            slug = re.sub(r'[^a-z0-9\s]', '', slug)  # Keep only alphanumeric and spaces
-            slug = re.sub(r'\s+', '-', slug)         # Replace spaces with hyphens
-            slug = re.sub(r'-+', '-', slug)          # Replace multiple hyphens with single
-            slug = slug.strip('-')                   # Remove leading/trailing hyphens
-            
-            # Ensure not empty
-            if not slug:
-                slug = f"content-{int(time.time())}"
-            
-            # Add year for movies
-            if year and content_type == 'movie':
-                slug = f"{slug}-{year}"
-            
-            # Limit length
-            if len(slug) > 100:
-                slug = slug[:100].rstrip('-')
-            
-            return slug
-            
-        except Exception as e:
-            logger.error(f"Error generating slug for title '{title}': {e}")
-            return f"content-{int(time.time())}"
-    
-    @staticmethod
-    def generate_unique_slug(db, model, title: str, year: Optional[int] = None, 
-                           content_type: str = 'movie') -> str:
-        """Generate unique slug, adding suffix if necessary"""
-        try:
-            base_slug = FixedSlugManager.generate_slug(title, year, content_type)
-            
-            if not base_slug:
-                base_slug = f"content-{int(time.time())}"
-            
-            slug = base_slug
-            counter = 1
-            
-            # Keep trying until we find a unique slug
-            while True:
-                try:
-                    existing = db.session.query(model).filter_by(slug=slug).first()
-                    if not existing:
-                        break
-                    slug = f"{base_slug}-{counter}"
-                    counter += 1
-                    
-                    # Prevent infinite loop
-                    if counter > 1000:
-                        slug = f"content-{int(time.time())}"
-                        break
-                except Exception as e:
-                    logger.error(f"Error checking slug uniqueness: {e}")
-                    slug = f"content-{int(time.time())}"
-                    break
-            
-            return slug
-            
-        except Exception as e:
-            logger.error(f"Error generating unique slug: {e}")
-            return f"content-{int(time.time())}"    
-
-# Enhanced Content Management Service with slug support - FIXED
-class ContentService:
-    @staticmethod
-    def save_content_from_tmdb(tmdb_data, content_type):
-        try:
-            # Check if content already exists
-            existing = Content.query.filter_by(tmdb_id=tmdb_data['id']).first()
-            if existing:
-                # Update if older than 24 hours
-                if existing.updated_at < datetime.utcnow() - timedelta(hours=24):
-                    ContentService.update_content_from_tmdb(existing, tmdb_data)
-                return existing
-            
-            # Extract genres
-            genres = []
-            if 'genres' in tmdb_data:
-                genres = [genre['name'] for genre in tmdb_data['genres']]
-            elif 'genre_ids' in tmdb_data:
-                genres = ContentService.map_genre_ids(tmdb_data['genre_ids'])
-            
-            # Extract languages
-            languages = []
-            if 'spoken_languages' in tmdb_data:
-                languages = [lang['name'] for lang in tmdb_data['spoken_languages']]
-            elif 'original_language' in tmdb_data:
-                languages = [tmdb_data['original_language']]
-            
-            # Determine if it's a new release
-            is_new_release = False
-            release_date = None
-            year = None
-            if tmdb_data.get('release_date') or tmdb_data.get('first_air_date'):
-                date_str = tmdb_data.get('release_date') or tmdb_data.get('first_air_date')
-                try:
-                    release_date = datetime.strptime(date_str, '%Y-%m-%d').date()
-                    year = release_date.year
-                    # Check if released in last 60 days
-                    if release_date >= (datetime.now() - timedelta(days=60)).date():
-                        is_new_release = True
-                except:
-                    pass
-            
-            # Determine if it's critics' choice
-            is_critics_choice = False
-            critics_score = tmdb_data.get('vote_average', 0)
-            vote_count = tmdb_data.get('vote_count', 0)
-            if critics_score >= 7.5 and vote_count >= 100:
-                is_critics_choice = True
-            
-            # Get YouTube trailer
-            youtube_trailer_id = ContentService.get_youtube_trailer(tmdb_data.get('title') or tmdb_data.get('name'))
-            
-            # Generate unique slug - FIXED with error handling
-            title = tmdb_data.get('title') or tmdb_data.get('name')
-            if not title:
-                title = f"Unknown Title {tmdb_data.get('id', '')}"
-            
-            try:
-                slug = FixedSlugManager.generate_unique_slug(db, Content, title, year, content_type)
-            except Exception as e:
-                logger.error(f"Error generating slug for '{title}': {e}")
-                slug = f"content-{tmdb_data.get('id', int(time.time()))}"
-            
-            # Ensure slug is not None
-            if not slug:
-                slug = f"content-{tmdb_data.get('id', int(time.time()))}"
-            
-            # Create content object
-            content = Content(
-                slug=slug,
-                tmdb_id=tmdb_data['id'],
-                title=title,
-                original_title=tmdb_data.get('original_title') or tmdb_data.get('original_name'),
-                content_type=content_type,
-                genres=json.dumps(genres),
-                languages=json.dumps(languages),
-                release_date=release_date,
-                runtime=tmdb_data.get('runtime'),
-                rating=tmdb_data.get('vote_average'),
-                vote_count=tmdb_data.get('vote_count'),
-                popularity=tmdb_data.get('popularity'),
-                overview=tmdb_data.get('overview'),
-                poster_path=tmdb_data.get('poster_path'),
-                backdrop_path=tmdb_data.get('backdrop_path'),
-                youtube_trailer_id=youtube_trailer_id,
-                is_new_release=is_new_release,
-                is_critics_choice=is_critics_choice,
-                critics_score=critics_score
-            )
-            
-            db.session.add(content)
-            db.session.flush()  # Get ID without committing
-            
-            # Save cast and crew if available
-            if 'credits' in tmdb_data:
-                ContentService.save_cast_crew(content.id, tmdb_data['credits'])
-            
-            db.session.commit()
-            
-            # Cache the content
-            cache.set(content_cache_key(content.id), content, timeout=7200)
-            
-            return content
-            
-        except Exception as e:
-            logger.error(f"Error saving content: {e}")
-            db.session.rollback()
-            return None
-    
-    @staticmethod
-    def save_cast_crew(content_id, credits_data):
-        """Save cast and crew information"""
-        try:
-            # Save cast
-            for idx, cast_member in enumerate(credits_data.get('cast', [])[:20]):
-                person = ContentService.get_or_create_person(cast_member)
-                if person:
-                    # Check if relationship already exists
-                    existing = ContentPerson.query.filter_by(
-                        content_id=content_id,
-                        person_id=person.id,
-                        role_type='cast',
-                        character=cast_member.get('character')
-                    ).first()
-                    
-                    if not existing:
-                        cp = ContentPerson(
-                            content_id=content_id,
-                            person_id=person.id,
-                            role_type='cast',
-                            character=cast_member.get('character'),
-                            order=idx
-                        )
-                        db.session.add(cp)
-            
-            # Save crew (key personnel only)
-            for crew_member in credits_data.get('crew', []):
-                if crew_member.get('job') in ['Director', 'Producer', 'Writer', 'Screenplay', 'Executive Producer']:
-                    person = ContentService.get_or_create_person(crew_member)
-                    if person:
-                        # Check if relationship already exists
-                        existing = ContentPerson.query.filter_by(
-                            content_id=content_id,
-                            person_id=person.id,
-                            role_type='crew',
-                            job=crew_member.get('job')
-                        ).first()
-                        
-                        if not existing:
-                            cp = ContentPerson(
-                                content_id=content_id,
-                                person_id=person.id,
-                                role_type='crew',
-                                job=crew_member.get('job'),
-                                department=crew_member.get('department'),
-                                order=0
-                            )
-                            db.session.add(cp)
-            
-            db.session.commit()
-        except Exception as e:
-            logger.error(f"Error saving cast/crew: {e}")
-            db.session.rollback()
-    
-    @staticmethod
-    def get_or_create_person(person_data):
-        """Get or create a person record"""
-        try:
-            # Check if person exists
-            person = Person.query.filter_by(tmdb_id=person_data['id']).first()
-            if person:
-                return person
-            
-            # Create new person
-            name = person_data.get('name')
-            try:
-                slug = FixedSlugManager.generate_unique_slug(db, Person, name)
-            except Exception as e:
-                logger.error(f"Error generating slug for person '{name}': {e}")
-                slug = f"person-{person_data['id']}-{int(time.time())}"
-            
-            person = Person(
-                slug=slug,
-                tmdb_id=person_data['id'],
-                name=name,
-                profile_path=person_data.get('profile_path'),
-                popularity=person_data.get('popularity'),
-                known_for_department=person_data.get('known_for_department'),
-                gender=person_data.get('gender')
-            )
-            
-            db.session.add(person)
-            db.session.flush()  # Get ID without committing
-            
-            return person
-        except Exception as e:
-            logger.error(f"Error creating person: {e}")
-            return None
-    
-    @staticmethod
-    def update_content_from_tmdb(content, tmdb_data):
-        """Update existing content with new TMDB data - FIXED"""
-        try:
-            # Update fields
-            content.rating = tmdb_data.get('vote_average', content.rating)
-            content.vote_count = tmdb_data.get('vote_count', content.vote_count)
-            content.popularity = tmdb_data.get('popularity', content.popularity)
-            content.updated_at = datetime.utcnow()
-            
-            # Ensure slug exists - if missing, generate one with error handling
-            if not content.slug:
-                year = content.release_date.year if content.release_date else None
-                title = content.title or tmdb_data.get('title') or tmdb_data.get('name')
-                if title:
-                    try:
-                        content.slug = FixedSlugManager.generate_unique_slug(db, Content, title, year, content.content_type)
-                    except Exception as e:
-                        logger.error(f"Error generating slug for content update '{title}': {e}")
-                        content.slug = f"content-{content.id}-{int(time.time())}"
-                else:
-                    content.slug = f"content-{content.id}-{int(time.time())}"
-            
-            db.session.commit()
-            
-            # Invalidate cache
-            cache.delete(content_cache_key(content.id))
-            
-        except Exception as e:
-            logger.error(f"Error updating content: {e}")
-            db.session.rollback()
-    
-    @staticmethod
-    def save_anime_content(anime_data):
-        try:
-            # Check if anime already exists
-            existing = Content.query.filter_by(mal_id=anime_data['mal_id']).first()
-            if existing:
-                return existing
-            
-            # Extract anime genres
-            genres = [genre['name'] for genre in anime_data.get('genres', [])]
-            
-            # Map to anime genre categories
-            anime_genre_categories = []
-            for genre in genres:
-                for category, category_genres in ANIME_GENRES.items():
-                    if genre in category_genres:
-                        anime_genre_categories.append(category)
-            
-            # Remove duplicates
-            anime_genre_categories = list(set(anime_genre_categories))
-            
-            # Get release date
-            release_date = None
-            year = None
-            if anime_data.get('aired', {}).get('from'):
-                try:
-                    release_date = datetime.strptime(anime_data['aired']['from'][:10], '%Y-%m-%d').date()
-                    year = release_date.year
-                except:
-                    pass
-            
-            # Get YouTube trailer for anime
-            youtube_trailer_id = ContentService.get_youtube_trailer(anime_data.get('title'), 'anime')
-            
-            # Generate unique slug for anime - FIXED
-            title = anime_data.get('title')
-            if not title:
-                title = f"Anime {anime_data.get('mal_id', '')}"
-            
-            try:
-                slug = FixedSlugManager.generate_unique_slug(db, Content, title, year, 'anime')
-            except Exception as e:
-                logger.error(f"Error generating slug for anime '{title}': {e}")
-                slug = f"anime-{anime_data.get('mal_id', int(time.time()))}"
-            
-            # Ensure slug is not None
-            if not slug:
-                slug = f"anime-{anime_data.get('mal_id', int(time.time()))}"
-            
-            # Create anime content
-            content = Content(
-                slug=slug,
-                mal_id=anime_data['mal_id'],
-                title=title,
-                original_title=anime_data.get('title_japanese'),
-                content_type='anime',
-                genres=json.dumps(genres),
-                anime_genres=json.dumps(anime_genre_categories),
-                languages=json.dumps(['japanese']),
-                release_date=release_date,
-                rating=anime_data.get('score'),
-                vote_count=anime_data.get('scored_by'),
-                popularity=anime_data.get('popularity'),
-                overview=anime_data.get('synopsis'),
-                poster_path=anime_data.get('images', {}).get('jpg', {}).get('image_url'),
-                youtube_trailer_id=youtube_trailer_id
-            )
-            
-            db.session.add(content)
-            db.session.commit()
-            
-            # Cache the content
-            cache.set(content_cache_key(content.id), content, timeout=7200)
-            
-            return content
-            
-        except Exception as e:
-            logger.error(f"Error saving anime content: {e}")
-            db.session.rollback()
-            return None
-    
-    @staticmethod
-    def get_youtube_trailer(title, content_type='movie'):
-        """Get YouTube trailer ID for content"""
-        try:
-            youtube_results = YouTubeService.search_trailers(title, content_type)
-            if youtube_results and youtube_results.get('items'):
-                # Return the first relevant trailer
-                return youtube_results['items'][0]['id']['videoId']
-        except Exception as e:
-            logger.error(f"Error getting YouTube trailer: {e}")
-        return None
-    
-    @staticmethod
-    def map_genre_ids(genre_ids):
-        # TMDB Genre ID mapping
-        genre_map = {
-            28: 'Action', 12: 'Adventure', 16: 'Animation', 35: 'Comedy',
-            80: 'Crime', 99: 'Documentary', 18: 'Drama', 10751: 'Family',
-            14: 'Fantasy', 36: 'History', 27: 'Horror', 10402: 'Music',
-            9648: 'Mystery', 10749: 'Romance', 878: 'Science Fiction',
-            10770: 'TV Movie', 53: 'Thriller', 10752: 'War', 37: 'Western'
-        }
-        return [genre_map.get(gid, 'Unknown') for gid in genre_ids if gid in genre_map]
-
 # Anonymous User Recommendations
 class AnonymousRecommendationEngine:
     @staticmethod
@@ -1226,6 +820,9 @@ class AnonymousRecommendationEngine:
             for rec in recommendations:
                 if rec.id not in seen_ids:
                     seen_ids.add(rec.id)
+                    # Ensure each recommendation has a slug
+                    if not rec.slug:
+                        rec.ensure_slug()
                     unique_recommendations.append(rec)
                     if len(unique_recommendations) >= limit:
                         break
@@ -1249,7 +846,6 @@ models = {
 services = {
     'TMDBService': TMDBService,
     'JikanService': JikanService,
-    'ContentService': ContentService,
     'MLServiceClient': MLServiceClient,
     'http_session': http_session,
     'ML_SERVICE_URL': ML_SERVICE_URL,
@@ -1261,15 +857,17 @@ init_users(app, db, models, services)
 
 # Initialize details service with error handling
 details_service = None
+content_service = None
 try:
     details_service = init_details_service(app, db, models, cache)
+    content_service = ContentService(db, models)
     logger.info("Details service initialized successfully")
 except Exception as e:
     logger.error(f"Failed to initialize details service: {e}")
 
 # API Routes
 
-# NEW: Slug-based details endpoint - FIXED
+# NEW: Slug-based details endpoint
 @app.route('/api/details/<slug>', methods=['GET'])
 def get_content_details_by_slug(slug):
     """Get content details by slug"""
@@ -1336,7 +934,7 @@ def search_content():
         if tmdb_results:
             for item in tmdb_results.get('results', []):
                 content_type_detected = 'movie' if 'title' in item else 'tv'
-                content = ContentService.save_content_from_tmdb(item, content_type_detected)
+                content = content_service.save_content_from_tmdb(item, content_type_detected)
                 if content:
                     # Record anonymous interaction
                     interaction = AnonymousInteraction(
@@ -1370,7 +968,7 @@ def search_content():
         if anime_results:
             for anime in anime_results.get('data', []):
                 # Save anime content
-                content = ContentService.save_anime_content(anime)
+                content = content_service.save_anime_content(anime)
                 if content:
                     # Get YouTube trailer URL
                     youtube_url = None
@@ -1473,13 +1071,18 @@ def get_content_details(content_id):
         # Format similar content for response
         similar_formatted = []
         for similar in similar_content:
+            # Ensure similar content has slug
+            similar_obj = Content.query.get(similar['id'])
+            if similar_obj and not similar_obj.slug:
+                similar_obj.ensure_slug()
+            
             youtube_url = None
             if similar.get('youtube_trailer_id'):
                 youtube_url = f"https://www.youtube.com/watch?v={similar['youtube_trailer_id']}"
             
             similar_formatted.append({
                 'id': similar['id'],
-                'slug': similar.get('slug'),
+                'slug': similar_obj.slug if similar_obj else similar.get('slug'),
                 'title': similar['title'],
                 'poster_path': similar['poster_path'],
                 'rating': similar['rating'],
@@ -1551,14 +1154,14 @@ def get_trending():
             tmdb_movies = TMDBService.get_trending('movie', 'day')
             if tmdb_movies:
                 for item in tmdb_movies.get('results', []):
-                    content = ContentService.save_content_from_tmdb(item, 'movie')
+                    content = content_service.save_content_from_tmdb(item, 'movie')
                     if content:
                         all_content.append(content)
             
             tmdb_tv = TMDBService.get_trending('tv', 'day')
             if tmdb_tv:
                 for item in tmdb_tv.get('results', []):
-                    content = ContentService.save_content_from_tmdb(item, 'tv')
+                    content = content_service.save_content_from_tmdb(item, 'tv')
                     if content:
                         all_content.append(content)
         except Exception as e:
@@ -1569,7 +1172,7 @@ def get_trending():
             top_anime = JikanService.get_top_anime()
             if top_anime:
                 for anime in top_anime.get('data', [])[:20]:
-                    content = ContentService.save_anime_content(anime)
+                    content = content_service.save_anime_content(anime)
                     if content:
                         all_content.append(content)
         except Exception as e:
@@ -1579,12 +1182,15 @@ def get_trending():
         db_trending = Content.query.filter_by(is_trending=True).limit(50).all()
         all_content.extend(db_trending)
         
-        # Remove duplicates
+        # Remove duplicates and ensure all have slugs
         seen_ids = set()
         unique_content = []
         for content in all_content:
             if content.id not in seen_ids:
                 seen_ids.add(content.id)
+                # Ensure content has slug
+                if not content.slug:
+                    content.ensure_slug()
                 unique_content.append(content)
         
         # Apply algorithms
@@ -1690,7 +1296,7 @@ def get_new_releases():
                 
                 if releases:
                     for item in releases.get('results', [])[:10]:
-                        content = ContentService.save_content_from_tmdb(item, content_type)
+                        content = content_service.save_content_from_tmdb(item, content_type)
                         if content and content.release_date:
                             days_old = (datetime.now().date() - content.release_date).days
                             if days_old <= 60:
@@ -1705,12 +1311,15 @@ def get_new_releases():
         ).limit(50).all()
         all_new_releases.extend(db_new_releases)
         
-        # Remove duplicates
+        # Remove duplicates and ensure all have slugs
         seen_ids = set()
         unique_releases = []
         for content in all_new_releases:
             if content.id not in seen_ids:
                 seen_ids.add(content.id)
+                # Ensure content has slug
+                if not content.slug:
+                    content.ensure_slug()
                 unique_releases.append(content)
         
         # Apply algorithms
@@ -1941,7 +1550,7 @@ def get_critics_choice():
         recommendations = []
         if critics_choice:
             for item in critics_choice.get('results', [])[:limit]:
-                content = ContentService.save_content_from_tmdb(item, content_type)
+                content = content_service.save_content_from_tmdb(item, content_type)
                 if content:
                     youtube_url = None
                     if content.youtube_trailer_id:
@@ -1992,7 +1601,7 @@ def get_genre_recommendations(genre):
             
             if genre_content:
                 for item in genre_content.get('results', [])[:limit]:
-                    content = ContentService.save_content_from_tmdb(item, content_type)
+                    content = content_service.save_content_from_tmdb(item, content_type)
                     if content:
                         youtube_url = None
                         if content.youtube_trailer_id:
@@ -2032,7 +1641,7 @@ def get_regional(language):
             lang_content = TMDBService.get_language_specific(lang_code, content_type)
             if lang_content:
                 for item in lang_content.get('results', [])[:limit]:
-                    content = ContentService.save_content_from_tmdb(item, content_type)
+                    content = content_service.save_content_from_tmdb(item, content_type)
                     if content:
                         youtube_url = None
                         if content.youtube_trailer_id:
@@ -2074,7 +1683,7 @@ def get_anime():
                     for anime in anime_results.get('data', []):
                         if len(recommendations) >= limit:
                             break
-                        content = ContentService.save_anime_content(anime)
+                        content = content_service.save_anime_content(anime)
                         if content:
                             youtube_url = None
                             if content.youtube_trailer_id:
@@ -2101,7 +1710,7 @@ def get_anime():
             top_anime = JikanService.get_top_anime()
             if top_anime:
                 for anime in top_anime.get('data', [])[:limit]:
-                    content = ContentService.save_anime_content(anime)
+                    content = content_service.save_anime_content(anime)
                     if content:
                         youtube_url = None
                         if content.youtube_trailer_id:
@@ -2147,11 +1756,20 @@ def get_similar_recommendations(content_id):
         if not base_content:
             return jsonify({'error': 'Content not found'}), 404
         
+        # Ensure base content has slug
+        if not base_content.slug:
+            base_content.ensure_slug()
+        
         # Build comprehensive content pool
         content_pool_query = Content.query
         
         # Get a large pool for accurate matching
         content_pool = content_pool_query.limit(2000).all()  # Increased pool size
+        
+        # Ensure all content in pool has slugs
+        for content in content_pool:
+            if not content.slug:
+                content.ensure_slug()
         
         # Use the ultra-powerful similarity engine for 100% accuracy
         similar_content = recommendation_orchestrator.get_ultra_similar_content(
@@ -2271,6 +1889,10 @@ def get_public_admin_recommendations():
             admin = User.query.get(rec.admin_id)
             
             if content:
+                # Ensure content has slug
+                if not content.slug:
+                    content.ensure_slug()
+                
                 youtube_url = None
                 if content.youtube_trailer_id:
                     youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
@@ -2369,66 +1991,58 @@ def vote_review_helpful(review_id):
         logger.error(f"Error voting on review: {e}")
         return jsonify({'error': 'Failed to vote'}), 500
 
-# TEMPORARY: Debug endpoints to test slug functionality
-@app.route('/api/debug/test-slug/<slug>')
-def test_slug(slug):
-    """Test slug lookup"""
+# Slug management endpoints
+@app.route('/api/admin/slugs/migrate', methods=['POST'])
+@auth_required
+def migrate_all_slugs():
+    """Migrate all content without slugs (admin only)"""
     try:
-        content = Content.query.filter_by(slug=slug).first()
-        if content:
-            return jsonify({
-                'found': True,
-                'content': {
-                    'id': content.id,
-                    'title': content.title,
-                    'slug': content.slug,
-                    'content_type': content.content_type
-                }
-            })
-        else:
-            return jsonify({'found': False, 'slug': slug})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-# TEMPORARY: Get sample slugs for testing
-@app.route('/api/debug/sample-slugs')
-def get_sample_slugs():
-    """Get sample slugs for testing"""
-    try:
-        contents = Content.query.filter(Content.slug != None).limit(10).all()
-        samples = []
-        for content in contents:
-            samples.append({
-                'id': content.id,
-                'title': content.title,
-                'slug': content.slug,
-                'url': f"/content/details.html?{content.slug}"
-            })
-        return jsonify({'samples': samples})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/debug/check-slugs')
-def check_slugs():
-    """Check slug status in database"""
-    try:
-        total_content = Content.query.count()
-        content_with_slugs = Content.query.filter(Content.slug != None, Content.slug != '').count()
-        content_without_slugs = total_content - content_with_slugs
+        # Check if user is admin
+        user = User.query.get(request.user_id)
+        if not user or not user.is_admin:
+            return jsonify({'error': 'Admin access required'}), 403
         
-        return jsonify({
-            'total_content': total_content,
-            'with_slugs': content_with_slugs,
-            'without_slugs': content_without_slugs,
-            'sample_without_slugs': [
-                {'id': c.id, 'title': c.title} 
-                for c in Content.query.filter(
-                    or_(Content.slug == None, Content.slug == '')
-                ).limit(5).all()
-            ]
-        })
+        if details_service:
+            batch_size = int(request.json.get('batch_size', 50))
+            stats = details_service.migrate_all_slugs(batch_size)
+            return jsonify({
+                'success': True,
+                'migration_stats': stats
+            }), 200
+        else:
+            return jsonify({'error': 'Service unavailable'}), 503
+            
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        logger.error(f"Error migrating slugs: {e}")
+        return jsonify({'error': 'Failed to migrate slugs'}), 500
+
+@app.route('/api/admin/content/<int:content_id>/slug', methods=['PUT'])
+@auth_required
+def update_content_slug(content_id):
+    """Update slug for specific content (admin only)"""
+    try:
+        # Check if user is admin
+        user = User.query.get(request.user_id)
+        if not user or not user.is_admin:
+            return jsonify({'error': 'Admin access required'}), 403
+        
+        if details_service:
+            force_update = request.json.get('force_update', False)
+            new_slug = details_service.update_content_slug(content_id, force_update)
+            
+            if new_slug:
+                return jsonify({
+                    'success': True,
+                    'new_slug': new_slug
+                }), 200
+            else:
+                return jsonify({'error': 'Content not found or update failed'}), 404
+        else:
+            return jsonify({'error': 'Service unavailable'}), 503
+            
+    except Exception as e:
+        logger.error(f"Error updating content slug: {e}")
+        return jsonify({'error': 'Failed to update slug'}), 500
 
 # Health check endpoint
 @app.route('/api/health', methods=['GET'])
@@ -2439,7 +2053,7 @@ def health_check():
         health_info = {
             'status': 'healthy',
             'timestamp': datetime.utcnow().isoformat(),
-            'version': '4.0.1'  # Updated version with all fixes
+            'version': '5.0.0'  # Updated version with comprehensive slug support
         }
         
         # Check database connectivity
@@ -2469,9 +2083,26 @@ def health_check():
             'youtube': bool(YOUTUBE_API_KEY),
             'ml_service': bool(ML_SERVICE_URL),
             'algorithms': 'ultra_powerful_enabled',
-            'slug_support': 'enabled',
-            'details_service': 'enabled' if details_service else 'disabled'
+            'slug_support': 'comprehensive_enabled',
+            'details_service': 'enabled' if details_service else 'disabled',
+            'content_service': 'enabled' if content_service else 'disabled'
         }
+        
+        # Check slug status
+        try:
+            total_content = Content.query.count()
+            content_with_slugs = Content.query.filter(
+                and_(Content.slug != None, Content.slug != '')
+            ).count()
+            
+            health_info['slug_status'] = {
+                'total_content': total_content,
+                'with_slugs': content_with_slugs,
+                'without_slugs': total_content - content_with_slugs,
+                'coverage_percentage': round((content_with_slugs / total_content * 100), 2) if total_content > 0 else 0
+            }
+        except Exception as e:
+            health_info['slug_status'] = {'error': str(e)}
         
         return jsonify(health_info), 200
         
@@ -2482,92 +2113,48 @@ def health_check():
             'timestamp': datetime.utcnow().isoformat()
         }), 500
 
-# FIXED: CLI command for generating slugs
+# CLI command for generating slugs - UPDATED
 @app.cli.command('generate-slugs')
 def generate_slugs():
-    """Generate slugs for existing content"""
+    """Generate slugs for existing content using details service"""
     try:
-        print("Starting slug generation...")
+        print("Starting comprehensive slug generation...")
         
-        # Generate slugs for content without them
-        contents = Content.query.filter(
-            or_(Content.slug == None, Content.slug == '')
-        ).all()
+        if not details_service:
+            print("Error: Details service not available")
+            return
         
-        print(f"Found {len(contents)} content items without slugs")
+        # Use the details service migration
+        stats = details_service.migrate_all_slugs(batch_size=50)
         
-        for i, content in enumerate(contents):
-            try:
-                year = content.release_date.year if content.release_date else None
-                title = content.title or f"Content {content.id}"
-                
-                try:
-                    slug = FixedSlugManager.generate_unique_slug(db, Content, title, year, content.content_type)
-                except Exception as e:
-                    logger.error(f"Error generating slug for content {content.id}: {e}")
-                    slug = f"content-{content.id}-{int(time.time())}"
-                
-                content.slug = slug
-                
-                print(f"[{i+1}/{len(contents)}] Generated slug for '{title}': {slug}")
-                
-                # Commit in batches
-                if (i + 1) % 50 == 0:
-                    db.session.commit()
-                    print(f"Committed batch of 50 items...")
-                    
-            except Exception as e:
-                print(f"Error generating slug for content {content.id}: {e}")
-                continue
-        
-        # Generate slugs for persons without them
-        persons = Person.query.filter(
-            or_(Person.slug == None, Person.slug == '')
-        ).all()
-        
-        print(f"Found {len(persons)} person items without slugs")
-        
-        for i, person in enumerate(persons):
-            try:
-                name = person.name or f"Person {person.id}"
-                try:
-                    slug = FixedSlugManager.generate_unique_slug(db, Person, name)
-                except Exception as e:
-                    logger.error(f"Error generating slug for person {person.id}: {e}")
-                    slug = f"person-{person.id}-{int(time.time())}"
-                
-                person.slug = slug
-                
-                print(f"[{i+1}/{len(persons)}] Generated slug for '{name}': {slug}")
-                
-                # Commit in batches
-                if (i + 1) % 50 == 0:
-                    db.session.commit()
-                    print(f"Committed batch of 50 persons...")
-                    
-            except Exception as e:
-                print(f"Error generating slug for person {person.id}: {e}")
-                continue
-        
-        # Final commit
-        db.session.commit()
-        print(f"Successfully generated slugs for {len(contents)} contents and {len(persons)} persons")
+        print("Slug migration completed successfully!")
+        print(f"Content updated: {stats['content_updated']}")
+        print(f"Persons updated: {stats['persons_updated']}")
+        print(f"Total processed: {stats['total_processed']}")
+        print(f"Errors: {stats['errors']}")
         
         # Verify results
-        remaining_content = Content.query.filter(
-            or_(Content.slug == None, Content.slug == '')
-        ).count()
-        
-        remaining_persons = Person.query.filter(
-            or_(Person.slug == None, Person.slug == '')
-        ).count()
-        
-        print(f"Remaining items without slugs: {remaining_content} contents, {remaining_persons} persons")
+        try:
+            total_content = Content.query.count()
+            content_with_slugs = Content.query.filter(
+                and_(Content.slug != None, Content.slug != '')
+            ).count()
+            
+            total_persons = Person.query.count()
+            persons_with_slugs = Person.query.filter(
+                and_(Person.slug != None, Person.slug != '')
+            ).count()
+            
+            print(f"\nVerification Results:")
+            print(f"Content: {content_with_slugs}/{total_content} ({round(content_with_slugs/total_content*100, 1)}% coverage)")
+            print(f"Persons: {persons_with_slugs}/{total_persons} ({round(persons_with_slugs/total_persons*100, 1)}% coverage)")
+            
+        except Exception as e:
+            print(f"Error during verification: {e}")
         
     except Exception as e:
-        logger.error(f"Error generating slugs: {e}")
-        db.session.rollback()
         print(f"Failed to generate slugs: {e}")
+        logger.error(f"CLI slug generation error: {e}")
 
 # Initialize database
 def create_tables():
@@ -2606,6 +2193,7 @@ else:
     print(f"Database URI configured: {'Yes' if app.config.get('SQLALCHEMY_DATABASE_URI') else 'No'}")
     print(f"Cache type: {app.config.get('CACHE_TYPE', 'Not configured')}")
     print(f"Details service status: {'Initialized' if details_service else 'Failed to initialize'}")
+    print(f"Content service status: {'Initialized' if content_service else 'Failed to initialize'}")
     
     # Log all registered routes
     print("\n=== Registered Routes ===")
