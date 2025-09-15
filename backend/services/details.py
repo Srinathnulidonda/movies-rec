@@ -137,16 +137,11 @@ class SlugManager:
             if not clean_title:
                 return f"content-{int(time.time())}"
             
-            # Use slugify for robust slug generation
-            slug = slugify(
-                clean_title,
-                max_length=80,  # Reasonable length limit
-                word_boundary=True,
-                save_order=True,
-                lowercase=True
-            )
+            # Use slugify with correct parameters
+            # For python-slugify library
+            slug = slugify(clean_title)
             
-            # Fallback if slugify fails or returns empty
+            # If slugify returns empty or None, use manual fallback
             if not slug:
                 # Manual cleaning as fallback
                 slug = clean_title.lower()
@@ -166,6 +161,16 @@ class SlugManager:
                 }.get(content_type, 'content')
                 return f"{type_prefix}-{int(time.time())}"
             
+            # Truncate if too long (manual truncation since max_length isn't supported)
+            if len(slug) > 80:
+                # Try to cut at word boundary
+                truncated = slug[:80]
+                last_dash = truncated.rfind('-')
+                if last_dash > 40:  # Only use word boundary if we're not cutting too much
+                    slug = truncated[:last_dash]
+                else:
+                    slug = truncated
+            
             # Add year suffix for movies to avoid conflicts
             if year and content_type == 'movie' and isinstance(year, int):
                 if 1800 <= year <= 2100:  # Reasonable year range
@@ -177,7 +182,7 @@ class SlugManager:
                 if not slug.startswith('anime-'):
                     slug = f"anime-{slug}"
             
-            # Final length check
+            # Final length check after additions
             if len(slug) > 100:
                 # Truncate at word boundary if possible
                 parts = slug[:97].split('-')
@@ -185,8 +190,6 @@ class SlugManager:
                     slug = '-'.join(parts[:-1])
                 else:
                     slug = slug[:97]
-                # Add ellipsis indicator
-                slug = f"{slug}..."
             
             return slug
             

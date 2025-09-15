@@ -132,3 +132,11 @@ Data sources (default choices if not otherwise present in repo)
 3.	Implement story embedding similarity using transformer/NLP encoders to match user-watched plots with similar items, combining it with NCF/MF in a hybrid ranking pipeline that enforces hard filters for language & content type.
 4.	Continuously improve via online learning (mini-batches), multi-armed bandit (exploring NCF, MF, story-similarity, trending), and real-time A/B testing to evolve recommendations with user behavior.
 5.	Ensure recommendations are context-aware, diverse, and real-time, returning each item with scores, reasons (e.g., "story match: Inception", "pref: Action"), and experiment ID for observability.
+
+
+
+
+
+fix all the errors in the app.py file and details.py regarding slug
+all the logic and other slugs details of the movies, anime, tv-show and person details movies, anime, tv-show should be in the details.py file 
+provide the complete updated production-level code
