@@ -196,8 +196,16 @@ class SlugManager:
         except Exception as e:
             logger.error(f"Error generating slug for title '{title}': {e}")
             # Ultimate fallback - guaranteed to work
-            safe_slug = ''.join(c.lower() if c.isalnum() else '-' for c in str(title))
+            # Use only ASCII characters for safety
+            safe_slug = ''
+            for c in str(title):
+                if c.isalnum():
+                    safe_slug += c.lower()
+                elif c in ' -_':
+                    safe_slug += '-'
+            
             safe_slug = re.sub(r'-+', '-', safe_slug).strip('-')
+            
             if not safe_slug:
                 type_prefix = {
                     'movie': 'movie',
@@ -207,10 +215,10 @@ class SlugManager:
                 }.get(content_type, 'content')
                 return f"{type_prefix}-{int(time.time())}"
             return safe_slug[:50]  # Limit length
-    
+            
     @staticmethod
     def generate_unique_slug(db, model, title: str, year: Optional[int] = None, 
-                           content_type: str = 'movie', existing_id: Optional[int] = None) -> str:
+                        content_type: str = 'movie', existing_id: Optional[int] = None) -> str:
         """
         Generate unique slug, adding suffix if necessary
         
@@ -240,7 +248,7 @@ class SlugManager:
             
             slug = base_slug
             counter = 1
-            max_attempts = 1000  # Prevent infinite loops
+            max_attempts = 100  # Reduced from 1000 for performance
             
             # Keep trying until we find a unique slug
             while counter <= max_attempts:
@@ -252,9 +260,10 @@ class SlugManager:
                     if existing_id:
                         query = query.filter(model.id != existing_id)
                     
-                    existing = query.first()
+                    # Use exists() for better performance
+                    exists = db.session.query(query.exists()).scalar()
                     
-                    if not existing:
+                    if not exists:
                         break
                     
                     # Generate new slug with counter
@@ -283,8 +292,8 @@ class SlugManager:
                 'anime': 'anime',
                 'person': 'person'
             }.get(content_type, 'content')
-            return f"{type_prefix}-{int(time.time())}-{hash(str(title))}"
-    
+            # Use timestamp and a small hash for uniqueness
+            return f"{type_prefix}-{int(time.time())}-{abs(hash(str(title)))[:6]}"    
     @staticmethod
     def extract_info_from_slug(slug: str) -> Dict:
         """Extract potential title and year from slug"""
