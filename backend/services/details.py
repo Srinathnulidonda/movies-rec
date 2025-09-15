@@ -301,27 +301,34 @@ class SlugManager:
     
     @staticmethod
     def extract_info_from_slug(slug: str) -> Dict:
-        """Extract potential title and year from slug"""
+        """Extract potential title and year from slug with better content type detection"""
         try:
             if not slug:
                 return {'title': 'Unknown', 'year': None, 'content_type': 'movie'}
             
-            # Handle anime prefix
-            content_type = 'movie'
+            # Handle different content type patterns
+            content_type = 'movie'  # default
             clean_slug = slug
             
+            # Check for explicit type indicators
             if slug.startswith('anime-'):
                 content_type = 'anime'
                 clean_slug = slug[6:]  # Remove 'anime-' prefix
-            elif 'tv-show' in slug:
+            elif slug.startswith('tv-') or 'tv-show' in slug or '-tv-' in slug:
                 content_type = 'tv'
+                clean_slug = slug.replace('tv-show-', '').replace('tv-', '').replace('-tv-', '-')
+            elif slug.startswith('series-') or '-series-' in slug:
+                content_type = 'tv'
+                clean_slug = slug.replace('series-', '').replace('-series-', '-')
             
             # Check if slug ends with a year (4 digits)
             year_match = re.search(r'-(\d{4})$', clean_slug)
             if year_match:
                 year = int(year_match.group(1))
                 title_slug = clean_slug[:year_match.start()]
-                if content_type == 'movie' and 1800 <= year <= 2100:
+                
+                # More flexible year range for upcoming content
+                if 1900 <= year <= 2030:
                     return {
                         'title': title_slug.replace('-', ' ').title(),
                         'year': year,
@@ -342,7 +349,7 @@ class SlugManager:
                 'year': None,
                 'content_type': 'movie'
             }
-    
+            
     @staticmethod
     def update_content_slug(db, content, force_update: bool = False) -> str:
         """
@@ -852,7 +859,7 @@ class DetailsService:
             return None
     
     def _find_content_fuzzy(self, slug: str) -> Optional[Any]:
-        """Find content using fuzzy matching if exact slug not found"""
+        """Find content using fuzzy matching with improved flexibility"""
         try:
             # Extract potential title from slug
             info = SlugManager.extract_info_from_slug(slug)
@@ -860,30 +867,74 @@ class DetailsService:
             year = info['year']
             content_type = info['content_type']
             
-            # Build query with all filters FIRST
+            # Try exact title match first
             query = self.Content.query.filter(
                 func.lower(self.Content.title).like(f"%{title.lower()}%")
             )
             
-            # Filter by content type if detected
-            if content_type:
-                query = query.filter(self.Content.content_type == content_type)
+            # Try with less restrictive filters first
+            results = []
             
-            # Filter by year if available
-            if year:
-                query = query.filter(
+            # Attempt 1: With content type and year filters
+            if content_type and year:
+                filtered_query = query.filter(
+                    self.Content.content_type == content_type,
                     func.extract('year', self.Content.release_date) == year
-                )
+                ).limit(5).all()
+                results.extend(filtered_query)
             
-            # Apply limit AFTER all filters
-            results = query.limit(10).all()
+            # Attempt 2: With content type only (relaxed year)
+            if not results and content_type:
+                filtered_query = query.filter(
+                    self.Content.content_type == content_type
+                ).limit(5).all()
+                results.extend(filtered_query)
             
-            if results:
+            # Attempt 3: Try both movie and tv types (common confusion)
+            if not results:
+                for ctype in ['movie', 'tv', 'anime']:
+                    filtered_query = query.filter(
+                        self.Content.content_type == ctype
+                    ).limit(3).all()
+                    results.extend(filtered_query)
+            
+            # Attempt 4: No content type filter, just title matching
+            if not results:
+                results = query.limit(10).all()
+            
+            # Attempt 5: Try alternative title formats
+            if not results:
+                # Try with colon (e.g., "Alien: Earth" instead of "Alien Earth")
+                alt_title = title.replace(' ', ': ', 1)  # "Alien: Earth"
+                alt_query = self.Content.query.filter(
+                    func.lower(self.Content.title).like(f"%{alt_title.lower()}%")
+                ).limit(5).all()
+                results.extend(alt_query)
+                
+                # Try with other common separators
+                for separator in [': ', ' - ', ': ', ' – ']:
+                    alt_title = title.replace(' ', separator, 1)
+                    alt_query = self.Content.query.filter(
+                        func.lower(self.Content.title).like(f"%{alt_title.lower()}%")
+                    ).limit(3).all()
+                    results.extend(alt_query)
+            
+            # Remove duplicates
+            seen_ids = set()
+            unique_results = []
+            for result in results:
+                if result.id not in seen_ids:
+                    seen_ids.add(result.id)
+                    unique_results.append(result)
+            
+            if unique_results:
                 # Return best match (highest similarity)
-                best_match = max(results, key=lambda x: self._calculate_similarity(x.title, title))
+                best_match = max(unique_results, key=lambda x: self._calculate_similarity(x.title, title))
                 logger.info(f"Found fuzzy match for '{slug}': {best_match.title} (slug: {best_match.slug})")
                 return best_match
             
+            # Last resort: check if content exists but with very different title
+            logger.warning(f"No fuzzy match found for '{slug}' with title '{title}' and year {year}")
             return None
             
         except Exception as e:
