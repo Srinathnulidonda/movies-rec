@@ -28,6 +28,7 @@ from urllib3.util.retry import Retry
 from flask_mail import Mail
 from services.upcoming import UpcomingContentService, ContentType, LanguagePriority
 import asyncio
+from services.similar import init_ultra_precision_similarity_service
 import services.auth as auth
 from services.auth import init_auth, auth_bp
 from services.admin import admin_bp, init_admin
@@ -864,6 +865,7 @@ init_auth(app, db, User)
 # Initialize other services
 init_admin(app, db, models, services)
 init_users(app, db, models, services)
+ultra_service = init_ultra_precision_similarity_service(db, models, cache)
 
 # API Routes
 
@@ -1795,171 +1797,15 @@ def get_anime():
 
 # OPTIMIZED Similar Recommendations Endpoint - FIXED
 @app.route('/api/recommendations/similar/<int:content_id>', methods=['GET'])
-def get_similar_recommendations(content_id):
-    """Optimized similarity endpoint with performance focus"""
-    try:
-        # Parameters with reduced defaults for performance
-        limit = min(int(request.args.get('limit', 8)), 15)  # Cap at 15, default 8
-        strict_mode = request.args.get('strict_mode', 'false').lower() == 'true'  # Default false for performance
-        min_similarity = float(request.args.get('min_similarity', 0.3))  # Lower threshold
-        
-        # Check cache first
-        cache_key = f"similar:{content_id}:{limit}:{strict_mode}:{min_similarity}"
-        if cache:
-            try:
-                cached_result = cache.get(cache_key)
-                if cached_result:
-                    return jsonify(cached_result), 200
-            except Exception as e:
-                logger.warning(f"Cache get error: {e}")
-        
-        # Get base content
-        base_content = Content.query.get(content_id)
-        if not base_content:
-            return jsonify({'error': 'Content not found'}), 404
-        
-        # Ensure base content has slug (without blocking)
-        if not base_content.slug:
-            try:
-                base_content.ensure_slug()
-                db.session.commit()
-            except Exception as e:
-                logger.warning(f"Slug generation failed for base content: {e}")
-                # Continue without slug update
-                base_content.slug = f"content-{base_content.id}"
-        
-        # Build optimized similar content list
-        similar_content = []
-        
-        try:
-            # Parse base content genres safely
-            try:
-                base_genres = json.loads(base_content.genres or '[]')
-            except (json.JSONDecodeError, TypeError):
-                base_genres = []
-            
-            # Simple genre-based similarity (fast and effective)
-            if base_genres:
-                # Use only the first genre for performance
-                primary_genre = base_genres[0]
-                
-                similar_items = Content.query.filter(
-                    Content.id != content_id,
-                    Content.content_type == base_content.content_type,
-                    Content.genres.contains(primary_genre)
-                ).order_by(
-                    Content.rating.desc()
-                ).limit(limit * 2).all()  # Get more than needed for filtering
-                
-                # Process and ensure slugs
-                for item in similar_items[:limit]:
-                    try:
-                        # Ensure slug without blocking
-                        if not item.slug:
-                            item.slug = f"content-{item.id}"  # Quick fallback
-                        
-                        # Parse item genres safely
-                        try:
-                            item_genres = json.loads(item.genres or '[]')
-                        except (json.JSONDecodeError, TypeError):
-                            item_genres = []
-                        
-                        similar_content.append({
-                            'id': item.id,
-                            'slug': item.slug,
-                            'title': item.title,
-                            'poster_path': f"https://image.tmdb.org/t/p/w300{item.poster_path}" if item.poster_path and not item.poster_path.startswith('http') else item.poster_path,
-                            'rating': item.rating,
-                            'content_type': item.content_type,
-                            'genres': item_genres,
-                            'similarity_score': 0.8,  # Default similarity score
-                            'match_type': 'genre_based'
-                        })
-                        
-                        if len(similar_content) >= limit:
-                            break
-                            
-                    except Exception as e:
-                        logger.warning(f"Error processing similar item {item.id}: {e}")
-                        continue
-            
-            # If no genre matches, get popular content of same type
-            if not similar_content:
-                fallback_items = Content.query.filter(
-                    Content.id != content_id,
-                    Content.content_type == base_content.content_type
-                ).order_by(
-                    Content.popularity.desc()
-                ).limit(limit).all()
-                
-                for item in fallback_items:
-                    if not item.slug:
-                        item.slug = f"content-{item.id}"
-                    
-                    similar_content.append({
-                        'id': item.id,
-                        'slug': item.slug,
-                        'title': item.title,
-                        'poster_path': f"https://image.tmdb.org/t/p/w300{item.poster_path}" if item.poster_path and not item.poster_path.startswith('http') else item.poster_path,
-                        'rating': item.rating,
-                        'content_type': item.content_type,
-                        'similarity_score': 0.5,
-                        'match_type': 'popularity_fallback'
-                    })
-        
-        except Exception as e:
-            logger.error(f"Error in similarity calculation: {e}")
-            # Return empty results on error
-            similar_content = []
-        
-        # Track interaction (non-blocking)
-        try:
-            session_id = get_session_id()
-            interaction = AnonymousInteraction(
-                session_id=session_id,
-                content_id=content_id,
-                interaction_type='similar_view',
-                ip_address=request.remote_addr
-            )
-            db.session.add(interaction)
-            db.session.commit()
-        except Exception as e:
-            logger.warning(f"Interaction tracking failed: {e}")
-        
-        # Prepare response
-        response = {
-            'base_content': {
-                'id': base_content.id,
-                'slug': base_content.slug or f"content-{base_content.id}",
-                'title': base_content.title,
-                'content_type': base_content.content_type,
-                'rating': base_content.rating
-            },
-            'similar_content': similar_content,
-            'metadata': {
-                'algorithm': 'optimized_genre_based',
-                'total_results': len(similar_content),
-                'similarity_threshold': min_similarity,
-                'timestamp': datetime.utcnow().isoformat()
-            }
-        }
-        
-        # Cache the result (non-blocking)
-        if cache:
-            try:
-                cache.set(cache_key, response, timeout=900)  # 15 minutes
-            except Exception as e:
-                logger.warning(f"Caching failed: {e}")
-        
-        return jsonify(response), 200
-        
-    except Exception as e:
-        logger.error(f"Similar recommendations error: {e}")
-        return jsonify({
-            'error': 'Failed to get similar recommendations',
-            'similar_content': [],
-            'metadata': {'error': str(e)}
-        }), 500
+def get_ultra_similar(content_id):
+    engine = ultra_service['ultra_similarity_engine']
+    results = engine.get_ultra_precise_similar_content(
+        content_id, 
+        limit=20,
+        language_strict=True,
+        quality_threshold='excellent'
+    )
+    return jsonify(results)
 
 @app.route('/api/recommendations/anonymous', methods=['GET'])
 def get_anonymous_recommendations():
@@ -1994,6 +1840,17 @@ def get_anonymous_recommendations():
     except Exception as e:
         logger.error(f"Anonymous recommendations error: {e}")
         return jsonify({'error': 'Failed to get recommendations'}), 500
+
+@app.route('/api/explore/genre/<genre>', methods=['GET'])
+def explore_ultra_genre(genre):
+    explorer = ultra_service['ultra_genre_explorer']
+    results = explorer.explore_genre_with_ultra_precision(
+        genre,
+        language=request.args.get('language'),
+        precision_level='ultra_high',
+        cultural_context=True
+    )
+    return jsonify(results)
 
 # Public Admin Recommendations
 @app.route('/api/recommendations/admin-choice', methods=['GET'])
