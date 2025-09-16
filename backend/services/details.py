@@ -265,6 +265,7 @@ class SlugManager:
             content_type = 'movie'
             clean_slug = slug
             
+            # Handle content type prefixes
             if slug.startswith('anime-'):
                 content_type = 'anime'
                 clean_slug = slug[6:]
@@ -278,20 +279,28 @@ class SlugManager:
                 content_type = 'person'
                 clean_slug = slug[7:]
             
+            # Extract year from end
             year_match = re.search(r'-(\d{4})$', clean_slug)
+            year = None
+            title_slug = clean_slug
+            
             if year_match:
                 year = int(year_match.group(1))
                 title_slug = clean_slug[:year_match.start()]
                 
                 if 1900 <= year <= 2030:
+                    # Convert slug to title with smart formatting
+                    title = SlugManager._slug_to_title(title_slug)
                     return {
-                        'title': title_slug.replace('-', ' ').title(),
+                        'title': title,
                         'year': year,
                         'content_type': content_type
                     }
             
+            # No year found or invalid year
+            title = SlugManager._slug_to_title(title_slug)
             return {
-                'title': clean_slug.replace('-', ' ').title(),
+                'title': title,
                 'year': None,
                 'content_type': content_type
             }
@@ -303,7 +312,36 @@ class SlugManager:
                 'year': None,
                 'content_type': 'movie'
             }
+    @staticmethod
+    def _slug_to_title(slug: str) -> str:
+        """Convert slug to title with smart formatting for common patterns"""
+        try:
+            # Basic conversion
+            title = slug.replace('-', ' ').title()
             
+            # Handle specific patterns
+            # Mission: Impossible pattern
+            if 'mission impossible' in title.lower():
+                title = re.sub(r'Mission Impossible', 'Mission: Impossible', title, flags=re.IGNORECASE)
+            
+            # Other common franchise patterns
+            title = re.sub(r'\bDc\b', 'DC', title)  # DC Comics
+            title = re.sub(r'\bMcu\b', 'MCU', title)  # Marvel
+            title = re.sub(r'\bUk\b', 'UK', title)  # United Kingdom
+            title = re.sub(r'\bUs\b', 'US', title)  # United States
+            title = re.sub(r'\bTv\b', 'TV', title)  # Television
+            
+            # Roman numerals
+            roman_numerals = ['Ii', 'Iii', 'Iv', 'Vi', 'Vii', 'Viii', 'Ix', 'Xi', 'Xii']
+            for numeral in roman_numerals:
+                title = re.sub(f'\\b{numeral}\\b', numeral.upper(), title)
+            
+            return title
+            
+        except Exception as e:
+            logger.error(f"Error converting slug to title: {e}")
+            return slug.replace('-', ' ').title()
+                    
     @staticmethod
     def update_content_slug(db, content, force_update: bool = False) -> str:
         try:
@@ -748,111 +786,168 @@ class DetailsService:
             
             logger.info(f"Fuzzy search for slug '{slug}': title='{title}', year={year}, type={content_type}")
             
+            # Start with the extracted title
             title_variations = [title.lower()]
             
+            # Add common Mission: Impossible specific patterns
+            if 'mission' in title.lower() and 'impossible' in title.lower():
+                # Try the standard Mission: Impossible format
+                parts = title.lower().split()
+                mission_idx = next((i for i, part in enumerate(parts) if 'mission' in part), -1)
+                impossible_idx = next((i for i, part in enumerate(parts) if 'impossible' in part), -1)
+                
+                if mission_idx >= 0 and impossible_idx >= 0:
+                    # Reconstruct with proper punctuation
+                    before_impossible = ' '.join(parts[:impossible_idx])
+                    after_impossible = ' '.join(parts[impossible_idx+1:])
+                    
+                    title_variations.extend([
+                        f"mission: impossible {after_impossible}".strip(),
+                        f"mission: impossible – {after_impossible}".strip(),
+                        f"mission: impossible - {after_impossible}".strip(),
+                        f"mission impossible {after_impossible}".strip(),
+                    ])
+            
+            # Add general punctuation variations
             title_variations.extend([
                 title.replace(':', '').lower(),
                 title.replace(':', ' -').lower(),
                 title.replace(':', ' –').lower(),
+                title.replace(':', ' ').lower(),
                 title.replace(' ', '').lower(),
                 title.replace('-', ' ').lower(),
                 title.replace('–', ' ').lower(),
-                title.replace(':', ' ').lower(),
             ])
             
-            if ':' in title:
-                main_title = title.split(':')[0].strip()
-                title_variations.append(main_title.lower())
-                title_variations.append(f"{main_title.lower()} the")
-                title_variations.append(f"{main_title.lower()} a")
+            # Handle franchise patterns (extract main title)
+            if ':' in title or '–' in title or '-' in title:
+                for separator in [':', '–', '-']:
+                    if separator in title:
+                        main_title = title.split(separator)[0].strip()
+                        title_variations.append(main_title.lower())
+                        # Try with common subtitle patterns
+                        subtitle = title.split(separator, 1)[1].strip() if separator in title else ''
+                        if subtitle:
+                            title_variations.extend([
+                                f"{main_title.lower()}: {subtitle.lower()}",
+                                f"{main_title.lower()} – {subtitle.lower()}",
+                                f"{main_title.lower()} - {subtitle.lower()}",
+                                f"{main_title.lower()} {subtitle.lower()}",
+                            ])
+                        break
             
+            # Try with "the" added/removed
             if title.lower().startswith('the '):
                 title_variations.append(title[4:].lower())
             else:
                 title_variations.append(f"the {title.lower()}")
             
+            # Remove duplicates while preserving order and filter empty strings
             seen = set()
             unique_variations = []
             for variation in title_variations:
-                if variation not in seen and variation.strip():
-                    seen.add(variation)
-                    unique_variations.append(variation)
+                clean_variation = variation.strip()
+                if clean_variation and clean_variation not in seen and len(clean_variation) > 2:
+                    seen.add(clean_variation)
+                    unique_variations.append(clean_variation)
             
-            logger.info(f"Trying {len(unique_variations)} title variations")
+            logger.info(f"Trying {len(unique_variations)} title variations: {unique_variations[:5]}...")  # Log first 5
             
             results = []
             
-            for variation in unique_variations:
-                if results:
+            # Try each variation with different strategies
+            for i, variation in enumerate(unique_variations):
+                if results and len(results) >= 3:  # Stop if we found good matches
                     break
                     
+                logger.info(f"Trying variation {i+1}: '{variation}'")
+                
+                # Strategy 1: Exact type and year match
                 if content_type and year:
                     query_results = self.Content.query.filter(
                         func.lower(self.Content.title).like(f"%{variation}%"),
                         self.Content.content_type == content_type,
                         func.extract('year', self.Content.release_date) == year
                     ).limit(3).all()
-                    results.extend(query_results)
                     
                     if query_results:
                         logger.info(f"Found {len(query_results)} matches with exact type and year for '{variation}'")
+                        results.extend(query_results)
+                        continue
                 
-                if not results and content_type and year:
+                # Strategy 2: Type match with flexible year (±2 years)
+                if content_type and year:
                     query_results = self.Content.query.filter(
                         func.lower(self.Content.title).like(f"%{variation}%"),
                         self.Content.content_type == content_type,
-                        func.extract('year', self.Content.release_date).between(year - 1, year + 1)
+                        func.extract('year', self.Content.release_date).between(year - 2, year + 2)
                     ).limit(3).all()
-                    results.extend(query_results)
                     
                     if query_results:
                         logger.info(f"Found {len(query_results)} matches with type and flexible year for '{variation}'")
+                        results.extend(query_results)
+                        continue
                 
-                if not results and content_type:
+                # Strategy 3: Type match only
+                if content_type:
                     query_results = self.Content.query.filter(
                         func.lower(self.Content.title).like(f"%{variation}%"),
                         self.Content.content_type == content_type
-                    ).limit(5).all()
-                    results.extend(query_results)
+                    ).order_by(self.Content.popularity.desc()).limit(5).all()
                     
                     if query_results:
                         logger.info(f"Found {len(query_results)} matches with type only for '{variation}'")
+                        results.extend(query_results)
+                        continue
             
+            # If still no results, try broader searches with the best variations
             if not results:
-                for variation in unique_variations[:3]:
+                logger.info("No matches found with specific strategies, trying broader search...")
+                best_variations = unique_variations[:5]  # Try top 5 variations
+                
+                for variation in best_variations:
+                    # Strategy 4: Any content type, flexible year
                     if year:
                         query_results = self.Content.query.filter(
                             func.lower(self.Content.title).like(f"%{variation}%"),
-                            func.extract('year', self.Content.release_date).between(year - 2, year + 2)
-                        ).limit(5).all()
-                        results.extend(query_results)
+                            func.extract('year', self.Content.release_date).between(year - 3, year + 3)
+                        ).order_by(self.Content.popularity.desc()).limit(5).all()
                         
                         if query_results:
-                            logger.info(f"Found {len(query_results)} matches with any type and flexible year for '{variation}'")
+                            logger.info(f"Found {len(query_results)} matches with flexible criteria for '{variation}'")
+                            results.extend(query_results)
                             break
                     
-                    if not results:
-                        query_results = self.Content.query.filter(
-                            func.lower(self.Content.title).like(f"%{variation}%")
-                        ).order_by(self.Content.popularity.desc()).limit(10).all()
-                        results.extend(query_results)
-                        
-                        if query_results:
-                            logger.info(f"Found {len(query_results)} matches with title only for '{variation}'")
-                            break
-            
-            if not results:
-                words = [word.strip() for word in title.lower().split() if len(word.strip()) > 2]
-                if len(words) >= 2:
-                    partial_title = ' '.join(words[:min(3, len(words))])
+                    # Strategy 5: Just title matching
                     query_results = self.Content.query.filter(
-                        func.lower(self.Content.title).like(f"%{partial_title}%")
-                    ).order_by(self.Content.popularity.desc()).limit(5).all()
-                    results.extend(query_results)
+                        func.lower(self.Content.title).like(f"%{variation}%")
+                    ).order_by(self.Content.popularity.desc()).limit(10).all()
                     
                     if query_results:
-                        logger.info(f"Found {len(query_results)} matches with partial title '{partial_title}'")
+                        logger.info(f"Found {len(query_results)} matches with title only for '{variation}'")
+                        results.extend(query_results)
+                        break
             
+            # Final attempt: partial word matching for franchise content
+            if not results and len(unique_variations) > 0:
+                logger.info("Trying partial word matching...")
+                words = [word.strip() for word in title.lower().split() if len(word.strip()) > 2]
+                if len(words) >= 2:
+                    # For Mission: Impossible, try just "mission impossible"
+                    if 'mission' in words and 'impossible' in words:
+                        partial_search = "mission impossible"
+                    else:
+                        partial_search = ' '.join(words[:min(2, len(words))])
+                    
+                    query_results = self.Content.query.filter(
+                        func.lower(self.Content.title).like(f"%{partial_search}%")
+                    ).order_by(self.Content.popularity.desc()).limit(5).all()
+                    
+                    if query_results:
+                        logger.info(f"Found {len(query_results)} matches with partial search '{partial_search}'")
+                        results.extend(query_results)
+            
+            # Remove duplicates
             seen_ids = set()
             unique_results = []
             for result in results:
@@ -861,6 +956,7 @@ class DetailsService:
                     unique_results.append(result)
             
             if unique_results:
+                # Return best match (highest similarity score)
                 best_match = max(unique_results, key=lambda x: self._calculate_similarity(x.title.lower(), title.lower()))
                 logger.info(f"Best fuzzy match for '{slug}': {best_match.title} (ID: {best_match.id}, slug: {best_match.slug})")
                 return best_match
