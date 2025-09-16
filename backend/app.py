@@ -28,7 +28,7 @@ from urllib3.util.retry import Retry
 from flask_mail import Mail
 from services.upcoming import UpcomingContentService, ContentType, LanguagePriority
 import asyncio
-from services.similar import init_ultra_precision_similarity_service
+from services.similar import init_similarity_service
 import services.auth as auth
 from services.auth import init_auth, auth_bp
 from services.admin import admin_bp, init_admin
@@ -865,7 +865,7 @@ init_auth(app, db, User)
 # Initialize other services
 init_admin(app, db, models, services)
 init_users(app, db, models, services)
-ultra_service = init_ultra_precision_similarity_service(db, models, cache)
+similarity_service = init_similarity_service(db, models, cache)
 
 # API Routes
 
@@ -1797,15 +1797,9 @@ def get_anime():
 
 # OPTIMIZED Similar Recommendations Endpoint - FIXED
 @app.route('/api/recommendations/similar/<int:content_id>', methods=['GET'])
-def get_ultra_similar(content_id):
-    engine = ultra_service['ultra_similarity_engine']
-    results = engine.get_ultra_precise_similar_content(
-        content_id, 
-        limit=20,
-        language_strict=True,
-        quality_threshold='excellent'
-    )
-    return jsonify(results)
+def get_similar_recommendations(content_id):
+    similarity_engine = similarity_service['similarity_engine']
+    return jsonify(similarity_engine.get_similar_content(content_id))
 
 @app.route('/api/recommendations/anonymous', methods=['GET'])
 def get_anonymous_recommendations():
@@ -1842,15 +1836,9 @@ def get_anonymous_recommendations():
         return jsonify({'error': 'Failed to get recommendations'}), 500
 
 @app.route('/api/explore/genre/<genre>', methods=['GET'])
-def explore_ultra_genre(genre):
-    explorer = ultra_service['ultra_genre_explorer']
-    results = explorer.explore_genre_with_ultra_precision(
-        genre,
-        language=request.args.get('language'),
-        precision_level='ultra_high',
-        cultural_context=True
-    )
-    return jsonify(results)
+def explore_genre(genre):
+    genre_explorer = similarity_service['genre_explorer']
+    return jsonify(genre_explorer.explore_genre(genre))
 
 # Public Admin Recommendations
 @app.route('/api/recommendations/admin-choice', methods=['GET'])
