@@ -1,4 +1,5 @@
 # backend/services/details.py
+
 import re
 import json
 import logging
@@ -17,6 +18,8 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 import time
+from difflib import SequenceMatcher
+from fuzzywuzzy import fuzz, process  # Add this import for better fuzzy matching
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +132,154 @@ def ensure_app_context(func):
                 else:
                     return None
     return wrapper
+
+class AdvancedFuzzyMatcher:
+    """Advanced fuzzy matching for content discovery with multiple strategies"""
+    
+    @staticmethod
+    def normalize_title(title: str) -> str:
+        """Normalize title for better matching"""
+        if not title:
+            return ""
+        
+        # Convert to lowercase
+        normalized = title.lower().strip()
+        
+        # Remove common punctuation and normalize spacing
+        normalized = re.sub(r'[:\-–—_\.]', ' ', normalized)
+        normalized = re.sub(r'[^\w\s]', '', normalized)
+        normalized = re.sub(r'\s+', ' ', normalized).strip()
+        
+        return normalized
+    
+    @staticmethod
+    def generate_title_variations(title: str) -> List[str]:
+        """Generate multiple variations of a title for better matching"""
+        variations = [title]
+        
+        if not title:
+            return variations
+        
+        # Original title
+        original = title.strip()
+        variations.append(original)
+        
+        # Normalized version
+        normalized = AdvancedFuzzyMatcher.normalize_title(title)
+        if normalized not in variations:
+            variations.append(normalized)
+        
+        # Remove subtitle patterns (everything after colon, dash, etc.)
+        main_title_patterns = [
+            r'^([^:]+)',  # Everything before first colon
+            r'^([^–]+)',  # Everything before em dash
+            r'^([^—]+)',  # Everything before en dash
+            r'^([^-]+)',  # Everything before hyphen
+        ]
+        
+        for pattern in main_title_patterns:
+            match = re.search(pattern, original)
+            if match:
+                main_title = match.group(1).strip()
+                if main_title and len(main_title) > 3:  # Avoid too short titles
+                    normalized_main = AdvancedFuzzyMatcher.normalize_title(main_title)
+                    if normalized_main not in variations:
+                        variations.append(normalized_main)
+        
+        # Add subtitle-only versions (everything after separator)
+        subtitle_patterns = [
+            r':\s*(.+)$',  # Everything after colon
+            r'–\s*(.+)$',  # Everything after em dash
+            r'—\s*(.+)$',  # Everything after en dash
+            r'-\s*(.+)$',  # Everything after hyphen
+        ]
+        
+        for pattern in subtitle_patterns:
+            match = re.search(pattern, original)
+            if match:
+                subtitle = match.group(1).strip()
+                if subtitle and len(subtitle) > 3:
+                    normalized_subtitle = AdvancedFuzzyMatcher.normalize_title(subtitle)
+                    if normalized_subtitle not in variations:
+                        variations.append(normalized_subtitle)
+        
+        # Handle common franchise patterns
+        franchise_patterns = [
+            (r'^(.+?)\s*\d+$', r'\1'),  # "Movie 2" -> "Movie"
+            (r'^(.+?)\s*part\s*\d+$', r'\1'),  # "Movie Part 2" -> "Movie"
+            (r'^(.+?)\s*chapter\s*\d+$', r'\1'),  # "Movie Chapter 2" -> "Movie"
+            (r'^(.+?)\s*episode\s*\d+$', r'\1'),  # "Movie Episode 2" -> "Movie"
+        ]
+        
+        for pattern, replacement in franchise_patterns:
+            match = re.search(pattern, normalized, re.IGNORECASE)
+            if match:
+                franchise_base = match.group(1).strip()
+                if franchise_base and len(franchise_base) > 3:
+                    if franchise_base not in variations:
+                        variations.append(franchise_base)
+        
+        # Remove duplicates while preserving order
+        unique_variations = []
+        for var in variations:
+            if var and var not in unique_variations:
+                unique_variations.append(var)
+        
+        return unique_variations
+    
+    @staticmethod
+    def calculate_similarity_score(title1: str, title2: str) -> float:
+        """Calculate comprehensive similarity score using multiple algorithms"""
+        if not title1 or not title2:
+            return 0.0
+        
+        # Normalize both titles
+        norm1 = AdvancedFuzzyMatcher.normalize_title(title1)
+        norm2 = AdvancedFuzzyMatcher.normalize_title(title2)
+        
+        # Multiple similarity measures
+        scores = []
+        
+        # 1. Basic sequence matching
+        try:
+            seq_score = SequenceMatcher(None, norm1, norm2).ratio()
+            scores.append(seq_score)
+        except:
+            pass
+        
+        # 2. Fuzzy matching (if available)
+        try:
+            fuzz_score = fuzz.ratio(norm1, norm2) / 100.0
+            scores.append(fuzz_score)
+            
+            # Token sort ratio (good for word order differences)
+            token_score = fuzz.token_sort_ratio(norm1, norm2) / 100.0
+            scores.append(token_score)
+            
+            # Partial ratio (good for substring matches)
+            partial_score = fuzz.partial_ratio(norm1, norm2) / 100.0
+            scores.append(partial_score)
+        except:
+            # Fallback if fuzzywuzzy is not available
+            pass
+        
+        # 3. Word-based matching
+        words1 = set(norm1.split())
+        words2 = set(norm2.split())
+        
+        if words1 and words2:
+            # Jaccard similarity
+            intersection = len(words1.intersection(words2))
+            union = len(words1.union(words2))
+            jaccard_score = intersection / union if union > 0 else 0
+            scores.append(jaccard_score)
+            
+            # Word overlap ratio
+            overlap_score = intersection / min(len(words1), len(words2))
+            scores.append(overlap_score)
+        
+        # Return the maximum score (best match)
+        return max(scores) if scores else 0.0
 
 class SlugManager:
     """
@@ -327,7 +478,7 @@ class SlugManager:
     
     @staticmethod
     def extract_info_from_slug(slug: str) -> Dict:
-        """Extract potential title and year from slug with better content type detection"""
+        """Extract potential title and year from slug with improved parsing"""
         try:
             if not slug:
                 return {'title': 'Unknown', 'year': None, 'content_type': 'movie'}
@@ -358,15 +509,37 @@ class SlugManager:
                 
                 # More flexible year range for upcoming content
                 if 1900 <= year <= 2030:
+                    title = title_slug.replace('-', ' ').title()
+                    
+                    # Handle common title patterns
+                    title = re.sub(r'\bThe\b', 'The', title)  # Proper "The" capitalization
+                    title = re.sub(r'\bAnd\b', 'and', title)  # Lowercase "and"
+                    title = re.sub(r'\bOf\b', 'of', title)    # Lowercase "of"
+                    title = re.sub(r'\bIn\b', 'in', title)    # Lowercase "in"
+                    title = re.sub(r'\bTo\b', 'to', title)    # Lowercase "to"
+                    title = re.sub(r'\bA\b', 'a', title)      # Lowercase "a"
+                    title = re.sub(r'\bAn\b', 'an', title)    # Lowercase "an"
+                    
                     return {
-                        'title': title_slug.replace('-', ' ').title(),
+                        'title': title,
                         'year': year,
                         'content_type': content_type
                     }
             
             # No year found or invalid year
+            title = clean_slug.replace('-', ' ').title()
+            
+            # Apply same title formatting
+            title = re.sub(r'\bThe\b', 'The', title)
+            title = re.sub(r'\bAnd\b', 'and', title)
+            title = re.sub(r'\bOf\b', 'of', title)
+            title = re.sub(r'\bIn\b', 'in', title)
+            title = re.sub(r'\bTo\b', 'to', title)
+            title = re.sub(r'\bA\b', 'a', title)
+            title = re.sub(r'\bAn\b', 'an', title)
+            
             return {
-                'title': clean_slug.replace('-', ' ').title(),
+                'title': title,
                 'year': None,
                 'content_type': content_type
             }
@@ -779,7 +952,7 @@ class ContentService:
         return [genre_map.get(gid, 'Unknown') for gid in genre_ids if gid in genre_map]
 
 class DetailsService:
-    """Main service for handling content details with comprehensive slug support and enhanced person details"""
+    """Main service for handling content details with enhanced fuzzy matching"""
     
     def __init__(self, db, models, cache=None):
         self.db = db
@@ -803,6 +976,9 @@ class DetailsService:
         
         # Initialize API keys from environment or config
         self._init_api_keys()
+        
+        # Initialize fuzzy matcher
+        self.fuzzy_matcher = AdvancedFuzzyMatcher()
     
     def _init_api_keys(self):
         """Initialize API keys from app config"""
@@ -833,7 +1009,7 @@ class DetailsService:
     
     def get_details_by_slug(self, slug: str, user_id: Optional[int] = None) -> Optional[Dict]:
         """
-        Main method to get all content details by slug
+        Main method to get all content details by slug with improved fuzzy matching
         Returns comprehensive details for the details page
         """
         try:
@@ -860,8 +1036,8 @@ class DetailsService:
             content = self.Content.query.filter_by(slug=slug).first()
             
             if not content:
-                # Try fuzzy matching if exact slug not found
-                content = self._find_content_fuzzy(slug)
+                # Try enhanced fuzzy matching
+                content = self._find_content_enhanced_fuzzy(slug)
                 
                 if not content:
                     logger.warning(f"Content not found for slug: {slug}")
@@ -894,97 +1070,167 @@ class DetailsService:
             logger.error(f"Error getting details for slug {slug}: {e}")
             return None
     
-    def _find_content_fuzzy(self, slug: str) -> Optional[Any]:
-        """Find content using fuzzy matching with improved flexibility"""
+    def _find_content_enhanced_fuzzy(self, slug: str) -> Optional[Any]:
+        """Enhanced fuzzy matching with multiple strategies and better logging"""
         try:
             # Extract potential title from slug
             info = SlugManager.extract_info_from_slug(slug)
-            title = info['title']
-            year = info['year']
+            search_title = info['title']
+            search_year = info['year']
             content_type = info['content_type']
             
-            # Try exact title match first
-            query = self.Content.query.filter(
-                func.lower(self.Content.title).like(f"%{title.lower()}%")
-            )
+            logger.info(f"Fuzzy search for '{slug}' - extracted title: '{search_title}', year: {search_year}, type: {content_type}")
             
-            # Try with less restrictive filters first
-            results = []
+            # Generate multiple title variations for better matching
+            title_variations = self.fuzzy_matcher.generate_title_variations(search_title)
+            logger.info(f"Generated title variations: {title_variations}")
             
-            # Attempt 1: With content type and year filters
-            if content_type and year:
-                filtered_query = query.filter(
-                    self.Content.content_type == content_type,
-                    func.extract('year', self.Content.release_date) == year
-                ).limit(5).all()
-                results.extend(filtered_query)
+            # Strategy 1: Exact matches with variations
+            candidates = []
             
-            # Attempt 2: With content type only (relaxed year)
-            if not results and content_type:
-                filtered_query = query.filter(
-                    self.Content.content_type == content_type
-                ).limit(5).all()
-                results.extend(filtered_query)
-            
-            # Attempt 3: Try both movie and tv types (common confusion)
-            if not results:
-                for ctype in ['movie', 'tv', 'anime']:
-                    filtered_query = query.filter(
-                        self.Content.content_type == ctype
-                    ).limit(3).all()
-                    results.extend(filtered_query)
-            
-            # Attempt 4: No content type filter, just title matching
-            if not results:
-                results = query.limit(10).all()
-            
-            # Attempt 5: Try alternative title formats
-            if not results:
-                # Try with colon (e.g., "Alien: Earth" instead of "Alien Earth")
-                alt_title = title.replace(' ', ': ', 1)  # "Alien: Earth"
-                alt_query = self.Content.query.filter(
-                    func.lower(self.Content.title).like(f"%{alt_title.lower()}%")
-                ).limit(5).all()
-                results.extend(alt_query)
+            for variation in title_variations:
+                # Try exact title match (case insensitive)
+                exact_matches = self.Content.query.filter(
+                    func.lower(self.Content.title) == variation.lower()
+                ).all()
+                candidates.extend(exact_matches)
                 
-                # Try with other common separators
-                for separator in [': ', ' - ', ': ', ' – ']:
-                    alt_title = title.replace(' ', separator, 1)
-                    alt_query = self.Content.query.filter(
-                        func.lower(self.Content.title).like(f"%{alt_title.lower()}%")
-                    ).limit(3).all()
-                    results.extend(alt_query)
+                # Try with original title
+                if hasattr(self.Content, 'original_title'):
+                    original_matches = self.Content.query.filter(
+                        func.lower(self.Content.original_title) == variation.lower()
+                    ).all()
+                    candidates.extend(original_matches)
+            
+            # Strategy 2: Partial matches with LIKE operator
+            for variation in title_variations:
+                if len(variation) > 3:  # Avoid too short searches
+                    partial_matches = self.Content.query.filter(
+                        func.lower(self.Content.title).like(f"%{variation.lower()}%")
+                    ).limit(20).all()
+                    candidates.extend(partial_matches)
+            
+            # Strategy 3: Word-based matching (each word as a separate LIKE)
+            words = search_title.lower().split()
+            if len(words) > 1:
+                word_query = self.Content.query
+                for word in words:
+                    if len(word) > 2:  # Skip very short words
+                        word_query = word_query.filter(
+                            func.lower(self.Content.title).like(f"%{word}%")
+                        )
+                word_matches = word_query.limit(10).all()
+                candidates.extend(word_matches)
+            
+            # Strategy 4: Genre + year matching (if we have year)
+            if search_year and content_type:
+                year_matches = self.Content.query.filter(
+                    self.Content.content_type == content_type,
+                    func.extract('year', self.Content.release_date) == search_year
+                ).limit(20).all()
+                candidates.extend(year_matches)
+            
+            # Strategy 5: Content type only matching
+            if content_type:
+                type_matches = self.Content.query.filter(
+                    self.Content.content_type == content_type
+                ).order_by(self.Content.popularity.desc()).limit(50).all()
+                candidates.extend(type_matches)
             
             # Remove duplicates
             seen_ids = set()
-            unique_results = []
-            for result in results:
-                if result.id not in seen_ids:
-                    seen_ids.add(result.id)
-                    unique_results.append(result)
+            unique_candidates = []
+            for candidate in candidates:
+                if candidate.id not in seen_ids:
+                    seen_ids.add(candidate.id)
+                    unique_candidates.append(candidate)
             
-            if unique_results:
-                # Return best match (highest similarity)
-                best_match = max(unique_results, key=lambda x: self._calculate_similarity(x.title, title))
-                logger.info(f"Found fuzzy match for '{slug}': {best_match.title} (slug: {best_match.slug})")
-                return best_match
+            logger.info(f"Found {len(unique_candidates)} unique candidates")
             
-            # Last resort: check if content exists but with very different title
-            logger.warning(f"No fuzzy match found for '{slug}' with title '{title}' and year {year}")
+            if not unique_candidates:
+                logger.warning(f"No candidates found for fuzzy matching")
+                return None
+            
+            # Calculate similarity scores for all candidates
+            scored_candidates = []
+            for candidate in unique_candidates:
+                # Calculate similarity with original title
+                title_score = self.fuzzy_matcher.calculate_similarity_score(
+                    search_title, candidate.title
+                )
+                
+                # Calculate similarity with original title if available
+                original_score = 0
+                if candidate.original_title:
+                    original_score = self.fuzzy_matcher.calculate_similarity_score(
+                        search_title, candidate.original_title
+                    )
+                
+                # Use the higher score
+                best_score = max(title_score, original_score)
+                
+                # Bonus for matching year
+                year_bonus = 0
+                if search_year and candidate.release_date:
+                    if candidate.release_date.year == search_year:
+                        year_bonus = 0.2
+                    elif abs(candidate.release_date.year - search_year) <= 1:
+                        year_bonus = 0.1  # Close years get smaller bonus
+                
+                # Bonus for matching content type
+                type_bonus = 0.1 if candidate.content_type == content_type else 0
+                
+                # Popularity bonus (normalized)
+                popularity_bonus = min(0.1, (candidate.popularity or 0) / 1000)
+                
+                # Final score
+                final_score = best_score + year_bonus + type_bonus + popularity_bonus
+                
+                scored_candidates.append((candidate, final_score, {
+                    'title_score': title_score,
+                    'original_score': original_score,
+                    'year_bonus': year_bonus,
+                    'type_bonus': type_bonus,
+                    'popularity_bonus': popularity_bonus
+                }))
+            
+            # Sort by score (highest first)
+            scored_candidates.sort(key=lambda x: x[1], reverse=True)
+            
+            # Log top candidates for debugging
+            logger.info("Top 5 fuzzy match candidates:")
+            for i, (candidate, score, details) in enumerate(scored_candidates[:5]):
+                logger.info(f"{i+1}. '{candidate.title}' ({candidate.release_date.year if candidate.release_date else 'No year'}) - Score: {score:.3f} - {details}")
+            
+            # Return best match if score is above threshold
+            if scored_candidates:
+                best_candidate, best_score, score_details = scored_candidates[0]
+                
+                # Dynamic threshold based on search quality
+                min_threshold = 0.3  # Base threshold
+                if search_year:
+                    min_threshold = 0.25  # Lower threshold if we have year
+                if len(title_variations) > 3:
+                    min_threshold = 0.2   # Lower threshold if we have many variations
+                
+                if best_score >= min_threshold:
+                    logger.info(f"Fuzzy match found: '{best_candidate.title}' (slug: {best_candidate.slug}) - Score: {best_score:.3f}")
+                    return best_candidate
+                else:
+                    logger.warning(f"Best candidate score {best_score:.3f} below threshold {min_threshold}")
+            
+            logger.warning(f"No suitable fuzzy match found for '{slug}' with title '{search_title}' and year {search_year}")
             return None
             
         except Exception as e:
-            logger.error(f"Error in fuzzy content search: {e}")
+            logger.error(f"Error in enhanced fuzzy content search: {e}")
             return None
-            
-    def _calculate_similarity(self, str1: str, str2: str) -> float:
-        """Calculate string similarity score"""
-        try:
-            from difflib import SequenceMatcher
-            return SequenceMatcher(None, str1.lower(), str2.lower()).ratio()
-        except Exception:
-            return 0.0
     
+    def _calculate_similarity(self, str1: str, str2: str) -> float:
+        """Calculate string similarity score using the enhanced fuzzy matcher"""
+        return self.fuzzy_matcher.calculate_similarity_score(str1, str2)
+    
+    # Keep all other methods unchanged...
     def _with_app_context(self, app, func, *args, **kwargs):
         """Execute function with Flask app context in thread"""
         if app:
@@ -1129,6 +1375,9 @@ class DetailsService:
             logger.error(f"Error building content details: {e}")
             # Return minimal details to prevent complete failure
             return self._get_minimal_details(content)
+
+    # Include all other methods from the original DetailsService class...
+    # (I'll include the key methods here, but all other methods remain the same)
 
     @ensure_app_context
     def _get_cast_crew(self, content_id: int) -> Dict:
@@ -1469,545 +1718,9 @@ class DetailsService:
             logger.error(f"Error creating content-person relationship: {e}")
             return None
 
-    @ensure_app_context
-    def get_person_details(self, person_slug: str) -> Optional[Dict]:
-        """Get comprehensive person details by slug with complete filmography and career information"""
-        try:
-            # Find person by slug
-            person = self.Person.query.filter_by(slug=person_slug).first()
-            
-            if not person:
-                # Try fuzzy matching
-                person = self._find_person_fuzzy(person_slug)
-                
-                if not person:
-                    return None
-            
-            # Ensure person has slug
-            if not person.slug:
-                try:
-                    SlugManager.update_content_slug(self.db, person)
-                    self.db.session.commit()
-                except Exception as e:
-                    logger.warning(f"Failed to update person slug: {e}")
-            
-            # Fetch complete person data from TMDB if available
-            tmdb_data = {}
-            if person.tmdb_id and TMDB_API_KEY:
-                tmdb_data = self._fetch_complete_person_details(person.tmdb_id)
-            
-            # Get complete filmography from database
-            filmography = self._get_complete_filmography(person.id)
-            
-            # Update person record with TMDB data if needed
-            self._update_person_from_tmdb(person, tmdb_data)
-            
-            # Parse also_known_as safely
-            also_known_as = []
-            try:
-                if person.also_known_as:
-                    also_known_as = json.loads(person.also_known_as)
-            except (json.JSONDecodeError, TypeError):
-                pass
-            
-            if not also_known_as and tmdb_data.get('also_known_as'):
-                also_known_as = tmdb_data['also_known_as']
-            
-            # Build comprehensive person details
-            person_details = {
-                'id': person.id,
-                'slug': person.slug,
-                'name': person.name,
-                'biography': person.biography or tmdb_data.get('biography', ''),
-                'birthday': person.birthday.isoformat() if person.birthday else tmdb_data.get('birthday'),
-                'deathday': person.deathday.isoformat() if person.deathday else tmdb_data.get('deathday'),
-                'place_of_birth': person.place_of_birth or tmdb_data.get('place_of_birth'),
-                'profile_path': self._format_image_url(person.profile_path, 'profile'),
-                'popularity': person.popularity or tmdb_data.get('popularity', 0),
-                'known_for_department': person.known_for_department or tmdb_data.get('known_for_department'),
-                'also_known_as': also_known_as,
-                'gender': person.gender,
-                'filmography': filmography,
-                'images': self._get_person_images(tmdb_data),
-                'social_media': self._get_person_social_media(tmdb_data),
-                'total_works': self._calculate_total_works(filmography),
-                'awards': [],  # Could be expanded with awards data
-                'personal_info': self._build_personal_info(person, tmdb_data),
-                'career_highlights': self._build_career_highlights(filmography),
-                'external_ids': tmdb_data.get('external_ids', {}),
-                'tmdb_id': person.tmdb_id
-            }
-            
-            return person_details
-            
-        except Exception as e:
-            logger.error(f"Error getting person details: {e}")
-            return None
+    # Include all other methods from the original service...
+    # (For brevity, I'm not copying all methods, but they should all be included)
 
-    def _fetch_complete_person_details(self, tmdb_id: int) -> Dict:
-        """Fetch complete person details from TMDB including all career information"""
-        try:
-            url = f"{TMDB_BASE_URL}/person/{tmdb_id}"
-            params = {
-                'api_key': TMDB_API_KEY,
-                'append_to_response': 'images,external_ids,combined_credits,movie_credits,tv_credits'
-            }
-            
-            response = self.session.get(url, params=params, timeout=10)
-            
-            if response.status_code == 200:
-                return response.json()
-            else:
-                logger.warning(f"TMDB person API returned {response.status_code} for person {tmdb_id}")
-                return {}
-                
-        except Exception as e:
-            logger.error(f"Error fetching complete person details from TMDB: {e}")
-            return {}
-
-    def _update_person_from_tmdb(self, person: Any, tmdb_data: Dict):
-        """Update person record with comprehensive TMDB data"""
-        try:
-            if not tmdb_data:
-                return
-            
-            updated = False
-            
-            # Update biography
-            if not person.biography and tmdb_data.get('biography'):
-                person.biography = tmdb_data['biography']
-                updated = True
-            
-            # Update birthday
-            if not person.birthday and tmdb_data.get('birthday'):
-                try:
-                    person.birthday = datetime.strptime(tmdb_data['birthday'], '%Y-%m-%d').date()
-                    updated = True
-                except:
-                    pass
-            
-            # Update deathday
-            if not person.deathday and tmdb_data.get('deathday'):
-                try:
-                    person.deathday = datetime.strptime(tmdb_data['deathday'], '%Y-%m-%d').date()
-                    updated = True
-                except:
-                    pass
-            
-            # Update place of birth
-            if not person.place_of_birth and tmdb_data.get('place_of_birth'):
-                person.place_of_birth = tmdb_data['place_of_birth']
-                updated = True
-            
-            # Update also known as
-            if not person.also_known_as and tmdb_data.get('also_known_as'):
-                person.also_known_as = json.dumps(tmdb_data['also_known_as'])
-                updated = True
-            
-            # Update popularity
-            if tmdb_data.get('popularity') and tmdb_data['popularity'] > (person.popularity or 0):
-                person.popularity = tmdb_data['popularity']
-                updated = True
-            
-            if updated:
-                self.db.session.commit()
-                logger.info(f"Updated person {person.name} with TMDB data")
-                
-        except Exception as e:
-            logger.error(f"Error updating person from TMDB: {e}")
-            self.db.session.rollback()
-
-    def _get_complete_filmography(self, person_id: int) -> Dict:
-        """Get complete filmography for a person organized by role and type"""
-        try:
-            filmography = {
-                'as_actor': [],
-                'as_director': [],
-                'as_writer': [],
-                'as_producer': [],
-                'upcoming': [],
-                'by_year': {},
-                'statistics': {
-                    'total_projects': 0,
-                    'years_active': 0,
-                    'highest_rated': None,
-                    'most_popular': None
-                }
-            }
-            
-            # Get ALL filmography entries (no limit)
-            filmography_entries = self.db.session.query(
-                self.ContentPerson, self.Content
-            ).join(
-                self.Content
-            ).filter(
-                self.ContentPerson.person_id == person_id
-            ).order_by(
-                self.Content.release_date.desc()
-            ).all()  # Get ALL entries
-            
-            years = set()
-            all_ratings = []
-            all_popularity = []
-            
-            for cp, content in filmography_entries:
-                # Ensure content has slug
-                if not content.slug:
-                    try:
-                        SlugManager.update_content_slug(self.db, content)
-                    except Exception:
-                        content.slug = f"content-{content.id}"
-                
-                work = {
-                    'id': content.id,
-                    'slug': content.slug,
-                    'title': content.title,
-                    'year': content.release_date.year if content.release_date else None,
-                    'content_type': content.content_type,
-                    'poster_path': self._format_image_url(content.poster_path, 'poster'),
-                    'rating': content.rating,
-                    'popularity': content.popularity,
-                    'character': cp.character,
-                    'job': cp.job,
-                    'department': cp.department,
-                    'release_date': content.release_date.isoformat() if content.release_date else None
-                }
-                
-                # Track statistics
-                if content.release_date:
-                    years.add(content.release_date.year)
-                if content.rating:
-                    all_ratings.append((content.rating, work))
-                if content.popularity:
-                    all_popularity.append((content.popularity, work))
-                
-                # Organize by year
-                year_key = work['year'] or 'Unknown'
-                if year_key not in filmography['by_year']:
-                    filmography['by_year'][year_key] = []
-                filmography['by_year'][year_key].append(work)
-                
-                # Check if upcoming
-                if content.release_date and content.release_date > datetime.now().date():
-                    filmography['upcoming'].append(work)
-                elif cp.role_type == 'cast':
-                    filmography['as_actor'].append(work)
-                elif cp.department == 'Directing' or cp.job == 'Director':
-                    filmography['as_director'].append(work)
-                elif cp.department == 'Writing' or cp.job in ['Writer', 'Screenplay', 'Story']:
-                    filmography['as_writer'].append(work)
-                elif 'Producer' in (cp.job or ''):
-                    filmography['as_producer'].append(work)
-            
-            # Calculate statistics
-            filmography['statistics']['total_projects'] = len(filmography_entries)
-            if years:
-                filmography['statistics']['years_active'] = max(years) - min(years) + 1
-            
-            if all_ratings:
-                filmography['statistics']['highest_rated'] = max(all_ratings, key=lambda x: x[0])[1]
-            
-            if all_popularity:
-                filmography['statistics']['most_popular'] = max(all_popularity, key=lambda x: x[0])[1]
-            
-            logger.info(f"Retrieved complete filmography: {filmography['statistics']['total_projects']} projects")
-            return filmography
-            
-        except Exception as e:
-            logger.error(f"Error getting complete filmography: {e}")
-            return {
-                'as_actor': [], 'as_director': [], 'as_writer': [], 'as_producer': [],
-                'upcoming': [], 'by_year': {}, 'statistics': {}
-            }
-
-    def _build_personal_info(self, person: Any, tmdb_data: Dict) -> Dict:
-        """Build comprehensive personal information"""
-        try:
-            personal_info = {
-                'age': None,
-                'zodiac_sign': None,
-                'nationality': None,
-                'height': None,
-                'awards_count': 0,
-                'trivia': []
-            }
-            
-            # Calculate age
-            if person.birthday:
-                today = datetime.now().date()
-                if person.deathday:
-                    end_date = person.deathday
-                else:
-                    end_date = today
-                
-                personal_info['age'] = end_date.year - person.birthday.year
-                if end_date.month < person.birthday.month or (end_date.month == person.birthday.month and end_date.day < person.birthday.day):
-                    personal_info['age'] -= 1
-            
-            # Determine nationality from place of birth
-            if person.place_of_birth:
-                # Simple nationality extraction (could be enhanced with a proper mapping)
-                place_parts = person.place_of_birth.split(',')
-                if len(place_parts) > 0:
-                    country = place_parts[-1].strip()
-                    personal_info['nationality'] = country
-            
-            return personal_info
-            
-        except Exception as e:
-            logger.error(f"Error building personal info: {e}")
-            return {}
-
-    def _build_career_highlights(self, filmography: Dict) -> Dict:
-        """Build career highlights and milestones"""
-        try:
-            highlights = {
-                'debut_year': None,
-                'breakthrough_role': None,
-                'most_successful_decade': None,
-                'collaboration_frequency': {},
-                'genre_distribution': {},
-                'career_phases': []
-            }
-            
-            # Find debut year
-            all_years = []
-            for role_type in ['as_actor', 'as_director', 'as_writer', 'as_producer']:
-                for work in filmography.get(role_type, []):
-                    if work.get('year'):
-                        all_years.append(work['year'])
-            
-            if all_years:
-                highlights['debut_year'] = min(all_years)
-            
-            # Analyze decades
-            decade_count = {}
-            for year in all_years:
-                decade = (year // 10) * 10
-                decade_count[decade] = decade_count.get(decade, 0) + 1
-            
-            if decade_count:
-                most_successful_decade = max(decade_count.items(), key=lambda x: x[1])
-                highlights['most_successful_decade'] = f"{most_successful_decade[0]}s"
-            
-            return highlights
-            
-        except Exception as e:
-            logger.error(f"Error building career highlights: {e}")
-            return {}
-
-    def _calculate_total_works(self, filmography: Dict) -> int:
-        """Calculate total number of works across all roles"""
-        try:
-            total = 0
-            for role_type in ['as_actor', 'as_director', 'as_writer', 'as_producer']:
-                total += len(filmography.get(role_type, []))
-            return total
-        except:
-            return 0
-
-    def _find_person_fuzzy(self, slug: str) -> Optional[Any]:
-        """Find person using fuzzy matching"""
-        try:
-            # Extract name from slug
-            info = SlugManager.extract_info_from_slug(slug)
-            name = info['title']  # For persons, title is the name
-            
-            # Build query and apply limit at the end
-            results = self.Person.query.filter(
-                func.lower(self.Person.name).like(f"%{name.lower()}%")
-            ).limit(10).all()
-            
-            if results:
-                # Return best match
-                best_match = max(results, key=lambda x: self._calculate_similarity(x.name, name))
-                logger.info(f"Found fuzzy match for person '{slug}': {best_match.name}")
-                return best_match
-            
-            return None
-            
-        except Exception as e:
-            logger.error(f"Error in fuzzy person search: {e}")
-            return None
-
-    def _get_person_images(self, tmdb_data: Dict) -> List[Dict]:
-        """Get person images from TMDB data"""
-        try:
-            images = []
-            if tmdb_data.get('images', {}).get('profiles'):
-                for img in tmdb_data['images']['profiles'][:20]:  # Get more images
-                    images.append({
-                        'url': self._format_image_url(img['file_path'], 'profile'),
-                        'width': img.get('width'),
-                        'height': img.get('height'),
-                        'aspect_ratio': img.get('aspect_ratio')
-                    })
-            return images
-        except Exception as e:
-            logger.error(f"Error getting person images: {e}")
-            return []
-
-    def _get_person_social_media(self, tmdb_data: Dict) -> Dict:
-        """Get person's social media links"""
-        try:
-            social = {}
-            if tmdb_data.get('external_ids'):
-                ids = tmdb_data['external_ids']
-                if ids.get('twitter_id'):
-                    social['twitter'] = f"https://twitter.com/{ids['twitter_id']}"
-                if ids.get('instagram_id'):
-                    social['instagram'] = f"https://instagram.com/{ids['instagram_id']}"
-                if ids.get('facebook_id'):
-                    social['facebook'] = f"https://facebook.com/{ids['facebook_id']}"
-                if ids.get('imdb_id'):
-                    social['imdb'] = f"https://www.imdb.com/name/{ids['imdb_id']}"
-                if ids.get('tiktok_id'):
-                    social['tiktok'] = f"https://tiktok.com/@{ids['tiktok_id']}"
-                if ids.get('youtube_id'):
-                    social['youtube'] = f"https://youtube.com/channel/{ids['youtube_id']}"
-                if ids.get('wikidata_id'):
-                    social['wikidata'] = f"https://www.wikidata.org/wiki/{ids['wikidata_id']}"
-            return social
-        except Exception as e:
-            logger.error(f"Error getting person social media: {e}")
-            return {}
-
-    def _get_gallery(self, content_id: int) -> Dict:
-        """Get content gallery (posters, backdrops, stills) with performance optimization"""
-        try:
-            gallery = {
-                'posters': [],
-                'backdrops': [],
-                'stills': []
-            }
-            
-            # Get content from database within app context
-            content = None
-            try:
-                if has_app_context():
-                    content = self.Content.query.get(content_id)
-                else:
-                    # If no app context, return basic gallery
-                    return gallery
-            except Exception as e:
-                logger.warning(f"Error getting content for gallery: {e}")
-                return gallery
-            
-            if content and content.tmdb_id and TMDB_API_KEY:
-                endpoint = 'movie' if content.content_type == 'movie' else 'tv'
-                url = f"{TMDB_BASE_URL}/{endpoint}/{content.tmdb_id}/images"
-                
-                params = {
-                    'api_key': TMDB_API_KEY
-                }
-                
-                response = self.session.get(url, params=params, timeout=8)
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    
-                    # Add posters
-                    for img in data.get('posters', [])[:15]:  # Get more images
-                        gallery['posters'].append({
-                            'url': self._format_image_url(img['file_path'], 'poster'),
-                            'thumbnail': self._format_image_url(img['file_path'], 'thumbnail'),
-                            'aspect_ratio': img.get('aspect_ratio'),
-                            'width': img.get('width'),
-                            'height': img.get('height')
-                        })
-                    
-                    # Add backdrops
-                    for img in data.get('backdrops', [])[:15]:  # Get more images
-                        gallery['backdrops'].append({
-                            'url': self._format_image_url(img['file_path'], 'backdrop'),
-                            'thumbnail': self._format_image_url(img['file_path'], 'still'),
-                            'aspect_ratio': img.get('aspect_ratio'),
-                            'width': img.get('width'),
-                            'height': img.get('height')
-                        })
-                    
-                    # Add stills for TV shows
-                    if content.content_type == 'tv' and data.get('stills'):
-                        for img in data.get('stills', [])[:15]:  # Get more images
-                            gallery['stills'].append({
-                                'url': self._format_image_url(img['file_path'], 'still'),
-                                'thumbnail': self._format_image_url(img['file_path'], 'thumbnail'),
-                                'aspect_ratio': img.get('aspect_ratio'),
-                                'width': img.get('width'),
-                                'height': img.get('height')
-                            })
-            
-            # Add default poster if no gallery images
-            if not gallery['posters'] and content and content.poster_path:
-                gallery['posters'].append({
-                    'url': self._format_image_url(content.poster_path, 'poster'),
-                    'thumbnail': self._format_image_url(content.poster_path, 'thumbnail')
-                })
-            
-            return gallery
-            
-        except Exception as e:
-            logger.error(f"Error getting gallery: {e}")
-            return {'posters': [], 'backdrops': [], 'stills': []}
-
-    def _get_minimal_details(self, content: Any) -> Dict:
-        """Return minimal details as fallback"""
-        try:
-            return {
-                'slug': getattr(content, 'slug', ''),
-                'id': getattr(content, 'id', 0),
-                'title': getattr(content, 'title', 'Unknown'),
-                'original_title': getattr(content, 'original_title', None),
-                'overview': getattr(content, 'overview', ''),
-                'content_type': getattr(content, 'content_type', 'movie'),
-                'poster_url': self._format_image_url(getattr(content, 'poster_path', None), 'poster'),
-                'backdrop_url': self._format_image_url(getattr(content, 'backdrop_path', None), 'backdrop'),
-                'trailer': None,
-                'synopsis': {
-                    'overview': getattr(content, 'overview', ''),
-                    'plot': '',
-                    'tagline': '',
-                    'content_warnings': [],
-                    'themes': [],
-                    'keywords': []
-                },
-                'cast_crew': {'cast': [], 'crew': {'directors': [], 'writers': [], 'producers': []}},
-                'ratings': {
-                    'tmdb': {'score': getattr(content, 'rating', 0), 'count': getattr(content, 'vote_count', 0)},
-                    'imdb': {'score': 0, 'votes': 'N/A'},
-                    'composite_score': getattr(content, 'rating', 0),
-                    'critics': [],
-                    'audience_score': None
-                },
-                'metadata': {
-                    'genres': [],
-                    'release_date': getattr(content, 'release_date', None),
-                    'runtime': getattr(content, 'runtime', None),
-                    'status': 'Released',
-                    'original_language': None,
-                    'spoken_languages': [],
-                    'production_companies': [],
-                    'production_countries': [],
-                    'budget': 0,
-                    'revenue': 0,
-                    'advisories': {},
-                    'certifications': {},
-                    'awards': '',
-                    'popularity': getattr(content, 'popularity', 0),
-                    'is_critics_choice': getattr(content, 'is_critics_choice', False),
-                    'is_trending': getattr(content, 'is_trending', False),
-                    'is_new_release': getattr(content, 'is_new_release', False)
-                },
-                'more_like_this': [],
-                'reviews': [],
-                'gallery': {'posters': [], 'backdrops': [], 'stills': []},
-                'streaming_info': None,
-                'seasons_episodes': None
-            }
-        except Exception as e:
-            logger.error(f"Error creating minimal details: {e}")
-            return {'error': 'Failed to create content details'}
-    
     def _fetch_tmdb_details(self, tmdb_id: int, content_type: str) -> Dict:
         """Fetch comprehensive details from TMDB with timeout"""
         try:
@@ -2572,6 +2285,597 @@ class DetailsService:
             logger.error(f"Error formatting image URL: {e}")
             return None
     
+    def _get_gallery(self, content_id: int) -> Dict:
+        """Get content gallery (posters, backdrops, stills) with performance optimization"""
+        try:
+            gallery = {
+                'posters': [],
+                'backdrops': [],
+                'stills': []
+            }
+            
+            # Get content from database within app context
+            content = None
+            try:
+                if has_app_context():
+                    content = self.Content.query.get(content_id)
+                else:
+                    # If no app context, return basic gallery
+                    return gallery
+            except Exception as e:
+                logger.warning(f"Error getting content for gallery: {e}")
+                return gallery
+            
+            if content and content.tmdb_id and TMDB_API_KEY:
+                endpoint = 'movie' if content.content_type == 'movie' else 'tv'
+                url = f"{TMDB_BASE_URL}/{endpoint}/{content.tmdb_id}/images"
+                
+                params = {
+                    'api_key': TMDB_API_KEY
+                }
+                
+                response = self.session.get(url, params=params, timeout=8)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    
+                    # Add posters
+                    for img in data.get('posters', [])[:15]:  # Get more images
+                        gallery['posters'].append({
+                            'url': self._format_image_url(img['file_path'], 'poster'),
+                            'thumbnail': self._format_image_url(img['file_path'], 'thumbnail'),
+                            'aspect_ratio': img.get('aspect_ratio'),
+                            'width': img.get('width'),
+                            'height': img.get('height')
+                        })
+                    
+                    # Add backdrops
+                    for img in data.get('backdrops', [])[:15]:  # Get more images
+                        gallery['backdrops'].append({
+                            'url': self._format_image_url(img['file_path'], 'backdrop'),
+                            'thumbnail': self._format_image_url(img['file_path'], 'still'),
+                            'aspect_ratio': img.get('aspect_ratio'),
+                            'width': img.get('width'),
+                            'height': img.get('height')
+                        })
+                    
+                    # Add stills for TV shows
+                    if content.content_type == 'tv' and data.get('stills'):
+                        for img in data.get('stills', [])[:15]:  # Get more images
+                            gallery['stills'].append({
+                                'url': self._format_image_url(img['file_path'], 'still'),
+                                'thumbnail': self._format_image_url(img['file_path'], 'thumbnail'),
+                                'aspect_ratio': img.get('aspect_ratio'),
+                                'width': img.get('width'),
+                                'height': img.get('height')
+                            })
+            
+            # Add default poster if no gallery images
+            if not gallery['posters'] and content and content.poster_path:
+                gallery['posters'].append({
+                    'url': self._format_image_url(content.poster_path, 'poster'),
+                    'thumbnail': self._format_image_url(content.poster_path, 'thumbnail')
+                })
+            
+            return gallery
+            
+        except Exception as e:
+            logger.error(f"Error getting gallery: {e}")
+            return {'posters': [], 'backdrops': [], 'stills': []}
+
+    def _get_minimal_details(self, content: Any) -> Dict:
+        """Return minimal details as fallback"""
+        try:
+            return {
+                'slug': getattr(content, 'slug', ''),
+                'id': getattr(content, 'id', 0),
+                'title': getattr(content, 'title', 'Unknown'),
+                'original_title': getattr(content, 'original_title', None),
+                'overview': getattr(content, 'overview', ''),
+                'content_type': getattr(content, 'content_type', 'movie'),
+                'poster_url': self._format_image_url(getattr(content, 'poster_path', None), 'poster'),
+                'backdrop_url': self._format_image_url(getattr(content, 'backdrop_path', None), 'backdrop'),
+                'trailer': None,
+                'synopsis': {
+                    'overview': getattr(content, 'overview', ''),
+                    'plot': '',
+                    'tagline': '',
+                    'content_warnings': [],
+                    'themes': [],
+                    'keywords': []
+                },
+                'cast_crew': {'cast': [], 'crew': {'directors': [], 'writers': [], 'producers': []}},
+                'ratings': {
+                    'tmdb': {'score': getattr(content, 'rating', 0), 'count': getattr(content, 'vote_count', 0)},
+                    'imdb': {'score': 0, 'votes': 'N/A'},
+                    'composite_score': getattr(content, 'rating', 0),
+                    'critics': [],
+                    'audience_score': None
+                },
+                'metadata': {
+                    'genres': [],
+                    'release_date': getattr(content, 'release_date', None),
+                    'runtime': getattr(content, 'runtime', None),
+                    'status': 'Released',
+                    'original_language': None,
+                    'spoken_languages': [],
+                    'production_companies': [],
+                    'production_countries': [],
+                    'budget': 0,
+                    'revenue': 0,
+                    'advisories': {},
+                    'certifications': {},
+                    'awards': '',
+                    'popularity': getattr(content, 'popularity', 0),
+                    'is_critics_choice': getattr(content, 'is_critics_choice', False),
+                    'is_trending': getattr(content, 'is_trending', False),
+                    'is_new_release': getattr(content, 'is_new_release', False)
+                },
+                'more_like_this': [],
+                'reviews': [],
+                'gallery': {'posters': [], 'backdrops': [], 'stills': []},
+                'streaming_info': None,
+                'seasons_episodes': None
+            }
+        except Exception as e:
+            logger.error(f"Error creating minimal details: {e}")
+            return {'error': 'Failed to create content details'}
+    
+    @ensure_app_context
+    def get_person_details(self, person_slug: str) -> Optional[Dict]:
+        """Get comprehensive person details by slug with complete filmography and career information"""
+        try:
+            # Find person by slug
+            person = self.Person.query.filter_by(slug=person_slug).first()
+            
+            if not person:
+                # Try fuzzy matching
+                person = self._find_person_fuzzy(person_slug)
+                
+                if not person:
+                    return None
+            
+            # Ensure person has slug
+            if not person.slug:
+                try:
+                    SlugManager.update_content_slug(self.db, person)
+                    self.db.session.commit()
+                except Exception as e:
+                    logger.warning(f"Failed to update person slug: {e}")
+            
+            # Fetch complete person data from TMDB if available
+            tmdb_data = {}
+            if person.tmdb_id and TMDB_API_KEY:
+                tmdb_data = self._fetch_complete_person_details(person.tmdb_id)
+            
+            # Get complete filmography from database
+            filmography = self._get_complete_filmography(person.id)
+            
+            # Update person record with TMDB data if needed
+            self._update_person_from_tmdb(person, tmdb_data)
+            
+            # Parse also_known_as safely
+            also_known_as = []
+            try:
+                if person.also_known_as:
+                    also_known_as = json.loads(person.also_known_as)
+            except (json.JSONDecodeError, TypeError):
+                pass
+            
+            if not also_known_as and tmdb_data.get('also_known_as'):
+                also_known_as = tmdb_data['also_known_as']
+            
+            # Build comprehensive person details
+            person_details = {
+                'id': person.id,
+                'slug': person.slug,
+                'name': person.name,
+                'biography': person.biography or tmdb_data.get('biography', ''),
+                'birthday': person.birthday.isoformat() if person.birthday else tmdb_data.get('birthday'),
+                'deathday': person.deathday.isoformat() if person.deathday else tmdb_data.get('deathday'),
+                'place_of_birth': person.place_of_birth or tmdb_data.get('place_of_birth'),
+                'profile_path': self._format_image_url(person.profile_path, 'profile'),
+                'popularity': person.popularity or tmdb_data.get('popularity', 0),
+                'known_for_department': person.known_for_department or tmdb_data.get('known_for_department'),
+                'also_known_as': also_known_as,
+                'gender': person.gender,
+                'filmography': filmography,
+                'images': self._get_person_images(tmdb_data),
+                'social_media': self._get_person_social_media(tmdb_data),
+                'total_works': self._calculate_total_works(filmography),
+                'awards': [],  # Could be expanded with awards data
+                'personal_info': self._build_personal_info(person, tmdb_data),
+                'career_highlights': self._build_career_highlights(filmography),
+                'external_ids': tmdb_data.get('external_ids', {}),
+                'tmdb_id': person.tmdb_id
+            }
+            
+            return person_details
+            
+        except Exception as e:
+            logger.error(f"Error getting person details: {e}")
+            return None
+
+    def _fetch_complete_person_details(self, tmdb_id: int) -> Dict:
+        """Fetch complete person details from TMDB including all career information"""
+        try:
+            url = f"{TMDB_BASE_URL}/person/{tmdb_id}"
+            params = {
+                'api_key': TMDB_API_KEY,
+                'append_to_response': 'images,external_ids,combined_credits,movie_credits,tv_credits'
+            }
+            
+            response = self.session.get(url, params=params, timeout=10)
+            
+            if response.status_code == 200:
+                return response.json()
+            else:
+                logger.warning(f"TMDB person API returned {response.status_code} for person {tmdb_id}")
+                return {}
+                
+        except Exception as e:
+            logger.error(f"Error fetching complete person details from TMDB: {e}")
+            return {}
+
+    def _update_person_from_tmdb(self, person: Any, tmdb_data: Dict):
+        """Update person record with comprehensive TMDB data"""
+        try:
+            if not tmdb_data:
+                return
+            
+            updated = False
+            
+            # Update biography
+            if not person.biography and tmdb_data.get('biography'):
+                person.biography = tmdb_data['biography']
+                updated = True
+            
+            # Update birthday
+            if not person.birthday and tmdb_data.get('birthday'):
+                try:
+                    person.birthday = datetime.strptime(tmdb_data['birthday'], '%Y-%m-%d').date()
+                    updated = True
+                except:
+                    pass
+            
+            # Update deathday
+            if not person.deathday and tmdb_data.get('deathday'):
+                try:
+                    person.deathday = datetime.strptime(tmdb_data['deathday'], '%Y-%m-%d').date()
+                    updated = True
+                except:
+                    pass
+            
+            # Update place of birth
+            if not person.place_of_birth and tmdb_data.get('place_of_birth'):
+                person.place_of_birth = tmdb_data['place_of_birth']
+                updated = True
+            
+            # Update also known as
+            if not person.also_known_as and tmdb_data.get('also_known_as'):
+                person.also_known_as = json.dumps(tmdb_data['also_known_as'])
+                updated = True
+            
+            # Update popularity
+            if tmdb_data.get('popularity') and tmdb_data['popularity'] > (person.popularity or 0):
+                person.popularity = tmdb_data['popularity']
+                updated = True
+            
+            if updated:
+                self.db.session.commit()
+                logger.info(f"Updated person {person.name} with TMDB data")
+                
+        except Exception as e:
+            logger.error(f"Error updating person from TMDB: {e}")
+            self.db.session.rollback()
+
+    def _get_complete_filmography(self, person_id: int) -> Dict:
+        """Get complete filmography for a person organized by role and type"""
+        try:
+            filmography = {
+                'as_actor': [],
+                'as_director': [],
+                'as_writer': [],
+                'as_producer': [],
+                'upcoming': [],
+                'by_year': {},
+                'statistics': {
+                    'total_projects': 0,
+                    'years_active': 0,
+                    'highest_rated': None,
+                    'most_popular': None
+                }
+            }
+            
+            # Get ALL filmography entries (no limit)
+            filmography_entries = self.db.session.query(
+                self.ContentPerson, self.Content
+            ).join(
+                self.Content
+            ).filter(
+                self.ContentPerson.person_id == person_id
+            ).order_by(
+                self.Content.release_date.desc()
+            ).all()  # Get ALL entries
+            
+            years = set()
+            all_ratings = []
+            all_popularity = []
+            
+            for cp, content in filmography_entries:
+                # Ensure content has slug
+                if not content.slug:
+                    try:
+                        SlugManager.update_content_slug(self.db, content)
+                    except Exception:
+                        content.slug = f"content-{content.id}"
+                
+                work = {
+                    'id': content.id,
+                    'slug': content.slug,
+                    'title': content.title,
+                    'year': content.release_date.year if content.release_date else None,
+                    'content_type': content.content_type,
+                    'poster_path': self._format_image_url(content.poster_path, 'poster'),
+                    'rating': content.rating,
+                    'popularity': content.popularity,
+                    'character': cp.character,
+                    'job': cp.job,
+                    'department': cp.department,
+                    'release_date': content.release_date.isoformat() if content.release_date else None
+                }
+                
+                # Track statistics
+                if content.release_date:
+                    years.add(content.release_date.year)
+                if content.rating:
+                    all_ratings.append((content.rating, work))
+                if content.popularity:
+                    all_popularity.append((content.popularity, work))
+                
+                # Organize by year
+                year_key = work['year'] or 'Unknown'
+                if year_key not in filmography['by_year']:
+                    filmography['by_year'][year_key] = []
+                filmography['by_year'][year_key].append(work)
+                
+                # Check if upcoming
+                if content.release_date and content.release_date > datetime.now().date():
+                    filmography['upcoming'].append(work)
+                elif cp.role_type == 'cast':
+                    filmography['as_actor'].append(work)
+                elif cp.department == 'Directing' or cp.job == 'Director':
+                    filmography['as_director'].append(work)
+                elif cp.department == 'Writing' or cp.job in ['Writer', 'Screenplay', 'Story']:
+                    filmography['as_writer'].append(work)
+                elif 'Producer' in (cp.job or ''):
+                    filmography['as_producer'].append(work)
+            
+            # Calculate statistics
+            filmography['statistics']['total_projects'] = len(filmography_entries)
+            if years:
+                filmography['statistics']['years_active'] = max(years) - min(years) + 1
+            
+            if all_ratings:
+                filmography['statistics']['highest_rated'] = max(all_ratings, key=lambda x: x[0])[1]
+            
+            if all_popularity:
+                filmography['statistics']['most_popular'] = max(all_popularity, key=lambda x: x[0])[1]
+            
+            logger.info(f"Retrieved complete filmography: {filmography['statistics']['total_projects']} projects")
+            return filmography
+            
+        except Exception as e:
+            logger.error(f"Error getting complete filmography: {e}")
+            return {
+                'as_actor': [], 'as_director': [], 'as_writer': [], 'as_producer': [],
+                'upcoming': [], 'by_year': {}, 'statistics': {}
+            }
+
+    def _build_personal_info(self, person: Any, tmdb_data: Dict) -> Dict:
+        """Build comprehensive personal information"""
+        try:
+            personal_info = {
+                'age': None,
+                'zodiac_sign': None,
+                'nationality': None,
+                'height': None,
+                'awards_count': 0,
+                'trivia': []
+            }
+            
+            # Calculate age
+            if person.birthday:
+                today = datetime.now().date()
+                if person.deathday:
+                    end_date = person.deathday
+                else:
+                    end_date = today
+                
+                personal_info['age'] = end_date.year - person.birthday.year
+                if end_date.month < person.birthday.month or (end_date.month == person.birthday.month and end_date.day < person.birthday.day):
+                    personal_info['age'] -= 1
+            
+            # Determine nationality from place of birth
+            if person.place_of_birth:
+                # Simple nationality extraction (could be enhanced with a proper mapping)
+                place_parts = person.place_of_birth.split(',')
+                if len(place_parts) > 0:
+                    country = place_parts[-1].strip()
+                    personal_info['nationality'] = country
+            
+            return personal_info
+            
+        except Exception as e:
+            logger.error(f"Error building personal info: {e}")
+            return {}
+
+    def _build_career_highlights(self, filmography: Dict) -> Dict:
+        """Build career highlights and milestones"""
+        try:
+            highlights = {
+                'debut_year': None,
+                'breakthrough_role': None,
+                'most_successful_decade': None,
+                'collaboration_frequency': {},
+                'genre_distribution': {},
+                'career_phases': []
+            }
+            
+            # Find debut year
+            all_years = []
+            for role_type in ['as_actor', 'as_director', 'as_writer', 'as_producer']:
+                for work in filmography.get(role_type, []):
+                    if work.get('year'):
+                        all_years.append(work['year'])
+            
+            if all_years:
+                highlights['debut_year'] = min(all_years)
+            
+            # Analyze decades
+            decade_count = {}
+            for year in all_years:
+                decade = (year // 10) * 10
+                decade_count[decade] = decade_count.get(decade, 0) + 1
+            
+            if decade_count:
+                most_successful_decade = max(decade_count.items(), key=lambda x: x[1])
+                highlights['most_successful_decade'] = f"{most_successful_decade[0]}s"
+            
+            return highlights
+            
+        except Exception as e:
+            logger.error(f"Error building career highlights: {e}")
+            return {}
+
+    def _calculate_total_works(self, filmography: Dict) -> int:
+        """Calculate total number of works across all roles"""
+        try:
+            total = 0
+            for role_type in ['as_actor', 'as_director', 'as_writer', 'as_producer']:
+                total += len(filmography.get(role_type, []))
+            return total
+        except:
+            return 0
+
+    def _find_person_fuzzy(self, slug: str) -> Optional[Any]:
+        """Find person using enhanced fuzzy matching"""
+        try:
+            # Extract name from slug
+            info = SlugManager.extract_info_from_slug(slug)
+            name = info['title']  # For persons, title is the name
+            
+            logger.info(f"Person fuzzy search for '{slug}' - extracted name: '{name}'")
+            
+            # Generate name variations
+            name_variations = self.fuzzy_matcher.generate_title_variations(name)
+            logger.info(f"Generated name variations: {name_variations}")
+            
+            # Find candidates
+            candidates = []
+            
+            for variation in name_variations:
+                # Exact matches
+                exact_matches = self.Person.query.filter(
+                    func.lower(self.Person.name) == variation.lower()
+                ).all()
+                candidates.extend(exact_matches)
+                
+                # Partial matches
+                if len(variation) > 3:
+                    partial_matches = self.Person.query.filter(
+                        func.lower(self.Person.name).like(f"%{variation.lower()}%")
+                    ).limit(20).all()
+                    candidates.extend(partial_matches)
+            
+            # Remove duplicates
+            seen_ids = set()
+            unique_candidates = []
+            for candidate in candidates:
+                if candidate.id not in seen_ids:
+                    seen_ids.add(candidate.id)
+                    unique_candidates.append(candidate)
+            
+            if not unique_candidates:
+                logger.warning(f"No person candidates found for '{slug}'")
+                return None
+            
+            # Score candidates
+            scored_candidates = []
+            for candidate in unique_candidates:
+                score = self.fuzzy_matcher.calculate_similarity_score(name, candidate.name)
+                
+                # Popularity bonus
+                popularity_bonus = min(0.1, (candidate.popularity or 0) / 1000)
+                final_score = score + popularity_bonus
+                
+                scored_candidates.append((candidate, final_score))
+            
+            # Sort by score
+            scored_candidates.sort(key=lambda x: x[1], reverse=True)
+            
+            # Log top candidates
+            logger.info(f"Top 3 person candidates:")
+            for i, (candidate, score) in enumerate(scored_candidates[:3]):
+                logger.info(f"{i+1}. '{candidate.name}' - Score: {score:.3f}")
+            
+            # Return best match if above threshold
+            if scored_candidates:
+                best_candidate, best_score = scored_candidates[0]
+                if best_score >= 0.3:  # Lower threshold for persons
+                    logger.info(f"Person fuzzy match found: '{best_candidate.name}' - Score: {best_score:.3f}")
+                    return best_candidate
+                else:
+                    logger.warning(f"Best person candidate score {best_score:.3f} below threshold 0.3")
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error in fuzzy person search: {e}")
+            return None
+
+    def _get_person_images(self, tmdb_data: Dict) -> List[Dict]:
+        """Get person images from TMDB data"""
+        try:
+            images = []
+            if tmdb_data.get('images', {}).get('profiles'):
+                for img in tmdb_data['images']['profiles'][:20]:  # Get more images
+                    images.append({
+                        'url': self._format_image_url(img['file_path'], 'profile'),
+                        'width': img.get('width'),
+                        'height': img.get('height'),
+                        'aspect_ratio': img.get('aspect_ratio')
+                    })
+            return images
+        except Exception as e:
+            logger.error(f"Error getting person images: {e}")
+            return []
+
+    def _get_person_social_media(self, tmdb_data: Dict) -> Dict:
+        """Get person's social media links"""
+        try:
+            social = {}
+            if tmdb_data.get('external_ids'):
+                ids = tmdb_data['external_ids']
+                if ids.get('twitter_id'):
+                    social['twitter'] = f"https://twitter.com/{ids['twitter_id']}"
+                if ids.get('instagram_id'):
+                    social['instagram'] = f"https://instagram.com/{ids['instagram_id']}"
+                if ids.get('facebook_id'):
+                    social['facebook'] = f"https://facebook.com/{ids['facebook_id']}"
+                if ids.get('imdb_id'):
+                    social['imdb'] = f"https://www.imdb.com/name/{ids['imdb_id']}"
+                if ids.get('tiktok_id'):
+                    social['tiktok'] = f"https://tiktok.com/@{ids['tiktok_id']}"
+                if ids.get('youtube_id'):
+                    social['youtube'] = f"https://youtube.com/channel/{ids['youtube_id']}"
+                if ids.get('wikidata_id'):
+                    social['wikidata'] = f"https://www.wikidata.org/wiki/{ids['wikidata_id']}"
+            return social
+        except Exception as e:
+            logger.error(f"Error getting person social media: {e}")
+            return {}
+    
     @ensure_app_context
     def add_review(self, content_id: int, user_id: int, review_data: Dict) -> Dict:
         """Add a new review for content"""
@@ -2701,8 +3005,8 @@ class DetailsService:
             else:
                 content = self.Content.query.filter_by(slug=identifier).first()
                 if not content:
-                    # Try fuzzy matching
-                    content = self._find_content_fuzzy(identifier)
+                    # Try enhanced fuzzy matching
+                    content = self._find_content_enhanced_fuzzy(identifier)
                 return content
         except Exception as e:
             logger.error(f"Error getting content by slug/id: {e}")
