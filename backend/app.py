@@ -28,8 +28,8 @@ from urllib3.util.retry import Retry
 from flask_mail import Mail
 from services.upcoming import UpcomingContentService, ContentType, LanguagePriority
 import asyncio
-from services.similar import init_similarity_service
 import services.auth as auth
+from services.similar import init_similar_service
 from services.auth import init_auth, auth_bp
 from services.admin import admin_bp, init_admin
 from services.users import users_bp, init_users
@@ -865,7 +865,15 @@ init_auth(app, db, User)
 # Initialize other services
 init_admin(app, db, models, services)
 init_users(app, db, models, services)
-similarity_service = init_similarity_service(db, models, cache)
+
+similar_service = None
+try:
+    with app.app_context():
+        similar_service = init_similar_service(app, db, models, cache)
+        logger.info("Similar titles service initialized successfully")
+except Exception as e:
+    logger.error(f"Failed to initialize similar titles service: {e}")
+
 
 # API Routes
 
@@ -1797,9 +1805,99 @@ def get_anime():
 
 # OPTIMIZED Similar Recommendations Endpoint - FIXED
 @app.route('/api/recommendations/similar/<int:content_id>', methods=['GET'])
-def get_similar_recommendations(content_id):
-    similarity_engine = similarity_service['similarity_engine']
-    return jsonify(similarity_engine.get_similar_content(content_id))
+def get_similar_recommendations_v2(content_id):
+    """Production-ready similar recommendations with 100% language accuracy"""
+    try:
+        # Parameters
+        limit = min(int(request.args.get('limit', 10)), 20)  # Cap at 20
+        min_similarity = float(request.args.get('min_similarity', 0.3))
+        language_priority = request.args.get('language_priority', 'true').lower() == 'true'
+        algorithm = request.args.get('algorithm', 'weighted_multi_factor')
+        
+        if not similar_service:
+            return jsonify({'error': 'Similar titles service unavailable'}), 503
+        
+        # Get similar titles using the new service
+        result = similar_service.get_similar_titles(
+            content_id=content_id,
+            limit=limit,
+            min_similarity=min_similarity,
+            language_priority=language_priority,
+            algorithm=algorithm
+        )
+        
+        # Track interaction (non-blocking)
+        try:
+            session_id = get_session_id()
+            interaction = AnonymousInteraction(
+                session_id=session_id,
+                content_id=content_id,
+                interaction_type='similar_view_v2',
+                ip_address=request.remote_addr
+            )
+            db.session.add(interaction)
+            db.session.commit()
+        except Exception as e:
+            logger.warning(f"Interaction tracking failed: {e}")
+        
+        return jsonify(result), 200
+        
+    except Exception as e:
+        logger.error(f"Similar recommendations v2 error: {e}")
+        return jsonify({
+            'error': 'Failed to get similar recommendations',
+            'base_content': {'id': content_id},
+            'similar_content': [],
+            'metadata': {'error': str(e)}
+        }), 500
+
+# New genre exploration endpoint
+@app.route('/api/explore/genre/<genre>', methods=['GET'])
+def explore_genre_v2(genre):
+    """Advanced genre exploration with language prioritization"""
+    try:
+        # Parameters
+        language_preference = request.args.get('language', 'telugu')  # Default Telugu
+        content_type = request.args.get('type', 'movie')
+        limit = min(int(request.args.get('limit', 20)), 50)  # Cap at 50
+        quality_threshold = float(request.args.get('quality_threshold', 6.0))
+        
+        if not similar_service:
+            return jsonify({'error': 'Genre exploration service unavailable'}), 503
+        
+        # Get genre exploration results
+        result = similar_service.explore_genre(
+            genre=genre,
+            language_preference=language_preference,
+            content_type=content_type,
+            limit=limit,
+            quality_threshold=quality_threshold
+        )
+        
+        return jsonify(result), 200
+        
+    except Exception as e:
+        logger.error(f"Genre exploration v2 error: {e}")
+        return jsonify({
+            'error': 'Failed to explore genre',
+            'genre': genre,
+            'results': []
+        }), 500
+
+# Performance monitoring endpoint for similar service
+@app.route('/api/similar/metrics', methods=['GET'])
+def get_similar_service_metrics():
+    """Get similar service performance metrics"""
+    try:
+        if not similar_service:
+            return jsonify({'error': 'Service unavailable'}), 503
+        
+        metrics = similar_service.get_performance_metrics()
+        return jsonify(metrics), 200
+        
+    except Exception as e:
+        logger.error(f"Similar service metrics error: {e}")
+        return jsonify({'error': 'Failed to get metrics'}), 500
 
 @app.route('/api/recommendations/anonymous', methods=['GET'])
 def get_anonymous_recommendations():
@@ -1834,11 +1932,6 @@ def get_anonymous_recommendations():
     except Exception as e:
         logger.error(f"Anonymous recommendations error: {e}")
         return jsonify({'error': 'Failed to get recommendations'}), 500
-
-@app.route('/api/explore/genre/<genre>', methods=['GET'])
-def explore_genre(genre):
-    genre_explorer = similarity_service['genre_explorer']
-    return jsonify(genre_explorer.explore_genre(genre))
 
 # Public Admin Recommendations
 @app.route('/api/recommendations/admin-choice', methods=['GET'])
