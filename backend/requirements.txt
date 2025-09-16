@@ -29,5 +29,3 @@ beautifulsoup4
 aiohttp
 Flask-Migrate
 python-slugify==8.0.4
-python-levenshtein==0.21.1
-fuzzywuzzy==0.18.0
