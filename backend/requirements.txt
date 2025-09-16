@@ -29,3 +29,4 @@ beautifulsoup4
 aiohttp
 Flask-Migrate
 python-slugify==8.0.4
+nltk
