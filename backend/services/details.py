@@ -123,24 +123,29 @@ def ensure_app_context(func):
     return wrapper
 
 class SlugManager:
+    
     @staticmethod
     def generate_slug(title: str, year: Optional[int] = None, content_type: str = 'movie') -> str:
         if not title or not isinstance(title, str):
             return f"content-{int(time.time())}"
+        
         try:
             clean_title = str(title).strip()
             if not clean_title:
                 return f"content-{int(time.time())}"
+            
             try:
                 slug = slugify(clean_title, max_length=80, word_boundary=True, save_order=True)
             except Exception as slugify_error:
                 logger.warning(f"Slugify failed for '{clean_title}': {slugify_error}")
                 slug = None
+            
             if not slug:
                 slug = clean_title.lower()
                 slug = re.sub(r'[^\w\s-]', '', slug, flags=re.ASCII)
                 slug = re.sub(r'[-\s]+', '-', slug)
                 slug = slug.strip('-')
+            
             if not slug or len(slug) < 1:
                 type_prefix = {
                     'movie': 'movie',
@@ -149,6 +154,7 @@ class SlugManager:
                     'person': 'person'
                 }.get(content_type, 'content')
                 return f"{type_prefix}-{int(time.time())}"
+            
             if len(slug) > 80:
                 truncated = slug[:80]
                 last_dash = truncated.rfind('-')
@@ -156,19 +162,24 @@ class SlugManager:
                     slug = truncated[:last_dash]
                 else:
                     slug = truncated
+            
             if year and content_type == 'movie' and isinstance(year, int):
                 if 1800 <= year <= 2100:
                     slug = f"{slug}-{year}"
+            
             if content_type == 'anime':
                 if not slug.startswith('anime-'):
                     slug = f"anime-{slug}"
+            
             if len(slug) > 100:
                 parts = slug[:97].split('-')
                 if len(parts) > 1:
                     slug = '-'.join(parts[:-1])
                 else:
                     slug = slug[:97]
+            
             return slug
+            
         except Exception as e:
             logger.error(f"Error generating slug for title '{title}': {e}")
             safe_slug = ''
@@ -177,7 +188,9 @@ class SlugManager:
                     safe_slug += c.lower()
                 elif c in ' -_':
                     safe_slug += '-'
+            
             safe_slug = re.sub(r'-+', '-', safe_slug).strip('-')
+            
             if not safe_slug:
                 type_prefix = {
                     'movie': 'movie',
@@ -187,12 +200,13 @@ class SlugManager:
                 }.get(content_type, 'content')
                 return f"{type_prefix}-{int(time.time())}"
             return safe_slug[:50]
-    
+            
     @staticmethod
     def generate_unique_slug(db, model, title: str, year: Optional[int] = None, 
                         content_type: str = 'movie', existing_id: Optional[int] = None) -> str:
         try:
             base_slug = SlugManager.generate_slug(title, year, content_type)
+            
             if not base_slug:
                 type_prefix = {
                     'movie': 'movie',
@@ -201,27 +215,37 @@ class SlugManager:
                     'person': 'person'
                 }.get(content_type, 'content')
                 base_slug = f"{type_prefix}-{int(time.time())}"
+            
             slug = base_slug
             counter = 1
             max_attempts = 50
+            
             while counter <= max_attempts:
                 try:
                     query = db.session.query(model.id).filter_by(slug=slug)
+                    
                     if existing_id:
                         query = query.filter(model.id != existing_id)
+                    
                     exists = query.first() is not None
+                    
                     if not exists:
                         break
+                    
                     slug = f"{base_slug}-{counter}"
                     counter += 1
+                    
                 except Exception as e:
                     logger.error(f"Error checking slug uniqueness: {e}")
                     slug = f"{base_slug}-{int(time.time())}"
                     break
+            
             if counter > max_attempts:
                 slug = f"{base_slug}-{int(time.time())}"
                 logger.warning(f"Hit max attempts for slug generation, using timestamp: {slug}")
+            
             return slug
+            
         except Exception as e:
             logger.error(f"Error generating unique slug: {e}")
             type_prefix = {
@@ -230,15 +254,17 @@ class SlugManager:
                 'anime': 'anime',
                 'person': 'person'
             }.get(content_type, 'content')
-            return f"{type_prefix}-{int(time.time())}-{abs(hash(str(title)))[:6]}"
+            return f"{type_prefix}-{int(time.time())}-{abs(hash(str(title)))[:6]}"    
     
     @staticmethod
     def extract_info_from_slug(slug: str) -> Dict:
         try:
             if not slug:
                 return {'title': 'Unknown', 'year': None, 'content_type': 'movie'}
+            
             content_type = 'movie'
             clean_slug = slug
+            
             if slug.startswith('anime-'):
                 content_type = 'anime'
                 clean_slug = slug[6:]
@@ -251,23 +277,25 @@ class SlugManager:
             elif slug.startswith('person-'):
                 content_type = 'person'
                 clean_slug = slug[7:]
+            
             year_match = re.search(r'-(\d{4})$', clean_slug)
             if year_match:
                 year = int(year_match.group(1))
                 title_slug = clean_slug[:year_match.start()]
+                
                 if 1900 <= year <= 2030:
-                    title = SlugManager._reconstruct_title_from_slug(title_slug)
                     return {
-                        'title': title,
+                        'title': title_slug.replace('-', ' ').title(),
                         'year': year,
                         'content_type': content_type
                     }
-            title = SlugManager._reconstruct_title_from_slug(clean_slug)
+            
             return {
-                'title': title,
+                'title': clean_slug.replace('-', ' ').title(),
                 'year': None,
                 'content_type': content_type
             }
+            
         except Exception as e:
             logger.error(f"Error extracting info from slug '{slug}': {e}")
             return {
@@ -275,51 +303,20 @@ class SlugManager:
                 'year': None,
                 'content_type': 'movie'
             }
-    
-    @staticmethod
-    def _reconstruct_title_from_slug(slug: str) -> str:
-        try:
-            if not slug:
-                return 'Unknown'
-            title = slug.replace('-', ' ')
-            franchise_patterns = {
-                'mission impossible': 'Mission: Impossible',
-                'fast furious': 'Fast & Furious',
-                'fast and furious': 'Fast & Furious',
-                'john wick': 'John Wick',
-                'avengers': 'Avengers',
-                'spider man': 'Spider-Man',
-                'x men': 'X-Men',
-                'iron man': 'Iron Man',
-                'ant man': 'Ant-Man',
-                'dead pool': 'Deadpool',
-            }
-            title_lower = title.lower()
-            for pattern, replacement in franchise_patterns.items():
-                if title_lower.startswith(pattern):
-                    remaining = title[len(pattern):].strip()
-                    if remaining:
-                        title = f"{replacement} {remaining.title()}"
-                    else:
-                        title = replacement
-                    break
-            else:
-                title = title.title()
-            return title
-        except Exception as e:
-            logger.error(f"Error reconstructing title from slug: {e}")
-            return slug.replace('-', ' ').title() if slug else 'Unknown'
-    
+            
     @staticmethod
     def update_content_slug(db, content, force_update: bool = False) -> str:
         try:
             if content.slug and not force_update:
                 return content.slug
+            
             content_type = getattr(content, 'content_type', 'movie')
             if hasattr(content, '__tablename__') and content.__tablename__ == 'persons':
                 content_type = 'person'
+            
             title = getattr(content, 'title', '') or getattr(content, 'name', '')
             year = None
+            
             if hasattr(content, 'release_date') and content.release_date:
                 try:
                     year = content.release_date.year
@@ -330,8 +327,10 @@ class SlugManager:
                     year = content.birthday.year
                 except:
                     pass
+            
             if not title:
                 title = f"Content {getattr(content, 'id', 'Unknown')}"
+            
             new_slug = SlugManager.generate_unique_slug(
                 db, 
                 content.__class__, 
@@ -340,8 +339,11 @@ class SlugManager:
                 content_type,
                 existing_id=getattr(content, 'id', None)
             )
+            
             content.slug = new_slug
+            
             return new_slug
+            
         except Exception as e:
             logger.error(f"Error updating content slug: {e}")
             fallback = f"content-{getattr(content, 'id', int(time.time()))}"
@@ -356,26 +358,34 @@ class SlugManager:
             'errors': 0,
             'total_processed': 0
         }
+        
         try:
             if 'Content' in models:
                 Content = models['Content']
+                
                 offset = 0
                 batch_count = 0
+                
                 while True:
                     content_items = Content.query.filter(
                         or_(Content.slug == None, Content.slug == '')
                     ).offset(offset).limit(batch_size).all()
+                    
                     if not content_items:
                         break
+                    
                     batch_count += 1
                     logger.info(f"Processing content batch {batch_count}, items: {len(content_items)}")
+                    
                     for i, content in enumerate(content_items):
                         try:
                             SlugManager.update_content_slug(db, content)
                             stats['content_updated'] += 1
+                            
                         except Exception as e:
                             logger.error(f"Error updating content {getattr(content, 'id', 'unknown')}: {e}")
                             stats['errors'] += 1
+                    
                     try:
                         db.session.commit()
                         logger.info(f"Committed content batch {batch_count}: {stats['content_updated']} total updated")
@@ -383,25 +393,33 @@ class SlugManager:
                         logger.error(f"Batch commit failed: {e}")
                         db.session.rollback()
                         stats['errors'] += len(content_items)
+                    
                     offset += batch_size
                     time.sleep(0.1)
+            
             if 'Person' in models:
                 Person = models['Person']
+                
                 offset = 0
                 batch_count = 0
+                
                 while True:
                     person_items = Person.query.filter(
                         or_(Person.slug == None, Person.slug == '')
                     ).offset(offset).limit(batch_size).all()
+                    
                     if not person_items:
                         break
+                    
                     batch_count += 1
                     logger.info(f"Processing person batch {batch_count}, items: {len(person_items)}")
+                    
                     for i, person in enumerate(person_items):
                         try:
                             name = getattr(person, 'name', '')
                             if not name:
                                 name = f"Person {getattr(person, 'id', 'Unknown')}"
+                            
                             new_slug = SlugManager.generate_unique_slug(
                                 db, 
                                 Person, 
@@ -409,11 +427,14 @@ class SlugManager:
                                 content_type='person',
                                 existing_id=getattr(person, 'id', None)
                             )
+                            
                             person.slug = new_slug
                             stats['persons_updated'] += 1
+                            
                         except Exception as e:
                             logger.error(f"Error updating person {getattr(person, 'id', 'unknown')}: {e}")
                             stats['errors'] += 1
+                    
                     try:
                         db.session.commit()
                         logger.info(f"Committed person batch {batch_count}: {stats['persons_updated']} total updated")
@@ -421,11 +442,15 @@ class SlugManager:
                         logger.error(f"Person batch commit failed: {e}")
                         db.session.rollback()
                         stats['errors'] += len(person_items)
+                    
                     offset += batch_size
                     time.sleep(0.1)
+            
             stats['total_processed'] = stats['content_updated'] + stats['persons_updated']
             logger.info(f"Slug migration completed: {stats}")
+            
             return stats
+            
         except Exception as e:
             logger.error(f"Error in slug migration: {e}")
             db.session.rollback()
@@ -433,6 +458,7 @@ class SlugManager:
             return stats
 
 class ContentService:
+    
     def __init__(self, db, models):
         self.db = db
         self.models = models
@@ -444,6 +470,7 @@ class ContentService:
             existing = None
             if self.Content and tmdb_data.get('id'):
                 existing = self.Content.query.filter_by(tmdb_id=tmdb_data['id']).first()
+            
             if existing:
                 if not existing.slug:
                     try:
@@ -452,7 +479,9 @@ class ContentService:
                     except Exception as e:
                         logger.warning(f"Failed to update existing content slug: {e}")
                 return existing
+            
             title = tmdb_data.get('title') or tmdb_data.get('name') or 'Unknown Title'
+            
             release_date = None
             year = None
             date_str = tmdb_data.get('release_date') or tmdb_data.get('first_air_date')
@@ -462,14 +491,17 @@ class ContentService:
                     year = release_date.year
                 except:
                     pass
+            
             slug = SlugManager.generate_unique_slug(
                 self.db, self.Content, title, year, content_type
             )
+            
             genres = []
             if 'genres' in tmdb_data:
                 genres = [genre['name'] for genre in tmdb_data['genres']]
             elif 'genre_ids' in tmdb_data:
                 genres = self._map_genre_ids(tmdb_data['genre_ids'])
+            
             content_data = {
                 'slug': slug,
                 'tmdb_id': tmdb_data['id'],
@@ -485,10 +517,13 @@ class ContentService:
                 'poster_path': tmdb_data.get('poster_path'),
                 'backdrop_path': tmdb_data.get('backdrop_path')
             }
+            
             content = self.Content(**content_data)
             self.db.session.add(content)
             self.db.session.commit()
+            
             return content
+            
         except Exception as e:
             logger.error(f"Error saving content from TMDB: {e}")
             self.db.session.rollback()
@@ -499,6 +534,7 @@ class ContentService:
             existing = None
             if self.Content and anime_data.get('mal_id'):
                 existing = self.Content.query.filter_by(mal_id=anime_data['mal_id']).first()
+            
             if existing:
                 if not existing.slug:
                     try:
@@ -507,7 +543,9 @@ class ContentService:
                     except Exception as e:
                         logger.warning(f"Failed to update existing anime slug: {e}")
                 return existing
+            
             title = anime_data.get('title') or 'Unknown Anime'
+            
             release_date = None
             year = None
             if anime_data.get('aired', {}).get('from'):
@@ -516,10 +554,13 @@ class ContentService:
                     year = release_date.year
                 except:
                     pass
+            
             slug = SlugManager.generate_unique_slug(
                 self.db, self.Content, title, year, 'anime'
             )
+            
             genres = [genre['name'] for genre in anime_data.get('genres', [])]
+            
             content_data = {
                 'slug': slug,
                 'mal_id': anime_data['mal_id'],
@@ -534,10 +575,13 @@ class ContentService:
                 'overview': anime_data.get('synopsis'),
                 'poster_path': anime_data.get('images', {}).get('jpg', {}).get('image_url')
             }
+            
             content = self.Content(**content_data)
             self.db.session.add(content)
             self.db.session.commit()
+            
             return content
+            
         except Exception as e:
             logger.error(f"Error saving anime content: {e}")
             self.db.session.rollback()
@@ -548,6 +592,7 @@ class ContentService:
             existing = None
             if self.Person and person_data.get('id'):
                 existing = self.Person.query.filter_by(tmdb_id=person_data['id']).first()
+            
             if existing:
                 if not existing.slug:
                     try:
@@ -561,10 +606,12 @@ class ContentService:
                     except Exception as e:
                         logger.warning(f"Failed to update person slug: {e}")
                 return existing
+            
             name = person_data.get('name') or 'Unknown Person'
             slug = SlugManager.generate_unique_slug(
                 self.db, self.Person, name, content_type='person'
             )
+            
             person_data_clean = {
                 'slug': slug,
                 'tmdb_id': person_data['id'],
@@ -574,10 +621,13 @@ class ContentService:
                 'known_for_department': person_data.get('known_for_department'),
                 'gender': person_data.get('gender')
             }
+            
             person = self.Person(**person_data_clean)
             self.db.session.add(person)
             self.db.session.flush()
+            
             return person
+            
         except Exception as e:
             logger.error(f"Error creating person: {e}")
             return None
@@ -593,6 +643,7 @@ class ContentService:
         return [genre_map.get(gid, 'Unknown') for gid in genre_ids if gid in genre_map]
 
 class DetailsService:
+    
     def __init__(self, db, models, cache=None):
         self.db = db
         self.Content = models.get('Content')
@@ -603,6 +654,7 @@ class DetailsService:
         self.ContentPerson = models.get('ContentPerson')
         self.cache = cache
         self.models = models
+        
         self.content_service = ContentService(db, models)
         self.session = self._create_http_session()
         self.executor = ThreadPoolExecutor(max_workers=5)
@@ -610,6 +662,7 @@ class DetailsService:
     
     def _init_api_keys(self):
         global TMDB_API_KEY, OMDB_API_KEY, YOUTUBE_API_KEY
+        
         try:
             if has_app_context() and current_app:
                 TMDB_API_KEY = current_app.config.get('TMDB_API_KEY')
@@ -637,6 +690,7 @@ class DetailsService:
             if not has_app_context():
                 logger.warning("No app context available for get_details_by_slug")
                 return None
+            
             cache_key = f"details:slug:{slug}"
             if self.cache:
                 try:
@@ -648,17 +702,29 @@ class DetailsService:
                         return cached
                 except Exception as e:
                     logger.warning(f"Cache error for slug {slug}: {e}")
-            content = self.get_or_fetch_content_by_slug(slug)
+            
+            content = self.Content.query.filter_by(slug=slug).first()
+            
             if not content:
-                logger.warning(f"Content not found for slug: {slug}")
-                return None
+                content = self._find_content_fuzzy(slug)
+                
+                if not content:
+                    info = SlugManager.extract_info_from_slug(slug)
+                    if self._should_fetch_from_external(slug, info['title'], info['year']):
+                        logger.info(f"Content not found for slug: {slug}, consider implementing external API fetch")
+                    else:
+                        logger.warning(f"Content not found for slug: {slug}")
+                    return None
+            
             if not content.slug:
                 try:
                     SlugManager.update_content_slug(self.db, content)
                     self.db.session.commit()
                 except Exception as e:
                     logger.warning(f"Failed to update content slug: {e}")
+            
             details = self._build_content_details(content, user_id)
+            
             if self.cache and details:
                 try:
                     cache_data = details.copy()
@@ -666,53 +732,11 @@ class DetailsService:
                     self.cache.set(cache_key, cache_data, timeout=1800)
                 except Exception as e:
                     logger.warning(f"Cache set error for slug {slug}: {e}")
+            
             return details
+            
         except Exception as e:
             logger.error(f"Error getting details for slug {slug}: {e}")
-            return None
-    
-    def get_or_fetch_content_by_slug(self, slug: str) -> Optional[Any]:
-        try:
-            content = self.Content.query.filter_by(slug=slug).first()
-            if not content:
-                content = self._find_content_fuzzy(slug)
-            if not content:
-                content = self._fetch_content_from_external_apis(slug)
-            return content
-        except Exception as e:
-            logger.error(f"Error getting/fetching content by slug: {e}")
-            return None
-    
-    def _fetch_content_from_external_apis(self, slug: str) -> Optional[Any]:
-        try:
-            from services.details import TMDBService
-            info = SlugManager.extract_info_from_slug(slug)
-            title = info['title']
-            year = info['year']
-            content_type = info['content_type']
-            logger.info(f"Attempting to fetch '{title}' ({year}) from external APIs")
-            if TMDB_API_KEY:
-                search_type = 'movie' if content_type == 'movie' else 'tv'
-                tmdb_results = TMDBService.search_content(title, search_type)
-                if tmdb_results and tmdb_results.get('results'):
-                    best_match = None
-                    for result in tmdb_results['results']:
-                        if year:
-                            release_date = result.get('release_date') or result.get('first_air_date')
-                            if release_date and str(year) in release_date:
-                                best_match = result
-                                break
-                        else:
-                            best_match = tmdb_results['results'][0]
-                            break
-                    if best_match:
-                        content = self.content_service.save_content_from_tmdb(best_match, content_type)
-                        if content:
-                            logger.info(f"Successfully fetched and saved '{content.title}' with slug '{content.slug}'")
-                            return content
-            return None
-        except Exception as e:
-            logger.error(f"Error fetching content from external APIs: {e}")
             return None
     
     def _find_content_fuzzy(self, slug: str) -> Optional[Any]:
@@ -721,155 +745,165 @@ class DetailsService:
             title = info['title']
             year = info['year']
             content_type = info['content_type']
-            search_titles = self._generate_title_variations(title)
+            
+            logger.info(f"Fuzzy search for slug '{slug}': title='{title}', year={year}, type={content_type}")
+            
+            title_variations = [title.lower()]
+            
+            title_variations.extend([
+                title.replace(':', '').lower(),
+                title.replace(':', ' -').lower(),
+                title.replace(':', ' –').lower(),
+                title.replace(' ', '').lower(),
+                title.replace('-', ' ').lower(),
+                title.replace('–', ' ').lower(),
+                title.replace(':', ' ').lower(),
+            ])
+            
+            if ':' in title:
+                main_title = title.split(':')[0].strip()
+                title_variations.append(main_title.lower())
+                title_variations.append(f"{main_title.lower()} the")
+                title_variations.append(f"{main_title.lower()} a")
+            
+            if title.lower().startswith('the '):
+                title_variations.append(title[4:].lower())
+            else:
+                title_variations.append(f"the {title.lower()}")
+            
+            seen = set()
+            unique_variations = []
+            for variation in title_variations:
+                if variation not in seen and variation.strip():
+                    seen.add(variation)
+                    unique_variations.append(variation)
+            
+            logger.info(f"Trying {len(unique_variations)} title variations")
+            
             results = []
-            for search_title in search_titles:
-                exact_results = self._search_by_title_variation(search_title, content_type, year, exact=True)
-                results.extend(exact_results)
-                if len(results) >= 3:
+            
+            for variation in unique_variations:
+                if results:
                     break
+                    
+                if content_type and year:
+                    query_results = self.Content.query.filter(
+                        func.lower(self.Content.title).like(f"%{variation}%"),
+                        self.Content.content_type == content_type,
+                        func.extract('year', self.Content.release_date) == year
+                    ).limit(3).all()
+                    results.extend(query_results)
+                    
+                    if query_results:
+                        logger.info(f"Found {len(query_results)} matches with exact type and year for '{variation}'")
+                
+                if not results and content_type and year:
+                    query_results = self.Content.query.filter(
+                        func.lower(self.Content.title).like(f"%{variation}%"),
+                        self.Content.content_type == content_type,
+                        func.extract('year', self.Content.release_date).between(year - 1, year + 1)
+                    ).limit(3).all()
+                    results.extend(query_results)
+                    
+                    if query_results:
+                        logger.info(f"Found {len(query_results)} matches with type and flexible year for '{variation}'")
+                
+                if not results and content_type:
+                    query_results = self.Content.query.filter(
+                        func.lower(self.Content.title).like(f"%{variation}%"),
+                        self.Content.content_type == content_type
+                    ).limit(5).all()
+                    results.extend(query_results)
+                    
+                    if query_results:
+                        logger.info(f"Found {len(query_results)} matches with type only for '{variation}'")
+            
             if not results:
-                for search_title in search_titles:
-                    fuzzy_results = self._search_by_title_variation(search_title, content_type, year, exact=False)
-                    results.extend(fuzzy_results)
-                    if len(results) >= 5:
-                        break
+                for variation in unique_variations[:3]:
+                    if year:
+                        query_results = self.Content.query.filter(
+                            func.lower(self.Content.title).like(f"%{variation}%"),
+                            func.extract('year', self.Content.release_date).between(year - 2, year + 2)
+                        ).limit(5).all()
+                        results.extend(query_results)
+                        
+                        if query_results:
+                            logger.info(f"Found {len(query_results)} matches with any type and flexible year for '{variation}'")
+                            break
+                    
+                    if not results:
+                        query_results = self.Content.query.filter(
+                            func.lower(self.Content.title).like(f"%{variation}%")
+                        ).order_by(self.Content.popularity.desc()).limit(10).all()
+                        results.extend(query_results)
+                        
+                        if query_results:
+                            logger.info(f"Found {len(query_results)} matches with title only for '{variation}'")
+                            break
+            
+            if not results:
+                words = [word.strip() for word in title.lower().split() if len(word.strip()) > 2]
+                if len(words) >= 2:
+                    partial_title = ' '.join(words[:min(3, len(words))])
+                    query_results = self.Content.query.filter(
+                        func.lower(self.Content.title).like(f"%{partial_title}%")
+                    ).order_by(self.Content.popularity.desc()).limit(5).all()
+                    results.extend(query_results)
+                    
+                    if query_results:
+                        logger.info(f"Found {len(query_results)} matches with partial title '{partial_title}'")
+            
             seen_ids = set()
             unique_results = []
             for result in results:
                 if result.id not in seen_ids:
                     seen_ids.add(result.id)
                     unique_results.append(result)
+            
             if unique_results:
-                best_match = self._find_best_match(unique_results, title, year)
-                logger.info(f"Found fuzzy match for '{slug}': {best_match.title} (slug: {best_match.slug})")
+                best_match = max(unique_results, key=lambda x: self._calculate_similarity(x.title.lower(), title.lower()))
+                logger.info(f"Best fuzzy match for '{slug}': {best_match.title} (ID: {best_match.id}, slug: {best_match.slug})")
                 return best_match
+            
             logger.warning(f"No fuzzy match found for '{slug}' with title '{title}' and year {year}")
+            logger.info(f"Consider fetching '{title}' ({year}) from external APIs")
             return None
+            
         except Exception as e:
             logger.error(f"Error in fuzzy content search: {e}")
             return None
-    
-    def _generate_title_variations(self, title: str) -> List[str]:
-        try:
-            variations = [title]
-            clean_title = title.strip()
-            if clean_title != title:
-                variations.append(clean_title)
-            punctuation_variations = [
-                clean_title.replace(' ', ': ', 1),
-                clean_title.replace(' ', ' - ', 1),
-                clean_title.replace(' ', ' – ', 1),
-                clean_title.replace(' The ', ': '),
-                clean_title.replace(' ', ': ', 2),
-                clean_title.replace(' The ', ' - '),
-                clean_title.replace(' ', ' - ', 2),
-                ' '.join(clean_title.split()),
-                clean_title.replace('Mission Impossible', 'Mission: Impossible'),
-                clean_title.replace('Mission: Impossible', 'Mission Impossible'),
-                clean_title.replace('Fast Furious', 'Fast & Furious'),
-                clean_title.replace('Fast And Furious', 'Fast & Furious'),
-                clean_title.replace('Spider Man', 'Spider-Man'),
-                clean_title.replace('X Men', 'X-Men'),
-            ]
-            for variation in punctuation_variations:
-                if variation and variation not in variations:
-                    variations.append(variation)
-            no_articles = []
-            for var in variations:
-                if var.startswith('The '):
-                    no_articles.append(var[4:])
-                if ' The ' in var:
-                    no_articles.append(var.replace(' The ', ' '))
-            variations.extend([na for na in no_articles if na and na not in variations])
-            short_versions = []
-            for var in variations:
-                words = var.split()
-                if len(words) > 2:
-                    short_versions.append(' '.join(words[:2]))
-                    if len(words) > 3:
-                        short_versions.append(' '.join(words[:3]))
-            variations.extend([sv for sv in short_versions if sv and sv not in variations])
-            return variations[:15]
-        except Exception as e:
-            logger.error(f"Error generating title variations: {e}")
-            return [title]
-    
-    def _search_by_title_variation(self, title: str, content_type: str, year: Optional[int], exact: bool = False) -> List[Any]:
-        try:
-            if exact:
-                query = self.Content.query.filter(
-                    func.lower(self.Content.title) == title.lower()
-                )
-            else:
-                query = self.Content.query.filter(
-                    func.lower(self.Content.title).like(f"%{title.lower()}%")
-                )
-            if content_type and content_type in ['movie', 'tv', 'anime']:
-                query = query.filter(self.Content.content_type == content_type)
-            if year and isinstance(year, int):
-                year_conditions = []
-                for y in range(year - 2, year + 3):
-                    if 1900 <= y <= 2030:
-                        year_conditions.append(func.extract('year', self.Content.release_date) == y)
-                if year_conditions:
-                    query = query.filter(or_(*year_conditions))
-            results = query.order_by(
-                self.Content.popularity.desc(),
-                self.Content.rating.desc()
-            ).limit(5).all()
-            return results
-        except Exception as e:
-            logger.error(f"Error in title variation search: {e}")
-            return []
-    
-    def _find_best_match(self, candidates: List[Any], target_title: str, target_year: Optional[int]) -> Any:
-        try:
-            if not candidates:
-                return None
-            if len(candidates) == 1:
-                return candidates[0]
-            scored_candidates = []
-            for candidate in candidates:
-                title_similarity = self._calculate_similarity(candidate.title, target_title)
-                year_score = 0.5
-                if target_year and candidate.release_date:
-                    year_diff = abs(candidate.release_date.year - target_year)
-                    if year_diff == 0:
-                        year_score = 1.0
-                    elif year_diff <= 1:
-                        year_score = 0.8
-                    elif year_diff <= 2:
-                        year_score = 0.6
-                    else:
-                        year_score = max(0, 1.0 - (year_diff * 0.2))
-                popularity_score = 0
-                if candidate.popularity and candidate.popularity > 0:
-                    popularity_score = min(0.3, (candidate.popularity / 100) * 0.3)
-                rating_score = 0
-                if candidate.rating and candidate.rating > 0:
-                    rating_score = min(0.2, (candidate.rating / 10) * 0.2)
-                total_score = (
-                    title_similarity * 0.5 +
-                    year_score * 0.3 +
-                    popularity_score +
-                    rating_score
-                )
-                scored_candidates.append((total_score, candidate))
-            scored_candidates.sort(key=lambda x: x[0], reverse=True)
-            best_score, best_candidate = scored_candidates[0]
-            logger.info(f"Best match score: {best_score:.3f} for '{best_candidate.title}'")
-            return best_candidate
-        except Exception as e:
-            logger.error(f"Error finding best match: {e}")
-            return candidates[0] if candidates else None
-    
+            
     def _calculate_similarity(self, str1: str, str2: str) -> float:
         try:
             from difflib import SequenceMatcher
-            return SequenceMatcher(None, str1.lower(), str2.lower()).ratio()
-        except Exception:
+            
+            clean_str1 = str1.lower().strip()
+            clean_str2 = str2.lower().strip()
+            
+            basic_sim = SequenceMatcher(None, clean_str1, clean_str2).ratio()
+            
+            words1 = set(clean_str1.split())
+            words2 = set(clean_str2.split())
+            
+            if words1 and words2:
+                word_overlap = len(words1.intersection(words2)) / len(words1.union(words2))
+                return 0.7 * basic_sim + 0.3 * word_overlap
+            
+            return basic_sim
+            
+        except Exception as e:
+            logger.warning(f"Error calculating similarity: {e}")
             return 0.0
+    
+    def _should_fetch_from_external(self, slug: str, title: str, year: Optional[int]) -> bool:
+        try:
+            current_year = datetime.now().year
+            if year and (current_year - 5 <= year <= current_year + 2):
+                logger.info(f"Content '{title}' ({year}) not found in database, could fetch from external APIs")
+                return True
+            return False
+        except:
+            return False
     
     def _with_app_context(self, app, func, *args, **kwargs):
         if app:
@@ -881,14 +915,18 @@ class DetailsService:
     def _build_content_details(self, content: Any, user_id: Optional[int] = None) -> Dict:
         try:
             self._init_api_keys()
+            
             from flask import current_app
             app = current_app._get_current_object() if has_app_context() else None
+            
             futures = {}
+            
             with ThreadPoolExecutor(max_workers=4) as executor:
                 if content.tmdb_id and TMDB_API_KEY:
                     futures['tmdb'] = executor.submit(self._fetch_tmdb_details, content.tmdb_id, content.content_type)
                 if content.imdb_id and OMDB_API_KEY:
                     futures['omdb'] = executor.submit(self._fetch_omdb_details, content.imdb_id)
+                
                 if app:
                     futures['cast_crew'] = executor.submit(self._with_app_context, app, self._get_cast_crew, content.id)
                     futures['reviews'] = executor.submit(self._with_app_context, app, self._get_reviews, content.id, 10)
@@ -899,7 +937,9 @@ class DetailsService:
                     futures['reviews'] = executor.submit(self._get_reviews, content.id, 10)
                     futures['similar'] = executor.submit(self._get_similar_content, content.id, 12)
                     futures['gallery'] = executor.submit(self._get_gallery, content.id)
+                
                 futures['trailer'] = executor.submit(self._get_trailer, content.title, content.content_type)
+            
             tmdb_data = {}
             omdb_data = {}
             cast_crew = {'cast': [], 'crew': {'directors': [], 'writers': [], 'producers': []}}
@@ -907,43 +947,53 @@ class DetailsService:
             similar = []
             gallery = {'posters': [], 'backdrops': [], 'stills': []}
             trailer = None
+            
             try:
                 if 'tmdb' in futures:
                     tmdb_data = futures['tmdb'].result(timeout=10) or {}
             except Exception as e:
                 logger.warning(f"TMDB fetch error/timeout: {e}")
+            
             try:
                 if 'omdb' in futures:
                     omdb_data = futures['omdb'].result(timeout=8) or {}
             except Exception as e:
                 logger.warning(f"OMDB fetch error/timeout: {e}")
+            
             try:
                 cast_crew = futures['cast_crew'].result(timeout=15) or cast_crew
             except Exception as e:
                 logger.warning(f"Cast/crew fetch error/timeout: {e}")
+            
             try:
                 reviews = futures['reviews'].result(timeout=5) or []
             except Exception as e:
                 logger.warning(f"Reviews fetch error/timeout: {e}")
+            
             try:
                 similar = futures['similar'].result(timeout=8) or []
             except Exception as e:
                 logger.warning(f"Similar content fetch error/timeout: {e}")
+            
             try:
                 gallery = futures['gallery'].result(timeout=8) or gallery
             except Exception as e:
                 logger.warning(f"Gallery fetch error/timeout: {e}")
+            
             try:
                 trailer = futures['trailer'].result(timeout=8)
             except Exception as e:
                 logger.warning(f"Trailer fetch error/timeout: {e}")
+            
             synopsis = self._build_synopsis(content, tmdb_data, omdb_data)
             ratings = self._build_ratings(content, tmdb_data, omdb_data)
             metadata = self._build_metadata(content, tmdb_data, omdb_data)
             streaming_info = self._get_streaming_info(content, tmdb_data)
+            
             seasons_episodes = None
             if content.content_type in ['tv', 'anime']:
                 seasons_episodes = self._get_seasons_episodes(content, tmdb_data)
+            
             details = {
                 'slug': content.slug,
                 'id': content.id,
@@ -964,13 +1014,16 @@ class DetailsService:
                 'streaming_info': streaming_info,
                 'seasons_episodes': seasons_episodes
             }
+            
             if user_id:
                 if app:
                     with app.app_context():
                         details['user_data'] = self._get_user_data(content.id, user_id)
                 else:
                     details['user_data'] = self._get_user_data(content.id, user_id)
+            
             return details
+            
         except Exception as e:
             logger.error(f"Error building content details: {e}")
             return self._get_minimal_details(content)
@@ -986,20 +1039,26 @@ class DetailsService:
                     'producers': []
                 }
             }
+            
             content = self.Content.query.get(content_id) if content_id else None
             if not content:
                 logger.warning(f"Content not found for ID: {content_id}")
                 return cast_crew
+            
             if self.ContentPerson and self.Person:
                 cast_crew = self._get_cast_crew_from_db(content_id)
+                
                 total_cast_crew = len(cast_crew['cast']) + sum(len(crew_list) for crew_list in cast_crew['crew'].values())
                 if total_cast_crew >= 5:
                     logger.info(f"Found {total_cast_crew} cast/crew members in database for content {content_id}")
                     return cast_crew
+            
             if content.tmdb_id and TMDB_API_KEY:
                 logger.info(f"Fetching comprehensive cast/crew from TMDB for content {content_id}")
                 cast_crew = self._fetch_and_save_all_cast_crew(content)
+            
             return cast_crew
+            
         except Exception as e:
             logger.error(f"Error getting cast/crew: {e}")
             return {'cast': [], 'crew': {'directors': [], 'writers': [], 'producers': []}}
@@ -1013,6 +1072,7 @@ class DetailsService:
                 'producers': []
             }
         }
+        
         try:
             cast_entries = self.db.session.query(
                 self.ContentPerson, self.Person
@@ -1024,12 +1084,14 @@ class DetailsService:
             ).order_by(
                 self.ContentPerson.order.asc()
             ).all()
+            
             for cp, person in cast_entries:
                 if not person.slug:
                     try:
                         SlugManager.update_content_slug(self.db, person)
                     except Exception:
                         person.slug = f"person-{person.id}"
+                
                 cast_crew['cast'].append({
                     'id': person.id,
                     'name': person.name,
@@ -1039,6 +1101,7 @@ class DetailsService:
                     'popularity': person.popularity or 0,
                     'order': cp.order or 999
                 })
+            
             crew_entries = self.db.session.query(
                 self.ContentPerson, self.Person
             ).join(
@@ -1047,12 +1110,14 @@ class DetailsService:
                 self.ContentPerson.content_id == content_id,
                 self.ContentPerson.role_type == 'crew'
             ).all()
+            
             for cp, person in crew_entries:
                 if not person.slug:
                     try:
                         SlugManager.update_content_slug(self.db, person)
                     except Exception:
                         person.slug = f"person-{person.id}"
+                
                 crew_data = {
                     'id': person.id,
                     'name': person.name,
@@ -1061,13 +1126,16 @@ class DetailsService:
                     'profile_path': self._format_image_url(person.profile_path, 'profile'),
                     'slug': person.slug
                 }
+                
                 if cp.department == 'Directing' or cp.job == 'Director':
                     cast_crew['crew']['directors'].append(crew_data)
                 elif cp.department == 'Writing' or cp.job in ['Writer', 'Screenplay', 'Story', 'Novel', 'Characters']:
                     cast_crew['crew']['writers'].append(crew_data)
                 elif cp.department == 'Production' or 'Producer' in (cp.job or ''):
                     cast_crew['crew']['producers'].append(crew_data)
+            
             return cast_crew
+            
         except Exception as e:
             logger.error(f"Error getting cast/crew from database: {e}")
             return cast_crew
@@ -1081,17 +1149,23 @@ class DetailsService:
                 'producers': []
             }
         }
+        
         try:
             endpoint = 'movie' if content.content_type == 'movie' else 'tv'
             url = f"{TMDB_BASE_URL}/{endpoint}/{content.tmdb_id}/credits"
+            
             params = {
                 'api_key': TMDB_API_KEY
             }
+            
             response = self.session.get(url, params=params, timeout=15)
+            
             if response.status_code == 200:
                 data = response.json()
+                
                 cast_data = data.get('cast', [])
                 logger.info(f"Processing {len(cast_data)} cast members for {content.title}")
+                
                 for i, cast_member in enumerate(cast_data):
                     try:
                         person = self._get_or_create_person(cast_member)
@@ -1101,6 +1175,7 @@ class DetailsService:
                                 character=cast_member.get('character'),
                                 order=i
                             )
+                            
                             cast_crew['cast'].append({
                                 'id': person.id,
                                 'name': person.name,
@@ -1113,11 +1188,14 @@ class DetailsService:
                     except Exception as e:
                         logger.warning(f"Error processing cast member: {e}")
                         continue
+                
                 crew_data = data.get('crew', [])
                 logger.info(f"Processing {len(crew_data)} crew members for {content.title}")
+                
                 directors = []
                 writers = []
                 producers = []
+                
                 for crew_member in crew_data:
                     try:
                         person = self._get_or_create_person(crew_member)
@@ -1127,6 +1205,7 @@ class DetailsService:
                                 job=crew_member.get('job'),
                                 department=crew_member.get('department')
                             )
+                            
                             crew_data_item = {
                                 'id': person.id,
                                 'name': person.name,
@@ -1135,28 +1214,37 @@ class DetailsService:
                                 'profile_path': self._format_image_url(person.profile_path, 'profile'),
                                 'slug': person.slug
                             }
+                            
                             job = crew_member.get('job', '').lower()
                             department = crew_member.get('department', '').lower()
+                            
                             if department == 'directing' or job == 'director':
                                 directors.append(crew_data_item)
                             elif department == 'writing' or job in ['writer', 'screenplay', 'story', 'novel', 'characters']:
                                 writers.append(crew_data_item)
                             elif department == 'production' or 'producer' in job:
                                 producers.append(crew_data_item)
+                                
                     except Exception as e:
                         logger.warning(f"Error processing crew member: {e}")
                         continue
+                
                 cast_crew['crew']['directors'] = directors
                 cast_crew['crew']['writers'] = writers
                 cast_crew['crew']['producers'] = producers
+                
                 self.db.session.commit()
+                
                 total_saved = len(cast_crew['cast']) + len(directors) + len(writers) + len(producers)
                 logger.info(f"Successfully saved {total_saved} cast/crew members for content {content.id} ({content.title})")
+                
             else:
                 logger.warning(f"TMDB credits API returned {response.status_code} for {content.title}")
+                
         except Exception as e:
             logger.error(f"Error fetching cast/crew from TMDB: {e}")
             self.db.session.rollback()
+        
         return cast_crew
 
     def _get_or_create_person(self, person_data) -> Any:
@@ -1164,12 +1252,15 @@ class DetailsService:
             tmdb_id = person_data.get('id')
             if not tmdb_id:
                 return None
+            
             person = self.Person.query.filter_by(tmdb_id=tmdb_id).first()
+            
             if not person:
                 name = person_data.get('name', 'Unknown')
                 slug = SlugManager.generate_unique_slug(
                     self.db, self.Person, name, content_type='person'
                 )
+                
                 person = self.Person(
                     slug=slug,
                     tmdb_id=tmdb_id,
@@ -1179,6 +1270,7 @@ class DetailsService:
                     known_for_department=person_data.get('known_for_department'),
                     gender=person_data.get('gender')
                 )
+                
                 self.db.session.add(person)
                 self.db.session.flush()
             else:
@@ -1187,11 +1279,14 @@ class DetailsService:
                         self.db, self.Person, person.name, content_type='person',
                         existing_id=person.id
                     )
+                
                 if not person.popularity and person_data.get('popularity'):
                     person.popularity = person_data.get('popularity')
                 if not person.known_for_department and person_data.get('known_for_department'):
                     person.known_for_department = person_data.get('known_for_department')
+            
             return person
+            
         except Exception as e:
             logger.error(f"Error creating/getting person: {e}")
             return None
@@ -1200,6 +1295,7 @@ class DetailsService:
                                      character=None, job=None, department=None, order=None):
         try:
             existing = None
+            
             if role_type == 'cast' and character:
                 existing = self.ContentPerson.query.filter_by(
                     content_id=content_id,
@@ -1220,6 +1316,7 @@ class DetailsService:
                     person_id=person_id,
                     role_type=role_type
                 ).first()
+            
             if not existing:
                 content_person = self.ContentPerson(
                     content_id=content_id,
@@ -1230,9 +1327,12 @@ class DetailsService:
                     department=department,
                     order=order
                 )
+                
                 self.db.session.add(content_person)
                 return content_person
+            
             return existing
+            
         except Exception as e:
             logger.error(f"Error creating content-person relationship: {e}")
             return None
@@ -1241,29 +1341,37 @@ class DetailsService:
     def get_person_details(self, person_slug: str) -> Optional[Dict]:
         try:
             person = self.Person.query.filter_by(slug=person_slug).first()
+            
             if not person:
                 person = self._find_person_fuzzy(person_slug)
+                
                 if not person:
                     return None
+            
             if not person.slug:
                 try:
                     SlugManager.update_content_slug(self.db, person)
                     self.db.session.commit()
                 except Exception as e:
                     logger.warning(f"Failed to update person slug: {e}")
+            
             tmdb_data = {}
             if person.tmdb_id and TMDB_API_KEY:
                 tmdb_data = self._fetch_complete_person_details(person.tmdb_id)
+            
             filmography = self._get_complete_filmography(person.id)
             self._update_person_from_tmdb(person, tmdb_data)
+            
             also_known_as = []
             try:
                 if person.also_known_as:
                     also_known_as = json.loads(person.also_known_as)
             except (json.JSONDecodeError, TypeError):
                 pass
+            
             if not also_known_as and tmdb_data.get('also_known_as'):
                 also_known_as = tmdb_data['also_known_as']
+            
             person_details = {
                 'id': person.id,
                 'slug': person.slug,
@@ -1287,7 +1395,9 @@ class DetailsService:
                 'external_ids': tmdb_data.get('external_ids', {}),
                 'tmdb_id': person.tmdb_id
             }
+            
             return person_details
+            
         except Exception as e:
             logger.error(f"Error getting person details: {e}")
             return None
@@ -1299,12 +1409,15 @@ class DetailsService:
                 'api_key': TMDB_API_KEY,
                 'append_to_response': 'images,external_ids,combined_credits,movie_credits,tv_credits'
             }
+            
             response = self.session.get(url, params=params, timeout=10)
+            
             if response.status_code == 200:
                 return response.json()
             else:
                 logger.warning(f"TMDB person API returned {response.status_code} for person {tmdb_id}")
                 return {}
+                
         except Exception as e:
             logger.error(f"Error fetching complete person details from TMDB: {e}")
             return {}
@@ -1313,34 +1426,43 @@ class DetailsService:
         try:
             if not tmdb_data:
                 return
+            
             updated = False
+            
             if not person.biography and tmdb_data.get('biography'):
                 person.biography = tmdb_data['biography']
                 updated = True
+            
             if not person.birthday and tmdb_data.get('birthday'):
                 try:
                     person.birthday = datetime.strptime(tmdb_data['birthday'], '%Y-%m-%d').date()
                     updated = True
                 except:
                     pass
+            
             if not person.deathday and tmdb_data.get('deathday'):
                 try:
                     person.deathday = datetime.strptime(tmdb_data['deathday'], '%Y-%m-%d').date()
                     updated = True
                 except:
                     pass
+            
             if not person.place_of_birth and tmdb_data.get('place_of_birth'):
                 person.place_of_birth = tmdb_data['place_of_birth']
                 updated = True
+            
             if not person.also_known_as and tmdb_data.get('also_known_as'):
                 person.also_known_as = json.dumps(tmdb_data['also_known_as'])
                 updated = True
+            
             if tmdb_data.get('popularity') and tmdb_data['popularity'] > (person.popularity or 0):
                 person.popularity = tmdb_data['popularity']
                 updated = True
+            
             if updated:
                 self.db.session.commit()
                 logger.info(f"Updated person {person.name} with TMDB data")
+                
         except Exception as e:
             logger.error(f"Error updating person from TMDB: {e}")
             self.db.session.rollback()
@@ -1361,6 +1483,7 @@ class DetailsService:
                     'most_popular': None
                 }
             }
+            
             filmography_entries = self.db.session.query(
                 self.ContentPerson, self.Content
             ).join(
@@ -1370,15 +1493,18 @@ class DetailsService:
             ).order_by(
                 self.Content.release_date.desc()
             ).all()
+            
             years = set()
             all_ratings = []
             all_popularity = []
+            
             for cp, content in filmography_entries:
                 if not content.slug:
                     try:
                         SlugManager.update_content_slug(self.db, content)
                     except Exception:
                         content.slug = f"content-{content.id}"
+                
                 work = {
                     'id': content.id,
                     'slug': content.slug,
@@ -1393,16 +1519,19 @@ class DetailsService:
                     'department': cp.department,
                     'release_date': content.release_date.isoformat() if content.release_date else None
                 }
+                
                 if content.release_date:
                     years.add(content.release_date.year)
                 if content.rating:
                     all_ratings.append((content.rating, work))
                 if content.popularity:
                     all_popularity.append((content.popularity, work))
+                
                 year_key = work['year'] or 'Unknown'
                 if year_key not in filmography['by_year']:
                     filmography['by_year'][year_key] = []
                 filmography['by_year'][year_key].append(work)
+                
                 if content.release_date and content.release_date > datetime.now().date():
                     filmography['upcoming'].append(work)
                 elif cp.role_type == 'cast':
@@ -1413,15 +1542,20 @@ class DetailsService:
                     filmography['as_writer'].append(work)
                 elif 'Producer' in (cp.job or ''):
                     filmography['as_producer'].append(work)
+            
             filmography['statistics']['total_projects'] = len(filmography_entries)
             if years:
                 filmography['statistics']['years_active'] = max(years) - min(years) + 1
+            
             if all_ratings:
                 filmography['statistics']['highest_rated'] = max(all_ratings, key=lambda x: x[0])[1]
+            
             if all_popularity:
                 filmography['statistics']['most_popular'] = max(all_popularity, key=lambda x: x[0])[1]
+            
             logger.info(f"Retrieved complete filmography: {filmography['statistics']['total_projects']} projects")
             return filmography
+            
         except Exception as e:
             logger.error(f"Error getting complete filmography: {e}")
             return {
@@ -1439,21 +1573,26 @@ class DetailsService:
                 'awards_count': 0,
                 'trivia': []
             }
+            
             if person.birthday:
                 today = datetime.now().date()
                 if person.deathday:
                     end_date = person.deathday
                 else:
                     end_date = today
+                
                 personal_info['age'] = end_date.year - person.birthday.year
                 if end_date.month < person.birthday.month or (end_date.month == person.birthday.month and end_date.day < person.birthday.day):
                     personal_info['age'] -= 1
+            
             if person.place_of_birth:
                 place_parts = person.place_of_birth.split(',')
                 if len(place_parts) > 0:
                     country = place_parts[-1].strip()
                     personal_info['nationality'] = country
+            
             return personal_info
+            
         except Exception as e:
             logger.error(f"Error building personal info: {e}")
             return {}
@@ -1468,21 +1607,27 @@ class DetailsService:
                 'genre_distribution': {},
                 'career_phases': []
             }
+            
             all_years = []
             for role_type in ['as_actor', 'as_director', 'as_writer', 'as_producer']:
                 for work in filmography.get(role_type, []):
                     if work.get('year'):
                         all_years.append(work['year'])
+            
             if all_years:
                 highlights['debut_year'] = min(all_years)
+            
             decade_count = {}
             for year in all_years:
                 decade = (year // 10) * 10
                 decade_count[decade] = decade_count.get(decade, 0) + 1
+            
             if decade_count:
                 most_successful_decade = max(decade_count.items(), key=lambda x: x[1])
                 highlights['most_successful_decade'] = f"{most_successful_decade[0]}s"
+            
             return highlights
+            
         except Exception as e:
             logger.error(f"Error building career highlights: {e}")
             return {}
@@ -1500,14 +1645,18 @@ class DetailsService:
         try:
             info = SlugManager.extract_info_from_slug(slug)
             name = info['title']
+            
             results = self.Person.query.filter(
                 func.lower(self.Person.name).like(f"%{name.lower()}%")
             ).limit(10).all()
+            
             if results:
                 best_match = max(results, key=lambda x: self._calculate_similarity(x.name, name))
                 logger.info(f"Found fuzzy match for person '{slug}': {best_match.name}")
                 return best_match
+            
             return None
+            
         except Exception as e:
             logger.error(f"Error in fuzzy person search: {e}")
             return None
@@ -1559,6 +1708,7 @@ class DetailsService:
                 'backdrops': [],
                 'stills': []
             }
+            
             content = None
             try:
                 if has_app_context():
@@ -1568,15 +1718,20 @@ class DetailsService:
             except Exception as e:
                 logger.warning(f"Error getting content for gallery: {e}")
                 return gallery
+            
             if content and content.tmdb_id and TMDB_API_KEY:
                 endpoint = 'movie' if content.content_type == 'movie' else 'tv'
                 url = f"{TMDB_BASE_URL}/{endpoint}/{content.tmdb_id}/images"
+                
                 params = {
                     'api_key': TMDB_API_KEY
                 }
+                
                 response = self.session.get(url, params=params, timeout=8)
+                
                 if response.status_code == 200:
                     data = response.json()
+                    
                     for img in data.get('posters', [])[:15]:
                         gallery['posters'].append({
                             'url': self._format_image_url(img['file_path'], 'poster'),
@@ -1585,6 +1740,7 @@ class DetailsService:
                             'width': img.get('width'),
                             'height': img.get('height')
                         })
+                    
                     for img in data.get('backdrops', [])[:15]:
                         gallery['backdrops'].append({
                             'url': self._format_image_url(img['file_path'], 'backdrop'),
@@ -1593,6 +1749,7 @@ class DetailsService:
                             'width': img.get('width'),
                             'height': img.get('height')
                         })
+                    
                     if content.content_type == 'tv' and data.get('stills'):
                         for img in data.get('stills', [])[:15]:
                             gallery['stills'].append({
@@ -1602,12 +1759,15 @@ class DetailsService:
                                 'width': img.get('width'),
                                 'height': img.get('height')
                             })
+            
             if not gallery['posters'] and content and content.poster_path:
                 gallery['posters'].append({
                     'url': self._format_image_url(content.poster_path, 'poster'),
                     'thumbnail': self._format_image_url(content.poster_path, 'thumbnail')
                 })
+            
             return gallery
+            
         except Exception as e:
             logger.error(f"Error getting gallery: {e}")
             return {'posters': [], 'backdrops': [], 'stills': []}
@@ -1673,16 +1833,22 @@ class DetailsService:
         try:
             if not TMDB_API_KEY:
                 return {}
+                
             endpoint = 'movie' if content_type == 'movie' else 'tv'
             url = f"{TMDB_BASE_URL}/{endpoint}/{tmdb_id}"
+            
             params = {
                 'api_key': TMDB_API_KEY,
                 'append_to_response': 'videos,images,credits,similar,recommendations,reviews,external_ids,watch/providers,content_ratings,release_dates,keywords'
             }
+            
             response = self.session.get(url, params=params, timeout=10)
+            
             if response.status_code == 200:
                 return response.json()
+            
             return {}
+            
         except Exception as e:
             logger.error(f"Error fetching TMDB details: {e}")
             return {}
@@ -1691,15 +1857,20 @@ class DetailsService:
         try:
             if not OMDB_API_KEY:
                 return {}
+                
             params = {
                 'apikey': OMDB_API_KEY,
                 'i': imdb_id,
                 'plot': 'full'
             }
+            
             response = self.session.get(OMDB_BASE_URL, params=params, timeout=8)
+            
             if response.status_code == 200:
                 return response.json()
+            
             return {}
+            
         except Exception as e:
             logger.error(f"Error fetching OMDB details: {e}")
             return {}
@@ -1708,9 +1879,11 @@ class DetailsService:
         try:
             if not YOUTUBE_API_KEY:
                 return None
+            
             search_query = f"{title} official trailer"
             if content_type == 'anime':
                 search_query = f"{title} anime trailer PV"
+            
             url = f"{YOUTUBE_BASE_URL}/search"
             params = {
                 'key': YOUTUBE_API_KEY,
@@ -1720,7 +1893,9 @@ class DetailsService:
                 'maxResults': 5,
                 'order': 'relevance'
             }
+            
             response = self.session.get(url, params=params, timeout=8)
+            
             if response.status_code == 200:
                 data = response.json()
                 if data.get('items'):
@@ -1732,7 +1907,9 @@ class DetailsService:
                         'embed_url': f"https://www.youtube.com/embed/{video['id']['videoId']}",
                         'watch_url': f"https://www.youtube.com/watch?v={video['id']['videoId']}"
                     }
+            
             return None
+            
         except Exception as e:
             logger.error(f"Error getting trailer: {e}")
             return None
@@ -1747,6 +1924,7 @@ class DetailsService:
                 'themes': [],
                 'keywords': []
             }
+            
             if tmdb_data.get('content_ratings'):
                 ratings = tmdb_data['content_ratings'].get('results', [])
                 us_rating = next((r for r in ratings if r['iso_3166_1'] == 'US'), None)
@@ -1755,9 +1933,11 @@ class DetailsService:
                         'rating': us_rating.get('rating'),
                         'descriptors': us_rating.get('descriptors', [])
                     })
+            
             if tmdb_data.get('keywords'):
                 keywords = tmdb_data['keywords'].get('keywords', []) or tmdb_data['keywords'].get('results', [])
                 synopsis['keywords'] = [kw['name'] for kw in keywords[:15]]
+            
             return synopsis
         except Exception as e:
             logger.error(f"Error building synopsis: {e}")
@@ -1785,6 +1965,7 @@ class DetailsService:
                 'critics': [],
                 'audience_score': None
             }
+            
             try:
                 imdb_rating = omdb_data.get('imdbRating', 'N/A')
                 if imdb_rating and imdb_rating != 'N/A':
@@ -1792,19 +1973,23 @@ class DetailsService:
                     ratings['imdb']['votes'] = omdb_data.get('imdbVotes', 'N/A')
             except (ValueError, TypeError):
                 pass
+            
             if omdb_data.get('Ratings'):
                 for rating in omdb_data['Ratings']:
                     ratings['critics'].append({
                         'source': rating['Source'],
                         'value': rating['Value']
                     })
+            
             scores = []
             if ratings['tmdb']['score'] > 0:
                 scores.append(ratings['tmdb']['score'])
             if ratings['imdb']['score'] > 0:
                 scores.append(ratings['imdb']['score'])
+            
             if scores:
                 ratings['composite_score'] = round(sum(scores) / len(scores), 1)
+            
             return ratings
         except Exception as e:
             logger.error(f"Error building ratings: {e}")
@@ -1822,6 +2007,7 @@ class DetailsService:
                 genres = json.loads(content.genres) if content.genres else []
             except (json.JSONDecodeError, TypeError):
                 genres = []
+            
             metadata = {
                 'genres': genres,
                 'release_date': content.release_date.isoformat() if content.release_date else None,
@@ -1841,11 +2027,13 @@ class DetailsService:
                 'is_trending': getattr(content, 'is_trending', False),
                 'is_new_release': getattr(content, 'is_new_release', False)
             }
+            
             if tmdb_data.get('spoken_languages'):
                 metadata['spoken_languages'] = [
                     {'code': lang['iso_639_1'], 'name': lang['name']} 
                     for lang in tmdb_data['spoken_languages']
                 ]
+            
             if tmdb_data.get('production_companies'):
                 metadata['production_companies'] = [
                     {
@@ -1855,6 +2043,7 @@ class DetailsService:
                     }
                     for company in tmdb_data['production_companies'][:5]
                 ]
+            
             if tmdb_data.get('release_dates'):
                 for country in tmdb_data['release_dates'].get('results', []):
                     if country['iso_3166_1'] in ['US', 'GB', 'IN']:
@@ -1862,6 +2051,7 @@ class DetailsService:
                             if release.get('certification'):
                                 metadata['certifications'][country['iso_3166_1']] = release['certification']
                                 break
+            
             return metadata
         except Exception as e:
             logger.error(f"Error building metadata: {e}")
@@ -1889,6 +2079,7 @@ class DetailsService:
     def _get_reviews(self, content_id: int, limit: int = 10) -> List[Dict]:
         try:
             reviews = []
+            
             if self.Review and self.User:
                 review_entries = self.db.session.query(
                     self.Review, self.User
@@ -1901,6 +2092,7 @@ class DetailsService:
                     self.Review.helpful_count.desc(),
                     self.Review.created_at.desc()
                 ).limit(limit).all()
+                
                 for review, user in review_entries:
                     reviews.append({
                         'id': review.id,
@@ -1917,7 +2109,9 @@ class DetailsService:
                         'created_at': review.created_at.isoformat(),
                         'updated_at': review.updated_at.isoformat() if review.updated_at else None
                     })
+            
             return reviews
+            
         except Exception as e:
             logger.error(f"Error getting reviews: {e}")
             return []
@@ -1926,34 +2120,42 @@ class DetailsService:
     def _get_similar_content(self, content_id: int, limit: int = 12) -> List[Dict]:
         try:
             similar = []
+            
             content = self.Content.query.get(content_id)
             if not content:
                 return []
+            
             try:
                 genres = json.loads(content.genres) if content.genres else []
             except (json.JSONDecodeError, TypeError):
                 genres = []
+            
             query = self.Content.query.filter(
                 self.Content.id != content_id,
                 self.Content.content_type == content.content_type
             )
+            
             if genres:
                 primary_genre = genres[0]
                 query = query.filter(self.Content.genres.contains(primary_genre))
+            
             similar_content = query.order_by(
                 self.Content.rating.desc(),
                 self.Content.popularity.desc()
             ).limit(limit).all()
+            
             for item in similar_content:
                 if not item.slug:
                     try:
                         SlugManager.update_content_slug(self.db, item)
                     except Exception:
                         item.slug = f"content-{item.id}"
+                
                 try:
                     item_genres = json.loads(item.genres) if item.genres else []
                 except (json.JSONDecodeError, TypeError):
                     item_genres = []
+                
                 similar.append({
                     'id': item.id,
                     'slug': item.slug,
@@ -1967,7 +2169,9 @@ class DetailsService:
                     'genres': item_genres,
                     'runtime': item.runtime
                 })
+            
             return similar
+            
         except Exception as e:
             logger.error(f"Error getting similar content: {e}")
             return []
@@ -1980,9 +2184,11 @@ class DetailsService:
                 'stream': [],
                 'free': []
             }
+            
             if tmdb_data.get('watch/providers'):
                 providers = tmdb_data['watch/providers'].get('results', {})
                 region_data = providers.get('US', {})
+                
                 if region_data.get('flatrate'):
                     for provider in region_data['flatrate'][:8]:
                         streaming['stream'].append({
@@ -1990,6 +2196,7 @@ class DetailsService:
                             'provider_name': provider['provider_name'],
                             'logo_path': self._format_image_url(provider.get('logo_path'), 'logo')
                         })
+                
                 if region_data.get('rent'):
                     for provider in region_data['rent'][:8]:
                         streaming['rent'].append({
@@ -1997,6 +2204,7 @@ class DetailsService:
                             'provider_name': provider['provider_name'],
                             'logo_path': self._format_image_url(provider.get('logo_path'), 'logo')
                         })
+                
                 if region_data.get('buy'):
                     for provider in region_data['buy'][:8]:
                         streaming['buy'].append({
@@ -2004,6 +2212,7 @@ class DetailsService:
                             'provider_name': provider['provider_name'],
                             'logo_path': self._format_image_url(provider.get('logo_path'), 'logo')
                         })
+                
                 if region_data.get('free'):
                     for provider in region_data['free'][:8]:
                         streaming['free'].append({
@@ -2011,9 +2220,12 @@ class DetailsService:
                             'provider_name': provider['provider_name'],
                             'logo_path': self._format_image_url(provider.get('logo_path'), 'logo')
                         })
+            
             if not any([streaming['rent'], streaming['buy'], streaming['stream'], streaming['free']]):
                 return None
+            
             return streaming
+            
         except Exception as e:
             logger.error(f"Error getting streaming info: {e}")
             return None
@@ -2022,15 +2234,18 @@ class DetailsService:
         try:
             if content.content_type not in ['tv', 'anime']:
                 return None
+            
             seasons_data = {
                 'season_count': tmdb_data.get('number_of_seasons', 0),
                 'episode_count': tmdb_data.get('number_of_episodes', 0),
                 'seasons': []
             }
+            
             if tmdb_data.get('seasons'):
                 for season in tmdb_data['seasons'][:15]:
                     if season['season_number'] == 0 and len(tmdb_data['seasons']) > 1:
                         continue
+                    
                     seasons_data['seasons'].append({
                         'season_number': season['season_number'],
                         'name': season['name'],
@@ -2039,6 +2254,7 @@ class DetailsService:
                         'overview': season.get('overview'),
                         'poster_path': self._format_image_url(season.get('poster_path'), 'poster')
                     })
+            
             if tmdb_data.get('next_episode_to_air'):
                 next_ep = tmdb_data['next_episode_to_air']
                 seasons_data['next_episode'] = {
@@ -2048,6 +2264,7 @@ class DetailsService:
                     'air_date': next_ep['air_date'],
                     'overview': next_ep.get('overview')
                 }
+            
             if tmdb_data.get('last_episode_to_air'):
                 last_ep = tmdb_data['last_episode_to_air']
                 seasons_data['last_episode'] = {
@@ -2056,7 +2273,9 @@ class DetailsService:
                     'episode_number': last_ep['episode_number'],
                     'air_date': last_ep['air_date']
                 }
+            
             return seasons_data
+            
         except Exception as e:
             logger.error(f"Error getting seasons/episodes: {e}")
             return None
@@ -2070,12 +2289,15 @@ class DetailsService:
                 'user_rating': None,
                 'watch_status': None
             }
+            
             if not self.UserInteraction:
                 return user_data
+            
             interactions = self.UserInteraction.query.filter_by(
                 user_id=user_id,
                 content_id=content_id
             ).all()
+            
             for interaction in interactions:
                 if interaction.interaction_type == 'watchlist':
                     user_data['in_watchlist'] = True
@@ -2085,7 +2307,9 @@ class DetailsService:
                     user_data['user_rating'] = interaction.rating
                 elif interaction.interaction_type == 'watch_status' and interaction.interaction_metadata:
                     user_data['watch_status'] = interaction.interaction_metadata.get('status')
+            
             return user_data
+            
         except Exception as e:
             logger.error(f"Error getting user data: {e}")
             return {
@@ -2107,8 +2331,10 @@ class DetailsService:
     def _format_image_url(self, path: str, image_type: str = 'poster') -> Optional[str]:
         if not path:
             return None
+        
         if path.startswith('http'):
             return path
+        
         try:
             if image_type == 'poster':
                 return f"{POSTER_BASE}{path}"
@@ -2136,15 +2362,18 @@ class DetailsService:
                     'success': False,
                     'message': 'Review system not available'
                 }
+            
             existing_review = self.Review.query.filter_by(
                 content_id=content_id,
                 user_id=user_id
             ).first()
+            
             if existing_review:
                 return {
                     'success': False,
                     'message': 'You have already reviewed this content'
                 }
+            
             review = self.Review(
                 content_id=content_id,
                 user_id=user_id,
@@ -2154,8 +2383,10 @@ class DetailsService:
                 has_spoilers=review_data.get('has_spoilers', False),
                 is_approved=False
             )
+            
             self.db.session.add(review)
             self.db.session.commit()
+            
             content = self.Content.query.get(content_id)
             if content and self.cache:
                 try:
@@ -2163,11 +2394,13 @@ class DetailsService:
                     self.cache.delete(cache_key)
                 except Exception as e:
                     logger.warning(f"Cache invalidation error: {e}")
+            
             return {
                 'success': True,
                 'review_id': review.id,
                 'message': 'Review submitted for moderation'
             }
+            
         except Exception as e:
             logger.error(f"Error adding review: {e}")
             self.db.session.rollback()
@@ -2181,14 +2414,18 @@ class DetailsService:
         try:
             if not self.Review:
                 return False
+            
             review = self.Review.query.get(review_id)
             if not review:
                 return False
+            
             if is_helpful:
                 review.helpful_count = (review.helpful_count or 0) + 1
             else:
                 review.helpful_count = max(0, (review.helpful_count or 0) - 1)
+            
             self.db.session.commit()
+            
             content = self.Content.query.get(review.content_id)
             if content and self.cache:
                 try:
@@ -2196,7 +2433,9 @@ class DetailsService:
                     self.cache.delete(cache_key)
                 except Exception as e:
                     logger.warning(f"Cache invalidation error: {e}")
+            
             return True
+            
         except Exception as e:
             logger.error(f"Error voting on review: {e}")
             self.db.session.rollback()
@@ -2211,12 +2450,14 @@ class DetailsService:
             if content:
                 new_slug = SlugManager.update_content_slug(self.db, content, force_update)
                 self.db.session.commit()
+                
                 if self.cache:
                     try:
                         cache_key = f"details:slug:{new_slug}"
                         self.cache.delete(cache_key)
                     except Exception as e:
                         logger.warning(f"Cache invalidation error: {e}")
+                
                 return new_slug
             return None
         except Exception as e:
