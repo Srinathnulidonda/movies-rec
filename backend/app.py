@@ -29,7 +29,7 @@ from flask_mail import Mail
 from services.upcoming import UpcomingContentService, ContentType, LanguagePriority
 import asyncio
 import services.auth as auth
-from services.similar import init_similar_service
+from services.similar import init_story_based_similarity_service
 from services.auth import init_auth, auth_bp
 from services.admin import admin_bp, init_admin
 from services.users import users_bp, init_users
@@ -866,13 +866,13 @@ init_auth(app, db, User)
 init_admin(app, db, models, services)
 init_users(app, db, models, services)
 
-similar_service = None
+story_similar_service = None
 try:
     with app.app_context():
-        similar_service = init_similar_service(app, db, models, cache)
-        logger.info("Similar titles service initialized successfully")
+        story_similar_service = init_story_based_similarity_service(app, db, models, cache)
+        logger.info("Story-based similarity service initialized successfully")
 except Exception as e:
-    logger.error(f"Failed to initialize similar titles service: {e}")
+    logger.error(f"Failed to initialize story similarity service: {e}")
 
 
 # API Routes
@@ -1805,37 +1805,57 @@ def get_anime():
 
 # OPTIMIZED Similar Recommendations Endpoint - FIXED
 @app.route('/api/recommendations/similar/<int:content_id>', methods=['GET'])
-def get_similar_recommendations_v2(content_id):
-    """Production-ready similar recommendations with 100% language accuracy"""
+def get_story_based_similar_recommendations(content_id):
+    """Story-centric similar recommendations - Content and narrative focused"""
     try:
         # Parameters
-        limit = min(int(request.args.get('limit', 10)), 20)  # Cap at 20
-        min_similarity = float(request.args.get('min_similarity', 0.3))
-        language_priority = request.args.get('language_priority', 'true').lower() == 'true'
-        algorithm = request.args.get('algorithm', 'weighted_multi_factor')
+        limit = min(int(request.args.get('limit', 10)), 20)
+        min_story_similarity = float(request.args.get('min_story_similarity', 0.3))
+        include_story_analysis = request.args.get('include_analysis', 'false').lower() == 'true'
         
-        if not similar_service:
-            return jsonify({'error': 'Similar titles service unavailable'}), 503
+        # Get user context if available
+        user_id = None
+        auth_header = request.headers.get('Authorization')
+        if auth_header and auth_header.startswith('Bearer '):
+            token = auth_header.split(' ')[1]
+            try:
+                payload = jwt.decode(token, app.config['SECRET_KEY'], algorithms=['HS256'])
+                user_id = payload.get('user_id')
+            except:
+                pass
         
-        # Get similar titles using the new service
-        result = similar_service.get_similar_titles(
+        if not story_similar_service:
+            return jsonify({'error': 'Story similarity service unavailable'}), 503
+        
+        # Get story-based similar content
+        result = story_similar_service.get_story_based_similar_content(
             content_id=content_id,
             limit=limit,
-            min_similarity=min_similarity,
-            language_priority=language_priority,
-            algorithm=algorithm
+            min_story_similarity=min_story_similarity,
+            user_id=user_id,
+            include_story_analysis=include_story_analysis
         )
         
-        # Track interaction (non-blocking)
+        # Track interaction
         try:
             session_id = get_session_id()
-            interaction = AnonymousInteraction(
-                session_id=session_id,
-                content_id=content_id,
-                interaction_type='similar_view_v2',
-                ip_address=request.remote_addr
-            )
-            db.session.add(interaction)
+            if user_id:
+                interaction = UserInteraction(
+                    user_id=user_id,
+                    content_id=content_id,
+                    interaction_type='similar_view_story',
+                    interaction_metadata={'algorithm': 'story_centric_v3'}
+                )
+                db.session.add(interaction)
+            else:
+                interaction = AnonymousInteraction(
+                    session_id=session_id,
+                    content_id=content_id,
+                    interaction_type='similar_view_story',
+                    ip_address=request.remote_addr
+                )
+                db.session.add(interaction)
+            
             db.session.commit()
         except Exception as e:
             logger.warning(f"Interaction tracking failed: {e}")
@@ -1843,13 +1863,72 @@ def get_similar_recommendations_v2(content_id):
         return jsonify(result), 200
         
     except Exception as e:
-        logger.error(f"Similar recommendations v2 error: {e}")
+        logger.error(f"Story-based similar recommendations error: {e}")
         return jsonify({
-            'error': 'Failed to get similar recommendations',
+            'error': 'Failed to get story-based similar recommendations',
             'base_content': {'id': content_id},
             'similar_content': [],
             'metadata': {'error': str(e)}
         }), 500
+
+@app.route('/api/content/<int:content_id>/story-analysis', methods=['GET'])
+def get_content_story_analysis(content_id):
+    """Get detailed story analysis for content"""
+    try:
+        if not story_similar_service:
+            return jsonify({'error': 'Story analysis service unavailable'}), 503
+        
+        story_analysis = story_similar_service.story_calculator.get_story_analysis(content_id)
+        
+        analysis_data = {
+            'content_id': content_id,
+            'themes': list(story_analysis.main_themes),
+            'narrative_patterns': [p.value for p in story_analysis.narrative_patterns],
+            'character_archetypes': list(story_analysis.character_archetypes),
+            'conflict_types': list(story_analysis.conflict_types),
+            'emotional_analysis': {
+                'tone': story_analysis.emotional_tone,
+                'intensity': story_analysis.emotional_intensity,
+                'complexity': story_analysis.emotional_complexity
+            },
+            'story_structure': {
+                'complexity_score': story_analysis.story_complexity_score,
+                'pacing_type': story_analysis.pacing_type,
+                'narrative_style': story_analysis.narrative_style
+            },
+            'setting_context': {
+                'setting_type': story_analysis.setting_type,
+                'time_period': story_analysis.time_period,
+                'story_scope': story_analysis.story_scope
+            },
+            'keywords': {
+                'plot_keywords': list(story_analysis.plot_keywords)[:10],
+                'character_keywords': list(story_analysis.character_keywords),
+                'emotion_keywords': list(story_analysis.emotion_keywords),
+                'action_keywords': list(story_analysis.action_keywords)
+            }
+        }
+        
+        return jsonify(analysis_data), 200
+        
+    except Exception as e:
+        logger.error(f"Story analysis error: {e}")
+        return jsonify({'error': 'Failed to get story analysis'}), 500
+
+# Service performance endpoint
+@app.route('/api/similar/story-performance', methods=['GET'])
+def get_story_service_performance():
+    """Get story similarity service performance"""
+    try:
+        if not story_similar_service:
+            return jsonify({'error': 'Service unavailable'}), 503
+        
+        performance = story_similar_service.get_service_performance()
+        return jsonify(performance), 200
+        
+    except Exception as e:
+        logger.error(f"Story service performance error: {e}")
+        return jsonify({'error': 'Failed to get performance stats'}), 500
 
 # New genre exploration endpoint
 @app.route('/api/explore/genre/<genre>', methods=['GET'])
