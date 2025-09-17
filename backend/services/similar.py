@@ -310,7 +310,7 @@ class ContentSimilarityEngine:
         """Calculate cast similarity based on shared actors"""
         try:
             # Import here to avoid circular imports
-            from backend.app import ContentPerson
+            from app import ContentPerson
             
             # Get cast for both contents
             base_cast = db_session.query(ContentPerson).filter(
@@ -345,7 +345,7 @@ class ContentSimilarityEngine:
         """Calculate crew similarity based on shared crew members"""
         try:
             # Import here to avoid circular imports
-            from backend.app import ContentPerson
+            from app import ContentPerson
             
             # Focus on key crew positions
             key_positions = ['Director', 'Producer', 'Writer', 'Screenplay', 'Music']
@@ -781,7 +781,7 @@ class HybridSimilarityEngine:
                 return cached_results[:limit]
             
             # Get base content
-            from backend.app import Content
+            from app import Content
             base_content = self.db.query(Content).filter(Content.id == content_id).first()
             
             if not base_content:
