@@ -26,10 +26,10 @@ import redis
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from flask_mail import Mail
-from services.similar import create_similar_titles_engine
 from services.upcoming import UpcomingContentService, ContentType, LanguagePriority
 import asyncio
 import services.auth as auth
+from services.similar import create_similar_content_service, SIMILARITY_CONFIGS
 from services.auth import init_auth, auth_bp
 from services.admin import admin_bp, init_admin
 from services.users import users_bp, init_users
@@ -845,13 +845,15 @@ try:
 except Exception as e:
     logger.error(f"Failed to initialize details/content services: {e}")
 
-
-similar_engine = None
+similar_service = None
 try:
-    similar_engine = create_similar_titles_engine(db, Content, cache)
-    logger.info("Similar titles engine initialized successfully")
+    with app.app_context():
+        # Use high accuracy config for production
+        config = SIMILARITY_CONFIGS['high_accuracy']
+        similar_service = create_similar_content_service(db, Content, cache, config)
+        logger.info("Similar content service initialized successfully")
 except Exception as e:
-    logger.error(f"Failed to initialize similar titles engine: {e}")
+    logger.error(f"Failed to initialize similar content service: {e}")
 
 
 # Now build services dictionary with ContentService
@@ -874,7 +876,6 @@ init_auth(app, db, User)
 # Initialize other services
 init_admin(app, db, models, services)
 init_users(app, db, models, services)
-
 
 # API Routes
 
@@ -1807,139 +1808,65 @@ def get_anime():
 # OPTIMIZED Similar Recommendations Endpoint - FIXED
 @app.route('/api/recommendations/similar/<int:content_id>', methods=['GET'])
 def get_similar_recommendations(content_id):
-    """Advanced similarity endpoint using story-based NLP analysis"""
+    """
+    Advanced similarity endpoint using semantic analysis and language matching.
+    
+    Query Parameters:
+    - limit: Number of results (default: 10, max: 20)
+    - strict_language: Enforce exact language matching (default: true)
+    - min_similarity: Minimum similarity threshold (default: config threshold)
+    - include_metadata: Include detailed metadata (default: true)
+    """
     try:
-        # Parameters
-        limit = min(int(request.args.get('limit', 8)), 20)  # Cap at 20
-        min_similarity = float(request.args.get('min_similarity', 0.4))
-        use_cache = request.args.get('use_cache', 'true').lower() == 'true'
+        # Get parameters
+        limit = min(int(request.args.get('limit', 10)), 20)
+        strict_language = request.args.get('strict_language', 'true').lower() == 'true'
+        min_similarity = request.args.get('min_similarity', type=float)
+        include_metadata = request.args.get('include_metadata', 'true').lower() == 'true'
         
-        # Get base content
-        base_content = Content.query.get(content_id)
-        if not base_content:
-            return jsonify({'error': 'Content not found'}), 404
+        # Check if service is available
+        if not similar_service:
+            logger.error("Similar content service not available")
+            return jsonify({
+                'error': 'Similar content service unavailable',
+                'similar_content': [],
+                'metadata': {'service_status': 'unavailable'}
+            }), 503
         
-        # Ensure base content has slug
-        if not base_content.slug:
-            try:
-                base_content.ensure_slug()
-                db.session.commit()
-            except Exception as e:
-                logger.warning(f"Slug generation failed for base content: {e}")
-                base_content.slug = f"content-{base_content.id}"
+        # Get similar content
+        result = similar_service.get_similar(
+            content_id=content_id,
+            limit=limit,
+            strict_language_match=strict_language,
+            min_similarity=min_similarity,
+            include_metadata=include_metadata
+        )
         
-        # Use advanced similar titles engine if available
-        if similar_engine:
-            try:
-                similar_content = similar_engine.get_similar_titles_formatted(
-                    base_content, 
-                    limit=limit, 
-                    min_similarity=min_similarity
-                )
-                
-                # Track interaction
-                try:
-                    session_id = get_session_id()
-                    interaction = AnonymousInteraction(
-                        session_id=session_id,
-                        content_id=content_id,
-                        interaction_type='similar_view',
-                        ip_address=request.remote_addr
-                    )
-                    db.session.add(interaction)
-                    db.session.commit()
-                except Exception as e:
-                    logger.warning(f"Interaction tracking failed: {e}")
-                
-                response = {
-                    'base_content': {
-                        'id': base_content.id,
-                        'slug': base_content.slug,
-                        'title': base_content.title,
-                        'content_type': base_content.content_type,
-                        'rating': base_content.rating
-                    },
-                    'similar_content': similar_content,
-                    'metadata': {
-                        'algorithm': 'advanced_story_similarity_nlp',
-                        'total_results': len(similar_content),
-                        'similarity_threshold': min_similarity,
-                        'story_weight': 0.7,
-                        'features': [
-                            'semantic_embeddings',
-                            'story_analysis',
-                            'exact_language_matching',
-                            'title_accuracy_validation'
-                        ],
-                        'timestamp': datetime.utcnow().isoformat()
-                    }
-                }
-                
-                return jsonify(response), 200
-                
-            except Exception as e:
-                logger.error(f"Advanced similarity engine failed: {e}")
-                # Fall through to fallback method
-        
-        # Fallback method (your existing implementation)
-        logger.warning("Using fallback similarity method")
-        
-        # [Your existing fallback code here - the optimized genre-based method]
-        similar_content = []
+        # Record interaction (non-blocking)
         try:
-            base_genres = json.loads(base_content.genres or '[]')
-            if base_genres:
-                primary_genre = base_genres[0]
-                similar_items = Content.query.filter(
-                    Content.id != content_id,
-                    Content.content_type == base_content.content_type,
-                    Content.genres.contains(primary_genre)
-                ).order_by(Content.rating.desc()).limit(limit).all()
-                
-                for item in similar_items:
-                    if not item.slug:
-                        item.slug = f"content-{item.id}"
-                    
-                    similar_content.append({
-                        'id': item.id,
-                        'slug': item.slug,
-                        'title': item.title,
-                        'poster_path': f"https://image.tmdb.org/t/p/w300{item.poster_path}" if item.poster_path and not item.poster_path.startswith('http') else item.poster_path,
-                        'rating': item.rating,
-                        'content_type': item.content_type,
-                        'similarity_score': 0.6,  # Default fallback score
-                        'match_type': 'genre_fallback'
-                    })
+            session_id = get_session_id()
+            interaction = AnonymousInteraction(
+                session_id=session_id,
+                content_id=content_id,
+                interaction_type='similar_view',
+                ip_address=request.remote_addr
+            )
+            db.session.add(interaction)
+            db.session.commit()
         except Exception as e:
-            logger.error(f"Fallback similarity failed: {e}")
+            logger.warning(f"Failed to record similar view interaction: {e}")
         
-        response = {
-            'base_content': {
-                'id': base_content.id,
-                'slug': base_content.slug,
-                'title': base_content.title,
-                'content_type': base_content.content_type,
-                'rating': base_content.rating
-            },
-            'similar_content': similar_content,
-            'metadata': {
-                'algorithm': 'fallback_genre_based',
-                'total_results': len(similar_content),
-                'warning': 'Advanced similarity engine unavailable',
-                'timestamp': datetime.utcnow().isoformat()
-            }
-        }
-        
-        return jsonify(response), 200
+        return jsonify(result), 200
         
     except Exception as e:
         logger.error(f"Similar recommendations error: {e}")
         return jsonify({
             'error': 'Failed to get similar recommendations',
             'similar_content': [],
-            'metadata': {'error': str(e)}
+            'metadata': {'error': str(e), 'timestamp': datetime.utcnow().isoformat()}
         }), 500
-
+    
+    
 @app.route('/api/recommendations/anonymous', methods=['GET'])
 def get_anonymous_recommendations():
     try:

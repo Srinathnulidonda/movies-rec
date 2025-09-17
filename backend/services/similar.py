@@ -1,765 +1,843 @@
-# backend/services/similar.py
-
 import json
 import logging
 import time
 from typing import List, Dict, Any, Optional, Tuple
-from dataclasses import dataclass
-from collections import defaultdict
+from datetime import datetime
+from collections import defaultdict, Counter
 import re
-import hashlib
-from datetime import datetime, timedelta
 
-# Core libraries
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-from sklearn.decomposition import TruncatedSVD
-from difflib import SequenceMatcher
-import nltk
-from nltk.corpus import stopwords
-from nltk.tokenize import word_tokenize
-from nltk.stem import WordNetLemmatizer
+from sqlalchemy import and_, or_, func, desc
+from sqlalchemy.orm import sessionmaker
 
-# Advanced NLP libraries (with fallbacks)
+# Try to import sentence-transformers, fallback if not available
 try:
     from sentence_transformers import SentenceTransformer
     SENTENCE_TRANSFORMERS_AVAILABLE = True
 except ImportError:
     SENTENCE_TRANSFORMERS_AVAILABLE = False
 
-try:
-    import spacy
-    SPACY_AVAILABLE = True
-except ImportError:
-    SPACY_AVAILABLE = False
-
-try:
-    import openai
-    OPENAI_AVAILABLE = True
-except ImportError:
-    OPENAI_AVAILABLE = False
-
-# Setup logging
 logger = logging.getLogger(__name__)
 
-@dataclass
-class SimilarityResult:
-    """Data class for similarity results"""
-    content_id: int
-    content: Any  # Content object
-    similarity_score: float
-    match_type: str
-    confidence: float
-    details: Dict[str, Any]
-
-class TextPreprocessor:
-    """Advanced text preprocessing for similarity analysis"""
+class SimilarContentService:
+    """
+    Advanced content similarity service focused on story content and language matching.
     
-    def __init__(self):
-        self.lemmatizer = None
-        self.stop_words = set()
-        self._initialize_nltk()
+    Features:
+    - Semantic similarity using sentence embeddings (BERT-based)
+    - TF-IDF cosine similarity as fallback
+    - Language-exact matching with priority scoring
+    - Genre and theme alignment
+    - Weighted multi-factor scoring
+    - Configurable thresholds and ranking
+    """
     
-    def _initialize_nltk(self):
-        """Initialize NLTK components with error handling"""
-        try:
-            nltk.download('punkt', quiet=True)
-            nltk.download('stopwords', quiet=True)
-            nltk.download('wordnet', quiet=True)
-            
-            self.stop_words = set(stopwords.words('english'))
-            self.lemmatizer = WordNetLemmatizer()
-            
-            # Add domain-specific stop words
-            self.stop_words.update({
-                'movie', 'film', 'story', 'tells', 'follows', 'shows',
-                'series', 'episode', 'season', 'anime', 'manga'
-            })
-            
-        except Exception as e:
-            logger.warning(f"NLTK initialization failed: {e}")
-            self.stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by'}
-    
-    def clean_text(self, text: str) -> str:
-        """Clean and preprocess text for similarity analysis"""
-        if not text:
-            return ""
+    def __init__(self, db, content_model, cache=None, config=None):
+        """
+        Initialize the similarity service.
         
-        # Remove special characters and normalize
-        text = re.sub(r'[^\w\s]', ' ', text.lower())
-        text = re.sub(r'\s+', ' ', text).strip()
-        
-        # Tokenize and remove stop words
-        try:
-            tokens = word_tokenize(text)
-        except:
-            tokens = text.split()
-        
-        # Filter tokens
-        filtered_tokens = []
-        for token in tokens:
-            if (len(token) > 2 and 
-                token not in self.stop_words and 
-                token.isalpha()):
-                
-                # Lemmatize if available
-                if self.lemmatizer:
-                    try:
-                        token = self.lemmatizer.lemmatize(token)
-                    except:
-                        pass
-                
-                filtered_tokens.append(token)
-        
-        return ' '.join(filtered_tokens)
-    
-    def extract_plot_keywords(self, text: str) -> List[str]:
-        """Extract key plot elements from text"""
-        if not text:
-            return []
-        
-        # Define plot-relevant patterns
-        plot_patterns = [
-            r'\b(murder|kill|death|die|dead)\b',
-            r'\b(love|romance|relationship|marry|wedding)\b',
-            r'\b(war|fight|battle|conflict|enemy)\b',
-            r'\b(family|father|mother|son|daughter|brother|sister)\b',
-            r'\b(secret|mystery|hidden|discover|reveal)\b',
-            r'\b(journey|travel|adventure|quest|search)\b',
-            r'\b(power|magic|supernatural|fantasy|sci-fi)\b',
-            r'\b(school|student|teacher|education|college)\b',
-            r'\b(crime|police|detective|investigation|law)\b',
-            r'\b(revenge|betrayal|conspiracy|plot)\b'
-        ]
-        
-        keywords = []
-        text_lower = text.lower()
-        
-        for pattern in plot_patterns:
-            matches = re.findall(pattern, text_lower)
-            keywords.extend(matches)
-        
-        return list(set(keywords))
-
-class LanguageMatcher:
-    """Precise language matching for content"""
-    
-    LANGUAGE_CODES = {
-        'english': ['en', 'english', 'eng'],
-        'hindi': ['hi', 'hindi', 'hin'],
-        'telugu': ['te', 'telugu', 'tel'],
-        'tamil': ['ta', 'tamil', 'tam'],
-        'kannada': ['kn', 'kannada', 'kan'],
-        'malayalam': ['ml', 'malayalam', 'mal'],
-        'japanese': ['ja', 'japanese', 'jpn'],
-        'korean': ['ko', 'korean', 'kor'],
-        'chinese': ['zh', 'chinese', 'chi', 'mandarin'],
-        'spanish': ['es', 'spanish', 'spa'],
-        'french': ['fr', 'french', 'fra'],
-        'german': ['de', 'german', 'deu']
-    }
-    
-    @classmethod
-    def normalize_languages(cls, languages: List[str]) -> List[str]:
-        """Normalize language list to standard codes"""
-        if not languages:
-            return ['en']  # Default to English
-        
-        normalized = []
-        for lang in languages:
-            lang_lower = lang.lower().strip()
-            
-            # Find matching language group
-            for standard_name, variants in cls.LANGUAGE_CODES.items():
-                if lang_lower in variants:
-                    normalized.append(standard_name)
-                    break
-            else:
-                # If not found, keep original
-                normalized.append(lang_lower)
-        
-        return list(set(normalized))
-    
-    @classmethod
-    def languages_match(cls, lang1: List[str], lang2: List[str]) -> bool:
-        """Check if two language lists have any overlap"""
-        norm1 = set(cls.normalize_languages(lang1))
-        norm2 = set(cls.normalize_languages(lang2))
-        return bool(norm1.intersection(norm2))
-
-class StoryEmbeddingEngine:
-    """Advanced story similarity using embeddings"""
-    
-    def __init__(self, cache=None):
-        self.cache = cache
-        self.model = None
-        self.spacy_model = None
-        self._initialize_models()
-    
-    def _initialize_models(self):
-        """Initialize embedding models with fallbacks"""
-        # Try to load Sentence Transformers
-        if SENTENCE_TRANSFORMERS_AVAILABLE:
-            try:
-                self.model = SentenceTransformer('all-MiniLM-L6-v2')
-                logger.info("Sentence Transformers model loaded successfully")
-            except Exception as e:
-                logger.warning(f"Failed to load Sentence Transformers: {e}")
-        
-        # Try to load spaCy model
-        if SPACY_AVAILABLE:
-            try:
-                self.spacy_model = spacy.load('en_core_web_sm')
-                logger.info("spaCy model loaded successfully")
-            except Exception as e:
-                logger.warning(f"Failed to load spaCy model: {e}")
-    
-    def get_embedding(self, text: str) -> Optional[np.ndarray]:
-        """Get text embedding using best available method"""
-        if not text:
-            return None
-        
-        cache_key = f"embedding:{hashlib.md5(text.encode()).hexdigest()}"
-        
-        # Check cache first
-        if self.cache:
-            try:
-                cached_embedding = self.cache.get(cache_key)
-                if cached_embedding is not None:
-                    return np.array(cached_embedding)
-            except Exception as e:
-                logger.warning(f"Cache get error: {e}")
-        
-        embedding = None
-        
-        # Method 1: Sentence Transformers (best)
-        if self.model is not None:
-            try:
-                embedding = self.model.encode([text])[0]
-                logger.debug("Used Sentence Transformers for embedding")
-            except Exception as e:
-                logger.warning(f"Sentence Transformers encoding failed: {e}")
-        
-        # Method 2: spaCy (good fallback)
-        elif self.spacy_model is not None:
-            try:
-                doc = self.spacy_model(text[:1000000])  # Limit text length
-                if doc.vector.any():
-                    embedding = doc.vector
-                    logger.debug("Used spaCy for embedding")
-            except Exception as e:
-                logger.warning(f"spaCy encoding failed: {e}")
-        
-        # Cache the result
-        if embedding is not None and self.cache:
-            try:
-                self.cache.set(cache_key, embedding.tolist(), timeout=86400)  # 24 hours
-            except Exception as e:
-                logger.warning(f"Cache set error: {e}")
-        
-        return embedding
-    
-    def calculate_similarity(self, text1: str, text2: str) -> float:
-        """Calculate semantic similarity between two texts"""
-        try:
-            emb1 = self.get_embedding(text1)
-            emb2 = self.get_embedding(text2)
-            
-            if emb1 is not None and emb2 is not None:
-                # Cosine similarity
-                similarity = np.dot(emb1, emb2) / (np.linalg.norm(emb1) * np.linalg.norm(emb2))
-                return float(similarity)
-            
-            return 0.0
-            
-        except Exception as e:
-            logger.warning(f"Embedding similarity calculation failed: {e}")
-            return 0.0
-
-class TitleAccuracyValidator:
-    """Validate title accuracy and relevance"""
-    
-    @staticmethod
-    def title_similarity(title1: str, title2: str) -> float:
-        """Calculate title similarity using fuzzy matching"""
-        if not title1 or not title2:
-            return 0.0
-        
-        # Normalize titles
-        norm1 = re.sub(r'[^\w\s]', '', title1.lower()).strip()
-        norm2 = re.sub(r'[^\w\s]', '', title2.lower()).strip()
-        
-        # Exact match
-        if norm1 == norm2:
-            return 1.0
-        
-        # Sequence matcher
-        return SequenceMatcher(None, norm1, norm2).ratio()
-    
-    @staticmethod
-    def is_title_relevant(content_title: str, candidate_title: str, min_relevance: float = 0.3) -> bool:
-        """Check if candidate title is relevant to content"""
-        similarity = TitleAccuracyValidator.title_similarity(content_title, candidate_title)
-        
-        # Allow different titles but flag if too similar (possible duplicates)
-        if similarity > 0.9:
-            logger.warning(f"Possible duplicate titles: '{content_title}' vs '{candidate_title}'")
-            return False
-        
-        # Titles should be different enough to be meaningful recommendations
-        return True
-
-class SimilarTitlesEngine:
-    """Main engine for generating similar titles recommendations"""
-    
-    def __init__(self, db, content_model, cache=None):
+        Args:
+            db: SQLAlchemy database session
+            content_model: Content SQLAlchemy model
+            cache: Cache instance (optional)
+            config: Configuration dictionary (optional)
+        """
         self.db = db
         self.Content = content_model
         self.cache = cache
         
-        # Initialize components
-        self.text_processor = TextPreprocessor()
-        self.embedding_engine = StoryEmbeddingEngine(cache)
-        self.language_matcher = LanguageMatcher()
-        self.title_validator = TitleAccuracyValidator()
+        # Default configuration
+        self.config = {
+            'embedding_model': 'all-MiniLM-L6-v2',  # Lightweight but effective
+            'similarity_threshold': 0.3,
+            'max_candidates': 1000,  # Limit initial candidate pool
+            'weights': {
+                'story_similarity': 0.4,      # Primary focus on story
+                'language_match': 0.3,        # Strong language priority
+                'genre_alignment': 0.2,       # Genre compatibility
+                'title_similarity': 0.1       # Minor title consideration
+            },
+            'language_boost': 0.2,            # Extra boost for exact language match
+            'genre_boost': 0.1,               # Extra boost for genre match
+            'cache_timeout': 1800,            # 30 minutes
+            'min_overview_length': 10,        # Minimum overview length for processing
+            'tfidf_max_features': 5000,       # TF-IDF feature limit
+            'embedding_batch_size': 32        # Batch size for embeddings
+        }
         
-        # TF-IDF fallback
-        self.tfidf_vectorizer = TfidfVectorizer(
-            max_features=5000,
-            stop_words='english',
-            ngram_range=(1, 2),
-            min_df=1,
-            max_df=0.95
-        )
+        # Update with provided config
+        if config:
+            self.config.update(config)
         
-        logger.info("SimilarTitlesEngine initialized successfully")
+        # Initialize models
+        self._sentence_model = None
+        self._tfidf_vectorizer = None
+        self._initialize_models()
     
-    def _get_cache_key(self, content_id: int, limit: int, min_similarity: float) -> str:
-        """Generate cache key for similarity results"""
-        return f"similar_titles:{content_id}:{limit}:{min_similarity}"
-    
-    def _get_candidate_content(self, base_content, limit_candidates: int = 500) -> List[Any]:
-        """Get candidate content for similarity comparison"""
+    def _initialize_models(self):
+        """Initialize NLP models with error handling."""
         try:
-            # Parse base content languages
-            base_languages = []
-            if base_content.languages:
-                try:
-                    base_languages = json.loads(base_content.languages)
-                except (json.JSONDecodeError, TypeError):
-                    base_languages = [base_content.languages] if base_content.languages else []
+            if SENTENCE_TRANSFORMERS_AVAILABLE:
+                self._sentence_model = SentenceTransformer(self.config['embedding_model'])
+                logger.info(f"Initialized sentence transformer: {self.config['embedding_model']}")
+            else:
+                logger.warning("Sentence transformers not available, using TF-IDF only")
             
-            # Parse base content genres for pre-filtering
-            base_genres = []
-            if base_content.genres:
-                try:
-                    base_genres = json.loads(base_content.genres)
-                except (json.JSONDecodeError, TypeError):
-                    base_genres = []
+            # Initialize TF-IDF as backup
+            self._tfidf_vectorizer = TfidfVectorizer(
+                max_features=self.config['tfidf_max_features'],
+                stop_words='english',
+                ngram_range=(1, 2),
+                min_df=2,
+                max_df=0.95
+            )
             
-            # Build query for candidates
+        except Exception as e:
+            logger.error(f"Error initializing NLP models: {e}")
+            self._sentence_model = None
+    
+    def get_similar(self, content_id: int, limit: int = 10, 
+                   strict_language_match: bool = True,
+                   min_similarity: float = None,
+                   include_metadata: bool = True) -> Dict[str, Any]:
+        """
+        Get similar content for a given content ID.
+        
+        Args:
+            content_id: ID of the base content
+            limit: Maximum number of similar items to return
+            strict_language_match: Whether to enforce exact language matching
+            min_similarity: Minimum similarity threshold (overrides config)
+            include_metadata: Whether to include detailed metadata
+        
+        Returns:
+            Dictionary with similar content and metadata
+        """
+        try:
+            start_time = time.time()
+            
+            # Check cache first
+            cache_key = self._generate_cache_key(
+                content_id, limit, strict_language_match, min_similarity
+            )
+            
+            if self.cache:
+                cached_result = self.cache.get(cache_key)
+                if cached_result:
+                    logger.info(f"Cache hit for similar content {content_id}")
+                    return cached_result
+            
+            # Get base content
+            base_content = self._get_content_by_id(content_id)
+            if not base_content:
+                return self._create_error_response("Content not found", content_id)
+            
+            # Validate base content has required fields
+            if not self._validate_content_for_similarity(base_content):
+                return self._create_error_response(
+                    "Content lacks required fields for similarity analysis", 
+                    content_id
+                )
+            
+            # Get candidate pool
+            candidates = self._get_candidate_pool(base_content, strict_language_match)
+            if not candidates:
+                return self._create_empty_response(base_content, "No suitable candidates found")
+            
+            # Calculate similarities
+            similarities = self._calculate_similarities(base_content, candidates)
+            
+            # Apply threshold
+            threshold = min_similarity or self.config['similarity_threshold']
+            filtered_similarities = [
+                sim for sim in similarities 
+                if sim['final_score'] >= threshold
+            ]
+            
+            # Sort and limit results
+            sorted_similarities = sorted(
+                filtered_similarities, 
+                key=lambda x: x['final_score'], 
+                reverse=True
+            )[:limit]
+            
+            # Format results
+            similar_content = self._format_similar_content(sorted_similarities)
+            
+            # Create response
+            response = {
+                'base_content': self._format_base_content(base_content),
+                'similar_content': similar_content,
+                'metadata': {
+                    'algorithm': 'advanced_semantic_similarity',
+                    'total_candidates_analyzed': len(candidates),
+                    'results_returned': len(similar_content),
+                    'similarity_threshold': threshold,
+                    'strict_language_match': strict_language_match,
+                    'processing_time_ms': round((time.time() - start_time) * 1000, 2),
+                    'model_used': self._get_model_info(),
+                    'weights_applied': self.config['weights'],
+                    'timestamp': datetime.utcnow().isoformat()
+                } if include_metadata else {}
+            }
+            
+            # Cache the result
+            if self.cache:
+                try:
+                    self.cache.set(cache_key, response, timeout=self.config['cache_timeout'])
+                except Exception as e:
+                    logger.warning(f"Failed to cache result: {e}")
+            
+            return response
+            
+        except Exception as e:
+            logger.error(f"Error in get_similar for content {content_id}: {e}")
+            return self._create_error_response(f"Similarity calculation failed: {str(e)}", content_id)
+    
+    def _get_content_by_id(self, content_id: int):
+        """Get content by ID with error handling."""
+        try:
+            return self.Content.query.get(content_id)
+        except Exception as e:
+            logger.error(f"Database error getting content {content_id}: {e}")
+            return None
+    
+    def _validate_content_for_similarity(self, content) -> bool:
+        """Validate that content has required fields for similarity analysis."""
+        if not content:
+            return False
+        
+        # Check for overview (primary field for story similarity)
+        if not content.overview or len(content.overview.strip()) < self.config['min_overview_length']:
+            logger.warning(f"Content {content.id} has insufficient overview for similarity")
+            return False
+        
+        # Check for title
+        if not content.title:
+            logger.warning(f"Content {content.id} missing title")
+            return False
+        
+        return True
+    
+    def _get_candidate_pool(self, base_content, strict_language_match: bool) -> List:
+        """
+        Get pool of candidate content for similarity comparison.
+        
+        Args:
+            base_content: Base content object
+            strict_language_match: Whether to enforce language matching
+        
+        Returns:
+            List of candidate content objects
+        """
+        try:
             query = self.Content.query.filter(
                 self.Content.id != base_content.id,
-                self.Content.content_type == base_content.content_type,
                 self.Content.overview.isnot(None),
-                self.Content.overview != ''
+                func.length(self.Content.overview) >= self.config['min_overview_length']
             )
             
             # Language filtering
-            if base_languages:
-                language_filters = []
-                for lang in base_languages:
-                    language_filters.append(self.Content.languages.contains(lang))
-                
-                if language_filters:
-                    query = query.filter(self.db.or_(*language_filters))
+            if strict_language_match and base_content.languages:
+                try:
+                    base_languages = json.loads(base_content.languages) if isinstance(base_content.languages, str) else base_content.languages
+                    if base_languages:
+                        # Create language filter conditions
+                        language_conditions = []
+                        for lang in base_languages:
+                            if isinstance(lang, str) and lang.strip():
+                                language_conditions.append(
+                                    self.Content.languages.contains(lang.strip().lower())
+                                )
+                        
+                        if language_conditions:
+                            query = query.filter(or_(*language_conditions))
+                except (json.JSONDecodeError, TypeError) as e:
+                    logger.warning(f"Error parsing languages for content {base_content.id}: {e}")
             
-            # Pre-filter by genre overlap (performance optimization)
-            if base_genres:
-                genre_filters = []
-                for genre in base_genres[:3]:  # Use top 3 genres
-                    genre_filters.append(self.Content.genres.contains(genre))
-                
-                if genre_filters:
-                    # Get genre matches first, then others
-                    genre_matches = query.filter(self.db.or_(*genre_filters)).order_by(
-                        self.Content.rating.desc()
-                    ).limit(limit_candidates // 2).all()
-                    
-                    other_matches = query.filter(
-                        ~self.db.or_(*genre_filters)
-                    ).order_by(
-                        self.Content.popularity.desc()
-                    ).limit(limit_candidates // 2).all()
-                    
-                    return genre_matches + other_matches
+            # Content type matching (optional enhancement)
+            if hasattr(base_content, 'content_type') and base_content.content_type:
+                query = query.filter(self.Content.content_type == base_content.content_type)
             
-            # Default: order by rating and popularity
-            return query.order_by(
-                self.Content.rating.desc(),
-                self.Content.popularity.desc()
-            ).limit(limit_candidates).all()
+            # Limit candidates for performance
+            candidates = query.limit(self.config['max_candidates']).all()
+            
+            logger.info(f"Found {len(candidates)} candidates for content {base_content.id}")
+            return candidates
             
         except Exception as e:
-            logger.error(f"Error getting candidate content: {e}")
+            logger.error(f"Error getting candidate pool: {e}")
             return []
     
-    def _calculate_story_similarity(self, base_overview: str, candidate_overview: str) -> Tuple[float, str]:
-        """Calculate story similarity using multiple methods"""
-        if not base_overview or not candidate_overview:
-            return 0.0, "no_overview"
-        
-        similarities = []
-        method_used = "fallback"
-        
-        # Method 1: Advanced embeddings (primary)
-        embedding_sim = self.embedding_engine.calculate_similarity(base_overview, candidate_overview)
-        if embedding_sim > 0:
-            similarities.append(embedding_sim)
-            method_used = "embeddings"
-        
-        # Method 2: TF-IDF fallback
-        try:
-            # Clean texts
-            clean_base = self.text_processor.clean_text(base_overview)
-            clean_candidate = self.text_processor.clean_text(candidate_overview)
-            
-            if clean_base and clean_candidate:
-                # Fit TF-IDF on both texts
-                tfidf_matrix = self.tfidf_vectorizer.fit_transform([clean_base, clean_candidate])
-                tfidf_sim = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:2])[0][0]
-                similarities.append(tfidf_sim)
-                
-                if method_used == "fallback":
-                    method_used = "tfidf"
-                    
-        except Exception as e:
-            logger.warning(f"TF-IDF similarity calculation failed: {e}")
-        
-        # Method 3: Plot keywords similarity
-        try:
-            base_keywords = set(self.text_processor.extract_plot_keywords(base_overview))
-            candidate_keywords = set(self.text_processor.extract_plot_keywords(candidate_overview))
-            
-            if base_keywords and candidate_keywords:
-                keyword_sim = len(base_keywords.intersection(candidate_keywords)) / len(base_keywords.union(candidate_keywords))
-                similarities.append(keyword_sim * 0.7)  # Weight down keyword similarity
-                
-        except Exception as e:
-            logger.warning(f"Keyword similarity calculation failed: {e}")
-        
-        # Combine similarities with weights
-        if similarities:
-            if len(similarities) == 1:
-                final_similarity = similarities[0]
-            else:
-                # Weighted average (embeddings get highest weight)
-                weights = [0.7, 0.2, 0.1][:len(similarities)]
-                final_similarity = sum(sim * weight for sim, weight in zip(similarities, weights))
-        else:
-            final_similarity = 0.0
-            method_used = "failed"
-        
-        return min(final_similarity, 1.0), method_used
-    
-    def _calculate_additional_factors(self, base_content, candidate_content) -> Dict[str, float]:
-        """Calculate additional similarity factors"""
-        factors = {}
-        
-        try:
-            # Genre similarity
-            base_genres = set(json.loads(base_content.genres or '[]'))
-            candidate_genres = set(json.loads(candidate_content.genres or '[]'))
-            
-            if base_genres and candidate_genres:
-                factors['genre_similarity'] = len(base_genres.intersection(candidate_genres)) / len(base_genres.union(candidate_genres))
-            else:
-                factors['genre_similarity'] = 0.0
-            
-            # Rating similarity (normalized)
-            if base_content.rating and candidate_content.rating:
-                rating_diff = abs(base_content.rating - candidate_content.rating)
-                factors['rating_similarity'] = max(0, 1 - (rating_diff / 10))
-            else:
-                factors['rating_similarity'] = 0.5
-            
-            # Release year proximity
-            if base_content.release_date and candidate_content.release_date:
-                year_diff = abs(base_content.release_date.year - candidate_content.release_date.year)
-                factors['year_proximity'] = max(0, 1 - (year_diff / 20))  # 20-year window
-            else:
-                factors['year_proximity'] = 0.5
-            
-            # Language match (exact)
-            base_languages = json.loads(base_content.languages or '[]')
-            candidate_languages = json.loads(candidate_content.languages or '[]')
-            factors['language_match'] = 1.0 if self.language_matcher.languages_match(base_languages, candidate_languages) else 0.0
-            
-        except Exception as e:
-            logger.warning(f"Error calculating additional factors: {e}")
-            factors = {
-                'genre_similarity': 0.0,
-                'rating_similarity': 0.5,
-                'year_proximity': 0.5,
-                'language_match': 0.0
-            }
-        
-        return factors
-    
-    def get_similar_titles(self, content, limit: int = 8, min_similarity: float = 0.4, use_cache: bool = True) -> List[SimilarityResult]:
+    def _calculate_similarities(self, base_content, candidates: List) -> List[Dict]:
         """
-        Get similar titles for given content
+        Calculate comprehensive similarity scores for all candidates.
         
         Args:
-            content: Content object to find similarities for
-            limit: Maximum number of similar titles to return
-            min_similarity: Minimum similarity score threshold
-            use_cache: Whether to use caching
-            
-        Returns:
-            List of SimilarityResult objects sorted by similarity score
-        """
-        try:
-            # Check cache first
-            cache_key = self._get_cache_key(content.id, limit, min_similarity)
-            if use_cache and self.cache:
-                try:
-                    cached_results = self.cache.get(cache_key)
-                    if cached_results:
-                        logger.info(f"Cache hit for similar titles: {content.id}")
-                        return [SimilarityResult(**result) for result in cached_results]
-                except Exception as e:
-                    logger.warning(f"Cache retrieval error: {e}")
-            
-            start_time = time.time()
-            
-            # Validate input content
-            if not content or not content.overview:
-                logger.warning(f"Content {content.id if content else 'None'} has no overview for similarity")
-                return []
-            
-            # Get candidate content
-            candidates = self._get_candidate_content(content, limit_candidates=min(500, limit * 25))
-            
-            if not candidates:
-                logger.warning(f"No candidate content found for {content.id}")
-                return []
-            
-            logger.info(f"Processing {len(candidates)} candidates for content {content.id}")
-            
-            # Calculate similarities
-            similarity_results = []
-            
-            for candidate in candidates:
-                try:
-                    # Language filter (strict)
-                    base_languages = json.loads(content.languages or '[]')
-                    candidate_languages = json.loads(candidate.languages or '[]')
-                    
-                    if not self.language_matcher.languages_match(base_languages, candidate_languages):
-                        continue
-                    
-                    # Title relevance check
-                    if not self.title_validator.is_title_relevant(content.title, candidate.title):
-                        continue
-                    
-                    # Calculate story similarity (primary factor)
-                    story_similarity, method = self._calculate_story_similarity(content.overview, candidate.overview)
-                    
-                    if story_similarity < min_similarity:
-                        continue
-                    
-                    # Calculate additional factors
-                    additional_factors = self._calculate_additional_factors(content, candidate)
-                    
-                    # Calculate final similarity score (story-weighted)
-                    final_score = (
-                        story_similarity * 0.7 +  # Story is 70% of the score
-                        additional_factors['genre_similarity'] * 0.15 +
-                        additional_factors['rating_similarity'] * 0.05 +
-                        additional_factors['year_proximity'] * 0.05 +
-                        additional_factors['language_match'] * 0.05
-                    )
-                    
-                    # Calculate confidence based on multiple factors
-                    confidence = min(1.0, (
-                        (1.0 if method in ['embeddings', 'tfidf'] else 0.7) +
-                        (0.2 if additional_factors['genre_similarity'] > 0.3 else 0.0) +
-                        (0.1 if additional_factors['language_match'] > 0.5 else 0.0)
-                    ))
-                    
-                    # Create similarity result
-                    result = SimilarityResult(
-                        content_id=candidate.id,
-                        content=candidate,
-                        similarity_score=final_score,
-                        match_type=f"story_{method}",
-                        confidence=confidence,
-                        details={
-                            'story_similarity': story_similarity,
-                            'similarity_method': method,
-                            **additional_factors,
-                            'final_weighted_score': final_score
-                        }
-                    )
-                    
-                    similarity_results.append(result)
-                    
-                except Exception as e:
-                    logger.warning(f"Error processing candidate {candidate.id}: {e}")
-                    continue
-            
-            # Sort by similarity score and confidence
-            similarity_results.sort(key=lambda x: (x.similarity_score, x.confidence), reverse=True)
-            
-            # Limit results
-            final_results = similarity_results[:limit]
-            
-            # Cache results
-            if use_cache and self.cache and final_results:
-                try:
-                    cache_data = [
-                        {
-                            'content_id': result.content_id,
-                            'content': result.content,  # Note: This might not serialize well
-                            'similarity_score': result.similarity_score,
-                            'match_type': result.match_type,
-                            'confidence': result.confidence,
-                            'details': result.details
-                        }
-                        for result in final_results
-                    ]
-                    self.cache.set(cache_key, cache_data, timeout=1800)  # 30 minutes
-                except Exception as e:
-                    logger.warning(f"Cache storage error: {e}")
-            
-            processing_time = time.time() - start_time
-            logger.info(f"Similar titles calculation completed for {content.id}: "
-                       f"{len(final_results)} results in {processing_time:.2f}s")
-            
-            return final_results
-            
-        except Exception as e:
-            logger.error(f"Error in get_similar_titles for content {content.id if content else 'None'}: {e}")
-            return []
-    
-    def get_similar_titles_formatted(self, content, limit: int = 8, min_similarity: float = 0.4) -> List[Dict[str, Any]]:
-        """
-        Get similar titles formatted for API response
+            base_content: Base content object
+            candidates: List of candidate content objects
         
         Returns:
-            List of dictionaries with formatted content data
+            List of similarity dictionaries with scores and metadata
+        """
+        similarities = []
+        
+        try:
+            # Prepare text data
+            base_text = self._prepare_text_for_similarity(base_content)
+            candidate_texts = [self._prepare_text_for_similarity(candidate) for candidate in candidates]
+            
+            # Calculate story similarity using best available method
+            story_similarities = self._calculate_story_similarities(base_text, candidate_texts)
+            
+            # Calculate other similarity factors
+            for i, candidate in enumerate(candidates):
+                try:
+                    # Get individual similarity scores
+                    story_score = story_similarities[i] if i < len(story_similarities) else 0.0
+                    language_score = self._calculate_language_similarity(base_content, candidate)
+                    genre_score = self._calculate_genre_similarity(base_content, candidate)
+                    title_score = self._calculate_title_similarity(base_content, candidate)
+                    
+                    # Calculate weighted final score
+                    final_score = (
+                        story_score * self.config['weights']['story_similarity'] +
+                        language_score * self.config['weights']['language_match'] +
+                        genre_score * self.config['weights']['genre_alignment'] +
+                        title_score * self.config['weights']['title_similarity']
+                    )
+                    
+                    # Apply boosts for exact matches
+                    if language_score > 0.8:  # High language match
+                        final_score += self.config['language_boost']
+                    
+                    if genre_score > 0.6:  # Good genre match
+                        final_score += self.config['genre_boost']
+                    
+                    # Cap final score at 1.0
+                    final_score = min(final_score, 1.0)
+                    
+                    # Determine match reason
+                    match_reason = self._determine_match_reason(
+                        story_score, language_score, genre_score, title_score
+                    )
+                    
+                    similarities.append({
+                        'content': candidate,
+                        'story_similarity': round(story_score, 4),
+                        'language_similarity': round(language_score, 4),
+                        'genre_similarity': round(genre_score, 4),
+                        'title_similarity': round(title_score, 4),
+                        'final_score': round(final_score, 4),
+                        'match_reason': match_reason,
+                        'match_type': self._classify_match_type(final_score, match_reason)
+                    })
+                    
+                except Exception as e:
+                    logger.warning(f"Error calculating similarity for candidate {candidate.id}: {e}")
+                    continue
+            
+            return similarities
+            
+        except Exception as e:
+            logger.error(f"Error in similarity calculation: {e}")
+            return []
+    
+    def _prepare_text_for_similarity(self, content) -> str:
+        """
+        Prepare text content for similarity analysis.
+        
+        Args:
+            content: Content object
+        
+        Returns:
+            Cleaned and prepared text string
         """
         try:
-            results = self.get_similar_titles(content, limit, min_similarity)
+            # Combine overview and title for richer context
+            text_parts = []
             
-            formatted_results = []
-            for result in results:
-                candidate = result.content
+            if content.overview:
+                text_parts.append(content.overview.strip())
+            
+            if content.title:
+                text_parts.append(content.title.strip())
+            
+            # Add genre information as context
+            if hasattr(content, 'genres') and content.genres:
+                try:
+                    genres = json.loads(content.genres) if isinstance(content.genres, str) else content.genres
+                    if genres and isinstance(genres, list):
+                        text_parts.append(' '.join(genres))
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            
+            combined_text = ' '.join(text_parts)
+            
+            # Clean the text
+            cleaned_text = self._clean_text(combined_text)
+            
+            return cleaned_text
+            
+        except Exception as e:
+            logger.warning(f"Error preparing text for content {content.id}: {e}")
+            return content.overview or content.title or ""
+    
+    def _clean_text(self, text: str) -> str:
+        """Clean and normalize text for better similarity matching."""
+        if not text:
+            return ""
+        
+        try:
+            # Remove HTML tags
+            text = re.sub(r'<[^>]+>', '', text)
+            
+            # Remove extra whitespace
+            text = re.sub(r'\s+', ' ', text)
+            
+            # Remove special characters but keep basic punctuation
+            text = re.sub(r'[^\w\s\.\,\!\?]', '', text)
+            
+            # Convert to lowercase
+            text = text.lower().strip()
+            
+            return text
+            
+        except Exception as e:
+            logger.warning(f"Error cleaning text: {e}")
+            return text
+    
+    def _calculate_story_similarities(self, base_text: str, candidate_texts: List[str]) -> List[float]:
+        """
+        Calculate story similarity using the best available method.
+        
+        Args:
+            base_text: Base content text
+            candidate_texts: List of candidate texts
+        
+        Returns:
+            List of similarity scores
+        """
+        try:
+            # Try sentence embeddings first (most accurate)
+            if self._sentence_model and SENTENCE_TRANSFORMERS_AVAILABLE:
+                return self._calculate_embedding_similarities(base_text, candidate_texts)
+            
+            # Fallback to TF-IDF
+            return self._calculate_tfidf_similarities(base_text, candidate_texts)
+            
+        except Exception as e:
+            logger.error(f"Error calculating story similarities: {e}")
+            return [0.0] * len(candidate_texts)
+    
+    def _calculate_embedding_similarities(self, base_text: str, candidate_texts: List[str]) -> List[float]:
+        """Calculate similarities using sentence embeddings."""
+        try:
+            if not base_text.strip():
+                return [0.0] * len(candidate_texts)
+            
+            # Filter out empty texts
+            valid_texts = [text for text in candidate_texts if text.strip()]
+            if not valid_texts:
+                return [0.0] * len(candidate_texts)
+            
+            # Generate embeddings
+            all_texts = [base_text] + valid_texts
+            embeddings = self._sentence_model.encode(
+                all_texts, 
+                batch_size=self.config['embedding_batch_size'],
+                show_progress_bar=False
+            )
+            
+            # Calculate cosine similarities
+            base_embedding = embeddings[0].reshape(1, -1)
+            candidate_embeddings = embeddings[1:]
+            
+            similarities = cosine_similarity(base_embedding, candidate_embeddings)[0]
+            
+            # Handle the case where some texts were filtered out
+            result_similarities = []
+            valid_idx = 0
+            
+            for text in candidate_texts:
+                if text.strip():
+                    result_similarities.append(float(similarities[valid_idx]))
+                    valid_idx += 1
+                else:
+                    result_similarities.append(0.0)
+            
+            return result_similarities
+            
+        except Exception as e:
+            logger.error(f"Error in embedding similarity calculation: {e}")
+            return [0.0] * len(candidate_texts)
+    
+    def _calculate_tfidf_similarities(self, base_text: str, candidate_texts: List[str]) -> List[float]:
+        """Calculate similarities using TF-IDF."""
+        try:
+            if not base_text.strip():
+                return [0.0] * len(candidate_texts)
+            
+            # Filter out empty texts
+            valid_texts = [text for text in candidate_texts if text.strip()]
+            if not valid_texts:
+                return [0.0] * len(candidate_texts)
+            
+            # Prepare all texts
+            all_texts = [base_text] + valid_texts
+            
+            # Fit TF-IDF and transform
+            tfidf_matrix = self._tfidf_vectorizer.fit_transform(all_texts)
+            
+            # Calculate similarities
+            base_vector = tfidf_matrix[0]
+            candidate_vectors = tfidf_matrix[1:]
+            
+            similarities = cosine_similarity(base_vector, candidate_vectors)[0]
+            
+            # Handle filtered texts
+            result_similarities = []
+            valid_idx = 0
+            
+            for text in candidate_texts:
+                if text.strip():
+                    result_similarities.append(float(similarities[valid_idx]))
+                    valid_idx += 1
+                else:
+                    result_similarities.append(0.0)
+            
+            return result_similarities
+            
+        except Exception as e:
+            logger.error(f"Error in TF-IDF similarity calculation: {e}")
+            return [0.0] * len(candidate_texts)
+    
+    def _calculate_language_similarity(self, base_content, candidate) -> float:
+        """Calculate language similarity score."""
+        try:
+            # Parse languages safely
+            base_languages = self._parse_languages(base_content.languages)
+            candidate_languages = self._parse_languages(candidate.languages)
+            
+            if not base_languages or not candidate_languages:
+                return 0.0
+            
+            # Convert to sets for intersection
+            base_set = set(lang.lower().strip() for lang in base_languages if lang)
+            candidate_set = set(lang.lower().strip() for lang in candidate_languages if lang)
+            
+            if not base_set or not candidate_set:
+                return 0.0
+            
+            # Calculate Jaccard similarity
+            intersection = base_set.intersection(candidate_set)
+            union = base_set.union(candidate_set)
+            
+            return len(intersection) / len(union) if union else 0.0
+            
+        except Exception as e:
+            logger.warning(f"Error calculating language similarity: {e}")
+            return 0.0
+    
+    def _calculate_genre_similarity(self, base_content, candidate) -> float:
+        """Calculate genre similarity score."""
+        try:
+            # Parse genres safely
+            base_genres = self._parse_genres(base_content.genres)
+            candidate_genres = self._parse_genres(candidate.genres)
+            
+            if not base_genres or not candidate_genres:
+                return 0.0
+            
+            # Convert to sets for intersection
+            base_set = set(genre.lower().strip() for genre in base_genres if genre)
+            candidate_set = set(genre.lower().strip() for genre in candidate_genres if genre)
+            
+            if not base_set or not candidate_set:
+                return 0.0
+            
+            # Calculate Jaccard similarity
+            intersection = base_set.intersection(candidate_set)
+            union = base_set.union(candidate_set)
+            
+            return len(intersection) / len(union) if union else 0.0
+            
+        except Exception as e:
+            logger.warning(f"Error calculating genre similarity: {e}")
+            return 0.0
+    
+    def _calculate_title_similarity(self, base_content, candidate) -> float:
+        """Calculate title similarity using simple string matching."""
+        try:
+            if not base_content.title or not candidate.title:
+                return 0.0
+            
+            base_title = self._clean_text(base_content.title)
+            candidate_title = self._clean_text(candidate.title)
+            
+            if not base_title or not candidate_title:
+                return 0.0
+            
+            # Simple word overlap calculation
+            base_words = set(base_title.split())
+            candidate_words = set(candidate_title.split())
+            
+            if not base_words or not candidate_words:
+                return 0.0
+            
+            intersection = base_words.intersection(candidate_words)
+            union = base_words.union(candidate_words)
+            
+            return len(intersection) / len(union) if union else 0.0
+            
+        except Exception as e:
+            logger.warning(f"Error calculating title similarity: {e}")
+            return 0.0
+    
+    def _parse_languages(self, languages_field) -> List[str]:
+        """Safely parse languages field."""
+        try:
+            if not languages_field:
+                return []
+            
+            if isinstance(languages_field, str):
+                return json.loads(languages_field)
+            elif isinstance(languages_field, list):
+                return languages_field
+            else:
+                return []
                 
-                # Ensure candidate has slug
-                if not candidate.slug:
-                    candidate.slug = f"content-{candidate.id}"
+        except (json.JSONDecodeError, TypeError):
+            return []
+    
+    def _parse_genres(self, genres_field) -> List[str]:
+        """Safely parse genres field."""
+        try:
+            if not genres_field:
+                return []
+            
+            if isinstance(genres_field, str):
+                return json.loads(genres_field)
+            elif isinstance(genres_field, list):
+                return genres_field
+            else:
+                return []
                 
-                # Get YouTube trailer URL
+        except (json.JSONDecodeError, TypeError):
+            return []
+    
+    def _determine_match_reason(self, story_score: float, language_score: float, 
+                              genre_score: float, title_score: float) -> str:
+        """Determine the primary reason for the match."""
+        scores = {
+            'story_content': story_score,
+            'language_match': language_score,
+            'genre_alignment': genre_score,
+            'title_similarity': title_score
+        }
+        
+        # Find the highest scoring factor
+        max_factor = max(scores.keys(), key=lambda k: scores[k])
+        max_score = scores[max_factor]
+        
+        # Create detailed reason based on score combinations
+        reasons = []
+        
+        if story_score >= 0.6:
+            reasons.append("similar story content")
+        if language_score >= 0.8:
+            reasons.append("exact language match")
+        if genre_score >= 0.5:
+            reasons.append("shared genres")
+        if title_score >= 0.3:
+            reasons.append("title similarity")
+        
+        if not reasons:
+            return f"low similarity match ({max_factor.replace('_', ' ')})"
+        
+        return ", ".join(reasons)
+    
+    def _classify_match_type(self, final_score: float, match_reason: str) -> str:
+        """Classify the type of match based on score and reason."""
+        if final_score >= 0.8:
+            return "excellent_match"
+        elif final_score >= 0.6:
+            return "good_match"
+        elif final_score >= 0.4:
+            return "moderate_match"
+        else:
+            return "weak_match"
+    
+    def _format_similar_content(self, similarities: List[Dict]) -> List[Dict]:
+        """Format similarity results for API response."""
+        formatted_results = []
+        
+        for similarity in similarities:
+            content = similarity['content']
+            
+            try:
+                # Ensure content has slug (try to generate if missing)
+                slug = getattr(content, 'slug', None)
+                if not slug:
+                    slug = f"content-{content.id}"
+                
+                # Get YouTube trailer URL if available
                 youtube_url = None
-                if candidate.youtube_trailer_id:
-                    youtube_url = f"https://www.youtube.com/watch?v={candidate.youtube_trailer_id}"
+                if hasattr(content, 'youtube_trailer_id') and content.youtube_trailer_id:
+                    youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
                 
                 # Format poster path
                 poster_path = None
-                if candidate.poster_path:
-                    if candidate.poster_path.startswith('http'):
-                        poster_path = candidate.poster_path
+                if hasattr(content, 'poster_path') and content.poster_path:
+                    if content.poster_path.startswith('http'):
+                        poster_path = content.poster_path
                     else:
-                        poster_path = f"https://image.tmdb.org/t/p/w300{candidate.poster_path}"
+                        poster_path = f"https://image.tmdb.org/t/p/w300{content.poster_path}"
                 
-                formatted_result = {
-                    'id': candidate.id,
-                    'slug': candidate.slug,
-                    'title': candidate.title,
+                formatted_content = {
+                    'id': content.id,
+                    'slug': slug,
+                    'title': content.title,
+                    'overview': content.overview[:200] + '...' if content.overview and len(content.overview) > 200 else content.overview,
                     'poster_path': poster_path,
-                    'rating': candidate.rating,
-                    'content_type': candidate.content_type,
+                    'rating': getattr(content, 'rating', None),
+                    'content_type': getattr(content, 'content_type', 'unknown'),
+                    'release_date': content.release_date.isoformat() if hasattr(content, 'release_date') and content.release_date else None,
+                    'genres': self._parse_genres(getattr(content, 'genres', None)),
+                    'languages': self._parse_languages(getattr(content, 'languages', None)),
                     'youtube_trailer': youtube_url,
-                    'similarity_score': round(result.similarity_score, 3),
-                    'match_type': result.match_type,
-                    'confidence': round(result.confidence, 3),
-                    'similarity_details': {
-                        'story_similarity': round(result.details.get('story_similarity', 0), 3),
-                        'genre_similarity': round(result.details.get('genre_similarity', 0), 3),
-                        'method': result.details.get('similarity_method', 'unknown')
-                    }
+                    'similarity_score': similarity['final_score'],
+                    'similarity_breakdown': {
+                        'story_similarity': similarity['story_similarity'],
+                        'language_similarity': similarity['language_similarity'],
+                        'genre_similarity': similarity['genre_similarity'],
+                        'title_similarity': similarity['title_similarity']
+                    },
+                    'match_reason': similarity['match_reason'],
+                    'match_type': similarity['match_type']
                 }
                 
-                # Add genres if available
-                try:
-                    formatted_result['genres'] = json.loads(candidate.genres or '[]')
-                except:
-                    formatted_result['genres'] = []
+                formatted_results.append(formatted_content)
                 
-                formatted_results.append(formatted_result)
+            except Exception as e:
+                logger.warning(f"Error formatting content {content.id}: {e}")
+                continue
+        
+        return formatted_results
+    
+    def _format_base_content(self, base_content) -> Dict:
+        """Format base content for API response."""
+        try:
+            slug = getattr(base_content, 'slug', None)
+            if not slug:
+                slug = f"content-{base_content.id}"
             
-            return formatted_results
-            
+            return {
+                'id': base_content.id,
+                'slug': slug,
+                'title': base_content.title,
+                'content_type': getattr(base_content, 'content_type', 'unknown'),
+                'rating': getattr(base_content, 'rating', None),
+                'genres': self._parse_genres(getattr(base_content, 'genres', None)),
+                'languages': self._parse_languages(getattr(base_content, 'languages', None))
+            }
         except Exception as e:
-            logger.error(f"Error formatting similar titles: {e}")
-            return []
+            logger.error(f"Error formatting base content: {e}")
+            return {'id': base_content.id, 'title': getattr(base_content, 'title', 'Unknown')}
+    
+    def _get_model_info(self) -> Dict:
+        """Get information about the models being used."""
+        return {
+            'primary_method': 'sentence_embeddings' if self._sentence_model else 'tfidf',
+            'embedding_model': self.config['embedding_model'] if self._sentence_model else None,
+            'fallback_method': 'tfidf_cosine_similarity',
+            'sentence_transformers_available': SENTENCE_TRANSFORMERS_AVAILABLE
+        }
+    
+    def _generate_cache_key(self, content_id: int, limit: int, 
+                           strict_language: bool, min_similarity: Optional[float]) -> str:
+        """Generate cache key for similarity results."""
+        return f"similar:{content_id}:{limit}:{strict_language}:{min_similarity or 'default'}"
+    
+    def _create_error_response(self, error_message: str, content_id: int) -> Dict:
+        """Create standardized error response."""
+        return {
+            'base_content': {'id': content_id},
+            'similar_content': [],
+            'metadata': {
+                'error': error_message,
+                'algorithm': 'advanced_semantic_similarity',
+                'timestamp': datetime.utcnow().isoformat()
+            }
+        }
+    
+    def _create_empty_response(self, base_content, reason: str) -> Dict:
+        """Create response for when no similar content is found."""
+        return {
+            'base_content': self._format_base_content(base_content),
+            'similar_content': [],
+            'metadata': {
+                'algorithm': 'advanced_semantic_similarity',
+                'reason': reason,
+                'total_candidates_analyzed': 0,
+                'results_returned': 0,
+                'timestamp': datetime.utcnow().isoformat()
+            }
+        }
 
-# Factory function for easy integration
-def create_similar_titles_engine(db, content_model, cache=None) -> SimilarTitlesEngine:
+
+# Factory function for easy initialization
+def create_similar_content_service(db, content_model, cache=None, config=None):
     """
-    Factory function to create SimilarTitlesEngine instance
+    Factory function to create a SimilarContentService instance.
     
     Args:
-        db: SQLAlchemy database instance
-        content_model: Content model class
+        db: SQLAlchemy database session
+        content_model: Content SQLAlchemy model
         cache: Cache instance (optional)
-        
+        config: Configuration dictionary (optional)
+    
     Returns:
-        SimilarTitlesEngine instance
+        SimilarContentService instance
     """
-    return SimilarTitlesEngine(db, content_model, cache)
+    return SimilarContentService(db, content_model, cache, config)
 
-# Test function
-def test_similar_titles_engine():
-    """
-    Test function for SimilarTitlesEngine
-    Usage: python -c "from backend.services.similar import test_similar_titles_engine; test_similar_titles_engine()"
-    """
-    print("Testing SimilarTitlesEngine...")
-    
-    # Test text preprocessing
-    preprocessor = TextPreprocessor()
-    test_text = "A young wizard goes to a magical school and fights against dark forces."
-    cleaned = preprocessor.clean_text(test_text)
-    keywords = preprocessor.extract_plot_keywords(test_text)
-    
-    print(f"Original: {test_text}")
-    print(f"Cleaned: {cleaned}")
-    print(f"Keywords: {keywords}")
-    
-    # Test language matching
-    lang1 = ['english', 'en']
-    lang2 = ['en', 'english']
-    lang3 = ['hindi', 'hi']
-    
-    print(f"English variants match: {LanguageMatcher.languages_match(lang1, lang2)}")
-    print(f"English-Hindi match: {LanguageMatcher.languages_match(lang1, lang3)}")
-    
-    # Test embedding engine (if available)
-    embedding_engine = StoryEmbeddingEngine()
-    if embedding_engine.model or embedding_engine.spacy_model:
-        sim = embedding_engine.calculate_similarity(
-            "A young wizard learns magic at school",
-            "A teenage sorcerer studies witchcraft at academy"
-        )
-        print(f"Story similarity: {sim:.3f}")
-    else:
-        print("No embedding models available for testing")
-    
-    print("Test completed!")
 
-if __name__ == "__main__":
-    test_similar_titles_engine()
+# Configuration presets for different use cases
+SIMILARITY_CONFIGS = {
+    'high_accuracy': {
+        'similarity_threshold': 0.5,
+        'weights': {
+            'story_similarity': 0.5,
+            'language_match': 0.3,
+            'genre_alignment': 0.15,
+            'title_similarity': 0.05
+        },
+        'language_boost': 0.25,
+        'max_candidates': 500
+    },
+    'fast_performance': {
+        'similarity_threshold': 0.3,
+        'weights': {
+            'story_similarity': 0.4,
+            'language_match': 0.3,
+            'genre_alignment': 0.2,
+            'title_similarity': 0.1
+        },
+        'max_candidates': 200,
+        'embedding_batch_size': 16
+    },
+    'language_priority': {
+        'similarity_threshold': 0.4,
+        'weights': {
+            'story_similarity': 0.3,
+            'language_match': 0.4,
+            'genre_alignment': 0.2,
+            'title_similarity': 0.1
+        },
+        'language_boost': 0.3,
+        'genre_boost': 0.05
+    }
+}
