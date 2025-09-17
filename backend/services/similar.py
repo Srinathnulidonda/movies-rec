@@ -2,6 +2,7 @@
 import json
 import logging
 import re
+import os
 import asyncio
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional, Tuple, Set
@@ -16,16 +17,42 @@ import time
 from sqlalchemy import and_, or_, func, text
 from sqlalchemy.orm import joinedload
 import numpy as np
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
-from sklearn.decomposition import TruncatedSVD
-import nltk
-from nltk.corpus import stopwords
-from nltk.tokenize import word_tokenize
-from nltk.stem import WordNetLemmatizer
 
 # Configure logging
 logger = logging.getLogger(__name__)
+
+# Try to import NLTK with graceful fallback
+NLTK_AVAILABLE = False
+try:
+    import nltk
+    from nltk.corpus import stopwords
+    from nltk.tokenize import word_tokenize
+    from nltk.stem import WordNetLemmatizer
+    
+    # Set NLTK data path for production environments
+    if not os.path.exists(nltk.data.find('tokenizers/punkt')):
+        nltk_data_dir = os.path.join(os.getcwd(), 'nltk_data')
+        if not os.path.exists(nltk_data_dir):
+            os.makedirs(nltk_data_dir, exist_ok=True)
+        nltk.data.path.append(nltk_data_dir)
+    
+    NLTK_AVAILABLE = True
+    logger.info("NLTK successfully imported")
+except ImportError as e:
+    logger.warning(f"NLTK not available: {e}")
+except Exception as e:
+    logger.warning(f"NLTK initialization error: {e}")
+
+# Try to import scikit-learn with graceful fallback
+SKLEARN_AVAILABLE = False
+try:
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    from sklearn.metrics.pairwise import cosine_similarity
+    from sklearn.decomposition import TruncatedSVD
+    SKLEARN_AVAILABLE = True
+    logger.info("Scikit-learn successfully imported")
+except ImportError as e:
+    logger.warning(f"Scikit-learn not available: {e}")
 
 class SimilarityType(Enum):
     """Types of similarity calculations"""
@@ -88,7 +115,7 @@ class ContentMetadata:
     rating: float
     popularity: float
     language_family: LanguageFamily
-    
+
 class AdvancedLanguageDetector:
     """Advanced language detection and classification"""
     
@@ -170,44 +197,105 @@ class AdvancedLanguageDetector:
         
         return normalized_languages, primary_family
 
+class SimpleTextAnalyzer:
+    """Simple text analysis without NLTK dependencies"""
+    
+    # Common English stop words
+    STOP_WORDS = {
+        'a', 'an', 'and', 'are', 'as', 'at', 'be', 'been', 'by', 'for', 'from',
+        'has', 'he', 'in', 'is', 'it', 'its', 'of', 'on', 'that', 'the', 'to',
+        'was', 'will', 'with', 'would', 'his', 'her', 'him', 'she', 'they', 'we',
+        'you', 'your', 'this', 'that', 'these', 'those', 'but', 'or', 'if', 'when',
+        'where', 'why', 'how', 'all', 'any', 'both', 'each', 'few', 'more', 'most',
+        'other', 'some', 'such', 'only', 'own', 'same', 'so', 'than', 'too', 'very'
+    }
+    
+    @classmethod
+    def simple_tokenize(cls, text: str) -> List[str]:
+        """Simple word tokenization"""
+        if not text:
+            return []
+        
+        # Remove punctuation and split
+        text = re.sub(r'[^\w\s]', ' ', text.lower())
+        words = text.split()
+        
+        # Filter out short words and stop words
+        filtered_words = [
+            word for word in words 
+            if len(word) > 2 and word not in cls.STOP_WORDS
+        ]
+        
+        return filtered_words
+    
+    @classmethod
+    def extract_keywords(cls, text: str, max_keywords: int = 10) -> List[str]:
+        """Extract keywords from text"""
+        words = cls.simple_tokenize(text)
+        
+        # Count word frequency
+        word_freq = Counter(words)
+        
+        # Get most common words
+        keywords = [word for word, count in word_freq.most_common(max_keywords)]
+        
+        return keywords
+
 class StoryContentAnalyzer:
-    """Advanced story and content analysis"""
+    """Advanced story and content analysis with fallbacks"""
     
     def __init__(self):
         self.vectorizer = None
         self.svd = None
-        self.is_initialized = False
+        self.nltk_initialized = False
+        self.text_analyzer = SimpleTextAnalyzer()
         self._init_nlp_tools()
     
     def _init_nlp_tools(self):
-        """Initialize NLP tools"""
-        try:
-            # Download required NLTK data
-            nltk.download('punkt', quiet=True)
-            nltk.download('stopwords', quiet=True)
-            nltk.download('wordnet', quiet=True)
-            
-            self.lemmatizer = WordNetLemmatizer()
-            self.stop_words = set(stopwords.words('english'))
-            
-            # Initialize TF-IDF vectorizer
-            self.vectorizer = TfidfVectorizer(
-                max_features=5000,
-                stop_words='english',
-                ngram_range=(1, 3),
-                max_df=0.95,
-                min_df=2,
-                lowercase=True,
-                strip_accents='unicode'
-            )
-            
-            # Initialize SVD for dimensionality reduction
-            self.svd = TruncatedSVD(n_components=100, random_state=42)
-            
-        except Exception as e:
-            logger.warning(f"NLP tools initialization failed: {e}")
-            self.lemmatizer = None
-            self.stop_words = set()
+        """Initialize NLP tools with graceful fallback"""
+        if NLTK_AVAILABLE:
+            try:
+                # Download required NLTK data with error handling
+                try:
+                    nltk.download('punkt', quiet=True)
+                    nltk.download('punkt_tab', quiet=True)  # New punkt_tab resource
+                    nltk.download('stopwords', quiet=True)
+                    nltk.download('wordnet', quiet=True)
+                    nltk.download('omw-1.4', quiet=True)  # For wordnet lemmatizer
+                except Exception as e:
+                    logger.warning(f"NLTK download failed: {e}")
+                
+                # Try to initialize NLTK components
+                try:
+                    self.lemmatizer = WordNetLemmatizer()
+                    self.stop_words = set(stopwords.words('english'))
+                    self.nltk_initialized = True
+                    logger.info("NLTK tools initialized successfully")
+                except Exception as e:
+                    logger.warning(f"NLTK tools initialization failed: {e}")
+                    self.nltk_initialized = False
+                
+            except Exception as e:
+                logger.warning(f"NLTK setup failed: {e}")
+                self.nltk_initialized = False
+        
+        # Initialize scikit-learn tools if available
+        if SKLEARN_AVAILABLE:
+            try:
+                self.vectorizer = TfidfVectorizer(
+                    max_features=5000,
+                    stop_words='english',
+                    ngram_range=(1, 3),
+                    max_df=0.95,
+                    min_df=2,
+                    lowercase=True,
+                    strip_accents='unicode'
+                )
+                
+                self.svd = TruncatedSVD(n_components=100, random_state=42)
+                logger.info("Scikit-learn tools initialized successfully")
+            except Exception as e:
+                logger.warning(f"Scikit-learn initialization failed: {e}")
     
     def extract_themes(self, overview: str, genres: List[str]) -> List[str]:
         """Extract themes from content overview and genres"""
@@ -223,7 +311,7 @@ class StoryContentAnalyzer:
             'family': ['family', 'father', 'mother', 'brother', 'sister', 'son', 'daughter'],
             'friendship': ['friend', 'friendship', 'buddy', 'companion'],
             'betrayal': ['betrayal', 'betray', 'deception', 'backstab'],
-            'sacrifice': ['sacrifice', 'sacrifice', 'selfless', 'giving up'],
+            'sacrifice': ['sacrifice', 'selfless', 'giving up'],
             'redemption': ['redemption', 'redeem', 'second chance', 'forgiveness'],
             'power': ['power', 'authority', 'control', 'dominance', 'rule'],
             'justice': ['justice', 'law', 'court', 'judge', 'crime'],
@@ -291,7 +379,7 @@ class StoryContentAnalyzer:
     def calculate_story_similarity(self, content1: ContentMetadata, content2: ContentMetadata) -> float:
         """Calculate story similarity between two content items"""
         try:
-            # Overview similarity using TF-IDF
+            # Overview similarity using simple text similarity
             overview_sim = self._calculate_text_similarity(
                 content1.overview or "", 
                 content2.overview or ""
@@ -338,14 +426,17 @@ class StoryContentAnalyzer:
             # Use sequence matcher for basic similarity
             similarity = difflib.SequenceMatcher(None, text1.lower(), text2.lower()).ratio()
             
-            # If vectorizer is available, use TF-IDF
-            if self.vectorizer and len(text1) > 20 and len(text2) > 20:
+            # If vectorizer is available and texts are substantial, use TF-IDF
+            if (SKLEARN_AVAILABLE and self.vectorizer and 
+                len(text1) > 20 and len(text2) > 20):
                 try:
                     tfidf_matrix = self.vectorizer.fit_transform([text1, text2])
                     cosine_sim = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:2])[0][0]
                     # Combine both measures
                     similarity = (similarity + cosine_sim) / 2
-                except:
+                except Exception as e:
+                    logger.debug(f"TF-IDF similarity failed: {e}")
+                    # Fall back to sequence matcher result
                     pass
             
             return similarity
@@ -516,6 +607,7 @@ class ContentMetadataExtractor:
         self.ContentPerson = models['ContentPerson']
         self.Person = models['Person']
         self.story_analyzer = StoryContentAnalyzer()
+        self.text_analyzer = SimpleTextAnalyzer()
     
     def extract_metadata(self, content) -> ContentMetadata:
         """Extract comprehensive metadata from content object"""
@@ -536,7 +628,7 @@ class ContentMetadataExtractor:
             narrative_elements = self.story_analyzer.extract_narrative_elements(content.overview or "")
             
             # Extract keywords from title and overview
-            keywords = self._extract_keywords(content.title, content.overview)
+            keywords = self._extract_keywords_safe(content.title, content.overview)
             
             return ContentMetadata(
                 id=content.id,
@@ -607,7 +699,6 @@ class ContentMetadataExtractor:
                     main_cast.append(person.name)
             
             # For now, production companies would need to be extracted from TMDB data
-            # This would require additional API calls or database schema changes
             production_companies = []
             
             return directors, writers, main_cast, production_companies
@@ -616,37 +707,50 @@ class ContentMetadataExtractor:
             logger.warning(f"Cast/crew extraction error: {e}")
             return [], [], [], []
     
-    def _extract_keywords(self, title: str, overview: str) -> List[str]:
-        """Extract keywords from title and overview"""
+    def _extract_keywords_safe(self, title: str, overview: str) -> List[str]:
+        """Extract keywords with fallback to simple text analysis"""
         keywords = []
         
-        # Extract from title
-        if title:
-            title_words = re.findall(r'\b\w{3,}\b', title.lower())
-            keywords.extend(title_words)
-        
-        # Extract from overview
-        if overview and self.story_analyzer.lemmatizer:
-            try:
-                # Tokenize and lemmatize
-                tokens = word_tokenize(overview.lower())
-                important_words = [
-                    self.story_analyzer.lemmatizer.lemmatize(word)
-                    for word in tokens
-                    if (word.isalpha() and 
-                        len(word) > 3 and 
-                        word not in self.story_analyzer.stop_words)
-                ]
-                
-                # Get most frequent words
-                word_freq = Counter(important_words)
-                top_words = [word for word, count in word_freq.most_common(10)]
-                keywords.extend(top_words)
-                
-            except Exception as e:
-                logger.warning(f"Keyword extraction error: {e}")
-        
-        return list(set(keywords))
+        try:
+            # Extract from title
+            if title:
+                title_words = self.text_analyzer.extract_keywords(title, max_keywords=5)
+                keywords.extend(title_words)
+            
+            # Extract from overview
+            if overview:
+                if self.story_analyzer.nltk_initialized:
+                    # Try NLTK approach first
+                    try:
+                        tokens = word_tokenize(overview.lower())
+                        important_words = [
+                            self.story_analyzer.lemmatizer.lemmatize(word)
+                            for word in tokens
+                            if (word.isalpha() and 
+                                len(word) > 3 and 
+                                word not in self.story_analyzer.stop_words)
+                        ]
+                        
+                        # Get most frequent words
+                        word_freq = Counter(important_words)
+                        top_words = [word for word, count in word_freq.most_common(10)]
+                        keywords.extend(top_words)
+                        
+                    except Exception as e:
+                        logger.debug(f"NLTK keyword extraction failed: {e}")
+                        # Fall back to simple analysis
+                        overview_words = self.text_analyzer.extract_keywords(overview, max_keywords=10)
+                        keywords.extend(overview_words)
+                else:
+                    # Use simple text analyzer
+                    overview_words = self.text_analyzer.extract_keywords(overview, max_keywords=10)
+                    keywords.extend(overview_words)
+            
+            return list(set(keywords))
+            
+        except Exception as e:
+            logger.warning(f"Keyword extraction failed: {e}")
+            return []
 
 class AdvancedSimilarityEngine:
     """Advanced similarity engine with multiple algorithms"""
@@ -690,6 +794,8 @@ class AdvancedSimilarityEngine:
                 'quality': 0.05
             }
         }
+        
+        logger.info(f"Advanced Similarity Engine initialized - NLTK: {NLTK_AVAILABLE}, Sklearn: {SKLEARN_AVAILABLE}")
     
     def find_similar_content(self, content_id: int, limit: int = 10, 
                            min_similarity: float = 0.3, 
@@ -1338,7 +1444,8 @@ def init_similarity_service(app, db, models, cache_backend=None):
         # Create genre explorer
         genre_explorer = GenreExplorer(db, models, similarity_engine)
         
-        logger.info("Similarity service initialized successfully")
+        logger.info("Similarity service initialized successfully with fallbacks")
+        logger.info(f"Available features: NLTK={NLTK_AVAILABLE}, Sklearn={SKLEARN_AVAILABLE}")
         
         return {
             'similarity_engine': similarity_engine,
