@@ -28,8 +28,8 @@ from urllib3.util.retry import Retry
 from flask_mail import Mail
 from services.upcoming import UpcomingContentService, ContentType, LanguagePriority
 import asyncio
+from services.similar import init_similarity_service, AdvancedSimilarityEngine, GenreExplorer
 import services.auth as auth
-from services.similar import init_story_based_similarity_service
 from services.auth import init_auth, auth_bp
 from services.admin import admin_bp, init_admin
 from services.users import users_bp, init_users
@@ -845,12 +845,34 @@ try:
 except Exception as e:
     logger.error(f"Failed to initialize details/content services: {e}")
 
-# Now build services dictionary with ContentService
+# Initialize similarity service after details service - ADD THIS SECTION
+similarity_service = None
+similarity_engine = None
+genre_explorer = None
+
+try:
+    with app.app_context():
+        # Initialize similarity service
+        similarity_components = init_similarity_service(app, db, models, cache)
+        if similarity_components:
+            similarity_engine = similarity_components['similarity_engine']
+            genre_explorer = similarity_components['genre_explorer']
+            similarity_service = similarity_components
+            logger.info("Similarity service initialized successfully")
+        else:
+            logger.error("Failed to initialize similarity service")
+except Exception as e:
+    logger.error(f"Failed to initialize similarity service: {e}")
+
+
+# Update the services dictionary
 services = {
     'TMDBService': TMDBService,
     'JikanService': JikanService,
-    'ContentService': content_service,  # Add ContentService here
+    'ContentService': content_service,
     'MLServiceClient': MLServiceClient,
+    'similarity_engine': similarity_engine,  # ADD THIS
+    'genre_explorer': genre_explorer,        # ADD THIS
     'http_session': http_session,
     'ML_SERVICE_URL': ML_SERVICE_URL,
     'cache': cache
@@ -865,14 +887,6 @@ init_auth(app, db, User)
 # Initialize other services
 init_admin(app, db, models, services)
 init_users(app, db, models, services)
-
-story_similar_service = None
-try:
-    with app.app_context():
-        story_similar_service = init_story_based_similarity_service(app, db, models, cache)
-        logger.info("Story-based similarity service initialized successfully")
-except Exception as e:
-    logger.error(f"Failed to initialize story similarity service: {e}")
 
 
 # API Routes
@@ -1805,178 +1819,387 @@ def get_anime():
 
 # OPTIMIZED Similar Recommendations Endpoint - FIXED
 @app.route('/api/recommendations/similar/<int:content_id>', methods=['GET'])
-def get_story_based_similar_recommendations(content_id):
-    """Story-centric similar recommendations - Content and narrative focused"""
+def get_similar_recommendations(content_id):
+    """Enhanced similarity endpoint using advanced similarity engine"""
     try:
         # Parameters
-        limit = min(int(request.args.get('limit', 10)), 20)
-        min_story_similarity = float(request.args.get('min_story_similarity', 0.3))
-        include_story_analysis = request.args.get('include_analysis', 'false').lower() == 'true'
+        limit = min(int(request.args.get('limit', 12)), 20)  # Cap at 20
+        min_similarity = float(request.args.get('min_similarity', 0.3))
+        language_priority = request.args.get('language_priority', 'true').lower() == 'true'
         
-        # Get user context if available
-        user_id = None
-        auth_header = request.headers.get('Authorization')
-        if auth_header and auth_header.startswith('Bearer '):
-            token = auth_header.split(' ')[1]
+        # Check if similarity service is available
+        if not similarity_engine:
+            logger.error("Similarity engine not available - falling back to basic similarity")
+            return get_basic_similar_recommendations(content_id, limit, min_similarity)
+        
+        # Check cache first
+        cache_key = f"advanced_similar:{content_id}:{limit}:{min_similarity}:{language_priority}"
+        if cache:
             try:
-                payload = jwt.decode(token, app.config['SECRET_KEY'], algorithms=['HS256'])
-                user_id = payload.get('user_id')
-            except:
-                pass
+                cached_result = cache.get(cache_key)
+                if cached_result:
+                    return jsonify(cached_result), 200
+            except Exception as e:
+                logger.warning(f"Cache get error: {e}")
         
-        if not story_similar_service:
-            return jsonify({'error': 'Story similarity service unavailable'}), 503
+        # Get base content
+        base_content = Content.query.get(content_id)
+        if not base_content:
+            return jsonify({'error': 'Content not found'}), 404
         
-        # Get story-based similar content
-        result = story_similar_service.get_story_based_similar_content(
+        # Ensure base content has slug
+        if not base_content.slug:
+            try:
+                base_content.ensure_slug()
+                db.session.commit()
+            except Exception as e:
+                logger.warning(f"Slug generation failed: {e}")
+                base_content.slug = f"content-{base_content.id}"
+        
+        # Use advanced similarity engine
+        similar_results = similarity_engine.find_similar_content(
             content_id=content_id,
             limit=limit,
-            min_story_similarity=min_story_similarity,
-            user_id=user_id,
-            include_story_analysis=include_story_analysis
+            min_similarity=min_similarity,
+            language_priority=language_priority
         )
         
-        # Track interaction
+        # Process results for response
+        similar_content = []
+        for result in similar_results:
+            content = result['content']
+            metadata = result['metadata']
+            score = result['similarity_score']
+            
+            # Ensure content has slug
+            if not content.slug:
+                try:
+                    content.ensure_slug()
+                except Exception:
+                    content.slug = f"content-{content.id}"
+            
+            # Get YouTube trailer URL
+            youtube_url = None
+            if content.youtube_trailer_id:
+                youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
+            
+            similar_content.append({
+                'id': content.id,
+                'slug': content.slug,
+                'title': content.title,
+                'original_title': content.original_title,
+                'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
+                'rating': content.rating,
+                'content_type': content.content_type,
+                'genres': metadata.genres,
+                'languages': metadata.languages,
+                'release_year': metadata.release_year,
+                'youtube_trailer': youtube_url,
+                'similarity_score': round(score.overall_score, 3),
+                'language_score': round(score.language_score, 3),
+                'story_score': round(score.story_score, 3),
+                'genre_score': round(score.genre_score, 3),
+                'confidence': round(score.confidence, 3),
+                'match_reasons': score.match_reasons,
+                'match_type': 'advanced_algorithm'
+            })
+        
+        # Track interaction (non-blocking)
         try:
             session_id = get_session_id()
-            if user_id:
-                interaction = UserInteraction(
-                    user_id=user_id,
-                    content_id=content_id,
-                    interaction_type='similar_view_story',
-                    interaction_metadata={'algorithm': 'story_centric_v3'}
-                )
-                db.session.add(interaction)
-            else:
-                interaction = AnonymousInteraction(
-                    session_id=session_id,
-                    content_id=content_id,
-                    interaction_type='similar_view_story',
-                    ip_address=request.remote_addr
-                )
-                db.session.add(interaction)
-            
+            interaction = AnonymousInteraction(
+                session_id=session_id,
+                content_id=content_id,
+                interaction_type='similar_view',
+                ip_address=request.remote_addr
+            )
+            db.session.add(interaction)
             db.session.commit()
         except Exception as e:
             logger.warning(f"Interaction tracking failed: {e}")
         
-        return jsonify(result), 200
+        # Prepare response
+        response = {
+            'base_content': {
+                'id': base_content.id,
+                'slug': base_content.slug or f"content-{base_content.id}",
+                'title': base_content.title,
+                'content_type': base_content.content_type,
+                'rating': base_content.rating,
+                'languages': json.loads(base_content.languages or '[]')
+            },
+            'similar_content': similar_content,
+            'metadata': {
+                'algorithm': 'advanced_similarity_engine',
+                'total_results': len(similar_content),
+                'similarity_threshold': min_similarity,
+                'language_priority_applied': language_priority,
+                'factors_considered': [
+                    'language_accuracy_100%',
+                    'story_content_analysis',
+                    'perfect_title_matching',
+                    'cast_crew_similarity',
+                    'production_analysis',
+                    'genre_relationships'
+                ],
+                'timestamp': datetime.utcnow().isoformat()
+            }
+        }
+        
+        # Cache the result
+        if cache:
+            try:
+                cache.set(cache_key, response, timeout=1800)  # 30 minutes
+            except Exception as e:
+                logger.warning(f"Caching failed: {e}")
+        
+        return jsonify(response), 200
         
     except Exception as e:
-        logger.error(f"Story-based similar recommendations error: {e}")
+        logger.error(f"Advanced similar recommendations error: {e}")
+        # Fallback to basic similarity
+        return get_basic_similar_recommendations(content_id, limit, min_similarity)
+
+def get_basic_similar_recommendations(content_id, limit=10, min_similarity=0.3):
+    """Fallback basic similarity function"""
+    try:
+        base_content = Content.query.get(content_id)
+        if not base_content:
+            return jsonify({'error': 'Content not found'}), 404
+        
+        # Ensure base content has slug
+        if not base_content.slug:
+            try:
+                base_content.ensure_slug()
+                db.session.commit()
+            except Exception:
+                base_content.slug = f"content-{base_content.id}"
+        
+        # Basic genre-based similarity
+        similar_content = []
+        try:
+            genres = json.loads(base_content.genres or '[]')
+            if genres:
+                primary_genre = genres[0]
+                similar_items = Content.query.filter(
+                    Content.id != content_id,
+                    Content.content_type == base_content.content_type,
+                    Content.genres.contains(primary_genre)
+                ).order_by(Content.rating.desc()).limit(limit).all()
+                
+                for item in similar_items:
+                    if not item.slug:
+                        item.slug = f"content-{item.id}"
+                    
+                    youtube_url = None
+                    if item.youtube_trailer_id:
+                        youtube_url = f"https://www.youtube.com/watch?v={item.youtube_trailer_id}"
+                    
+                    similar_content.append({
+                        'id': item.id,
+                        'slug': item.slug,
+                        'title': item.title,
+                        'poster_path': f"https://image.tmdb.org/t/p/w300{item.poster_path}" if item.poster_path and not item.poster_path.startswith('http') else item.poster_path,
+                        'rating': item.rating,
+                        'content_type': item.content_type,
+                        'similarity_score': 0.7,  # Default score
+                        'match_type': 'basic_genre_based',
+                        'youtube_trailer': youtube_url
+                    })
+        except Exception as e:
+            logger.error(f"Basic similarity error: {e}")
+        
+        response = {
+            'base_content': {
+                'id': base_content.id,
+                'slug': base_content.slug,
+                'title': base_content.title,
+                'content_type': base_content.content_type,
+                'rating': base_content.rating
+            },
+            'similar_content': similar_content,
+            'metadata': {
+                'algorithm': 'basic_fallback',
+                'total_results': len(similar_content),
+                'timestamp': datetime.utcnow().isoformat()
+            }
+        }
+        
+        return jsonify(response), 200
+        
+    except Exception as e:
+        logger.error(f"Basic similarity fallback error: {e}")
         return jsonify({
-            'error': 'Failed to get story-based similar recommendations',
-            'base_content': {'id': content_id},
+            'error': 'Failed to get similar recommendations',
             'similar_content': [],
             'metadata': {'error': str(e)}
         }), 500
 
-@app.route('/api/content/<int:content_id>/story-analysis', methods=['GET'])
-def get_content_story_analysis(content_id):
-    """Get detailed story analysis for content"""
-    try:
-        if not story_similar_service:
-            return jsonify({'error': 'Story analysis service unavailable'}), 503
-        
-        story_analysis = story_similar_service.story_calculator.get_story_analysis(content_id)
-        
-        analysis_data = {
-            'content_id': content_id,
-            'themes': list(story_analysis.main_themes),
-            'narrative_patterns': [p.value for p in story_analysis.narrative_patterns],
-            'character_archetypes': list(story_analysis.character_archetypes),
-            'conflict_types': list(story_analysis.conflict_types),
-            'emotional_analysis': {
-                'tone': story_analysis.emotional_tone,
-                'intensity': story_analysis.emotional_intensity,
-                'complexity': story_analysis.emotional_complexity
-            },
-            'story_structure': {
-                'complexity_score': story_analysis.story_complexity_score,
-                'pacing_type': story_analysis.pacing_type,
-                'narrative_style': story_analysis.narrative_style
-            },
-            'setting_context': {
-                'setting_type': story_analysis.setting_type,
-                'time_period': story_analysis.time_period,
-                'story_scope': story_analysis.story_scope
-            },
-            'keywords': {
-                'plot_keywords': list(story_analysis.plot_keywords)[:10],
-                'character_keywords': list(story_analysis.character_keywords),
-                'emotion_keywords': list(story_analysis.emotion_keywords),
-                'action_keywords': list(story_analysis.action_keywords)
-            }
-        }
-        
-        return jsonify(analysis_data), 200
-        
-    except Exception as e:
-        logger.error(f"Story analysis error: {e}")
-        return jsonify({'error': 'Failed to get story analysis'}), 500
-
-# Service performance endpoint
-@app.route('/api/similar/story-performance', methods=['GET'])
-def get_story_service_performance():
-    """Get story similarity service performance"""
-    try:
-        if not story_similar_service:
-            return jsonify({'error': 'Service unavailable'}), 503
-        
-        performance = story_similar_service.get_service_performance()
-        return jsonify(performance), 200
-        
-    except Exception as e:
-        logger.error(f"Story service performance error: {e}")
-        return jsonify({'error': 'Failed to get performance stats'}), 500
-
-# New genre exploration endpoint
 @app.route('/api/explore/genre/<genre>', methods=['GET'])
-def explore_genre_v2(genre):
-    """Advanced genre exploration with language prioritization"""
+def explore_genre_advanced(genre):
+    """Advanced genre exploration endpoint"""
     try:
         # Parameters
-        language_preference = request.args.get('language', 'telugu')  # Default Telugu
         content_type = request.args.get('type', 'movie')
-        limit = min(int(request.args.get('limit', 20)), 50)  # Cap at 50
+        limit = min(int(request.args.get('limit', 20)), 50)
+        language_preference = request.args.getlist('language') or ['telugu', 'english', 'hindi']
         quality_threshold = float(request.args.get('quality_threshold', 6.0))
         
-        if not similar_service:
-            return jsonify({'error': 'Genre exploration service unavailable'}), 503
+        # Check if genre explorer is available
+        if not genre_explorer:
+            logger.error("Genre explorer not available - falling back to basic genre search")
+            return get_basic_genre_recommendations(genre, content_type, limit)
         
-        # Get genre exploration results
-        result = similar_service.explore_genre(
+        # Check cache
+        cache_key = f"genre_explore:{genre}:{content_type}:{limit}:{':'.join(language_preference)}:{quality_threshold}"
+        if cache:
+            try:
+                cached_result = cache.get(cache_key)
+                if cached_result:
+                    return jsonify(cached_result), 200
+            except Exception as e:
+                logger.warning(f"Cache get error: {e}")
+        
+        # Use advanced genre explorer
+        exploration_result = genre_explorer.explore_genre(
             genre=genre,
-            language_preference=language_preference,
             content_type=content_type,
             limit=limit,
+            language_preference=language_preference,
             quality_threshold=quality_threshold
         )
         
-        return jsonify(result), 200
+        # Process results for response
+        recommendations = []
+        for result in exploration_result.get('results', []):
+            content = result['content']
+            metadata = result['metadata']
+            
+            # Ensure content has slug
+            if not content.slug:
+                try:
+                    content.ensure_slug()
+                except Exception:
+                    content.slug = f"content-{content.id}"
+            
+            # Get YouTube trailer URL
+            youtube_url = None
+            if content.youtube_trailer_id:
+                youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
+            
+            recommendations.append({
+                'id': content.id,
+                'slug': content.slug,
+                'title': content.title,
+                'original_title': content.original_title,
+                'content_type': content.content_type,
+                'genres': metadata.genres,
+                'anime_genres': metadata.anime_genres,
+                'languages': metadata.languages,
+                'rating': content.rating,
+                'release_year': metadata.release_year,
+                'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
+                'overview': content.overview[:200] + '...' if content.overview and len(content.overview) > 200 else content.overview,
+                'youtube_trailer': youtube_url,
+                'genre_relevance': round(result['genre_relevance'], 3),
+                'match_type': result['match_type'],
+                'themes': metadata.themes[:5]  # Top 5 themes
+            })
         
-    except Exception as e:
-        logger.error(f"Genre exploration v2 error: {e}")
-        return jsonify({
-            'error': 'Failed to explore genre',
+        # Prepare enhanced response
+        response = {
             'genre': genre,
-            'results': []
-        }), 500
-
-# Performance monitoring endpoint for similar service
-@app.route('/api/similar/metrics', methods=['GET'])
-def get_similar_service_metrics():
-    """Get similar service performance metrics"""
-    try:
-        if not similar_service:
-            return jsonify({'error': 'Service unavailable'}), 503
+            'content_type': content_type,
+            'total_results': len(recommendations),
+            'recommendations': recommendations,
+            'exploration_data': {
+                'related_genres': exploration_result.get('related_genres', []),
+                'language_distribution': exploration_result.get('language_distribution', {}),
+                'quality_stats': exploration_result.get('quality_stats', {}),
+                'language_preference_applied': language_preference,
+                'quality_threshold': quality_threshold
+            },
+            'metadata': {
+                'algorithm': 'advanced_genre_explorer',
+                'factors_considered': [
+                    'direct_genre_matching',
+                    'related_genre_analysis',
+                    'language_priority',
+                    'quality_filtering',
+                    'story_theme_analysis'
+                ],
+                'timestamp': datetime.utcnow().isoformat()
+            }
+        }
         
-        metrics = similar_service.get_performance_metrics()
-        return jsonify(metrics), 200
+        # Cache the result
+        if cache:
+            try:
+                cache.set(cache_key, response, timeout=1800)  # 30 minutes
+            except Exception as e:
+                logger.warning(f"Caching failed: {e}")
+        
+        return jsonify(response), 200
         
     except Exception as e:
-        logger.error(f"Similar service metrics error: {e}")
-        return jsonify({'error': 'Failed to get metrics'}), 500
+        logger.error(f"Advanced genre exploration error: {e}")
+        return get_basic_genre_recommendations(genre, content_type, limit)
+
+def get_basic_genre_recommendations(genre, content_type='movie', limit=20):
+    """Fallback basic genre recommendations"""
+    try:
+        # Genre ID mapping for TMDB
+        genre_ids = {
+            'action': 28, 'adventure': 12, 'animation': 16,
+            'comedy': 35, 'crime': 80, 'documentary': 99, 'drama': 18,
+            'fantasy': 14, 'horror': 27, 'mystery': 9648,
+            'romance': 10749, 'sci-fi': 878, 'thriller': 53
+        }
+        
+        recommendations = []
+        genre_id = genre_ids.get(genre.lower())
+        
+        if genre_id:
+            # Get content by genre from database
+            genre_content = Content.query.filter(
+                Content.content_type == content_type,
+                Content.genres.contains(genre.title())
+            ).order_by(Content.rating.desc()).limit(limit).all()
+            
+            for content in genre_content:
+                if not content.slug:
+                    content.slug = f"content-{content.id}"
+                
+                youtube_url = None
+                if content.youtube_trailer_id:
+                    youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
+                
+                recommendations.append({
+                    'id': content.id,
+                    'slug': content.slug,
+                    'title': content.title,
+                    'content_type': content.content_type,
+                    'genres': json.loads(content.genres or '[]'),
+                    'rating': content.rating,
+                    'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
+                    'overview': content.overview[:150] + '...' if content.overview else '',
+                    'youtube_trailer': youtube_url,
+                    'match_type': 'basic_genre_match'
+                })
+        
+        return jsonify({
+            'genre': genre,
+            'content_type': content_type,
+            'recommendations': recommendations,
+            'metadata': {
+                'algorithm': 'basic_fallback',
+                'total_results': len(recommendations)
+            }
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Basic genre recommendations error: {e}")
+        return jsonify({'error': 'Failed to get genre recommendations'}), 500
 
 @app.route('/api/recommendations/anonymous', methods=['GET'])
 def get_anonymous_recommendations():
@@ -2359,6 +2582,8 @@ def health_check():
             'slug_support': 'comprehensive_enabled',
             'details_service': 'enabled' if details_service else 'disabled',
             'content_service': 'enabled' if content_service else 'disabled',
+            'similarity_engine': 'enabled' if similarity_engine else 'disabled',  # ADD THIS
+            'genre_explorer': 'enabled' if genre_explorer else 'disabled',        # ADD THIS
             'cast_crew': 'fully_enabled'
         }
         
@@ -2541,7 +2766,9 @@ else:
     print(f"Performance optimizations: Applied")
     print(f"Unicode fixes: Applied")
     print(f"Cast/Crew support: Fully enabled")
-    
+    print(f"Similarity engine status: {'Initialized' if similarity_engine else 'Failed to initialize'}")
+    print(f"Genre explorer status: {'Initialized' if genre_explorer else 'Failed to initialize'}")
+    print(f"Advanced similarity features: {'Enabled' if similarity_service else 'Disabled'}") 
     # Log all registered routes
     print("\n=== Registered Routes ===")
     for rule in app.url_map.iter_rules():
