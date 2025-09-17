@@ -145,3 +145,6 @@ You are a senior backend architect working on a large-scale movie recommendation
 - the Similar Titles should be first priority that the content lanugage and the similar title should be the 100% accurate 
    and 100% perfect tiltle 
 - all the logics and alogithms should be in backend/services/similar.py file so develop this with the best production-level code
+- the similar titles engine with 100% accurate story matching capabilities
+- 100% accurate the similar story matching  should be there
+- use the nltk, scikit-learn and joblib that support render free tier
