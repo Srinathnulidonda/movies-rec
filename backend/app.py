@@ -29,7 +29,6 @@ from flask_mail import Mail
 from services.upcoming import UpcomingContentService, ContentType, LanguagePriority
 import asyncio
 import services.auth as auth
-from services.similar import init_similarity_service, SimilarityService
 from services.auth import init_auth, auth_bp
 from services.admin import admin_bp, init_admin
 from services.users import users_bp, init_users
@@ -844,15 +843,6 @@ try:
         logger.info("Details and Content services initialized successfully")
 except Exception as e:
     logger.error(f"Failed to initialize details/content services: {e}")
-
-similarity_service = None
-try:
-    with app.app_context():
-        similarity_service = init_similarity_service(app, db, models, cache)
-        logger.info("Similarity service initialized successfully")
-except Exception as e:
-    logger.error(f"Failed to initialize similarity service: {e}")
-
 
 # Now build services dictionary with ContentService
 services = {
@@ -1806,48 +1796,123 @@ def get_anime():
 # OPTIMIZED Similar Recommendations Endpoint - FIXED
 @app.route('/api/recommendations/similar/<int:content_id>', methods=['GET'])
 def get_similar_recommendations(content_id):
-    """
-    Ultra-powerful similar recommendations with 100% accurate story matching.
-    
-    Query Parameters:
-        - limit: Maximum number of results (default: 10, max: 20)
-        - min_similarity: Minimum similarity threshold 0.0-1.0 (default: 0.4)
-        - language_priority: Prioritize same language content (default: true)
-        - strict_mode: Enable strict similarity matching (default: false)
-        - content_type: Filter by content type (movie/tv/anime)
-    """
+    """Optimized similarity endpoint with performance focus"""
     try:
-        # Get parameters with validation
-        limit = min(int(request.args.get('limit', 10)), 20)  # Cap at 20 for performance
-        min_similarity = max(0.0, min(1.0, float(request.args.get('min_similarity', 0.4))))
-        language_priority = request.args.get('language_priority', 'true').lower() == 'true'
-        strict_mode = request.args.get('strict_mode', 'false').lower() == 'true'
-        content_type_filter = request.args.get('content_type')
+        # Parameters with reduced defaults for performance
+        limit = min(int(request.args.get('limit', 8)), 15)  # Cap at 15, default 8
+        strict_mode = request.args.get('strict_mode', 'false').lower() == 'true'  # Default false for performance
+        min_similarity = float(request.args.get('min_similarity', 0.3))  # Lower threshold
         
-        # Validate content_type filter
-        if content_type_filter and content_type_filter not in ['movie', 'tv', 'anime']:
-            return jsonify({'error': 'Invalid content_type. Must be movie, tv, or anime'}), 400
+        # Check cache first
+        cache_key = f"similar:{content_id}:{limit}:{strict_mode}:{min_similarity}"
+        if cache:
+            try:
+                cached_result = cache.get(cache_key)
+                if cached_result:
+                    return jsonify(cached_result), 200
+            except Exception as e:
+                logger.warning(f"Cache get error: {e}")
         
-        # Check if similarity service is available
-        if not similarity_service:
-            logger.error("Similarity service not available")
-            return jsonify({
-                'error': 'Similarity service unavailable',
-                'similar_content': [],
-                'metadata': {'service_status': 'unavailable'}
-            }), 503
+        # Get base content
+        base_content = Content.query.get(content_id)
+        if not base_content:
+            return jsonify({'error': 'Content not found'}), 404
         
-        # Get similar content using the ultra-powerful engine
-        result = similarity_service.get_similar_content(
-            content_id=content_id,
-            limit=limit,
-            min_similarity=min_similarity,
-            language_priority=language_priority,
-            strict_mode=strict_mode,
-            content_type_filter=content_type_filter
-        )
+        # Ensure base content has slug (without blocking)
+        if not base_content.slug:
+            try:
+                base_content.ensure_slug()
+                db.session.commit()
+            except Exception as e:
+                logger.warning(f"Slug generation failed for base content: {e}")
+                # Continue without slug update
+                base_content.slug = f"content-{base_content.id}"
         
-        # Track interaction for analytics
+        # Build optimized similar content list
+        similar_content = []
+        
+        try:
+            # Parse base content genres safely
+            try:
+                base_genres = json.loads(base_content.genres or '[]')
+            except (json.JSONDecodeError, TypeError):
+                base_genres = []
+            
+            # Simple genre-based similarity (fast and effective)
+            if base_genres:
+                # Use only the first genre for performance
+                primary_genre = base_genres[0]
+                
+                similar_items = Content.query.filter(
+                    Content.id != content_id,
+                    Content.content_type == base_content.content_type,
+                    Content.genres.contains(primary_genre)
+                ).order_by(
+                    Content.rating.desc()
+                ).limit(limit * 2).all()  # Get more than needed for filtering
+                
+                # Process and ensure slugs
+                for item in similar_items[:limit]:
+                    try:
+                        # Ensure slug without blocking
+                        if not item.slug:
+                            item.slug = f"content-{item.id}"  # Quick fallback
+                        
+                        # Parse item genres safely
+                        try:
+                            item_genres = json.loads(item.genres or '[]')
+                        except (json.JSONDecodeError, TypeError):
+                            item_genres = []
+                        
+                        similar_content.append({
+                            'id': item.id,
+                            'slug': item.slug,
+                            'title': item.title,
+                            'poster_path': f"https://image.tmdb.org/t/p/w300{item.poster_path}" if item.poster_path and not item.poster_path.startswith('http') else item.poster_path,
+                            'rating': item.rating,
+                            'content_type': item.content_type,
+                            'genres': item_genres,
+                            'similarity_score': 0.8,  # Default similarity score
+                            'match_type': 'genre_based'
+                        })
+                        
+                        if len(similar_content) >= limit:
+                            break
+                            
+                    except Exception as e:
+                        logger.warning(f"Error processing similar item {item.id}: {e}")
+                        continue
+            
+            # If no genre matches, get popular content of same type
+            if not similar_content:
+                fallback_items = Content.query.filter(
+                    Content.id != content_id,
+                    Content.content_type == base_content.content_type
+                ).order_by(
+                    Content.popularity.desc()
+                ).limit(limit).all()
+                
+                for item in fallback_items:
+                    if not item.slug:
+                        item.slug = f"content-{item.id}"
+                    
+                    similar_content.append({
+                        'id': item.id,
+                        'slug': item.slug,
+                        'title': item.title,
+                        'poster_path': f"https://image.tmdb.org/t/p/w300{item.poster_path}" if item.poster_path and not item.poster_path.startswith('http') else item.poster_path,
+                        'rating': item.rating,
+                        'content_type': item.content_type,
+                        'similarity_score': 0.5,
+                        'match_type': 'popularity_fallback'
+                    })
+        
+        except Exception as e:
+            logger.error(f"Error in similarity calculation: {e}")
+            # Return empty results on error
+            similar_content = []
+        
+        # Track interaction (non-blocking)
         try:
             session_id = get_session_id()
             interaction = AnonymousInteraction(
@@ -1861,103 +1926,39 @@ def get_similar_recommendations(content_id):
         except Exception as e:
             logger.warning(f"Interaction tracking failed: {e}")
         
-        # Return results
-        if 'error' in result:
-            return jsonify(result), 500 if 'Failed' in result['error'] else 404
+        # Prepare response
+        response = {
+            'base_content': {
+                'id': base_content.id,
+                'slug': base_content.slug or f"content-{base_content.id}",
+                'title': base_content.title,
+                'content_type': base_content.content_type,
+                'rating': base_content.rating
+            },
+            'similar_content': similar_content,
+            'metadata': {
+                'algorithm': 'optimized_genre_based',
+                'total_results': len(similar_content),
+                'similarity_threshold': min_similarity,
+                'timestamp': datetime.utcnow().isoformat()
+            }
+        }
         
-        return jsonify(result), 200
+        # Cache the result (non-blocking)
+        if cache:
+            try:
+                cache.set(cache_key, response, timeout=900)  # 15 minutes
+            except Exception as e:
+                logger.warning(f"Caching failed: {e}")
         
-    except ValueError as e:
-        return jsonify({
-            'error': f'Invalid parameter: {str(e)}',
-            'similar_content': [],
-            'metadata': {'error_type': 'validation_error'}
-        }), 400
+        return jsonify(response), 200
         
     except Exception as e:
         logger.error(f"Similar recommendations error: {e}")
         return jsonify({
             'error': 'Failed to get similar recommendations',
             'similar_content': [],
-            'metadata': {
-                'error': str(e),
-                'error_type': type(e).__name__,
-                'timestamp': datetime.utcnow().isoformat()
-            }
-        }), 500
-
-# Add new endpoint for similarity service status
-@app.route('/api/similarity/status', methods=['GET'])
-def get_similarity_service_status():
-    """Get similarity service status and capabilities."""
-    try:
-        if similarity_service:
-            status = similarity_service.get_service_status()
-            return jsonify(status), 200
-        else:
-            return jsonify({
-                'service': 'SimilarityService',
-                'status': 'unavailable',
-                'error': 'Service not initialized',
-                'timestamp': datetime.utcnow().isoformat()
-            }), 503
-            
-    except Exception as e:
-        logger.error(f"Similarity status error: {e}")
-        return jsonify({
-            'service': 'SimilarityService',
-            'status': 'error',
-            'error': str(e),
-            'timestamp': datetime.utcnow().isoformat()
-        }), 500
-
-# Add admin endpoint for bulk similarity updates
-@app.route('/api/admin/similarity/bulk-update', methods=['POST'])
-@auth_required
-def bulk_update_similarities():
-    """Bulk update similarities for multiple content items (admin only)."""
-    try:
-        # Check if user is admin
-        user = User.query.get(request.user_id)
-        if not user or not user.is_admin:
-            return jsonify({'error': 'Admin access required'}), 403
-        
-        if not similarity_service:
-            return jsonify({'error': 'Similarity service unavailable'}), 503
-        
-        # Get content IDs from request
-        content_ids = request.json.get('content_ids', [])
-        batch_size = min(int(request.json.get('batch_size', 10)), 50)  # Cap batch size
-        
-        if not content_ids:
-            return jsonify({'error': 'content_ids required'}), 400
-        
-        # Validate content IDs exist
-        existing_ids = [
-            row[0] for row in db.session.query(Content.id)
-            .filter(Content.id.in_(content_ids)).all()
-        ]
-        
-        if not existing_ids:
-            return jsonify({'error': 'No valid content IDs found'}), 400
-        
-        # Perform bulk update
-        result = similarity_service.bulk_update_similarities(existing_ids, batch_size)
-        
-        return jsonify({
-            'success': True,
-            'bulk_update_result': result,
-            'requested_ids': len(content_ids),
-            'valid_ids': len(existing_ids),
-            'timestamp': datetime.utcnow().isoformat()
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"Bulk similarity update error: {e}")
-        return jsonify({
-            'success': False,
-            'error': str(e),
-            'timestamp': datetime.utcnow().isoformat()
+            'metadata': {'error': str(e)}
         }), 500
 
 @app.route('/api/recommendations/anonymous', methods=['GET'])
@@ -2301,13 +2302,13 @@ def performance_check():
 # Health check endpoint - UPDATED
 @app.route('/api/health', methods=['GET'])
 def health_check():
-    """Enhanced health check with similarity service status"""
+    """Enhanced health check with cache status"""
     try:
         # Basic health info
         health_info = {
             'status': 'healthy',
             'timestamp': datetime.utcnow().isoformat(),
-            'version': '5.3.0',  # Updated version with ultra-powerful similarity
+            'version': '5.2.0',  # Updated version with cast/crew features
             'python_version': '3.13.4'
         }
         
@@ -2337,28 +2338,12 @@ def health_check():
             'omdb': bool(OMDB_API_KEY),
             'youtube': bool(YOUTUBE_API_KEY),
             'ml_service': bool(ML_SERVICE_URL),
-            'algorithms': 'ultra_powerful_enabled',
+            'algorithms': 'optimized_enabled',
             'slug_support': 'comprehensive_enabled',
             'details_service': 'enabled' if details_service else 'disabled',
             'content_service': 'enabled' if content_service else 'disabled',
-            'similarity_service': 'enabled' if similarity_service else 'disabled',
             'cast_crew': 'fully_enabled'
         }
-        
-        # Check similarity service status
-        if similarity_service:
-            try:
-                sim_status = similarity_service.get_service_status()
-                health_info['similarity_engine'] = {
-                    'status': sim_status.get('status', 'unknown'),
-                    'nltk_available': sim_status.get('nltk_available', False),
-                    'features': sim_status.get('features', []),
-                    'accuracy_guarantee': '100%_story_matching'
-                }
-            except Exception as e:
-                health_info['similarity_engine'] = {'status': 'error', 'error': str(e)}
-        else:
-            health_info['similarity_engine'] = {'status': 'unavailable'}
         
         # Check slug status
         try:
@@ -2393,18 +2378,14 @@ def health_check():
         health_info['performance'] = {
             'optimizations_applied': [
                 'python_3.13_compatibility',
-                'ultra_powerful_similarity_engine',
-                '100%_accurate_story_matching',
-                'nltk_advanced_text_processing',
-                'scikit_learn_ml_algorithms',
-                'joblib_caching_optimization',
-                'telugu_language_priority',
-                'render_free_tier_optimized',
-                'multi_level_similarity_scoring'
+                'reduced_api_timeouts', 
+                'optimized_thread_pools',
+                'enhanced_caching',
+                'error_handling_improvements',
+                'cast_crew_optimization'
             ],
             'memory_optimizations': 'enabled',
-            'unicode_fixes': 'applied',
-            'similarity_accuracy': '100%_guaranteed'
+            'unicode_fixes': 'applied'
         }
         
         return jsonify(health_info), 200
@@ -2415,6 +2396,7 @@ def health_check():
             'error': str(e),
             'timestamp': datetime.utcnow().isoformat()
         }), 500
+
 # CLI command for generating slugs - UPDATED
 @app.cli.command('generate-slugs')
 def generate_slugs():
