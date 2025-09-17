@@ -136,9 +136,12 @@ Data sources (default choices if not otherwise present in repo)
 
 
 
+according to the above backend/app.py file
+provide the best promt for my promt for the claude ai
+
+MY PROMT
 You are a senior backend engineer: implement a production-ready file that
 - the Similar Titles should be first priority that the content lanugage and the similar title should be the 100% accurate 
    and 100% perfect tiltle 
-- all the logics and alogithms should be in backend/services/similar.py file so develop this with the best production-level 
-  code  same goes to explore genre
-- main factor is the story and the content
+- all the logics and alogithms should be in backend/services/similar.py file so develop this with the best production-level code
+- main factor is the story
