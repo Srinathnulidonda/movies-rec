@@ -1448,13 +1448,15 @@ class DetailsService:
             url = f"{TMDB_BASE_URL}/person/{tmdb_id}"
             params = {
                 'api_key': TMDB_API_KEY,
-                'append_to_response': 'images,external_ids,combined_credits,movie_credits,tv_credits'
+                'append_to_response': 'images,external_ids,combined_credits,movie_credits,tv_credits,tagged_images'
             }
             
             response = self.session.get(url, params=params, timeout=10)
             
             if response.status_code == 200:
-                return response.json()
+                data = response.json()
+                logger.info(f"Successfully fetched TMDB data for person {tmdb_id}, includes external_ids: {bool(data.get('external_ids'))}")
+                return data
             else:
                 logger.warning(f"TMDB person API returned {response.status_code} for person {tmdb_id}")
                 return {}
@@ -1462,7 +1464,7 @@ class DetailsService:
         except Exception as e:
             logger.error(f"Error fetching complete person details from TMDB: {e}")
             return {}
-
+    
     def _fetch_and_save_person_credits(self, person: Any, tmdb_data: Dict):
         try:
             if not tmdb_data:
@@ -1597,6 +1599,7 @@ class DetailsService:
                 }
             }
             
+            # Get all content-person relationships from database
             filmography_entries = self.db.session.query(
                 self.ContentPerson, self.Content
             ).join(
@@ -1607,12 +1610,29 @@ class DetailsService:
                 self.Content.release_date.desc().nullslast()
             ).all()
             
+            # Also get upcoming content from TMDB data if available
+            upcoming_from_tmdb = []
+            if tmdb_data:
+                # Get upcoming from combined credits
+                combined_credits = tmdb_data.get('combined_credits', {})
+                for credit_type in ['cast', 'crew']:
+                    for credit in combined_credits.get(credit_type, []):
+                        release_date_str = credit.get('release_date') or credit.get('first_air_date')
+                        if release_date_str:
+                            try:
+                                release_date = datetime.strptime(release_date_str, '%Y-%m-%d').date()
+                                if release_date >= datetime.now().date():  # Include today and future
+                                    upcoming_from_tmdb.append((credit, credit_type))
+                            except:
+                                pass
+            
             years = []
             all_ratings = []
             all_popularity = []
             total_votes = 0
-            current_year = datetime.now().year
+            current_date = datetime.now().date()
             
+            # Process database entries
             for cp, content in filmography_entries:
                 try:
                     if not content.slug:
@@ -1622,10 +1642,14 @@ class DetailsService:
                             content.slug = f"content-{content.id}"
                     
                     year = None
+                    is_upcoming = False
                     if content.release_date:
                         try:
                             year = int(content.release_date.year)
                             years.append(year)
+                            # Check if it's upcoming (future release or current year with future date)
+                            if content.release_date >= current_date:
+                                is_upcoming = True
                         except (AttributeError, TypeError, ValueError):
                             pass
                     
@@ -1670,14 +1694,21 @@ class DetailsService:
                         'department': cp.department,
                         'role_type': cp.role_type,
                         'release_date': content.release_date.isoformat() if content.release_date else None,
-                        'overview': content.overview or ''
+                        'overview': content.overview or '',
+                        'status': 'Upcoming' if is_upcoming else 'Released'
                     }
                     
+                    # Add to upcoming if it's a future release
+                    if is_upcoming:
+                        filmography['upcoming'].append(work)
+                    
+                    # Categorize by year
                     year_key = str(year) if year else 'Unknown'
                     if year_key not in filmography['by_year']:
                         filmography['by_year'][year_key] = []
                     filmography['by_year'][year_key].append(work)
                     
+                    # Categorize by decade
                     if year:
                         decade = (year // 10) * 10
                         decade_key = f"{decade}s"
@@ -1685,9 +1716,7 @@ class DetailsService:
                             filmography['by_decade'][decade_key] = []
                         filmography['by_decade'][decade_key].append(work)
                     
-                    if year and year > current_year:
-                        filmography['upcoming'].append(work)
-                    
+                    # Categorize by role
                     if cp.role_type == 'cast':
                         filmography['as_actor'].append(work)
                     elif cp.role_type == 'crew':
@@ -1707,6 +1736,59 @@ class DetailsService:
                     logger.warning(f"Error processing filmography entry: {e}")
                     continue
             
+            # Add upcoming content from TMDB that might not be in our database yet
+            for credit, credit_type in upcoming_from_tmdb:
+                try:
+                    # Check if we already have this content in our results
+                    tmdb_id = credit.get('id')
+                    already_exists = any(
+                        work.get('tmdb_id') == tmdb_id for work in filmography['upcoming']
+                    )
+                    
+                    if not already_exists and tmdb_id:
+                        release_date_str = credit.get('release_date') or credit.get('first_air_date')
+                        release_date = None
+                        year = None
+                        
+                        if release_date_str:
+                            try:
+                                release_date = datetime.strptime(release_date_str, '%Y-%m-%d').date()
+                                year = release_date.year
+                            except:
+                                pass
+                        
+                        upcoming_work = {
+                            'id': None,  # Not in our database yet
+                            'tmdb_id': tmdb_id,
+                            'slug': None,
+                            'title': credit.get('title') or credit.get('name', 'Unknown Title'),
+                            'original_title': credit.get('original_title') or credit.get('original_name'),
+                            'year': year,
+                            'content_type': 'tv' if credit.get('media_type') == 'tv' else 'movie',
+                            'poster_path': self._format_image_url(credit.get('poster_path'), 'poster'),
+                            'backdrop_path': self._format_image_url(credit.get('backdrop_path'), 'backdrop'),
+                            'rating': credit.get('vote_average', 0),
+                            'popularity': credit.get('popularity', 0),
+                            'vote_count': credit.get('vote_count', 0),
+                            'character': credit.get('character') if credit_type == 'cast' else None,
+                            'job': credit.get('job') if credit_type == 'crew' else None,
+                            'department': credit.get('department') if credit_type == 'crew' else None,
+                            'role_type': credit_type,
+                            'release_date': release_date.isoformat() if release_date else None,
+                            'overview': credit.get('overview', ''),
+                            'status': 'Upcoming'
+                        }
+                        
+                        filmography['upcoming'].append(upcoming_work)
+                        
+                except Exception as e:
+                    logger.warning(f"Error processing upcoming TMDB credit: {e}")
+                    continue
+            
+            # Sort upcoming by release date
+            filmography['upcoming'].sort(key=lambda x: x.get('release_date') or '9999-12-31')
+            
+            # Calculate statistics
             try:
                 filmography['statistics']['total_projects'] = len(filmography_entries)
                 
@@ -1744,7 +1826,8 @@ class DetailsService:
             except Exception as e:
                 logger.warning(f"Error calculating filmography statistics: {e}")
             
-            logger.info(f"Retrieved enhanced filmography: {filmography['statistics']['total_projects']} projects")
+            total_upcoming = len(filmography['upcoming'])
+            logger.info(f"Retrieved enhanced filmography: {filmography['statistics']['total_projects']} projects, {total_upcoming} upcoming")
             return filmography
             
         except Exception as e:
@@ -1774,6 +1857,9 @@ class DetailsService:
             images = self._get_person_images(tmdb_data)
             social_media = self._get_person_social_media(tmdb_data)
             
+            # Extract additional TMDB data
+            external_ids = tmdb_data.get('external_ids', {})
+            
             person_details = {
                 'id': person.id,
                 'slug': person.slug,
@@ -1794,11 +1880,14 @@ class DetailsService:
                 'total_works': self._calculate_total_works(filmography),
                 'personal_info': personal_info,
                 'career_highlights': career_highlights,
-                'external_ids': tmdb_data.get('external_ids', {}),
+                'external_ids': external_ids,
                 'known_for': self._get_known_for_works(filmography),
                 'awards_recognition': self._build_awards_info(tmdb_data, filmography),
                 'trivia': self._extract_trivia(person, tmdb_data),
-                'collaborations': self._analyze_collaborations(filmography)
+                'collaborations': self._analyze_collaborations(filmography),
+                # Add upcoming projects count to main response
+                'upcoming_projects_count': len(filmography.get('upcoming', [])),
+                'social_media_count': len(social_media)
             }
             
             return person_details
@@ -2141,23 +2230,80 @@ class DetailsService:
     def _get_person_social_media(self, tmdb_data: Dict) -> Dict:
         try:
             social = {}
+            
+            logger.info(f"Processing social media from TMDB data: {bool(tmdb_data.get('external_ids'))}")
+            
             if tmdb_data.get('external_ids'):
                 ids = tmdb_data['external_ids']
+                logger.info(f"Available external IDs: {list(ids.keys())}")
+                
+                # Twitter/X
                 if ids.get('twitter_id'):
-                    social['twitter'] = f"https://twitter.com/{ids['twitter_id']}"
+                    social['twitter'] = {
+                        'url': f"https://twitter.com/{ids['twitter_id']}",
+                        'handle': f"@{ids['twitter_id']}",
+                        'platform': 'Twitter'
+                    }
+                
+                # Instagram  
                 if ids.get('instagram_id'):
-                    social['instagram'] = f"https://instagram.com/{ids['instagram_id']}"
+                    social['instagram'] = {
+                        'url': f"https://instagram.com/{ids['instagram_id']}",
+                        'handle': f"@{ids['instagram_id']}",
+                        'platform': 'Instagram'
+                    }
+                
+                # Facebook
                 if ids.get('facebook_id'):
-                    social['facebook'] = f"https://facebook.com/{ids['facebook_id']}"
+                    social['facebook'] = {
+                        'url': f"https://facebook.com/{ids['facebook_id']}",
+                        'handle': ids['facebook_id'],
+                        'platform': 'Facebook'
+                    }
+                
+                # IMDb
                 if ids.get('imdb_id'):
-                    social['imdb'] = f"https://www.imdb.com/name/{ids['imdb_id']}"
+                    social['imdb'] = {
+                        'url': f"https://www.imdb.com/name/{ids['imdb_id']}",
+                        'handle': ids['imdb_id'],
+                        'platform': 'IMDb'
+                    }
+                
+                # TikTok
                 if ids.get('tiktok_id'):
-                    social['tiktok'] = f"https://tiktok.com/@{ids['tiktok_id']}"
+                    social['tiktok'] = {
+                        'url': f"https://tiktok.com/@{ids['tiktok_id']}",
+                        'handle': f"@{ids['tiktok_id']}",
+                        'platform': 'TikTok'
+                    }
+                
+                # YouTube
                 if ids.get('youtube_id'):
-                    social['youtube'] = f"https://youtube.com/channel/{ids['youtube_id']}"
+                    social['youtube'] = {
+                        'url': f"https://youtube.com/channel/{ids['youtube_id']}",
+                        'handle': ids['youtube_id'],
+                        'platform': 'YouTube'
+                    }
+                
+                # Wikidata
                 if ids.get('wikidata_id'):
-                    social['wikidata'] = f"https://www.wikidata.org/wiki/{ids['wikidata_id']}"
+                    social['wikidata'] = {
+                        'url': f"https://www.wikidata.org/wiki/{ids['wikidata_id']}",
+                        'handle': ids['wikidata_id'],
+                        'platform': 'Wikidata'
+                    }
+                
+                # Additional social platforms that TMDB might have
+                if ids.get('twitter_id'):  # Use Twitter ID for X as well
+                    social['x'] = {
+                        'url': f"https://x.com/{ids['twitter_id']}",
+                        'handle': f"@{ids['twitter_id']}",
+                        'platform': 'X (Twitter)'
+                    }
+            
+            logger.info(f"Found social media links: {list(social.keys())}")
             return social
+            
         except Exception as e:
             logger.error(f"Error getting person social media: {e}")
             return {}
