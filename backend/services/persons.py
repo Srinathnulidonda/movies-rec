@@ -84,6 +84,34 @@ def ensure_app_context(func):
                 return None
     return wrapper
 
+def get_empty_filmography():
+    """Return empty filmography structure"""
+    return {
+        'as_actor': [],
+        'as_director': [],
+        'as_writer': [],
+        'as_producer': [],
+        'as_crew': [],
+        'upcoming': [],
+        'by_year': defaultdict(list),
+        'by_decade': defaultdict(list),
+        'by_genre': defaultdict(list),
+        'collaborations': defaultdict(list),
+        'statistics': {
+            'total_projects': 0,
+            'years_active': 0,
+            'debut_year': None,
+            'latest_year': None,
+            'highest_rated': None,
+            'most_popular': None,
+            'most_successful': None,
+            'genre_breakdown': {},
+            'department_breakdown': {},
+            'average_rating': 0,
+            'total_box_office': 0
+        }
+    }
+
 class PersonsService:
     
     def __init__(self, db, models, cache=None):
@@ -223,8 +251,12 @@ class PersonsService:
                     futures['tmdb_images'] = executor.submit(self._fetch_tmdb_person_images, person.tmdb_id)
                     futures['tmdb_external_ids'] = executor.submit(self._fetch_tmdb_external_ids, person.tmdb_id)
                 
-                # Database filmography
-                futures['db_filmography'] = executor.submit(self._get_complete_database_filmography, person.id)
+                # Database filmography - Ensure proper context handling
+                if has_app_context():
+                    futures['db_filmography'] = executor.submit(self._get_complete_database_filmography_safe, person.id)
+                else:
+                    logger.warning("No app context for database filmography")
+                    futures['db_filmography'] = None
                 
                 # Additional data
                 futures['awards'] = executor.submit(self._fetch_awards_and_honors, person)
@@ -235,10 +267,18 @@ class PersonsService:
             results = {}
             for key, future in futures.items():
                 try:
-                    results[key] = future.result(timeout=15)
+                    if future is not None:
+                        results[key] = future.result(timeout=15)
+                    else:
+                        results[key] = None
                 except Exception as e:
                     logger.warning(f"Error fetching {key}: {e}")
                     results[key] = None
+            
+            # Ensure we have filmography even if database call failed
+            if results.get('db_filmography') is None:
+                results['db_filmography'] = get_empty_filmography()
+                logger.warning(f"Using empty filmography for person {person.name}")
             
             # Build comprehensive details
             details = self._compile_person_details(person, results)
@@ -248,6 +288,14 @@ class PersonsService:
         except Exception as e:
             logger.error(f"Error building comprehensive person details: {e}")
             return self._get_minimal_person_details(person)
+    
+    def _get_complete_database_filmography_safe(self, person_id: int) -> Dict:
+        """Safe wrapper for filmography retrieval"""
+        try:
+            return self._get_complete_database_filmography(person_id)
+        except Exception as e:
+            logger.error(f"Error in safe filmography retrieval: {e}")
+            return get_empty_filmography()
     
     def _fetch_tmdb_person_details(self, tmdb_id: int) -> Dict:
         """Fetch detailed person information from TMDB"""
@@ -334,31 +382,7 @@ class PersonsService:
     def _get_complete_database_filmography(self, person_id: int) -> Dict:
         """Get complete filmography from database with detailed information"""
         try:
-            filmography = {
-                'as_actor': [],
-                'as_director': [],
-                'as_writer': [],
-                'as_producer': [],
-                'as_crew': [],
-                'upcoming': [],
-                'by_year': defaultdict(list),
-                'by_decade': defaultdict(list),
-                'by_genre': defaultdict(list),
-                'collaborations': defaultdict(list),
-                'statistics': {
-                    'total_projects': 0,
-                    'years_active': 0,
-                    'debut_year': None,
-                    'latest_year': None,
-                    'highest_rated': None,
-                    'most_popular': None,
-                    'most_successful': None,
-                    'genre_breakdown': {},
-                    'department_breakdown': {},
-                    'average_rating': 0,
-                    'total_box_office': 0
-                }
-            }
+            filmography = get_empty_filmography()
             
             # Get all content-person relationships
             filmography_entries = self.db.session.query(
@@ -480,11 +504,7 @@ class PersonsService:
             
         except Exception as e:
             logger.error(f"Error getting complete database filmography: {e}")
-            return {
-                'as_actor': [], 'as_director': [], 'as_writer': [], 'as_producer': [], 'as_crew': [],
-                'upcoming': [], 'by_year': {}, 'by_decade': {}, 'by_genre': {},
-                'collaborations': {}, 'statistics': {}
-            }
+            return get_empty_filmography()
     
     def _fetch_awards_and_honors(self, person: Any) -> List[Dict]:
         """Fetch awards and honors information"""
@@ -535,14 +555,15 @@ class PersonsService:
     def _compile_person_details(self, person: Any, api_results: Dict) -> Dict:
         """Compile all person details into comprehensive response"""
         try:
-            tmdb_data = api_results.get('tmdb_details', {})
-            tmdb_credits = api_results.get('tmdb_credits', {})
-            tmdb_images = api_results.get('tmdb_images', {})
-            external_ids = api_results.get('tmdb_external_ids', {})
-            db_filmography = api_results.get('db_filmography', {})
-            awards = api_results.get('awards', [])
-            trivia = api_results.get('trivia', [])
-            news = api_results.get('news', [])
+            # Get results with safe defaults
+            tmdb_data = api_results.get('tmdb_details') or {}
+            tmdb_credits = api_results.get('tmdb_credits') or {}
+            tmdb_images = api_results.get('tmdb_images') or {}
+            external_ids = api_results.get('tmdb_external_ids') or {}
+            db_filmography = api_results.get('db_filmography') or get_empty_filmography()
+            awards = api_results.get('awards') or []
+            trivia = api_results.get('trivia') or []
+            news = api_results.get('news') or []
             
             # Update person data from TMDB if available
             self._update_person_from_tmdb(person, tmdb_data)
@@ -556,7 +577,7 @@ class PersonsService:
             # Process images
             images = self._process_person_images(tmdb_images, person.profile_path)
             
-            # Build career timeline
+            # Build career timeline - with null check
             career_timeline = self._build_career_timeline(db_filmography)
             
             # Build collaborations
@@ -565,7 +586,7 @@ class PersonsService:
             # Build personal life information
             personal_life = self._build_personal_life_info(person, tmdb_data)
             
-            # Build career highlights
+            # Build career highlights - with null check
             career_highlights = self._build_detailed_career_highlights(db_filmography, tmdb_data)
             
             # Process also_known_as
@@ -681,13 +702,14 @@ class PersonsService:
                 person.popularity = tmdb_data['popularity']
                 updated = True
             
-            if updated:
+            if updated and has_app_context():
                 self.db.session.commit()
                 logger.info(f"Updated person {person.name} with TMDB data")
                 
         except Exception as e:
             logger.error(f"Error updating person from TMDB: {e}")
-            self.db.session.rollback()
+            if has_app_context():
+                self.db.session.rollback()
     
     def _build_social_media_links(self, external_ids: Dict) -> Dict:
         """Build social media links from external IDs"""
@@ -762,16 +784,22 @@ class PersonsService:
             return []
     
     def _build_career_timeline(self, filmography: Dict) -> List[Dict]:
-        """Build detailed career timeline"""
+        """Build detailed career timeline - with null checks"""
         try:
             timeline = []
+            
+            if not filmography or not isinstance(filmography, dict):
+                logger.warning("Invalid filmography data for timeline building")
+                return timeline
             
             # Get all works sorted by year
             all_works = []
             for role_type in ['as_actor', 'as_director', 'as_writer', 'as_producer', 'as_crew']:
-                for work in filmography.get(role_type, []):
-                    if work.get('year'):
-                        all_works.append(work)
+                works = filmography.get(role_type, [])
+                if works and isinstance(works, list):
+                    for work in works:
+                        if work and isinstance(work, dict) and work.get('year'):
+                            all_works.append(work)
             
             # Sort by year
             all_works.sort(key=lambda x: x.get('year', 0))
@@ -813,6 +841,9 @@ class PersonsService:
     def _identify_career_milestone(self, year: int, works: List[Dict]) -> Optional[str]:
         """Identify if a year represents a career milestone"""
         try:
+            if not works or not isinstance(works, list):
+                return None
+            
             # Check for debut
             # Check for breakthrough roles
             # Check for awards
@@ -821,11 +852,16 @@ class PersonsService:
             if len(works) >= 5:
                 return f"Prolific year with {len(works)} projects"
             
-            highest_rated = max((w for w in works if w.get('rating')), 
-                              key=lambda x: x.get('rating', 0), default=None)
+            highest_rated = None
+            try:
+                rated_works = [w for w in works if w and isinstance(w, dict) and w.get('rating')]
+                if rated_works:
+                    highest_rated = max(rated_works, key=lambda x: x.get('rating', 0))
+            except Exception:
+                pass
             
             if highest_rated and highest_rated.get('rating', 0) >= 8.0:
-                return f"Critical success with {highest_rated['title']}"
+                return f"Critical success with {highest_rated.get('title', 'Unknown')}"
             
             return None
             
@@ -834,7 +870,7 @@ class PersonsService:
             return None
     
     def _build_collaborations(self, filmography: Dict) -> Dict:
-        """Build collaboration information"""
+        """Build collaboration information - with null checks"""
         try:
             collaborations = {
                 'frequent_directors': {},
@@ -845,6 +881,9 @@ class PersonsService:
                 'genre_specialists': {}
             }
             
+            if not filmography or not isinstance(filmography, dict):
+                return collaborations
+            
             # This would require additional database queries to find collaborators
             # For now, return empty structure
             
@@ -852,7 +891,14 @@ class PersonsService:
             
         except Exception as e:
             logger.error(f"Error building collaborations: {e}")
-            return {}
+            return {
+                'frequent_directors': {},
+                'frequent_actors': {},
+                'frequent_writers': {},
+                'frequent_producers': {},
+                'studio_relationships': {},
+                'genre_specialists': {}
+            }
     
     def _build_personal_life_info(self, person: Any, tmdb_data: Dict) -> Dict:
         """Build personal life information"""
@@ -895,7 +941,18 @@ class PersonsService:
             
         except Exception as e:
             logger.error(f"Error building personal life info: {e}")
-            return {}
+            return {
+                'age': None,
+                'zodiac_sign': None,
+                'nationality': None,
+                'education': [],
+                'family': {},
+                'relationships': [],
+                'children': [],
+                'residence': [],
+                'interests': [],
+                'philanthropy': []
+            }
     
     def _get_zodiac_sign(self, birthday) -> str:
         """Get zodiac sign from birthday"""
@@ -932,7 +989,7 @@ class PersonsService:
             return "Unknown"
     
     def _build_detailed_career_highlights(self, filmography: Dict, tmdb_data: Dict) -> Dict:
-        """Build detailed career highlights"""
+        """Build detailed career highlights - with null checks"""
         try:
             highlights = {
                 'debut_work': None,
@@ -951,65 +1008,108 @@ class PersonsService:
                 'career_transformations': []
             }
             
+            if not filmography or not isinstance(filmography, dict):
+                logger.warning("Invalid filmography data for career highlights")
+                return highlights
+            
             stats = filmography.get('statistics', {})
+            if not isinstance(stats, dict):
+                return highlights
             
             # Find debut work
-            if stats.get('debut_year'):
-                debut_year_works = filmography.get('by_year', {}).get(str(stats['debut_year']), [])
-                if debut_year_works:
-                    highlights['debut_work'] = debut_year_works[0]
+            debut_year = stats.get('debut_year')
+            if debut_year:
+                by_year = filmography.get('by_year', {})
+                if isinstance(by_year, dict):
+                    debut_year_works = by_year.get(str(debut_year), [])
+                    if debut_year_works and isinstance(debut_year_works, list):
+                        highlights['debut_work'] = debut_year_works[0]
             
             # Find highest rated work
-            if stats.get('highest_rated'):
-                highlights['signature_works'].append(stats['highest_rated'])
+            highest_rated = stats.get('highest_rated')
+            if highest_rated and isinstance(highest_rated, dict):
+                highlights['signature_works'].append(highest_rated)
             
             # Find most popular work
-            if stats.get('most_popular'):
-                highlights['box_office_successes'].append(stats['most_popular'])
+            most_popular = stats.get('most_popular')
+            if most_popular and isinstance(most_popular, dict):
+                highlights['box_office_successes'].append(most_popular)
             
             # Find works with high ratings
             for role_type in ['as_actor', 'as_director', 'as_writer', 'as_producer']:
                 works = filmography.get(role_type, [])
-                critical_works = [w for w in works if w.get('rating', 0) >= 8.0]
-                highlights['critical_darlings'].extend(critical_works[:3])
+                if works and isinstance(works, list):
+                    critical_works = []
+                    for work in works:
+                        if work and isinstance(work, dict) and work.get('rating', 0) >= 8.0:
+                            critical_works.append(work)
+                    highlights['critical_darlings'].extend(critical_works[:3])
             
             return highlights
             
         except Exception as e:
             logger.error(f"Error building detailed career highlights: {e}")
-            return {}
+            return {
+                'debut_work': None,
+                'breakthrough_role': None,
+                'signature_works': [],
+                'career_defining_moments': [],
+                'box_office_successes': [],
+                'critical_darlings': [],
+                'awards_season_contenders': [],
+                'genre_innovations': [],
+                'directorial_debut': None,
+                'producing_debut': None,
+                'writing_debut': None,
+                'international_recognition': [],
+                'collaborations_of_note': [],
+                'career_transformations': []
+            }
     
     def _enhance_filmography_with_tmdb(self, db_filmography: Dict, tmdb_credits: Dict) -> Dict:
-        """Enhance database filmography with additional TMDB data"""
+        """Enhance database filmography with additional TMDB data - with null checks"""
         try:
+            if not db_filmography or not isinstance(db_filmography, dict):
+                logger.warning("Invalid db_filmography for enhancement")
+                return get_empty_filmography()
+            
             enhanced = db_filmography.copy()
             
-            if not tmdb_credits:
+            if not tmdb_credits or not isinstance(tmdb_credits, dict):
                 return enhanced
             
             # Process cast credits
             tmdb_cast = tmdb_credits.get('cast', [])
             tmdb_crew = tmdb_credits.get('crew', [])
             
+            if not isinstance(tmdb_cast, list):
+                tmdb_cast = []
+            if not isinstance(tmdb_crew, list):
+                tmdb_crew = []
+            
             # Create lookup for TMDB data
             tmdb_lookup = {}
             
             for credit in tmdb_cast + tmdb_crew:
-                tmdb_id = credit.get('id')
-                if tmdb_id:
-                    tmdb_lookup[tmdb_id] = credit
+                if credit and isinstance(credit, dict):
+                    tmdb_id = credit.get('id')
+                    if tmdb_id:
+                        tmdb_lookup[tmdb_id] = credit
             
             # Enhance existing works with TMDB data
             for role_type in ['as_actor', 'as_director', 'as_writer', 'as_producer', 'as_crew']:
                 enhanced_works = []
-                for work in enhanced.get(role_type, []):
-                    # Try to match with TMDB data
-                    enhanced_work = work.copy()
-                    
-                    # Add additional metadata from TMDB if available
-                    # This would require matching logic based on title and year
-                    
-                    enhanced_works.append(enhanced_work)
+                works = enhanced.get(role_type, [])
+                if works and isinstance(works, list):
+                    for work in works:
+                        if work and isinstance(work, dict):
+                            # Try to match with TMDB data
+                            enhanced_work = work.copy()
+                            
+                            # Add additional metadata from TMDB if available
+                            # This would require matching logic based on title and year
+                            
+                            enhanced_works.append(enhanced_work)
                 
                 enhanced[role_type] = enhanced_works
             
@@ -1017,13 +1117,23 @@ class PersonsService:
             
         except Exception as e:
             logger.error(f"Error enhancing filmography with TMDB: {e}")
-            return db_filmography
+            return db_filmography if isinstance(db_filmography, dict) else get_empty_filmography()
     
     def _calculate_genre_expertise(self, filmography: Dict) -> Dict:
-        """Calculate genre expertise and preferences"""
+        """Calculate genre expertise and preferences - with null checks"""
         try:
             genre_stats = {}
-            genre_breakdown = filmography.get('statistics', {}).get('genre_breakdown', {})
+            
+            if not filmography or not isinstance(filmography, dict):
+                return genre_stats
+            
+            stats = filmography.get('statistics', {})
+            if not isinstance(stats, dict):
+                return genre_stats
+            
+            genre_breakdown = stats.get('genre_breakdown', {})
+            if not isinstance(genre_breakdown, dict):
+                return genre_stats
             
             total_works = sum(genre_breakdown.values()) if genre_breakdown else 0
             
@@ -1056,18 +1166,24 @@ class PersonsService:
             return "Occasional"
     
     def _calculate_decade_activity(self, filmography: Dict) -> Dict:
-        """Calculate activity by decade"""
+        """Calculate activity by decade - with null checks"""
         try:
             decade_activity = {}
+            
+            if not filmography or not isinstance(filmography, dict):
+                return decade_activity
+            
             by_decade = filmography.get('by_decade', {})
+            if not isinstance(by_decade, dict):
+                return decade_activity
             
             for decade, works in by_decade.items():
-                if decade != 'Unknown':
+                if decade != 'Unknown' and works and isinstance(works, list):
                     decade_activity[decade] = {
                         'count': len(works),
-                        'notable_works': [w for w in works if w.get('rating', 0) >= 7.5][:3],
+                        'notable_works': [w for w in works if w and isinstance(w, dict) and w.get('rating', 0) >= 7.5][:3],
                         'avg_rating': self._calculate_average_rating(works),
-                        'most_popular': max(works, key=lambda x: x.get('popularity', 0)) if works else None
+                        'most_popular': max(works, key=lambda x: x.get('popularity', 0) if x and isinstance(x, dict) else 0) if works else None
                     }
             
             return decade_activity
@@ -1077,11 +1193,18 @@ class PersonsService:
             return {}
     
     def _calculate_average_rating(self, works: List[Dict]) -> float:
-        """Calculate average rating for a list of works"""
+        """Calculate average rating for a list of works - with null checks"""
         try:
-            ratings = [w.get('rating', 0) for w in works if w.get('rating')]
+            if not works or not isinstance(works, list):
+                return 0
+            
+            ratings = []
+            for work in works:
+                if work and isinstance(work, dict) and work.get('rating'):
+                    ratings.append(work['rating'])
+            
             return round(sum(ratings) / len(ratings), 2) if ratings else 0
-        except:
+        except Exception:
             return 0
     
     def _build_collaboration_network(self, person_id: int) -> Dict:
@@ -1097,12 +1220,21 @@ class PersonsService:
             
         except Exception as e:
             logger.error(f"Error building collaboration network: {e}")
-            return {}
+            return {
+                'frequent_collaborators': [],
+                'collaboration_strength': {},
+                'network_connections': []
+            }
     
     def _calculate_influence_score(self, filmography: Dict) -> float:
-        """Calculate influence score based on various factors"""
+        """Calculate influence score based on various factors - with null checks"""
         try:
+            if not filmography or not isinstance(filmography, dict):
+                return 0.0
+            
             stats = filmography.get('statistics', {})
+            if not isinstance(stats, dict):
+                return 0.0
             
             factors = {
                 'total_projects': min(stats.get('total_projects', 0) / 50, 1.0) * 0.3,
@@ -1119,15 +1251,28 @@ class PersonsService:
             return 0.0
     
     def _calculate_versatility_rating(self, filmography: Dict) -> float:
-        """Calculate versatility rating based on genre and role diversity"""
+        """Calculate versatility rating based on genre and role diversity - with null checks"""
         try:
+            if not filmography or not isinstance(filmography, dict):
+                return 0.0
+            
+            stats = filmography.get('statistics', {})
+            if not isinstance(stats, dict):
+                return 0.0
+            
             # Genre diversity
-            genre_count = len(filmography.get('statistics', {}).get('genre_breakdown', {}))
+            genre_breakdown = stats.get('genre_breakdown', {})
+            genre_count = len(genre_breakdown) if isinstance(genre_breakdown, dict) else 0
             genre_score = min(genre_count / 10, 1.0) * 0.6
             
             # Role diversity
             role_types = ['as_actor', 'as_director', 'as_writer', 'as_producer']
-            active_roles = sum(1 for role in role_types if filmography.get(role, []))
+            active_roles = 0
+            for role in role_types:
+                role_works = filmography.get(role, [])
+                if role_works and isinstance(role_works, list) and len(role_works) > 0:
+                    active_roles += 1
+            
             role_score = (active_roles / len(role_types)) * 0.4
             
             versatility = (genre_score + role_score) * 100
@@ -1153,14 +1298,27 @@ class PersonsService:
                 'known_for_department': person.known_for_department,
                 'also_known_as': [],
                 'gender': person.gender,
-                'filmography': {'as_actor': [], 'as_director': [], 'as_writer': [], 'as_producer': []},
+                'filmography': get_empty_filmography(),
+                'detailed_filmography': get_empty_filmography(),
+                'career_timeline': [],
+                'career_highlights': {},
+                'collaborations': {},
+                'personal_life': {},
+                'awards_and_honors': [],
+                'trivia_and_facts': [],
+                'quotes': [],
                 'images': [],
                 'social_media': {},
                 'external_links': {},
                 'total_works': 0,
                 'statistics': {},
-                'career_highlights': {},
-                'personal_life': {}
+                'upcoming_projects': [],
+                'recent_news': [],
+                'genre_expertise': {},
+                'decade_activity': {},
+                'collaboration_network': {},
+                'influence_score': 0.0,
+                'versatility_rating': 0.0
             }
         except Exception as e:
             logger.error(f"Error creating minimal person details: {e}")
@@ -1170,6 +1328,10 @@ class PersonsService:
         """Search for persons"""
         try:
             if not query or len(query) < 2:
+                return []
+            
+            if not has_app_context():
+                logger.warning("No app context for person search")
                 return []
             
             # Search in database
