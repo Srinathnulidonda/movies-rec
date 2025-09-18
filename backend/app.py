@@ -29,6 +29,7 @@ from flask_mail import Mail
 from services.upcoming import UpcomingContentService, ContentType, LanguagePriority
 import asyncio
 import services.auth as auth
+from services.persons import init_persons_service
 from services.auth import init_auth, auth_bp
 from services.admin import admin_bp, init_admin
 from services.users import users_bp, init_users
@@ -843,6 +844,14 @@ try:
         logger.info("Details and Content services initialized successfully")
 except Exception as e:
     logger.error(f"Failed to initialize details/content services: {e}")
+
+persons_service = None
+try:
+    with app.app_context():
+        persons_service = init_persons_service(app, db, models, cache)
+        logger.info("Persons service initialized successfully")
+except Exception as e:
+    logger.error(f"Failed to initialize persons service: {e}")
 
 # Now build services dictionary with ContentService
 services = {
@@ -2049,35 +2058,156 @@ def get_public_admin_recommendations():
 
 # Person details endpoint
 @app.route('/api/person/<slug>', methods=['GET'])
-def get_person_details(slug):
-    """Get person details by slug"""
+def get_person_details_by_slug(slug):
+    """Get comprehensive person details by slug"""
     try:
-        # Get user ID if authenticated
-        user_id = None
-        auth_header = request.headers.get('Authorization')
-        if auth_header and auth_header.startswith('Bearer '):
-            token = auth_header.split(' ')[1]
-            try:
-                payload = jwt.decode(token, app.config['SECRET_KEY'], algorithms=['HS256'])
-                user_id = payload.get('user_id')
-            except:
-                pass
-        
-        # Get details using the details service
-        if details_service:
-            person_details = details_service.get_person_details(slug)
-        else:
-            logger.error("Details service not available")
+        if not persons_service:
+            logger.error("Persons service not available")
             return jsonify({'error': 'Service unavailable'}), 503
         
-        if not person_details:
+        details = persons_service.get_person_details_by_slug(slug)
+        
+        if not details:
             return jsonify({'error': 'Person not found'}), 404
         
-        return jsonify(person_details), 200
+        return jsonify(details), 200
         
     except Exception as e:
         logger.error(f"Error getting person details for slug {slug}: {e}")
         return jsonify({'error': 'Failed to get person details'}), 500
+    
+
+@app.route('/api/persons/search', methods=['GET'])
+def search_persons():
+    """Search for persons"""
+    try:
+        query = request.args.get('query', '')
+        limit = int(request.args.get('limit', 20))
+        
+        if not query:
+            return jsonify({'error': 'Query parameter required'}), 400
+        
+        if not persons_service:
+            return jsonify({'error': 'Service unavailable'}), 503
+        
+        results = persons_service.search_persons(query, limit)
+        
+        return jsonify({
+            'results': results,
+            'total_results': len(results),
+            'query': query
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error searching persons: {e}")
+        return jsonify({'error': 'Search failed'}), 500
+
+@app.route('/api/person/<slug>/filmography', methods=['GET'])
+def get_person_filmography(slug):
+    """Get detailed filmography for a person"""
+    try:
+        filter_type = request.args.get('filter', 'all')  # all, as_actor, as_director, etc.
+        sort_by = request.args.get('sort', 'year-desc')
+        limit = int(request.args.get('limit', 50))
+        offset = int(request.args.get('offset', 0))
+        
+        if not persons_service:
+            return jsonify({'error': 'Service unavailable'}), 503
+        
+        person_details = persons_service.get_person_details_by_slug(slug)
+        
+        if not person_details:
+            return jsonify({'error': 'Person not found'}), 404
+        
+        filmography = person_details.get('detailed_filmography', {})
+        
+        # Apply filters and sorting
+        if filter_type == 'all':
+            all_works = []
+            for role_type in ['as_actor', 'as_director', 'as_writer', 'as_producer', 'as_crew']:
+                works = filmography.get(role_type, [])
+                for work in works:
+                    work['role_category'] = role_type
+                    all_works.append(work)
+        else:
+            all_works = filmography.get(filter_type, [])
+        
+        # Sort works
+        if sort_by == 'year-desc':
+            all_works.sort(key=lambda x: x.get('year', 0), reverse=True)
+        elif sort_by == 'year-asc':
+            all_works.sort(key=lambda x: x.get('year', 0))
+        elif sort_by == 'rating-desc':
+            all_works.sort(key=lambda x: x.get('rating', 0), reverse=True)
+        elif sort_by == 'popularity-desc':
+            all_works.sort(key=lambda x: x.get('popularity', 0), reverse=True)
+        elif sort_by == 'title-asc':
+            all_works.sort(key=lambda x: x.get('title', ''))
+        
+        # Apply pagination
+        total_count = len(all_works)
+        paginated_works = all_works[offset:offset + limit]
+        
+        return jsonify({
+            'filmography': paginated_works,
+            'total_count': total_count,
+            'offset': offset,
+            'limit': limit,
+            'has_more': offset + limit < total_count,
+            'filter': filter_type,
+            'sort': sort_by,
+            'statistics': filmography.get('statistics', {})
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting filmography for person {slug}: {e}")
+        return jsonify({'error': 'Failed to get filmography'}), 500
+
+@app.route('/api/person/<slug>/images', methods=['GET'])
+def get_person_images(slug):
+    """Get all images for a person"""
+    try:
+        if not persons_service:
+            return jsonify({'error': 'Service unavailable'}), 503
+        
+        person_details = persons_service.get_person_details_by_slug(slug)
+        
+        if not person_details:
+            return jsonify({'error': 'Person not found'}), 404
+        
+        images = person_details.get('images', [])
+        
+        return jsonify({
+            'images': images,
+            'total_count': len(images)
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting images for person {slug}: {e}")
+        return jsonify({'error': 'Failed to get images'}), 500
+
+@app.route('/api/person/<slug>/timeline', methods=['GET'])
+def get_person_career_timeline(slug):
+    """Get career timeline for a person"""
+    try:
+        if not persons_service:
+            return jsonify({'error': 'Service unavailable'}), 503
+        
+        person_details = persons_service.get_person_details_by_slug(slug)
+        
+        if not person_details:
+            return jsonify({'error': 'Person not found'}), 404
+        
+        timeline = person_details.get('career_timeline', [])
+        
+        return jsonify({
+            'timeline': timeline,
+            'total_entries': len(timeline)
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting timeline for person {slug}: {e}")
+        return jsonify({'error': 'Failed to get timeline'}), 500
 
 # Review endpoints
 @app.route('/api/details/<slug>/reviews', methods=['POST'])
