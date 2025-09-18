@@ -2979,6 +2979,7 @@ class DetailsService:
                     'message': 'Review system not available'
                 }
             
+            # Check for existing review
             existing_review = self.Review.query.filter_by(
                 content_id=content_id,
                 user_id=user_id
@@ -2990,6 +2991,10 @@ class DetailsService:
                     'message': 'You have already reviewed this content'
                 }
             
+            # Smart approval logic
+            user = self.User.query.get(user_id) if self.User else None
+            should_auto_approve = self._should_auto_approve_review(user, review_data)
+            
             review = self.Review(
                 content_id=content_id,
                 user_id=user_id,
@@ -2997,12 +3002,13 @@ class DetailsService:
                 title=review_data.get('title'),
                 review_text=review_data.get('review_text'),
                 has_spoilers=review_data.get('has_spoilers', False),
-                is_approved=False
+                is_approved=should_auto_approve
             )
             
             self.db.session.add(review)
             self.db.session.commit()
             
+            # Clear cache for this content
             content = self.Content.query.get(content_id)
             if content and self.cache:
                 try:
@@ -3011,10 +3017,13 @@ class DetailsService:
                 except Exception as e:
                     logger.warning(f"Cache invalidation error: {e}")
             
+            message = 'Review published successfully' if should_auto_approve else 'Review submitted for moderation'
+            
             return {
                 'success': True,
                 'review_id': review.id,
-                'message': 'Review submitted for moderation'
+                'message': message,
+                'auto_approved': should_auto_approve
             }
             
         except Exception as e:
@@ -3024,6 +3033,44 @@ class DetailsService:
                 'success': False,
                 'message': 'Failed to add review'
             }
+
+    def _should_auto_approve_review(self, user, review_data: Dict) -> bool:
+        """Determine if a review should be auto-approved"""
+        try:
+            # Auto-approve if user is admin
+            if user and getattr(user, 'is_admin', False):
+                return True
+            
+            # Auto-approve if review text is reasonable length and has rating
+            review_text = review_data.get('review_text', '')
+            rating = review_data.get('rating', 0)
+            
+            if len(review_text.strip()) >= 20 and 1 <= rating <= 10:
+                # Check if user has previous approved reviews
+                if user and self.Review:
+                    approved_reviews_count = self.Review.query.filter_by(
+                        user_id=user.id,
+                        is_approved=True
+                    ).count()
+                    
+                    # Auto-approve if user has 1+ approved reviews already
+                    if approved_reviews_count >= 1:
+                        return True
+                    
+                    # Auto-approve first review if it's substantial
+                    if len(review_text.strip()) >= 50:
+                        return True
+            
+            # For demo purposes, auto-approve all reviews
+            # Comment out the line below for production with moderation
+            return True
+            
+            # Default to requiring moderation
+            # return False
+            
+        except Exception as e:
+            logger.error(f"Error in auto-approval logic: {e}")
+            return False  # Conservative fallback
     
     @ensure_app_context
     def vote_review_helpful(self, review_id: int, user_id: int, is_helpful: bool = True) -> bool:
