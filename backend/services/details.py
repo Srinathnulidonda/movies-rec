@@ -321,6 +321,12 @@ class SlugManager:
             title = re.sub(r'\bUk\b', 'UK', title)
             title = re.sub(r'\bUs\b', 'US', title)
             title = re.sub(r'\bTv\b', 'TV', title)
+            title = re.sub(r'\bF1\b', 'F1', title)
+            title = re.sub(r'\bF2\b', 'F2', title)
+            title = re.sub(r'\bUfc\b', 'UFC', title)
+            title = re.sub(r'\bWwe\b', 'WWE', title)
+            title = re.sub(r'\bNba\b', 'NBA', title)
+            title = re.sub(r'\bNfl\b', 'NFL', title)
             
             roman_numerals = ['Ii', 'Iii', 'Iv', 'Vi', 'Vii', 'Viii', 'Ix', 'Xi', 'Xii']
             for numeral in roman_numerals:
@@ -774,150 +780,45 @@ class DetailsService:
             year = info['year']
             content_type = info['content_type']
             
-            logger.info(f"Fuzzy search for slug '{slug}': title='{title}', year={year}, type={content_type}")
+            logger.info(f"Enhanced fuzzy search for slug '{slug}': title='{title}', year={year}, type={content_type}")
             
-            title_variations = [title.lower()]
+            title_variations = self._generate_comprehensive_title_variations(title)
             
-            if 'mission' in title.lower() and 'impossible' in title.lower():
-                parts = title.lower().split()
-                mission_idx = next((i for i, part in enumerate(parts) if 'mission' in part), -1)
-                impossible_idx = next((i for i, part in enumerate(parts) if 'impossible' in part), -1)
-                
-                if mission_idx >= 0 and impossible_idx >= 0:
-                    before_impossible = ' '.join(parts[:impossible_idx])
-                    after_impossible = ' '.join(parts[impossible_idx+1:])
-                    
-                    title_variations.extend([
-                        f"mission: impossible {after_impossible}".strip(),
-                        f"mission: impossible – {after_impossible}".strip(),
-                        f"mission: impossible - {after_impossible}".strip(),
-                        f"mission impossible {after_impossible}".strip(),
-                    ])
-            
-            title_variations.extend([
-                title.replace(':', '').lower(),
-                title.replace(':', ' -').lower(),
-                title.replace(':', ' –').lower(),
-                title.replace(':', ' ').lower(),
-                title.replace(' ', '').lower(),
-                title.replace('-', ' ').lower(),
-                title.replace('–', ' ').lower(),
-            ])
-            
-            if ':' in title or '–' in title or '-' in title:
-                for separator in [':', '–', '-']:
-                    if separator in title:
-                        main_title = title.split(separator)[0].strip()
-                        title_variations.append(main_title.lower())
-                        subtitle = title.split(separator, 1)[1].strip() if separator in title else ''
-                        if subtitle:
-                            title_variations.extend([
-                                f"{main_title.lower()}: {subtitle.lower()}",
-                                f"{main_title.lower()} – {subtitle.lower()}",
-                                f"{main_title.lower()} - {subtitle.lower()}",
-                                f"{main_title.lower()} {subtitle.lower()}",
-                            ])
-                        break
-            
-            if title.lower().startswith('the '):
-                title_variations.append(title[4:].lower())
-            else:
-                title_variations.append(f"the {title.lower()}")
-            
-            seen = set()
-            unique_variations = []
-            for variation in title_variations:
-                clean_variation = variation.strip()
-                if clean_variation and clean_variation not in seen and len(clean_variation) > 2:
-                    seen.add(clean_variation)
-                    unique_variations.append(clean_variation)
-            
-            logger.info(f"Trying {len(unique_variations)} title variations: {unique_variations[:5]}...")
+            logger.info(f"Generated {len(title_variations)} title variations for '{title}'")
             
             results = []
             
-            for i, variation in enumerate(unique_variations):
-                if results and len(results) >= 3:
+            strategies = [
+                ('exact_match_with_year', lambda v: self._search_exact_with_year(v, content_type, year)),
+                ('flexible_year_match', lambda v: self._search_flexible_year(v, content_type, year)),
+                ('content_type_match', lambda v: self._search_by_content_type(v, content_type)),
+                ('contains_search', lambda v: self._search_contains(v, content_type)),
+                ('partial_word_match', lambda v: self._search_partial_words(v, content_type)),
+                ('broad_search', lambda v: self._search_broad(v)),
+                ('super_fuzzy', lambda v: self._search_super_fuzzy(v, content_type, year))
+            ]
+            
+            for strategy_name, search_func in strategies:
+                if results and len(results) >= 5:
                     break
                     
-                logger.info(f"Trying variation {i+1}: '{variation}'")
+                logger.info(f"Trying strategy: {strategy_name}")
                 
-                if content_type and year:
-                    query_results = self.Content.query.filter(
-                        func.lower(self.Content.title).like(f"%{variation}%"),
-                        self.Content.content_type == content_type,
-                        func.extract('year', self.Content.release_date) == year
-                    ).limit(3).all()
-                    
-                    if query_results:
-                        logger.info(f"Found {len(query_results)} matches with exact type and year for '{variation}'")
-                        results.extend(query_results)
-                        continue
-                
-                if content_type and year:
-                    query_results = self.Content.query.filter(
-                        func.lower(self.Content.title).like(f"%{variation}%"),
-                        self.Content.content_type == content_type,
-                        func.extract('year', self.Content.release_date).between(year - 2, year + 2)
-                    ).limit(3).all()
-                    
-                    if query_results:
-                        logger.info(f"Found {len(query_results)} matches with type and flexible year for '{variation}'")
-                        results.extend(query_results)
-                        continue
-                
-                if content_type:
-                    query_results = self.Content.query.filter(
-                        func.lower(self.Content.title).like(f"%{variation}%"),
-                        self.Content.content_type == content_type
-                    ).order_by(self.Content.popularity.desc()).limit(5).all()
-                    
-                    if query_results:
-                        logger.info(f"Found {len(query_results)} matches with type only for '{variation}'")
-                        results.extend(query_results)
-                        continue
-            
-            if not results:
-                logger.info("No matches found with specific strategies, trying broader search...")
-                best_variations = unique_variations[:5]
-                
-                for variation in best_variations:
-                    if year:
-                        query_results = self.Content.query.filter(
-                            func.lower(self.Content.title).like(f"%{variation}%"),
-                            func.extract('year', self.Content.release_date).between(year - 3, year + 3)
-                        ).order_by(self.Content.popularity.desc()).limit(5).all()
-                        
-                        if query_results:
-                            logger.info(f"Found {len(query_results)} matches with flexible criteria for '{variation}'")
-                            results.extend(query_results)
-                            break
-                    
-                    query_results = self.Content.query.filter(
-                        func.lower(self.Content.title).like(f"%{variation}%")
-                    ).order_by(self.Content.popularity.desc()).limit(10).all()
-                    
-                    if query_results:
-                        logger.info(f"Found {len(query_results)} matches with title only for '{variation}'")
-                        results.extend(query_results)
+                for i, variation in enumerate(title_variations):
+                    if results and len(results) >= 10:
                         break
-            
-            if not results and len(unique_variations) > 0:
-                logger.info("Trying partial word matching...")
-                words = [word.strip() for word in title.lower().split() if len(word.strip()) > 2]
-                if len(words) >= 2:
-                    if 'mission' in words and 'impossible' in words:
-                        partial_search = "mission impossible"
-                    else:
-                        partial_search = ' '.join(words[:min(2, len(words))])
                     
-                    query_results = self.Content.query.filter(
-                        func.lower(self.Content.title).like(f"%{partial_search}%")
-                    ).order_by(self.Content.popularity.desc()).limit(5).all()
-                    
-                    if query_results:
-                        logger.info(f"Found {len(query_results)} matches with partial search '{partial_search}'")
-                        results.extend(query_results)
+                    try:
+                        strategy_results = search_func(variation)
+                        if strategy_results:
+                            results.extend(strategy_results)
+                            logger.info(f"Strategy '{strategy_name}' found {len(strategy_results)} results for variation '{variation}'")
+                    except Exception as e:
+                        logger.warning(f"Error in strategy {strategy_name} for variation '{variation}': {e}")
+                        continue
+                
+                if results:
+                    logger.info(f"Strategy '{strategy_name}' completed with {len(results)} total results")
             
             seen_ids = set()
             unique_results = []
@@ -927,17 +828,310 @@ class DetailsService:
                     unique_results.append(result)
             
             if unique_results:
-                best_match = max(unique_results, key=lambda x: self._calculate_similarity(x.title.lower(), title.lower()))
+                best_match = self._find_best_match(unique_results, title, year, content_type)
                 logger.info(f"Best fuzzy match for '{slug}': {best_match.title} (ID: {best_match.id}, slug: {best_match.slug})")
                 return best_match
             
             logger.warning(f"No fuzzy match found for '{slug}' with title '{title}' and year {year}")
-            logger.info(f"Consider fetching '{title}' ({year}) from external APIs")
             return None
             
         except Exception as e:
             logger.error(f"Error in fuzzy content search: {e}")
             return None
+    
+    def _generate_comprehensive_title_variations(self, title: str) -> List[str]:
+        try:
+            variations = []
+            title_lower = title.lower().strip()
+            
+            if not title_lower or len(title_lower) < 1:
+                return [title_lower] if title_lower else []
+            
+            variations.append(title_lower)
+            
+            if len(title_lower) <= 5:
+                variations.extend([
+                    f"{title_lower} movie",
+                    f"{title_lower} film",
+                    f"{title_lower} series",
+                    f"{title_lower} show",
+                    f"{title_lower}:",
+                    f"the {title_lower}",
+                    f"{title_lower} the",
+                    f"{title_lower} 2024",
+                    f"{title_lower} 2025",
+                    f"{title_lower} documentary",
+                    f"{title_lower} season",
+                ])
+                
+                for year in range(2020, 2026):
+                    variations.append(f"{title_lower} {year}")
+                    variations.append(f"{title_lower}-{year}")
+            
+            if title_lower in ['f1', 'f2']:
+                variations.extend([
+                    f"formula {title_lower[-1]}",
+                    f"formula one" if title_lower == 'f1' else f"formula two",
+                    f"{title_lower} racing",
+                    f"{title_lower} grand prix",
+                    f"{title_lower} championship"
+                ])
+            
+            for separator in [':', '–', '-', ' - ', ' – ']:
+                if separator in title:
+                    parts = title.split(separator)
+                    if len(parts) >= 2:
+                        main_part = parts[0].strip().lower()
+                        sub_part = parts[1].strip().lower()
+                        
+                        variations.extend([
+                            main_part,
+                            sub_part,
+                            f"{main_part}: {sub_part}",
+                            f"{main_part} - {sub_part}",
+                            f"{main_part} {sub_part}",
+                            f"{main_part}{sub_part}",
+                        ])
+            
+            variations.extend([
+                title.replace(':', '').lower(),
+                title.replace(':', ' -').lower(),
+                title.replace(':', ' –').lower(),
+                title.replace(':', ' ').lower(),
+                title.replace(' ', '').lower(),
+                title.replace('-', ' ').lower(),
+                title.replace('–', ' ').lower(),
+                title.replace('_', ' ').lower(),
+                title.replace('.', ' ').lower(),
+            ])
+            
+            if title_lower.startswith('the '):
+                variations.append(title_lower[4:])
+            else:
+                variations.append(f"the {title_lower}")
+            
+            if 'mission' in title_lower and 'impossible' in title_lower:
+                parts = title_lower.split()
+                mission_idx = next((i for i, part in enumerate(parts) if 'mission' in part), -1)
+                impossible_idx = next((i for i, part in enumerate(parts) if 'impossible' in part), -1)
+                
+                if mission_idx >= 0 and impossible_idx >= 0:
+                    after_impossible = ' '.join(parts[impossible_idx+1:]) if impossible_idx < len(parts) - 1 else ''
+                    
+                    variations.extend([
+                        f"mission: impossible {after_impossible}".strip(),
+                        f"mission: impossible – {after_impossible}".strip(),
+                        f"mission: impossible - {after_impossible}".strip(),
+                        f"mission impossible {after_impossible}".strip(),
+                        "mission: impossible",
+                        "mission impossible"
+                    ])
+            
+            words = [w.strip() for w in title_lower.split() if len(w.strip()) > 0]
+            if len(words) > 1:
+                for i in range(len(words)):
+                    for j in range(i+1, min(i+4, len(words)+1)):
+                        phrase = ' '.join(words[i:j])
+                        if len(phrase) >= 2:
+                            variations.append(phrase)
+                
+                if len(words) >= 2:
+                    variations.append(' '.join(words[:2]))
+                    variations.append(' '.join(words[-2:]))
+            
+            abbreviations = {
+                'and': '&',
+                '&': 'and',
+                'versus': 'vs',
+                'vs': 'versus',
+                'vs.': 'vs',
+                'doctor': 'dr',
+                'dr': 'doctor',
+                'mister': 'mr',
+                'mr': 'mister'
+            }
+            
+            for old, new in abbreviations.items():
+                if old in title_lower:
+                    variations.append(title_lower.replace(old, new))
+            
+            seen = set()
+            unique_variations = []
+            for var in variations:
+                clean_var = var.strip()
+                if clean_var and clean_var not in seen and len(clean_var) >= 1:
+                    seen.add(clean_var)
+                    unique_variations.append(clean_var)
+            
+            return unique_variations[:50]
+            
+        except Exception as e:
+            logger.error(f"Error generating title variations: {e}")
+            return [title.lower().strip()] if title else []
+    
+    def _search_exact_with_year(self, variation: str, content_type: str, year: Optional[int]) -> List[Any]:
+        if not year or not content_type:
+            return []
+        
+        try:
+            return self.Content.query.filter(
+                func.lower(self.Content.title) == variation,
+                self.Content.content_type == content_type,
+                func.extract('year', self.Content.release_date) == year
+            ).limit(5).all()
+        except Exception:
+            return []
+    
+    def _search_flexible_year(self, variation: str, content_type: str, year: Optional[int]) -> List[Any]:
+        if not year:
+            return []
+        
+        try:
+            return self.Content.query.filter(
+                func.lower(self.Content.title).like(f"%{variation}%"),
+                self.Content.content_type == content_type if content_type else True,
+                func.extract('year', self.Content.release_date).between(year - 3, year + 3)
+            ).order_by(self.Content.popularity.desc()).limit(10).all()
+        except Exception:
+            return []
+    
+    def _search_by_content_type(self, variation: str, content_type: str) -> List[Any]:
+        try:
+            return self.Content.query.filter(
+                func.lower(self.Content.title).like(f"%{variation}%"),
+                self.Content.content_type == content_type if content_type else True
+            ).order_by(self.Content.popularity.desc()).limit(15).all()
+        except Exception:
+            return []
+    
+    def _search_contains(self, variation: str, content_type: str) -> List[Any]:
+        try:
+            results = []
+            
+            exact_results = self.Content.query.filter(
+                func.lower(self.Content.title) == variation
+            ).order_by(self.Content.popularity.desc()).limit(10).all()
+            results.extend(exact_results)
+            
+            if len(results) < 10:
+                contains_results = self.Content.query.filter(
+                    func.lower(self.Content.title).like(f"%{variation}%"),
+                    ~self.Content.id.in_([r.id for r in exact_results])
+                ).order_by(self.Content.popularity.desc()).limit(15 - len(results)).all()
+                results.extend(contains_results)
+            
+            return results
+        except Exception:
+            return []
+    
+    def _search_partial_words(self, variation: str, content_type: str) -> List[Any]:
+        try:
+            words = [w.strip() for w in variation.split() if len(w.strip()) >= 2]
+            if not words:
+                return []
+            
+            conditions = []
+            for word in words[:3]:
+                conditions.append(func.lower(self.Content.title).like(f"%{word}%"))
+            
+            if conditions:
+                return self.Content.query.filter(
+                    and_(*conditions)
+                ).order_by(self.Content.popularity.desc()).limit(10).all()
+            
+            return []
+        except Exception:
+            return []
+    
+    def _search_broad(self, variation: str) -> List[Any]:
+        try:
+            if len(variation) < 2:
+                return []
+            
+            return self.Content.query.filter(
+                func.lower(self.Content.title).like(f"%{variation}%")
+            ).order_by(self.Content.popularity.desc()).limit(20).all()
+        except Exception:
+            return []
+    
+    def _search_super_fuzzy(self, variation: str, content_type: str, year: Optional[int]) -> List[Any]:
+        try:
+            results = []
+            
+            if len(variation) >= 2:
+                for i in range(max(1, len(variation) - 3), len(variation)):
+                    partial = variation[:i]
+                    if len(partial) >= 2:
+                        partial_results = self.Content.query.filter(
+                            func.lower(self.Content.title).like(f"{partial}%")
+                        ).order_by(self.Content.popularity.desc()).limit(5).all()
+                        results.extend(partial_results)
+                
+                for i in range(2, min(len(variation), 6)):
+                    partial = variation[:i]
+                    partial_results = self.Content.query.filter(
+                        func.lower(self.Content.title).like(f"%{partial}%")
+                    ).order_by(self.Content.popularity.desc()).limit(5).all()
+                    results.extend(partial_results)
+            
+            return results[:15]
+        except Exception:
+            return []
+    
+    def _find_best_match(self, results: List[Any], title: str, year: Optional[int], content_type: str) -> Any:
+        try:
+            if not results:
+                return None
+            
+            if len(results) == 1:
+                return results[0]
+            
+            scored_results = []
+            
+            for result in results:
+                score = 0
+                
+                try:
+                    title_similarity = self._calculate_similarity(result.title.lower(), title.lower())
+                    score += title_similarity * 50
+                except Exception:
+                    pass
+                
+                if year and result.release_date:
+                    try:
+                        year_diff = abs(result.release_date.year - year)
+                        if year_diff == 0:
+                            score += 30
+                        elif year_diff <= 1:
+                            score += 20
+                        elif year_diff <= 3:
+                            score += 10
+                    except Exception:
+                        pass
+                
+                if content_type and result.content_type == content_type:
+                    score += 15
+                
+                try:
+                    if result.popularity:
+                        score += min(result.popularity / 100, 10)
+                except Exception:
+                    pass
+                
+                try:
+                    if result.rating:
+                        score += min(result.rating, 10)
+                except Exception:
+                    pass
+                
+                scored_results.append((result, score))
+            
+            scored_results.sort(key=lambda x: x[1], reverse=True)
+            return scored_results[0][0]
+            
+        except Exception as e:
+            logger.error(f"Error finding best match: {e}")
+            return results[0] if results else None
             
     def _calculate_similarity(self, str1: str, str2: str) -> float:
         try:
@@ -946,6 +1140,9 @@ class DetailsService:
             clean_str1 = str1.lower().strip()
             clean_str2 = str2.lower().strip()
             
+            if clean_str1 == clean_str2:
+                return 1.0
+            
             basic_sim = SequenceMatcher(None, clean_str1, clean_str2).ratio()
             
             words1 = set(clean_str1.split())
@@ -953,7 +1150,7 @@ class DetailsService:
             
             if words1 and words2:
                 word_overlap = len(words1.intersection(words2)) / len(words1.union(words2))
-                return 0.7 * basic_sim + 0.3 * word_overlap
+                return 0.6 * basic_sim + 0.4 * word_overlap
             
             return basic_sim
             
@@ -1599,7 +1796,6 @@ class DetailsService:
                 }
             }
             
-            # Get all content-person relationships from database
             filmography_entries = self.db.session.query(
                 self.ContentPerson, self.Content
             ).join(
@@ -1610,10 +1806,8 @@ class DetailsService:
                 self.Content.release_date.desc().nullslast()
             ).all()
             
-            # Also get upcoming content from TMDB data if available
             upcoming_from_tmdb = []
             if tmdb_data:
-                # Get upcoming from combined credits
                 combined_credits = tmdb_data.get('combined_credits', {})
                 for credit_type in ['cast', 'crew']:
                     for credit in combined_credits.get(credit_type, []):
@@ -1621,7 +1815,7 @@ class DetailsService:
                         if release_date_str:
                             try:
                                 release_date = datetime.strptime(release_date_str, '%Y-%m-%d').date()
-                                if release_date >= datetime.now().date():  # Include today and future
+                                if release_date >= datetime.now().date():
                                     upcoming_from_tmdb.append((credit, credit_type))
                             except:
                                 pass
@@ -1632,7 +1826,6 @@ class DetailsService:
             total_votes = 0
             current_date = datetime.now().date()
             
-            # Process database entries
             for cp, content in filmography_entries:
                 try:
                     if not content.slug:
@@ -1647,7 +1840,6 @@ class DetailsService:
                         try:
                             year = int(content.release_date.year)
                             years.append(year)
-                            # Check if it's upcoming (future release or current year with future date)
                             if content.release_date >= current_date:
                                 is_upcoming = True
                         except (AttributeError, TypeError, ValueError):
@@ -1698,17 +1890,14 @@ class DetailsService:
                         'status': 'Upcoming' if is_upcoming else 'Released'
                     }
                     
-                    # Add to upcoming if it's a future release
                     if is_upcoming:
                         filmography['upcoming'].append(work)
                     
-                    # Categorize by year
                     year_key = str(year) if year else 'Unknown'
                     if year_key not in filmography['by_year']:
                         filmography['by_year'][year_key] = []
                     filmography['by_year'][year_key].append(work)
                     
-                    # Categorize by decade
                     if year:
                         decade = (year // 10) * 10
                         decade_key = f"{decade}s"
@@ -1716,7 +1905,6 @@ class DetailsService:
                             filmography['by_decade'][decade_key] = []
                         filmography['by_decade'][decade_key].append(work)
                     
-                    # Categorize by role
                     if cp.role_type == 'cast':
                         filmography['as_actor'].append(work)
                     elif cp.role_type == 'crew':
@@ -1736,10 +1924,8 @@ class DetailsService:
                     logger.warning(f"Error processing filmography entry: {e}")
                     continue
             
-            # Add upcoming content from TMDB that might not be in our database yet
             for credit, credit_type in upcoming_from_tmdb:
                 try:
-                    # Check if we already have this content in our results
                     tmdb_id = credit.get('id')
                     already_exists = any(
                         work.get('tmdb_id') == tmdb_id for work in filmography['upcoming']
@@ -1758,7 +1944,7 @@ class DetailsService:
                                 pass
                         
                         upcoming_work = {
-                            'id': None,  # Not in our database yet
+                            'id': None,
                             'tmdb_id': tmdb_id,
                             'slug': None,
                             'title': credit.get('title') or credit.get('name', 'Unknown Title'),
@@ -1785,10 +1971,8 @@ class DetailsService:
                     logger.warning(f"Error processing upcoming TMDB credit: {e}")
                     continue
             
-            # Sort upcoming by release date
             filmography['upcoming'].sort(key=lambda x: x.get('release_date') or '9999-12-31')
             
-            # Calculate statistics
             try:
                 filmography['statistics']['total_projects'] = len(filmography_entries)
                 
@@ -1857,7 +2041,6 @@ class DetailsService:
             images = self._get_person_images(tmdb_data)
             social_media = self._get_person_social_media(tmdb_data)
             
-            # Extract additional TMDB data
             external_ids = tmdb_data.get('external_ids', {})
             
             person_details = {
@@ -1885,7 +2068,6 @@ class DetailsService:
                 'awards_recognition': self._build_awards_info(tmdb_data, filmography),
                 'trivia': self._extract_trivia(person, tmdb_data),
                 'collaborations': self._analyze_collaborations(filmography),
-                # Add upcoming projects count to main response
                 'upcoming_projects_count': len(filmography.get('upcoming', [])),
                 'social_media_count': len(social_media)
             }
@@ -2237,7 +2419,6 @@ class DetailsService:
                 ids = tmdb_data['external_ids']
                 logger.info(f"Available external IDs: {list(ids.keys())}")
                 
-                # Twitter/X
                 if ids.get('twitter_id'):
                     social['twitter'] = {
                         'url': f"https://twitter.com/{ids['twitter_id']}",
@@ -2245,7 +2426,6 @@ class DetailsService:
                         'platform': 'Twitter'
                     }
                 
-                # Instagram  
                 if ids.get('instagram_id'):
                     social['instagram'] = {
                         'url': f"https://instagram.com/{ids['instagram_id']}",
@@ -2253,7 +2433,6 @@ class DetailsService:
                         'platform': 'Instagram'
                     }
                 
-                # Facebook
                 if ids.get('facebook_id'):
                     social['facebook'] = {
                         'url': f"https://facebook.com/{ids['facebook_id']}",
@@ -2261,7 +2440,6 @@ class DetailsService:
                         'platform': 'Facebook'
                     }
                 
-                # IMDb
                 if ids.get('imdb_id'):
                     social['imdb'] = {
                         'url': f"https://www.imdb.com/name/{ids['imdb_id']}",
@@ -2269,7 +2447,6 @@ class DetailsService:
                         'platform': 'IMDb'
                     }
                 
-                # TikTok
                 if ids.get('tiktok_id'):
                     social['tiktok'] = {
                         'url': f"https://tiktok.com/@{ids['tiktok_id']}",
@@ -2277,7 +2454,6 @@ class DetailsService:
                         'platform': 'TikTok'
                     }
                 
-                # YouTube
                 if ids.get('youtube_id'):
                     social['youtube'] = {
                         'url': f"https://youtube.com/channel/{ids['youtube_id']}",
@@ -2285,7 +2461,6 @@ class DetailsService:
                         'platform': 'YouTube'
                     }
                 
-                # Wikidata
                 if ids.get('wikidata_id'):
                     social['wikidata'] = {
                         'url': f"https://www.wikidata.org/wiki/{ids['wikidata_id']}",
@@ -2293,8 +2468,7 @@ class DetailsService:
                         'platform': 'Wikidata'
                     }
                 
-                # Additional social platforms that TMDB might have
-                if ids.get('twitter_id'):  # Use Twitter ID for X as well
+                if ids.get('twitter_id'):
                     social['x'] = {
                         'url': f"https://x.com/{ids['twitter_id']}",
                         'handle': f"@{ids['twitter_id']}",
@@ -2979,7 +3153,6 @@ class DetailsService:
                     'message': 'Review system not available'
                 }
             
-            # Check for existing review
             existing_review = self.Review.query.filter_by(
                 content_id=content_id,
                 user_id=user_id
@@ -2991,7 +3164,6 @@ class DetailsService:
                     'message': 'You have already reviewed this content'
                 }
             
-            # Smart approval logic
             user = self.User.query.get(user_id) if self.User else None
             should_auto_approve = self._should_auto_approve_review(user, review_data)
             
@@ -3008,7 +3180,6 @@ class DetailsService:
             self.db.session.add(review)
             self.db.session.commit()
             
-            # Clear cache for this content
             content = self.Content.query.get(content_id)
             if content and self.cache:
                 try:
@@ -3035,42 +3206,31 @@ class DetailsService:
             }
 
     def _should_auto_approve_review(self, user, review_data: Dict) -> bool:
-        """Determine if a review should be auto-approved"""
         try:
-            # Auto-approve if user is admin
             if user and getattr(user, 'is_admin', False):
                 return True
             
-            # Auto-approve if review text is reasonable length and has rating
             review_text = review_data.get('review_text', '')
             rating = review_data.get('rating', 0)
             
             if len(review_text.strip()) >= 20 and 1 <= rating <= 10:
-                # Check if user has previous approved reviews
                 if user and self.Review:
                     approved_reviews_count = self.Review.query.filter_by(
                         user_id=user.id,
                         is_approved=True
                     ).count()
                     
-                    # Auto-approve if user has 1+ approved reviews already
                     if approved_reviews_count >= 1:
                         return True
                     
-                    # Auto-approve first review if it's substantial
                     if len(review_text.strip()) >= 50:
                         return True
             
-            # For demo purposes, auto-approve all reviews
-            # Comment out the line below for production with moderation
             return True
-            
-            # Default to requiring moderation
-            # return False
             
         except Exception as e:
             logger.error(f"Error in auto-approval logic: {e}")
-            return False  # Conservative fallback
+            return False
     
     @ensure_app_context
     def vote_review_helpful(self, review_id: int, user_id: int, is_helpful: bool = True) -> bool:
