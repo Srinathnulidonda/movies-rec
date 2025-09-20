@@ -4,8 +4,17 @@ from datetime import datetime, timedelta
 import json
 import logging
 import jwt
+import sys
+import os
 from functools import wraps
-from ml_services.recommendation import RecommendationEngine
+
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+
+try:
+    from ml_services.recommendation import RecommendationEngine
+except ImportError:
+    RecommendationEngine = None
+    print("Warning: ML Services not available. Recommendation features will be limited.")
 
 users_bp = Blueprint('users', __name__)
 logger = logging.getLogger(__name__)
@@ -26,7 +35,16 @@ def init_users(flask_app, database, models, services):
     Content = models['Content']
     UserInteraction = models['UserInteraction']
     
-    recommendation_engine = RecommendationEngine(db, models)
+    if RecommendationEngine:
+        try:
+            recommendation_engine = RecommendationEngine(db, models)
+            print("ML Recommendation Engine initialized successfully")
+        except Exception as e:
+            print(f"Warning: Failed to initialize ML Recommendation Engine: {e}")
+            recommendation_engine = None
+    else:
+        print("Warning: RecommendationEngine not available")
+        recommendation_engine = None
 
 def require_auth(f):
     @wraps(f)
@@ -151,7 +169,11 @@ def record_interaction(current_user):
             if interaction:
                 db.session.delete(interaction)
                 db.session.commit()
-                recommendation_engine.update_user_profile(current_user.id)
+                if recommendation_engine:
+                    try:
+                        recommendation_engine.update_user_profile(current_user.id)
+                    except Exception as e:
+                        logger.warning(f"Failed to update user profile: {e}")
                 return jsonify({'message': 'Removed from watchlist'}), 200
             else:
                 return jsonify({'message': 'Content not in watchlist'}), 404
@@ -177,7 +199,11 @@ def record_interaction(current_user):
         db.session.add(interaction)
         db.session.commit()
         
-        recommendation_engine.update_user_profile(current_user.id)
+        if recommendation_engine:
+            try:
+                recommendation_engine.update_user_profile(current_user.id)
+            except Exception as e:
+                logger.warning(f"Failed to update user profile: {e}")
         
         return jsonify({'message': 'Interaction recorded successfully'}), 201
         
@@ -206,7 +232,7 @@ def get_watchlist(current_user):
             
             result.append({
                 'id': content.id,
-                'slug': content.slug,
+                'slug': getattr(content, 'slug', None),
                 'title': content.title,
                 'content_type': content.content_type,
                 'genres': json.loads(content.genres or '[]'),
@@ -234,7 +260,11 @@ def remove_from_watchlist(current_user, content_id):
         if interaction:
             db.session.delete(interaction)
             db.session.commit()
-            recommendation_engine.update_user_profile(current_user.id)
+            if recommendation_engine:
+                try:
+                    recommendation_engine.update_user_profile(current_user.id)
+                except Exception as e:
+                    logger.warning(f"Failed to update user profile: {e}")
             return jsonify({'message': 'Removed from watchlist'}), 200
         else:
             return jsonify({'message': 'Content not in watchlist'}), 404
@@ -280,7 +310,7 @@ def get_favorites(current_user):
             
             result.append({
                 'id': content.id,
-                'slug': content.slug,
+                'slug': getattr(content, 'slug', None),
                 'title': content.title,
                 'content_type': content.content_type,
                 'genres': json.loads(content.genres or '[]'),
@@ -299,6 +329,13 @@ def get_favorites(current_user):
 @require_auth
 def get_personalized_recommendations(current_user):
     try:
+        if not recommendation_engine:
+            return jsonify({
+                'recommendations': [],
+                'error': 'ML recommendation engine not available',
+                'fallback': True
+            }), 200
+        
         limit = int(request.args.get('limit', 20))
         content_type = request.args.get('content_type', 'all')
         strategy = request.args.get('strategy', 'hybrid')
@@ -319,7 +356,7 @@ def get_personalized_recommendations(current_user):
             
             result.append({
                 'id': content.id,
-                'slug': content.slug,
+                'slug': getattr(content, 'slug', None),
                 'title': content.title,
                 'content_type': content.content_type,
                 'genres': json.loads(content.genres or '[]'),
@@ -336,8 +373,8 @@ def get_personalized_recommendations(current_user):
         return jsonify({
             'recommendations': result,
             'strategy': strategy,
-            'total_interactions': recommendation_engine.get_user_interaction_count(current_user.id),
-            'user_profile_strength': recommendation_engine.get_user_profile_strength(current_user.id)
+            'total_interactions': recommendation_engine.get_user_interaction_count(current_user.id) if recommendation_engine else 0,
+            'user_profile_strength': recommendation_engine.get_user_profile_strength(current_user.id) if recommendation_engine else 'unknown'
         }), 200
         
     except Exception as e:
@@ -348,6 +385,13 @@ def get_personalized_recommendations(current_user):
 @require_auth
 def get_ml_personalized_recommendations(current_user):
     try:
+        if not recommendation_engine:
+            return jsonify({
+                'recommendations': [],
+                'error': 'ML recommendation engine not available',
+                'fallback': True
+            }), 200
+        
         limit = int(request.args.get('limit', 20))
         include_explanations = request.args.get('include_explanations', 'true').lower() == 'true'
         diversity_factor = float(request.args.get('diversity_factor', 0.3))
@@ -368,7 +412,7 @@ def get_ml_personalized_recommendations(current_user):
             
             result.append({
                 'id': content.id,
-                'slug': content.slug,
+                'slug': getattr(content, 'slug', None),
                 'title': content.title,
                 'content_type': content.content_type,
                 'genres': json.loads(content.genres or '[]'),
@@ -384,7 +428,7 @@ def get_ml_personalized_recommendations(current_user):
                 'diversity_contribution': rec['diversity_contribution']
             })
         
-        metrics = recommendation_engine.get_recommendation_metrics(current_user.id)
+        metrics = recommendation_engine.get_recommendation_metrics(current_user.id) if recommendation_engine else {}
         
         return jsonify({
             'recommendations': result,
@@ -427,7 +471,7 @@ def get_interaction_history(current_user):
                     'interaction_type': interaction.interaction_type,
                     'rating': interaction.rating,
                     'timestamp': interaction.timestamp.isoformat(),
-                    'metadata': interaction.interaction_metadata or {}
+                    'metadata': getattr(interaction, 'interaction_metadata', {}) or {}
                 })
         
         return jsonify({
@@ -456,13 +500,17 @@ def record_recommendation_feedback(current_user):
         if not all(field in data for field in required_fields):
             return jsonify({'error': 'Missing required fields'}), 400
         
-        recommendation_engine.record_recommendation_feedback(
-            user_id=current_user.id,
-            content_id=data['content_id'],
-            feedback_type=data['feedback_type'],
-            recommendation_id=data['recommendation_id'],
-            feedback_value=data.get('feedback_value', 1.0)
-        )
+        if recommendation_engine:
+            try:
+                recommendation_engine.record_recommendation_feedback(
+                    user_id=current_user.id,
+                    content_id=data['content_id'],
+                    feedback_type=data['feedback_type'],
+                    recommendation_id=data['recommendation_id'],
+                    feedback_value=data.get('feedback_value', 1.0)
+                )
+            except Exception as e:
+                logger.warning(f"Failed to record ML feedback: {e}")
         
         return jsonify({'message': 'Feedback recorded successfully'}), 201
         

@@ -1,4 +1,3 @@
-# backend/admin.py
 from flask import Blueprint, request, jsonify
 from flask_caching import Cache
 from datetime import datetime, timedelta
@@ -12,15 +11,12 @@ from functools import wraps
 import jwt
 import os
 
-# Create admin blueprint
 admin_bp = Blueprint('admin', __name__)
 
-# Configure logging
 logger = logging.getLogger(__name__)
 
 cache = Cache()
 
-# Initialize Telegram bot
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '7974343726:AAFUCW444L6jbj1tVLRyf8V7Isz2Ua1SxSk')
 TELEGRAM_CHANNEL_ID = os.environ.get('TELEGRAM_CHANNEL_ID', '-1002850793757')
 
@@ -33,7 +29,6 @@ if TELEGRAM_BOT_TOKEN and TELEGRAM_BOT_TOKEN != 'your_telegram_bot_token':
 else:
     bot = None
 
-# Will be initialized by main app
 db = None
 User = None
 Content = None
@@ -42,17 +37,14 @@ AdminRecommendation = None
 TMDBService = None
 JikanService = None
 ContentService = None
-MLServiceClient = None
 http_session = None
-ML_SERVICE_URL = None
 cache = None
 app = None
 
 def init_admin(flask_app, database, models, services):
-    """Initialize admin module with app context and models"""
     global db, User, Content, UserInteraction, AdminRecommendation
-    global TMDBService, JikanService, ContentService, MLServiceClient
-    global http_session, ML_SERVICE_URL, cache, app
+    global TMDBService, JikanService, ContentService
+    global http_session, cache, app
     
     app = flask_app
     db = database
@@ -64,11 +56,8 @@ def init_admin(flask_app, database, models, services):
     TMDBService = services['TMDBService']
     JikanService = services['JikanService']
     ContentService = services['ContentService']
-    MLServiceClient = services['MLServiceClient']
     http_session = services['http_session']
-    ML_SERVICE_URL = services['ML_SERVICE_URL']
     cache = services['cache']
-
 
 def require_admin(f):
     @wraps(f)
@@ -89,7 +78,6 @@ def require_admin(f):
         return f(current_user, *args, **kwargs)
     return decorated_function
 
-# Telegram Service
 class TelegramService:
     @staticmethod
     def send_admin_recommendation(content, admin_name, description):
@@ -98,7 +86,6 @@ class TelegramService:
                 logger.warning("Telegram bot or channel ID not configured")
                 return False
             
-            # Format genre list
             genres_list = []
             if content.genres:
                 try:
@@ -106,7 +93,6 @@ class TelegramService:
                 except:
                     genres_list = []
             
-            # Create poster URL
             poster_url = None
             if content.poster_path:
                 if content.poster_path.startswith('http'):
@@ -114,7 +100,6 @@ class TelegramService:
                 else:
                     poster_url = f"https://image.tmdb.org/t/p/w500{content.poster_path}"
             
-            # Create message
             message = f"""🎬 **Admin's Choice** by {admin_name}
 
 **{content.title}**
@@ -129,7 +114,6 @@ class TelegramService:
 
 #AdminChoice #MovieRecommendation #CineScope"""
             
-            # Send message with photo if available
             if poster_url:
                 try:
                     bot.send_photo(
@@ -149,13 +133,12 @@ class TelegramService:
             logger.error(f"Telegram send error: {e}")
             return False
 
-# Admin Routes
 @admin_bp.route('/api/admin/search', methods=['GET'])
 @require_admin
 def admin_search(current_user):
     try:
         query = request.args.get('query', '')
-        source = request.args.get('source', 'tmdb')  # tmdb, omdb, anime
+        source = request.args.get('source', 'tmdb')
         page = int(request.args.get('page', 1))
         
         if not query:
@@ -208,7 +191,6 @@ def save_external_content(current_user):
         if not data:
             return jsonify({'error': 'No content data provided'}), 400
         
-        # Check if content already exists by external ID
         existing_content = None
         if data.get('source') == 'anime' and data.get('id'):
             existing_content = Content.query.filter_by(mal_id=data['id']).first()
@@ -221,9 +203,7 @@ def save_external_content(current_user):
                 'content_id': existing_content.id
             }), 200
         
-        # Create new content from external data
         try:
-            # Handle release date
             release_date = None
             if data.get('release_date'):
                 try:
@@ -231,10 +211,8 @@ def save_external_content(current_user):
                 except:
                     release_date = None
             
-            # Get YouTube trailer
-            youtube_trailer_id = ContentService.get_youtube_trailer(data.get('title'), data.get('content_type'))
+            youtube_trailer_id = ContentService.get_youtube_trailer(data.get('title'), data.get('content_type')) if ContentService else None
             
-            # Create content object
             if data.get('source') == 'anime':
                 content = Content(
                     mal_id=data.get('id'),
@@ -269,6 +247,8 @@ def save_external_content(current_user):
                     youtube_trailer_id=youtube_trailer_id
                 )
             
+            content.ensure_slug()
+            
             db.session.add(content)
             db.session.commit()
             
@@ -296,16 +276,13 @@ def create_admin_recommendation(current_user):
         if not all(field in data for field in required_fields):
             return jsonify({'error': 'Missing required fields'}), 400
         
-        # Get content - handle both internal ID and external ID
         content = Content.query.get(data['content_id'])
         if not content:
-            # Try to find by TMDB ID if direct ID lookup fails
             content = Content.query.filter_by(tmdb_id=data['content_id']).first()
         
         if not content:
             return jsonify({'error': 'Content not found. Please save content first.'}), 404
         
-        # Create admin recommendation
         admin_rec = AdminRecommendation(
             content_id=content.id,
             admin_id=current_user.id,
@@ -316,11 +293,7 @@ def create_admin_recommendation(current_user):
         db.session.add(admin_rec)
         db.session.commit()
         
-        # Send to Telegram channel
         telegram_success = TelegramService.send_admin_recommendation(content, current_user.username, data['description'])
-        
-        # Invalidate admin recommendations cache
-        # cache.delete_memoized(get_public_admin_recommendations)
         
         return jsonify({
             'message': 'Admin recommendation created successfully',
@@ -378,7 +351,6 @@ def get_admin_recommendations(current_user):
 @require_admin
 def get_analytics(current_user):
     try:
-        # Get basic analytics
         total_users = User.query.count()
         total_content = Content.query.count()
         total_interactions = UserInteraction.query.count()
@@ -386,29 +358,45 @@ def get_analytics(current_user):
             User.last_active >= datetime.utcnow() - timedelta(days=7)
         ).count()
         
-        # Popular content
         popular_content = db.session.query(
             Content.id, Content.title, func.count(UserInteraction.id).label('interaction_count')
         ).join(UserInteraction).group_by(Content.id, Content.title)\
          .order_by(desc('interaction_count')).limit(10).all()
         
-        # Popular genres
         all_interactions = UserInteraction.query.join(Content).all()
         genre_counts = defaultdict(int)
         for interaction in all_interactions:
             content = Content.query.get(interaction.content_id)
             if content and content.genres:
-                genres = json.loads(content.genres)
-                for genre in genres:
-                    genre_counts[genre] += 1
+                try:
+                    genres = json.loads(content.genres)
+                    for genre in genres:
+                        genre_counts[genre] += 1
+                except:
+                    pass
         
         popular_genres = sorted(genre_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+        
+        user_interactions_by_type = db.session.query(
+            UserInteraction.interaction_type,
+            func.count(UserInteraction.id).label('count')
+        ).group_by(UserInteraction.interaction_type).all()
+        
+        content_by_type = db.session.query(
+            Content.content_type,
+            func.count(Content.id).label('count')
+        ).group_by(Content.content_type).all()
+        
+        recent_users = User.query.filter(
+            User.created_at >= datetime.utcnow() - timedelta(days=30)
+        ).count()
         
         return jsonify({
             'total_users': total_users,
             'total_content': total_content,
             'total_interactions': total_interactions,
             'active_users_last_week': active_users_last_week,
+            'new_users_last_month': recent_users,
             'popular_content': [
                 {'title': item.title, 'interactions': item.interaction_count}
                 for item in popular_content
@@ -416,6 +404,14 @@ def get_analytics(current_user):
             'popular_genres': [
                 {'genre': genre, 'count': count}
                 for genre, count in popular_genres
+            ],
+            'interactions_by_type': [
+                {'type': item.interaction_type, 'count': item.count}
+                for item in user_interactions_by_type
+            ],
+            'content_by_type': [
+                {'type': item.content_type, 'count': item.count}
+                for item in content_by_type
             ]
         }), 200
         
@@ -423,231 +419,106 @@ def get_analytics(current_user):
         logger.error(f"Analytics error: {e}")
         return jsonify({'error': 'Failed to get analytics'}), 500
 
-# ML Service Admin Routes
-@admin_bp.route('/api/admin/ml-service-check', methods=['GET'])
+@admin_bp.route('/api/admin/users', methods=['GET'])
 @require_admin
-def ml_service_comprehensive_check(current_user):
-    """Simple comprehensive ML service check"""
+def get_users_management(current_user):
     try:
-        ml_url = ML_SERVICE_URL
-        if not ml_url:
-            return jsonify({
-                'status': 'error',
-                'message': 'ML_SERVICE_URL not configured',
-                'checks': {}
-            }), 500
-
-        checks = {}
-        overall_status = 'healthy'
+        page = int(request.args.get('page', 1))
+        per_page = int(request.args.get('per_page', 20))
+        search = request.args.get('search', '')
         
-        # 1. Basic Health Check
-        try:
-            start_time = time.time()
-            health_resp = http_session.get(f"{ml_url}/api/health", timeout=10)
-            health_time = time.time() - start_time
+        query = User.query
+        
+        if search:
+            query = query.filter(
+                User.username.contains(search) | 
+                User.email.contains(search)
+            )
+        
+        users = query.order_by(User.created_at.desc()).paginate(
+            page=page, per_page=per_page, error_out=False
+        )
+        
+        result = []
+        for user in users.items:
+            user_interactions = UserInteraction.query.filter_by(user_id=user.id).count()
             
-            if health_resp.status_code == 200:
-                health_data = health_resp.json()
-                checks['connectivity'] = {
-                    'status': 'pass',
-                    'response_time': f"{health_time:.2f}s",
-                    'models_initialized': health_data.get('models_initialized', False),
-                    'data_status': health_data.get('data_status', {})
-                }
-            else:
-                checks['connectivity'] = {'status': 'fail', 'error': f'HTTP {health_resp.status_code}'}
-                overall_status = 'unhealthy'
-        except Exception as e:
-            checks['connectivity'] = {'status': 'fail', 'error': str(e)}
-            overall_status = 'unhealthy'
-
-        # 2. Recommendation Test (only if connectivity passes)
-        if checks['connectivity']['status'] == 'pass':
-            try:
-                start_time = time.time()
-                test_request = {
-                    'user_id': 1,
-                    'preferred_languages': ['english'],
-                    'preferred_genres': ['Action'],
-                    'interactions': [{
-                        'content_id': 1,
-                        'interaction_type': 'view',
-                        'timestamp': datetime.utcnow().isoformat()
-                    }]
-                }
-                
-                rec_resp = http_session.post(f"{ml_url}/api/recommendations", json=test_request, timeout=20)
-                rec_time = time.time() - start_time
-                
-                if rec_resp.status_code == 200:
-                    rec_data = rec_resp.json()
-                    checks['recommendations'] = {
-                        'status': 'pass',
-                        'response_time': f"{rec_time:.2f}s",
-                        'count': len(rec_data.get('recommendations', [])),
-                        'strategy': rec_data.get('strategy', 'unknown'),
-                        'cached': rec_data.get('cached', False)
-                    }
-                else:
-                    checks['recommendations'] = {'status': 'fail', 'error': f'HTTP {rec_resp.status_code}'}
-                    overall_status = 'partial'
-            except Exception as e:
-                checks['recommendations'] = {'status': 'fail', 'error': str(e)}
-                overall_status = 'partial'
-
-        # 3. Statistics Check
-        if checks['connectivity']['status'] == 'pass':
-            try:
-                start_time = time.time()
-                stats_resp = http_session.get(f"{ml_url}/api/stats", timeout=10)
-                stats_time = time.time() - start_time
-                
-                if stats_resp.status_code == 200:
-                    stats_data = stats_resp.json()
-                    checks['statistics'] = {
-                        'status': 'pass',
-                        'response_time': f"{stats_time:.2f}s",
-                        'data_count': stats_data.get('data_statistics', {}).get('total_content', 0),
-                        'user_count': stats_data.get('data_statistics', {}).get('unique_users', 0)
-                    }
-                else:
-                    checks['statistics'] = {'status': 'fail', 'error': f'HTTP {stats_resp.status_code}'}
-            except Exception as e:
-                checks['statistics'] = {'status': 'fail', 'error': str(e)}
-
-        # 4. Quick Performance Test
-        endpoints = [
-            {'name': 'trending', 'url': '/api/trending?limit=3'},
-        ]
+            result.append({
+                'id': user.id,
+                'username': user.username,
+                'email': user.email,
+                'is_admin': user.is_admin,
+                'created_at': user.created_at.isoformat(),
+                'last_active': user.last_active.isoformat() if user.last_active else None,
+                'total_interactions': user_interactions,
+                'preferred_languages': json.loads(user.preferred_languages or '[]'),
+                'preferred_genres': json.loads(user.preferred_genres or '[]')
+            })
         
-        performance = {}
-        for endpoint in endpoints:
-            try:
-                start_time = time.time()
-                resp = http_session.get(f"{ml_url}{endpoint['url']}", timeout=10)
-                response_time = time.time() - start_time
-                
-                performance[endpoint['name']] = {
-                    'status': 'pass' if resp.status_code == 200 else 'fail',
-                    'response_time': f"{response_time:.2f}s"
-                }
-            except Exception as e:
-                performance[endpoint['name']] = {'status': 'fail', 'error': str(e)}
-
-        checks['performance'] = performance
-
-        # 5. Database Integration Check
-        try:
-            total_users = User.query.count()
-            total_content = Content.query.count() 
-            total_interactions = UserInteraction.query.count()
-            
-            checks['database_integration'] = {
-                'status': 'pass',
-                'backend_users': total_users,
-                'backend_content': total_content,
-                'backend_interactions': total_interactions,
-                'data_ready': total_content > 0 and total_interactions > 0
-            }
-        except Exception as e:
-            checks['database_integration'] = {'status': 'fail', 'error': str(e)}
-
-        # Summary
-        failed_checks = sum(1 for check in checks.values() 
-                           if isinstance(check, dict) and check.get('status') == 'fail')
-        total_checks = len([check for check in checks.values() if isinstance(check, dict)])
-        
-        if failed_checks == 0:
-            overall_status = 'healthy'
-        elif failed_checks < total_checks:
-            overall_status = 'partial'
-        else:
-            overall_status = 'unhealthy'
-
         return jsonify({
-            'status': overall_status,
-            'timestamp': datetime.utcnow().isoformat(),
-            'ml_service_url': ml_url,
-            'summary': {
-                'total_checks': total_checks,
-                'passed': total_checks - failed_checks,
-                'failed': failed_checks
-            },
-            'checks': checks,
-            'quick_actions': {
-                'force_update_available': checks.get('connectivity', {}).get('status') == 'pass',
-                'recommendations_working': checks.get('recommendations', {}).get('status') == 'pass'
-            }
+            'users': result,
+            'total': users.total,
+            'pages': users.pages,
+            'current_page': page
         }), 200
-
-    except Exception as e:
-        logger.error(f"ML service check error: {e}")
-        return jsonify({
-            'status': 'error',
-            'message': str(e),
-            'timestamp': datetime.utcnow().isoformat()
-        }), 500
-
-@admin_bp.route('/api/admin/ml-service-update', methods=['POST'])
-@require_admin  
-def ml_service_force_update(current_user):
-    """Force ML service model update"""
-    try:
-        if not ML_SERVICE_URL:
-            return jsonify({'success': False, 'message': 'ML service not configured'}), 400
-            
-        response = http_session.post(f"{ML_SERVICE_URL}/api/update-models", timeout=30)
         
-        if response.status_code == 200:
-            return jsonify({'success': True, 'message': 'Model update initiated'})
-        else:
-            return jsonify({'success': False, 'message': f'Update failed: {response.status_code}'})
-            
     except Exception as e:
-        return jsonify({'success': False, 'message': str(e)})
+        logger.error(f"Users management error: {e}")
+        return jsonify({'error': 'Failed to get users'}), 500
 
-@admin_bp.route('/api/admin/ml-stats', methods=['GET'])
+@admin_bp.route('/api/admin/content/manage', methods=['GET'])
 @require_admin
-def get_ml_service_stats(current_user):
-    """Get ML service statistics and performance metrics"""
+def get_content_management(current_user):
     try:
-        if not ML_SERVICE_URL:
-            return jsonify({'error': 'ML service not configured'}), 400
+        page = int(request.args.get('page', 1))
+        per_page = int(request.args.get('per_page', 20))
+        content_type = request.args.get('type', 'all')
+        search = request.args.get('search', '')
         
-        # Get ML service stats
-        ml_stats = MLServiceClient.call_ml_service('/api/stats')
+        query = Content.query
         
-        if ml_stats:
-            # Add backend stats for comparison
-            backend_stats = {
-                'total_users': User.query.count(),
-                'total_content': Content.query.count(),
-                'total_interactions': UserInteraction.query.count(),
-                'active_users_last_week': User.query.filter(
-                    User.last_active >= datetime.utcnow() - timedelta(days=7)
-                ).count()
-            }
+        if content_type != 'all':
+            query = query.filter_by(content_type=content_type)
+        
+        if search:
+            query = query.filter(Content.title.contains(search))
+        
+        contents = query.order_by(Content.created_at.desc()).paginate(
+            page=page, per_page=per_page, error_out=False
+        )
+        
+        result = []
+        for content in contents.items:
+            interaction_count = UserInteraction.query.filter_by(content_id=content.id).count()
             
-            return jsonify({
-                'ml_service_stats': ml_stats,
-                'backend_stats': backend_stats,
-                'data_sync_status': {
-                    'content_match': backend_stats['total_content'] == ml_stats.get('data_statistics', {}).get('total_content', 0),
-                    'user_match': backend_stats['total_users'] == ml_stats.get('data_statistics', {}).get('unique_users', 0)
-                }
-            }), 200
-        else:
-            return jsonify({'error': 'Failed to get ML service stats'}), 500
-            
+            result.append({
+                'id': content.id,
+                'title': content.title,
+                'content_type': content.content_type,
+                'rating': content.rating,
+                'release_date': content.release_date.isoformat() if content.release_date else None,
+                'created_at': content.created_at.isoformat(),
+                'interaction_count': interaction_count,
+                'genres': json.loads(content.genres or '[]'),
+                'tmdb_id': content.tmdb_id,
+                'mal_id': content.mal_id,
+                'poster_path': content.poster_path
+            })
+        
+        return jsonify({
+            'content': result,
+            'total': contents.total,
+            'pages': contents.pages,
+            'current_page': page
+        }), 200
+        
     except Exception as e:
-        logger.error(f"ML stats error: {e}")
-        return jsonify({'error': 'Failed to get ML statistics'}), 500
+        logger.error(f"Content management error: {e}")
+        return jsonify({'error': 'Failed to get content'}), 500
 
-# Cache management endpoints
 @admin_bp.route('/api/admin/cache/clear', methods=['POST'])
 @require_admin
 def clear_cache(current_user):
-    """Clear all or specific cache entries"""
     try:
         cache_type = request.args.get('type', 'all')
         
@@ -655,12 +526,10 @@ def clear_cache(current_user):
             cache.clear()
             message = 'All cache cleared'
         elif cache_type == 'search':
-            # Clear search-related cache
             cache.delete_memoized(TMDBService.search_content)
             cache.delete_memoized(JikanService.search_anime)
             message = 'Search cache cleared'
         elif cache_type == 'recommendations':
-            # Clear recommendation-related cache
             message = 'Recommendations cache cleared'
         else:
             return jsonify({'error': 'Invalid cache type'}), 400
@@ -677,15 +546,12 @@ def clear_cache(current_user):
 @admin_bp.route('/api/admin/cache/stats', methods=['GET'])
 @require_admin
 def get_cache_stats(current_user):
-    """Get cache statistics"""
     try:
-        # Get cache type and basic info
         cache_info = {
             'type': app.config.get('CACHE_TYPE', 'unknown'),
             'default_timeout': app.config.get('CACHE_DEFAULT_TIMEOUT', 0),
         }
         
-        # Add Redis-specific stats if using Redis
         if app.config.get('CACHE_TYPE') == 'redis':
             try:
                 import redis
@@ -707,3 +573,47 @@ def get_cache_stats(current_user):
     except Exception as e:
         logger.error(f"Cache stats error: {e}")
         return jsonify({'error': 'Failed to get cache stats'}), 500
+
+@admin_bp.route('/api/admin/system-health', methods=['GET'])
+@require_admin
+def get_system_health(current_user):
+    try:
+        health_data = {
+            'timestamp': datetime.utcnow().isoformat(),
+            'status': 'healthy',
+            'components': {}
+        }
+        
+        health_data['components']['database'] = {
+            'status': 'healthy',
+            'total_users': User.query.count(),
+            'total_content': Content.query.count(),
+            'total_interactions': UserInteraction.query.count()
+        }
+        
+        try:
+            cache.set('health_check', 'ok', timeout=10)
+            if cache.get('health_check') == 'ok':
+                health_data['components']['cache'] = {'status': 'healthy'}
+            else:
+                health_data['components']['cache'] = {'status': 'degraded'}
+                health_data['status'] = 'degraded'
+        except:
+            health_data['components']['cache'] = {'status': 'unhealthy'}
+            health_data['status'] = 'degraded'
+        
+        health_data['components']['external_apis'] = {
+            'tmdb': 'configured' if TMDBService else 'not_configured',
+            'jikan': 'configured' if JikanService else 'not_configured',
+            'telegram': 'configured' if bot else 'not_configured'
+        }
+        
+        return jsonify(health_data), 200
+        
+    except Exception as e:
+        logger.error(f"System health check error: {e}")
+        return jsonify({
+            'status': 'unhealthy',
+            'error': str(e),
+            'timestamp': datetime.utcnow().isoformat()
+        }), 500

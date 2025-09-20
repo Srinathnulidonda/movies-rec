@@ -713,7 +713,8 @@ app.register_blueprint(users_bp)
 init_auth(app, db, User)
 
 init_admin(app, db, models, services)
-init_users(app, db, models, services)
+services_for_users = {k: v for k, v in services.items() if k not in ['MLServiceClient', 'ML_SERVICE_URL']}
+init_users(app, db, models, services_for_users)
 
 @app.route('/api/details/<slug>', methods=['GET'])
 def get_content_details_by_slug(slug):
