@@ -5,7 +5,7 @@ import json
 import logging
 import jwt
 from functools import wraps
-from ..ml_services.recommendation import RecommendationEngine
+from ml_services.recommendation import RecommendationEngine
 
 users_bp = Blueprint('users', __name__)
 logger = logging.getLogger(__name__)
