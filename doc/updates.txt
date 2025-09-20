@@ -148,3 +148,25 @@ You are a senior backend architect working on a large-scale movie recommendation
 - the similar titles engine with 100% accurate story matching capabilities
 - 100% accurate the similar story matching  should be there
 - use the nltk, scikit-learn and joblib that support render free tier
+
+
+remove the ml-services urls from this users.py 
+instead of url create and folder backend/ml-services 
+in that folder create algorithm.py and recommendation.py files which functionality is to based on the users search history,view, like, favorite, watchlist, rating should be keep traking based on that the personalized recommendations should be provided use the best approches to provide the personalized recommendations of movies, tv shows and anime those should be 100% accurate 
+in backend/ml-services/algorithm.py file there should be complete alogrithms and operation should be there
+according to the users search history, view, like, favorite, watchlist, rating
+now  improve the users.py
+provide the files without comments
+
+Critical Success Factors
+1.	Multi-layered approach: Don't rely on single algorithm
+2.	Dynamic weighting: Adjust based on user behavior patterns
+3.	Continuous learning: Regular model updates with fresh data
+4.	Context awareness: Consider time, device, location
+5.	Cold start handling: Strategies for new users/items
+6.	Feedback loops: Learn from user interactions immediately
+Evaluation Metrics
+•	Accuracy: RMSE, Precision@K, NDCG
+•	Beyond accuracy: Diversity, novelty, coverage, serendipity
+Key Implementation Strategy
+Start with hybrid collaborative + content-based filtering, add deep learning layers, implement real-time feedback, and continuously A/B test different approaches while maintaining diversity in recommendations.
