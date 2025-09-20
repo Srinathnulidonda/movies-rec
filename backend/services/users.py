@@ -1,4 +1,3 @@
-#backend/services/users.py
 from flask import Blueprint, request, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta
@@ -12,10 +11,9 @@ from functools import wraps
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 try:
-    from ml_services.recommendation import RecommendationEngine
+    from ml_services.recommendation import PersonalizedRecommendationEngine
 except ImportError:
-    RecommendationEngine = None
-    print("Warning: ML Services not available. Recommendation features will be limited.")
+    PersonalizedRecommendationEngine = None
 
 users_bp = Blueprint('users', __name__)
 logger = logging.getLogger(__name__)
@@ -36,16 +34,13 @@ def init_users(flask_app, database, models, services):
     Content = models['Content']
     UserInteraction = models['UserInteraction']
     
-    if RecommendationEngine:
+    if PersonalizedRecommendationEngine:
         try:
-            recommendation_engine = RecommendationEngine(db, models)
-            print("ML Recommendation Engine initialized successfully")
+            recommendation_engine = PersonalizedRecommendationEngine(db, models)
+            print("Enhanced Personalized Recommendation Engine initialized")
         except Exception as e:
-            print(f"Warning: Failed to initialize ML Recommendation Engine: {e}")
+            print(f"Warning: Failed to initialize Enhanced Recommendation Engine: {e}")
             recommendation_engine = None
-    else:
-        print("Warning: RecommendationEngine not available")
-        recommendation_engine = None
 
 def require_auth(f):
     @wraps(f)
@@ -84,12 +79,15 @@ def register():
             username=data['username'],
             email=data['email'],
             password_hash=generate_password_hash(data['password']),
-            preferred_languages=json.dumps(data.get('preferred_languages', [])),
+            preferred_languages=json.dumps(data.get('preferred_languages', ['english', 'telugu'])),
             preferred_genres=json.dumps(data.get('preferred_genres', []))
         )
         
         db.session.add(user)
         db.session.commit()
+        
+        if recommendation_engine:
+            recommendation_engine.initialize_user_profile(user.id)
         
         token = jwt.encode({
             'user_id': user.id,
@@ -171,10 +169,7 @@ def record_interaction(current_user):
                 db.session.delete(interaction)
                 db.session.commit()
                 if recommendation_engine:
-                    try:
-                        recommendation_engine.update_user_profile(current_user.id)
-                    except Exception as e:
-                        logger.warning(f"Failed to update user profile: {e}")
+                    recommendation_engine.update_user_behavior_profile(current_user.id)
                 return jsonify({'message': 'Removed from watchlist'}), 200
             else:
                 return jsonify({'message': 'Content not in watchlist'}), 404
@@ -189,22 +184,34 @@ def record_interaction(current_user):
             if existing:
                 return jsonify({'message': 'Already in watchlist'}), 200
         
+        metadata = data.get('metadata', {})
+        if data['interaction_type'] == 'search':
+            metadata['query'] = data.get('search_query', '')
+            metadata['search_timestamp'] = datetime.utcnow().isoformat()
+        elif data['interaction_type'] == 'view':
+            metadata['view_duration'] = data.get('view_duration', 0)
+            metadata['completion_percentage'] = data.get('completion_percentage', 0)
+        
         interaction = UserInteraction(
             user_id=current_user.id,
             content_id=data['content_id'],
             interaction_type=data['interaction_type'],
             rating=data.get('rating'),
-            interaction_metadata=data.get('metadata', {})
+            interaction_metadata=metadata
         )
         
         db.session.add(interaction)
         db.session.commit()
         
         if recommendation_engine:
-            try:
-                recommendation_engine.update_user_profile(current_user.id)
-            except Exception as e:
-                logger.warning(f"Failed to update user profile: {e}")
+            recommendation_engine.update_user_behavior_profile(current_user.id)
+            recommendation_engine.process_real_time_interaction(
+                current_user.id, 
+                data['content_id'], 
+                data['interaction_type'],
+                data.get('rating'),
+                metadata
+            )
         
         return jsonify({'message': 'Interaction recorded successfully'}), 201
         
@@ -212,6 +219,48 @@ def record_interaction(current_user):
         logger.error(f"Interaction recording error: {e}")
         db.session.rollback()
         return jsonify({'error': 'Failed to record interaction'}), 500
+
+@users_bp.route('/api/interactions/batch', methods=['POST'])
+@require_auth
+def record_batch_interactions(current_user):
+    try:
+        data = request.get_json()
+        interactions_data = data.get('interactions', [])
+        
+        if not interactions_data:
+            return jsonify({'error': 'No interactions provided'}), 400
+        
+        recorded_count = 0
+        
+        for interaction_data in interactions_data:
+            if 'content_id' in interaction_data and 'interaction_type' in interaction_data:
+                metadata = interaction_data.get('metadata', {})
+                
+                interaction = UserInteraction(
+                    user_id=current_user.id,
+                    content_id=interaction_data['content_id'],
+                    interaction_type=interaction_data['interaction_type'],
+                    rating=interaction_data.get('rating'),
+                    interaction_metadata=metadata
+                )
+                
+                db.session.add(interaction)
+                recorded_count += 1
+        
+        db.session.commit()
+        
+        if recommendation_engine and recorded_count > 0:
+            recommendation_engine.update_user_behavior_profile(current_user.id)
+        
+        return jsonify({
+            'message': f'Recorded {recorded_count} interactions successfully',
+            'recorded_count': recorded_count
+        }), 201
+        
+    except Exception as e:
+        logger.error(f"Batch interaction error: {e}")
+        db.session.rollback()
+        return jsonify({'error': 'Failed to record batch interactions'}), 500
 
 @users_bp.route('/api/user/watchlist', methods=['GET'])
 @require_auth
@@ -247,49 +296,6 @@ def get_watchlist(current_user):
     except Exception as e:
         logger.error(f"Watchlist error: {e}")
         return jsonify({'error': 'Failed to get watchlist'}), 500
-
-@users_bp.route('/api/user/watchlist/<int:content_id>', methods=['DELETE'])
-@require_auth
-def remove_from_watchlist(current_user, content_id):
-    try:
-        interaction = UserInteraction.query.filter_by(
-            user_id=current_user.id,
-            content_id=content_id,
-            interaction_type='watchlist'
-        ).first()
-        
-        if interaction:
-            db.session.delete(interaction)
-            db.session.commit()
-            if recommendation_engine:
-                try:
-                    recommendation_engine.update_user_profile(current_user.id)
-                except Exception as e:
-                    logger.warning(f"Failed to update user profile: {e}")
-            return jsonify({'message': 'Removed from watchlist'}), 200
-        else:
-            return jsonify({'message': 'Content not in watchlist'}), 404
-            
-    except Exception as e:
-        logger.error(f"Remove from watchlist error: {e}")
-        db.session.rollback()
-        return jsonify({'error': 'Failed to remove from watchlist'}), 500
-
-@users_bp.route('/api/user/watchlist/<int:content_id>', methods=['GET'])
-@require_auth
-def check_watchlist_status(current_user, content_id):
-    try:
-        interaction = UserInteraction.query.filter_by(
-            user_id=current_user.id,
-            content_id=content_id,
-            interaction_type='watchlist'
-        ).first()
-        
-        return jsonify({'in_watchlist': interaction is not None}), 200
-        
-    except Exception as e:
-        logger.error(f"Check watchlist status error: {e}")
-        return jsonify({'error': 'Failed to check watchlist status'}), 500
 
 @users_bp.route('/api/user/favorites', methods=['GET'])
 @require_auth
@@ -333,19 +339,20 @@ def get_personalized_recommendations(current_user):
         if not recommendation_engine:
             return jsonify({
                 'recommendations': [],
-                'error': 'ML recommendation engine not available',
-                'fallback': True
+                'error': 'Recommendation engine not available'
             }), 200
         
-        limit = int(request.args.get('limit', 20))
+        limit = int(request.args.get('limit', 30))
         content_type = request.args.get('content_type', 'all')
-        strategy = request.args.get('strategy', 'hybrid')
+        strategy = request.args.get('strategy', 'intelligent_hybrid')
+        include_explanations = request.args.get('include_explanations', 'true').lower() == 'true'
         
-        recommendations = recommendation_engine.get_personalized_recommendations(
+        recommendations = recommendation_engine.get_ultra_personalized_recommendations(
             user_id=current_user.id,
             limit=limit,
             content_type=content_type,
-            strategy=strategy
+            strategy=strategy,
+            include_explanations=include_explanations
         )
         
         result = []
@@ -365,43 +372,46 @@ def get_personalized_recommendations(current_user):
                 'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
                 'overview': content.overview[:150] + '...' if content.overview else '',
                 'youtube_trailer': youtube_url,
-                'recommendation_score': rec['score'],
-                'recommendation_reason': rec['reason'],
-                'algorithm_used': rec['algorithm'],
-                'confidence': rec['confidence']
+                'personalization_score': rec['personalization_score'],
+                'match_reason': rec['match_reason'],
+                'confidence_level': rec['confidence_level'],
+                'behavioral_match': rec['behavioral_match'],
+                'preference_alignment': rec['preference_alignment']
             })
+        
+        user_profile = recommendation_engine.get_comprehensive_user_profile(current_user.id)
         
         return jsonify({
             'recommendations': result,
-            'strategy': strategy,
-            'total_interactions': recommendation_engine.get_user_interaction_count(current_user.id) if recommendation_engine else 0,
-            'user_profile_strength': recommendation_engine.get_user_profile_strength(current_user.id) if recommendation_engine else 'unknown'
+            'user_profile': user_profile,
+            'recommendation_strategy': strategy,
+            'total_analyzed_interactions': user_profile.get('total_interactions', 0),
+            'personalization_strength': user_profile.get('profile_strength', 'unknown')
         }), 200
         
     except Exception as e:
         logger.error(f"Personalized recommendations error: {e}")
-        return jsonify({'recommendations': [], 'error': 'Failed to get recommendations'}), 200
+        return jsonify({'recommendations': [], 'error': 'Failed to get recommendations'}), 500
 
-@users_bp.route('/api/recommendations/ml-personalized', methods=['GET'])
+@users_bp.route('/api/recommendations/behavior-based', methods=['GET'])
 @require_auth
-def get_ml_personalized_recommendations(current_user):
+def get_behavior_based_recommendations(current_user):
     try:
         if not recommendation_engine:
             return jsonify({
                 'recommendations': [],
-                'error': 'ML recommendation engine not available',
-                'fallback': True
+                'error': 'Recommendation engine not available'
             }), 200
         
-        limit = int(request.args.get('limit', 20))
-        include_explanations = request.args.get('include_explanations', 'true').lower() == 'true'
-        diversity_factor = float(request.args.get('diversity_factor', 0.3))
+        limit = int(request.args.get('limit', 25))
+        behavior_focus = request.args.get('behavior_focus', 'comprehensive')
+        temporal_weight = float(request.args.get('temporal_weight', 0.7))
         
-        recommendations = recommendation_engine.get_advanced_recommendations(
+        recommendations = recommendation_engine.get_behavior_driven_recommendations(
             user_id=current_user.id,
             limit=limit,
-            include_explanations=include_explanations,
-            diversity_factor=diversity_factor
+            behavior_focus=behavior_focus,
+            temporal_weight=temporal_weight
         )
         
         result = []
@@ -421,27 +431,48 @@ def get_ml_personalized_recommendations(current_user):
                 'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
                 'overview': content.overview[:150] + '...' if content.overview else '',
                 'youtube_trailer': youtube_url,
-                'ml_score': rec['ml_score'],
-                'ml_reason': rec['explanation'],
-                'algorithm_mix': rec['algorithm_mix'],
-                'confidence': rec['confidence'],
-                'novelty_score': rec['novelty_score'],
-                'diversity_contribution': rec['diversity_contribution']
+                'behavior_score': rec['behavior_score'],
+                'behavior_pattern': rec['behavior_pattern'],
+                'temporal_relevance': rec['temporal_relevance'],
+                'interaction_affinity': rec['interaction_affinity']
             })
         
-        metrics = recommendation_engine.get_recommendation_metrics(current_user.id) if recommendation_engine else {}
+        behavior_analysis = recommendation_engine.analyze_user_behavior_patterns(current_user.id)
         
         return jsonify({
             'recommendations': result,
-            'ml_strategy': 'advanced_hybrid',
-            'user_metrics': metrics,
-            'diversity_applied': diversity_factor,
-            'recommendation_quality': 'high_precision'
+            'behavior_analysis': behavior_analysis,
+            'behavior_focus': behavior_focus,
+            'temporal_weight': temporal_weight
         }), 200
         
     except Exception as e:
-        logger.error(f"ML personalized recommendations error: {e}")
-        return jsonify({'recommendations': [], 'error': 'Failed to get recommendations'}), 200
+        logger.error(f"Behavior-based recommendations error: {e}")
+        return jsonify({'recommendations': [], 'error': 'Failed to get recommendations'}), 500
+
+@users_bp.route('/api/user/profile/update-preferences', methods=['POST'])
+@require_auth
+def update_user_preferences(current_user):
+    try:
+        data = request.get_json()
+        
+        if 'preferred_languages' in data:
+            current_user.preferred_languages = json.dumps(data['preferred_languages'])
+        
+        if 'preferred_genres' in data:
+            current_user.preferred_genres = json.dumps(data['preferred_genres'])
+        
+        db.session.commit()
+        
+        if recommendation_engine:
+            recommendation_engine.update_user_behavior_profile(current_user.id)
+        
+        return jsonify({'message': 'Preferences updated successfully'}), 200
+        
+    except Exception as e:
+        logger.error(f"Update preferences error: {e}")
+        db.session.rollback()
+        return jsonify({'error': 'Failed to update preferences'}), 500
 
 @users_bp.route('/api/user/interaction-history', methods=['GET'])
 @require_auth
@@ -497,24 +528,36 @@ def record_recommendation_feedback(current_user):
     try:
         data = request.get_json()
         
-        required_fields = ['content_id', 'feedback_type', 'recommendation_id']
+        required_fields = ['content_id', 'feedback_type']
         if not all(field in data for field in required_fields):
             return jsonify({'error': 'Missing required fields'}), 400
         
         if recommendation_engine:
-            try:
-                recommendation_engine.record_recommendation_feedback(
-                    user_id=current_user.id,
-                    content_id=data['content_id'],
-                    feedback_type=data['feedback_type'],
-                    recommendation_id=data['recommendation_id'],
-                    feedback_value=data.get('feedback_value', 1.0)
-                )
-            except Exception as e:
-                logger.warning(f"Failed to record ML feedback: {e}")
+            recommendation_engine.record_detailed_feedback(
+                user_id=current_user.id,
+                content_id=data['content_id'],
+                feedback_type=data['feedback_type'],
+                feedback_value=data.get('feedback_value', 1.0),
+                feedback_context=data.get('feedback_context', {})
+            )
         
         return jsonify({'message': 'Feedback recorded successfully'}), 201
         
     except Exception as e:
         logger.error(f"Recommendation feedback error: {e}")
         return jsonify({'error': 'Failed to record feedback'}), 500
+
+@users_bp.route('/api/user/profile/analytics', methods=['GET'])
+@require_auth
+def get_user_profile_analytics(current_user):
+    try:
+        if not recommendation_engine:
+            return jsonify({'error': 'Analytics not available'}), 503
+        
+        analytics = recommendation_engine.get_user_analytics(current_user.id)
+        
+        return jsonify(analytics), 200
+        
+    except Exception as e:
+        logger.error(f"Profile analytics error: {e}")
+        return jsonify({'error': 'Failed to get analytics'}), 500

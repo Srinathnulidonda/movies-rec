@@ -15,7 +15,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-class CollaborativeFiltering:
+class EnhancedCollaborativeFiltering:
     def __init__(self, db, models):
         self.db = db
         self.User = models['User']
@@ -23,10 +23,11 @@ class CollaborativeFiltering:
         self.UserInteraction = models['UserInteraction']
         self.user_similarity_cache = {}
         self.item_similarity_cache = {}
+        self.user_behavior_profiles = {}
         
-    def get_user_item_matrix(self, interaction_types=None):
+    def get_enhanced_user_item_matrix(self, interaction_types=None, temporal_weight=True):
         if interaction_types is None:
-            interaction_types = ['view', 'like', 'favorite', 'rating', 'watchlist']
+            interaction_types = ['view', 'like', 'favorite', 'rating', 'watchlist', 'search']
         
         interactions = self.UserInteraction.query.filter(
             self.UserInteraction.interaction_type.in_(interaction_types)
@@ -34,8 +35,13 @@ class CollaborativeFiltering:
         
         user_item_dict = defaultdict(dict)
         for interaction in interactions:
-            weight = self._get_interaction_weight(interaction)
-            user_item_dict[interaction.user_id][interaction.content_id] = weight
+            weight = self._calculate_enhanced_interaction_weight(interaction, temporal_weight)
+            if interaction.content_id in user_item_dict[interaction.user_id]:
+                user_item_dict[interaction.user_id][interaction.content_id] = max(
+                    user_item_dict[interaction.user_id][interaction.content_id], weight
+                )
+            else:
+                user_item_dict[interaction.user_id][interaction.content_id] = weight
         
         users = list(user_item_dict.keys())
         items = list(set().union(*[items.keys() for items in user_item_dict.values()]))
@@ -50,28 +56,58 @@ class CollaborativeFiltering:
         
         return matrix, user_to_idx, item_to_idx
     
-    def _get_interaction_weight(self, interaction):
-        weights = {
+    def _calculate_enhanced_interaction_weight(self, interaction, temporal_weight=True):
+        base_weights = {
             'view': 1.0,
-            'like': 2.0,
-            'favorite': 3.0,
-            'watchlist': 2.5,
-            'rating': interaction.rating * 0.5 if interaction.rating else 2.0,
-            'search': 0.5
+            'like': 3.0,
+            'favorite': 5.0,
+            'watchlist': 4.0,
+            'rating': (interaction.rating or 3.0) * 0.8,
+            'search': 0.8,
+            'share': 2.5,
+            'download': 3.5
         }
         
-        base_weight = weights.get(interaction.interaction_type, 1.0)
+        base_weight = base_weights.get(interaction.interaction_type, 1.0)
         
-        days_ago = (datetime.utcnow() - interaction.timestamp).days
-        time_decay = math.exp(-days_ago / 30.0)
+        if interaction.interaction_metadata:
+            metadata = interaction.interaction_metadata
+            
+            if interaction.interaction_type == 'view':
+                duration = metadata.get('view_duration', 0)
+                completion = metadata.get('completion_percentage', 0)
+                if duration > 300:
+                    base_weight *= 1.5
+                if completion > 80:
+                    base_weight *= 1.8
+                elif completion > 50:
+                    base_weight *= 1.4
+            
+            if interaction.interaction_type == 'search':
+                if metadata.get('clicked_result', False):
+                    base_weight *= 2.0
         
-        return base_weight * time_decay
+        if temporal_weight:
+            days_ago = (datetime.utcnow() - interaction.timestamp).days
+            if days_ago <= 7:
+                time_multiplier = 1.5
+            elif days_ago <= 30:
+                time_multiplier = 1.2
+            elif days_ago <= 90:
+                time_multiplier = 1.0
+            else:
+                time_multiplier = math.exp(-days_ago / 180.0)
+            
+            base_weight *= time_multiplier
+        
+        return min(base_weight, 10.0)
     
-    def calculate_user_similarity(self, user_id, target_users=None):
-        if user_id in self.user_similarity_cache:
-            return self.user_similarity_cache[user_id]
+    def calculate_advanced_user_similarity(self, user_id, similarity_threshold=0.1):
+        cache_key = f"{user_id}_advanced"
+        if cache_key in self.user_similarity_cache:
+            return self.user_similarity_cache[cache_key]
         
-        matrix, user_to_idx, item_to_idx = self.get_user_item_matrix()
+        matrix, user_to_idx, item_to_idx = self.get_enhanced_user_item_matrix()
         
         if user_id not in user_to_idx:
             return {}
@@ -81,43 +117,108 @@ class CollaborativeFiltering:
         
         similarities = cosine_similarity(user_vector, matrix)[0]
         
+        user_profile = self._get_user_behavior_profile(user_id)
+        
         result = {}
         for other_user_id, other_idx in user_to_idx.items():
             if other_user_id != user_id:
-                result[other_user_id] = similarities[other_idx]
+                cosine_sim = similarities[other_idx]
+                if cosine_sim > similarity_threshold:
+                    other_profile = self._get_user_behavior_profile(other_user_id)
+                    profile_similarity = self._calculate_profile_similarity(user_profile, other_profile)
+                    
+                    combined_similarity = 0.7 * cosine_sim + 0.3 * profile_similarity
+                    result[other_user_id] = combined_similarity
         
-        self.user_similarity_cache[user_id] = result
+        self.user_similarity_cache[cache_key] = result
         return result
     
-    def calculate_item_similarity(self, item_id, target_items=None):
-        if item_id in self.item_similarity_cache:
-            return self.item_similarity_cache[item_id]
+    def _get_user_behavior_profile(self, user_id):
+        if user_id in self.user_behavior_profiles:
+            return self.user_behavior_profiles[user_id]
         
-        matrix, user_to_idx, item_to_idx = self.get_user_item_matrix()
+        interactions = self.UserInteraction.query.filter_by(user_id=user_id).all()
         
-        if item_id not in item_to_idx:
-            return {}
+        profile = {
+            'genre_preferences': Counter(),
+            'language_preferences': Counter(),
+            'content_type_preferences': Counter(),
+            'rating_patterns': [],
+            'interaction_frequency': defaultdict(int),
+            'temporal_patterns': defaultdict(int),
+            'avg_rating': 0.0
+        }
         
-        item_idx = item_to_idx[item_id]
-        item_vector = matrix[:, item_idx].reshape(-1, 1)
+        for interaction in interactions:
+            content = self.Content.query.get(interaction.content_id)
+            if content:
+                try:
+                    genres = json.loads(content.genres or '[]')
+                    for genre in genres:
+                        weight = self._calculate_enhanced_interaction_weight(interaction, False)
+                        profile['genre_preferences'][genre] += weight
+                except:
+                    pass
+                
+                try:
+                    languages = json.loads(content.languages or '[]')
+                    for language in languages:
+                        weight = self._calculate_enhanced_interaction_weight(interaction, False)
+                        profile['language_preferences'][language] += weight
+                except:
+                    pass
+                
+                weight = self._calculate_enhanced_interaction_weight(interaction, False)
+                profile['content_type_preferences'][content.content_type] += weight
+                
+                if interaction.rating:
+                    profile['rating_patterns'].append(interaction.rating)
+                
+                profile['interaction_frequency'][interaction.interaction_type] += 1
+                
+                hour = interaction.timestamp.hour
+                profile['temporal_patterns'][hour] += 1
         
-        similarities = cosine_similarity(item_vector.T, matrix.T)[0]
+        if profile['rating_patterns']:
+            profile['avg_rating'] = sum(profile['rating_patterns']) / len(profile['rating_patterns'])
         
-        result = {}
-        for other_item_id, other_idx in item_to_idx.items():
-            if other_item_id != item_id:
-                result[other_item_id] = similarities[other_idx]
-        
-        self.item_similarity_cache[item_id] = result
-        return result
+        self.user_behavior_profiles[user_id] = profile
+        return profile
     
-    def user_based_recommendations(self, user_id, limit=20):
-        similarities = self.calculate_user_similarity(user_id)
+    def _calculate_profile_similarity(self, profile1, profile2):
+        similarities = []
+        
+        genres1 = set(profile1['genre_preferences'].keys())
+        genres2 = set(profile2['genre_preferences'].keys())
+        if genres1 and genres2:
+            genre_overlap = len(genres1 & genres2) / len(genres1 | genres2)
+            similarities.append(genre_overlap * 0.4)
+        
+        langs1 = set(profile1['language_preferences'].keys())
+        langs2 = set(profile2['language_preferences'].keys())
+        if langs1 and langs2:
+            lang_overlap = len(langs1 & langs2) / len(langs1 | langs2)
+            similarities.append(lang_overlap * 0.3)
+        
+        types1 = set(profile1['content_type_preferences'].keys())
+        types2 = set(profile2['content_type_preferences'].keys())
+        if types1 and types2:
+            type_overlap = len(types1 & types2) / len(types1 | types2)
+            similarities.append(type_overlap * 0.2)
+        
+        if profile1['avg_rating'] > 0 and profile2['avg_rating'] > 0:
+            rating_similarity = 1 - abs(profile1['avg_rating'] - profile2['avg_rating']) / 10.0
+            similarities.append(rating_similarity * 0.1)
+        
+        return sum(similarities) if similarities else 0.0
+    
+    def get_precision_user_recommendations(self, user_id, limit=30):
+        similarities = self.calculate_advanced_user_similarity(user_id)
         
         if not similarities:
             return []
         
-        similar_users = sorted(similarities.items(), key=lambda x: x[1], reverse=True)[:50]
+        similar_users = sorted(similarities.items(), key=lambda x: x[1], reverse=True)[:100]
         
         user_interactions = set(
             interaction.content_id for interaction in 
@@ -125,9 +226,10 @@ class CollaborativeFiltering:
         )
         
         recommendations = defaultdict(float)
+        recommendation_sources = defaultdict(list)
         
         for similar_user_id, similarity_score in similar_users:
-            if similarity_score < 0.1:
+            if similarity_score < 0.2:
                 continue
             
             similar_user_interactions = self.UserInteraction.query.filter_by(
@@ -136,57 +238,74 @@ class CollaborativeFiltering:
             
             for interaction in similar_user_interactions:
                 if interaction.content_id not in user_interactions:
-                    weight = self._get_interaction_weight(interaction)
-                    recommendations[interaction.content_id] += similarity_score * weight
+                    weight = self._calculate_enhanced_interaction_weight(interaction)
+                    score = similarity_score * weight
+                    recommendations[interaction.content_id] += score
+                    recommendation_sources[interaction.content_id].append({
+                        'similar_user': similar_user_id,
+                        'similarity': similarity_score,
+                        'interaction_type': interaction.interaction_type,
+                        'weight': weight
+                    })
         
-        sorted_recommendations = sorted(
-            recommendations.items(), 
-            key=lambda x: x[1], 
-            reverse=True
-        )[:limit]
+        user_profile = self._get_user_behavior_profile(user_id)
         
-        return [(content_id, score) for content_id, score in sorted_recommendations]
+        enhanced_recommendations = []
+        for content_id, base_score in recommendations.items():
+            content = self.Content.query.get(content_id)
+            if content:
+                profile_match = self._calculate_content_profile_match(content, user_profile)
+                final_score = base_score * (1 + profile_match)
+                
+                enhanced_recommendations.append((content_id, final_score, {
+                    'base_score': base_score,
+                    'profile_match': profile_match,
+                    'sources': recommendation_sources[content_id][:3]
+                }))
+        
+        enhanced_recommendations.sort(key=lambda x: x[1], reverse=True)
+        return enhanced_recommendations[:limit]
     
-    def item_based_recommendations(self, user_id, limit=20):
-        user_interactions = self.UserInteraction.query.filter_by(user_id=user_id).all()
+    def _calculate_content_profile_match(self, content, user_profile):
+        match_score = 0.0
         
-        if not user_interactions:
-            return []
+        try:
+            content_genres = set(json.loads(content.genres or '[]'))
+            user_top_genres = set([genre for genre, _ in user_profile['genre_preferences'].most_common(5)])
+            if content_genres and user_top_genres:
+                genre_match = len(content_genres & user_top_genres) / len(content_genres)
+                match_score += genre_match * 0.4
+        except:
+            pass
         
-        recommendations = defaultdict(float)
+        try:
+            content_languages = set(json.loads(content.languages or '[]'))
+            user_top_languages = set([lang for lang, _ in user_profile['language_preferences'].most_common(3)])
+            if content_languages and user_top_languages:
+                lang_match = len(content_languages & user_top_languages) / len(content_languages)
+                match_score += lang_match * 0.3
+        except:
+            pass
         
-        for interaction in user_interactions:
-            similarities = self.calculate_item_similarity(interaction.content_id)
-            interaction_weight = self._get_interaction_weight(interaction)
-            
-            for similar_item_id, similarity_score in similarities.items():
-                if similarity_score > 0.1:
-                    recommendations[similar_item_id] += similarity_score * interaction_weight
+        if content.content_type in user_profile['content_type_preferences']:
+            type_weight = user_profile['content_type_preferences'][content.content_type]
+            total_type_weight = sum(user_profile['content_type_preferences'].values())
+            if total_type_weight > 0:
+                type_match = type_weight / total_type_weight
+                match_score += type_match * 0.3
         
-        user_seen_items = set(interaction.content_id for interaction in user_interactions)
-        
-        filtered_recommendations = [
-            (item_id, score) for item_id, score in recommendations.items()
-            if item_id not in user_seen_items
-        ]
-        
-        sorted_recommendations = sorted(
-            filtered_recommendations, 
-            key=lambda x: x[1], 
-            reverse=True
-        )[:limit]
-        
-        return sorted_recommendations
+        return match_score
 
-class ContentBasedFiltering:
+class AdvancedContentBasedFiltering:
     def __init__(self, db, models):
         self.db = db
         self.Content = models['Content']
         self.UserInteraction = models['UserInteraction']
         self.content_features_cache = {}
-        self.tfidf_vectorizer = TfidfVectorizer(max_features=5000, stop_words='english')
+        self.user_content_profiles = {}
+        self.tfidf_vectorizer = TfidfVectorizer(max_features=10000, stop_words='english', ngram_range=(1, 2))
         
-    def extract_content_features(self, content_id):
+    def build_comprehensive_content_features(self, content_id):
         if content_id in self.content_features_cache:
             return self.content_features_cache[content_id]
         
@@ -194,139 +313,267 @@ class ContentBasedFiltering:
         if not content:
             return None
         
-        features = {}
+        features = {
+            'genres': set(),
+            'languages': set(),
+            'content_type': content.content_type,
+            'rating': content.rating or 0,
+            'popularity': content.popularity or 0,
+            'runtime': content.runtime or 0,
+            'release_year': 0,
+            'overview': content.overview or '',
+            'vote_count': content.vote_count or 0,
+            'is_trending': content.is_trending or False,
+            'is_new_release': content.is_new_release or False,
+            'is_critics_choice': content.is_critics_choice or False
+        }
         
         try:
             genres = json.loads(content.genres or '[]')
             features['genres'] = set(genres)
         except:
-            features['genres'] = set()
+            pass
         
         try:
             languages = json.loads(content.languages or '[]')
             features['languages'] = set(languages)
         except:
-            features['languages'] = set()
-        
-        features['content_type'] = content.content_type
-        features['rating'] = content.rating or 0
-        features['popularity'] = content.popularity or 0
-        features['runtime'] = content.runtime or 0
+            pass
         
         if content.release_date:
             features['release_year'] = content.release_date.year
-        else:
-            features['release_year'] = 0
         
-        features['overview'] = content.overview or ''
+        features['decade'] = features['release_year'] // 10 * 10 if features['release_year'] > 0 else 0
+        
+        if features['runtime'] > 0:
+            if features['runtime'] < 90:
+                features['duration_category'] = 'short'
+            elif features['runtime'] < 150:
+                features['duration_category'] = 'medium'
+            else:
+                features['duration_category'] = 'long'
+        else:
+            features['duration_category'] = 'unknown'
+        
+        if features['rating'] >= 8.0:
+            features['quality_tier'] = 'excellent'
+        elif features['rating'] >= 7.0:
+            features['quality_tier'] = 'good'
+        elif features['rating'] >= 6.0:
+            features['quality_tier'] = 'average'
+        else:
+            features['quality_tier'] = 'below_average'
         
         self.content_features_cache[content_id] = features
         return features
     
-    def calculate_content_similarity(self, content_id1, content_id2):
-        features1 = self.extract_content_features(content_id1)
-        features2 = self.extract_content_features(content_id2)
+    def build_user_content_profile(self, user_id):
+        if user_id in self.user_content_profiles:
+            return self.user_content_profiles[user_id]
         
-        if not features1 or not features2:
+        interactions = self.UserInteraction.query.filter_by(user_id=user_id).all()
+        
+        profile = {
+            'preferred_genres': Counter(),
+            'preferred_languages': Counter(),
+            'content_type_preferences': Counter(),
+            'quality_preferences': Counter(),
+            'duration_preferences': Counter(),
+            'decade_preferences': Counter(),
+            'rating_distribution': [],
+            'interaction_patterns': defaultdict(float),
+            'content_features_liked': defaultdict(float)
+        }
+        
+        total_weight = 0
+        
+        for interaction in interactions:
+            content_features = self.build_comprehensive_content_features(interaction.content_id)
+            if not content_features:
+                continue
+            
+            weight = self._calculate_interaction_weight(interaction)
+            total_weight += weight
+            
+            for genre in content_features['genres']:
+                profile['preferred_genres'][genre] += weight
+            
+            for language in content_features['languages']:
+                profile['preferred_languages'][language] += weight
+            
+            profile['content_type_preferences'][content_features['content_type']] += weight
+            profile['quality_preferences'][content_features['quality_tier']] += weight
+            profile['duration_preferences'][content_features['duration_category']] += weight
+            
+            if content_features['decade'] > 0:
+                profile['decade_preferences'][content_features['decade']] += weight
+            
+            if interaction.rating:
+                profile['rating_distribution'].append(interaction.rating)
+            
+            profile['interaction_patterns'][interaction.interaction_type] += weight
+            
+            for feature_key, feature_value in content_features.items():
+                if isinstance(feature_value, (int, float, bool)):
+                    profile['content_features_liked'][feature_key] += weight * float(feature_value)
+        
+        if total_weight > 0:
+            for key in ['preferred_genres', 'preferred_languages', 'content_type_preferences', 
+                       'quality_preferences', 'duration_preferences', 'decade_preferences']:
+                for item in profile[key]:
+                    profile[key][item] /= total_weight
+        
+        profile['avg_rating'] = sum(profile['rating_distribution']) / len(profile['rating_distribution']) if profile['rating_distribution'] else 0
+        profile['rating_variance'] = np.var(profile['rating_distribution']) if len(profile['rating_distribution']) > 1 else 0
+        
+        self.user_content_profiles[user_id] = profile
+        return profile
+    
+    def calculate_advanced_content_similarity(self, user_id, content_id):
+        user_profile = self.build_user_content_profile(user_id)
+        content_features = self.build_comprehensive_content_features(content_id)
+        
+        if not user_profile or not content_features:
             return 0.0
         
-        similarity_scores = []
+        similarity_components = []
         
-        genre_similarity = len(features1['genres'] & features2['genres']) / max(
-            len(features1['genres'] | features2['genres']), 1
-        )
-        similarity_scores.append(genre_similarity * 0.3)
+        genre_score = 0.0
+        for genre in content_features['genres']:
+            if genre in user_profile['preferred_genres']:
+                genre_score += user_profile['preferred_genres'][genre]
         
-        language_similarity = len(features1['languages'] & features2['languages']) / max(
-            len(features1['languages'] | features2['languages']), 1
-        )
-        similarity_scores.append(language_similarity * 0.2)
+        if content_features['genres']:
+            genre_score /= len(content_features['genres'])
+        similarity_components.append(genre_score * 0.35)
         
-        content_type_similarity = 1.0 if features1['content_type'] == features2['content_type'] else 0.0
-        similarity_scores.append(content_type_similarity * 0.15)
+        language_score = 0.0
+        for language in content_features['languages']:
+            if language in user_profile['preferred_languages']:
+                language_score += user_profile['preferred_languages'][language]
         
-        rating_diff = abs(features1['rating'] - features2['rating'])
-        rating_similarity = max(0, 1 - rating_diff / 10.0)
-        similarity_scores.append(rating_similarity * 0.15)
+        if content_features['languages']:
+            language_score /= len(content_features['languages'])
+        similarity_components.append(language_score * 0.25)
         
-        year_diff = abs(features1['release_year'] - features2['release_year'])
-        year_similarity = max(0, 1 - year_diff / 20.0)
-        similarity_scores.append(year_similarity * 0.1)
+        content_type_score = user_profile['content_type_preferences'].get(content_features['content_type'], 0)
+        similarity_components.append(content_type_score * 0.15)
         
-        if features1['overview'] and features2['overview']:
-            try:
-                tfidf_matrix = self.tfidf_vectorizer.fit_transform([
-                    features1['overview'], features2['overview']
-                ])
-                text_similarity = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:2])[0][0]
-                similarity_scores.append(text_similarity * 0.1)
-            except:
-                similarity_scores.append(0.0)
+        quality_score = user_profile['quality_preferences'].get(content_features['quality_tier'], 0)
+        similarity_components.append(quality_score * 0.1)
         
-        return sum(similarity_scores)
+        duration_score = user_profile['duration_preferences'].get(content_features['duration_category'], 0)
+        similarity_components.append(duration_score * 0.05)
+        
+        decade_score = user_profile['decade_preferences'].get(content_features['decade'], 0)
+        similarity_components.append(decade_score * 0.05)
+        
+        if user_profile['avg_rating'] > 0 and content_features['rating'] > 0:
+            rating_diff = abs(user_profile['avg_rating'] - content_features['rating'])
+            rating_score = max(0, 1 - rating_diff / 5.0)
+            similarity_components.append(rating_score * 0.05)
+        
+        return sum(similarity_components)
     
-    def get_content_recommendations(self, user_id, limit=20):
-        user_interactions = self.UserInteraction.query.filter_by(user_id=user_id).all()
+    def get_precision_content_recommendations(self, user_id, limit=30):
+        user_interactions = set(
+            interaction.content_id for interaction in 
+            self.UserInteraction.query.filter_by(user_id=user_id).all()
+        )
         
         if not user_interactions:
             return []
         
-        liked_content = []
-        for interaction in user_interactions:
-            weight = self._get_interaction_weight(interaction)
-            if weight >= 2.0:
-                liked_content.append((interaction.content_id, weight))
+        user_profile = self.build_user_content_profile(user_id)
         
-        if not liked_content:
-            return []
+        candidate_content = self.Content.query.limit(5000).all()
         
-        all_content = self.Content.query.all()
-        user_seen_content = set(interaction.content_id for interaction in user_interactions)
+        recommendations = []
         
-        recommendations = defaultdict(float)
+        for content in candidate_content:
+            if content.id not in user_interactions:
+                similarity_score = self.calculate_advanced_content_similarity(user_id, content.id)
+                
+                if similarity_score > 0.1:
+                    boost_factors = self._calculate_boost_factors(content, user_profile)
+                    final_score = similarity_score * boost_factors
+                    
+                    recommendations.append((content.id, final_score, {
+                        'base_similarity': similarity_score,
+                        'boost_factors': boost_factors,
+                        'content_match_details': self._get_match_details(content, user_profile)
+                    }))
         
-        for content in all_content:
-            if content.id in user_seen_content:
-                continue
-            
-            content_score = 0.0
-            total_weight = 0.0
-            
-            for liked_content_id, user_weight in liked_content:
-                similarity = self.calculate_content_similarity(content.id, liked_content_id)
-                content_score += similarity * user_weight
-                total_weight += user_weight
-            
-            if total_weight > 0:
-                recommendations[content.id] = content_score / total_weight
-        
-        sorted_recommendations = sorted(
-            recommendations.items(), 
-            key=lambda x: x[1], 
-            reverse=True
-        )[:limit]
-        
-        return sorted_recommendations
+        recommendations.sort(key=lambda x: x[1], reverse=True)
+        return recommendations[:limit]
     
-    def _get_interaction_weight(self, interaction):
+    def _calculate_boost_factors(self, content, user_profile):
+        boost = 1.0
+        
+        if content.is_trending:
+            boost *= 1.1
+        
+        if content.is_critics_choice:
+            boost *= 1.15
+        
+        if content.rating and content.rating >= 8.0:
+            boost *= 1.2
+        
+        if content.vote_count and content.vote_count >= 1000:
+            boost *= 1.05
+        
+        if content.release_date:
+            days_since_release = (datetime.now().date() - content.release_date).days
+            if days_since_release <= 90:
+                boost *= 1.1
+        
+        return boost
+    
+    def _get_match_details(self, content, user_profile):
+        details = {}
+        
+        try:
+            content_genres = set(json.loads(content.genres or '[]'))
+            user_top_genres = set([genre for genre, _ in user_profile['preferred_genres'].most_common(3)])
+            matching_genres = content_genres & user_top_genres
+            if matching_genres:
+                details['matching_genres'] = list(matching_genres)
+        except:
+            pass
+        
+        try:
+            content_languages = set(json.loads(content.languages or '[]'))
+            user_top_languages = set([lang for lang, _ in user_profile['preferred_languages'].most_common(2)])
+            matching_languages = content_languages & user_top_languages
+            if matching_languages:
+                details['matching_languages'] = list(matching_languages)
+        except:
+            pass
+        
+        if content.content_type in user_profile['content_type_preferences']:
+            details['content_type_preference'] = user_profile['content_type_preferences'][content.content_type]
+        
+        return details
+    
+    def _calculate_interaction_weight(self, interaction):
         weights = {
             'view': 1.0,
-            'like': 2.0,
-            'favorite': 3.0,
-            'watchlist': 2.5,
-            'rating': interaction.rating * 0.5 if interaction.rating else 2.0,
-            'search': 0.5
+            'like': 3.0,
+            'favorite': 5.0,
+            'watchlist': 4.0,
+            'rating': (interaction.rating or 3.0) * 0.8,
+            'search': 0.8
         }
         
         base_weight = weights.get(interaction.interaction_type, 1.0)
         
         days_ago = (datetime.utcnow() - interaction.timestamp).days
-        time_decay = math.exp(-days_ago / 30.0)
+        time_decay = math.exp(-days_ago / 60.0)
         
         return base_weight * time_decay
 
-class MatrixFactorization:
-    def __init__(self, db, models, n_factors=50, learning_rate=0.01, regularization=0.01, epochs=100):
+class PrecisionMatrixFactorization:
+    def __init__(self, db, models, n_factors=100, learning_rate=0.005, regularization=0.02, epochs=150):
         self.db = db
         self.User = models['User']
         self.Content = models['Content']
@@ -340,23 +587,28 @@ class MatrixFactorization:
         self.user_biases = None
         self.item_biases = None
         self.global_bias = None
+        self.trained = False
         
-    def prepare_data(self):
+    def prepare_enhanced_data(self):
         interactions = self.UserInteraction.query.all()
         
         ratings = []
         for interaction in interactions:
-            weight = self._get_interaction_weight(interaction)
+            weight = self._calculate_enhanced_weight(interaction)
             ratings.append({
                 'user_id': interaction.user_id,
                 'item_id': interaction.content_id,
-                'rating': weight
+                'rating': weight,
+                'timestamp': interaction.timestamp
             })
         
         df = pd.DataFrame(ratings)
         
         if df.empty:
             return None, None, None
+        
+        recent_cutoff = datetime.utcnow() - timedelta(days=365)
+        df = df[df['timestamp'] >= recent_cutoff]
         
         user_to_idx = {user_id: idx for idx, user_id in enumerate(df['user_id'].unique())}
         item_to_idx = {item_id: idx for idx, item_id in enumerate(df['item_id'].unique())}
@@ -369,38 +621,80 @@ class MatrixFactorization:
         for _, row in df.iterrows():
             user_idx = user_to_idx[row['user_id']]
             item_idx = item_to_idx[row['item_id']]
-            rating_matrix[user_idx, item_idx] = row['rating']
+            
+            if rating_matrix[user_idx, item_idx] == 0:
+                rating_matrix[user_idx, item_idx] = row['rating']
+            else:
+                rating_matrix[user_idx, item_idx] = max(rating_matrix[user_idx, item_idx], row['rating'])
         
         return rating_matrix, user_to_idx, item_to_idx
     
-    def train(self):
-        rating_matrix, user_to_idx, item_to_idx = self.prepare_data()
+    def _calculate_enhanced_weight(self, interaction):
+        base_weights = {
+            'view': 2.0,
+            'like': 4.0,
+            'favorite': 6.0,
+            'watchlist': 5.0,
+            'rating': (interaction.rating or 3.0) * 1.2,
+            'search': 1.5
+        }
+        
+        weight = base_weights.get(interaction.interaction_type, 2.0)
+        
+        if interaction.interaction_metadata:
+            metadata = interaction.interaction_metadata
+            if interaction.interaction_type == 'view':
+                completion = metadata.get('completion_percentage', 0)
+                if completion > 80:
+                    weight *= 1.5
+                elif completion > 50:
+                    weight *= 1.2
+        
+        days_ago = (datetime.utcnow() - interaction.timestamp).days
+        if days_ago <= 30:
+            time_boost = 1.3
+        elif days_ago <= 90:
+            time_boost = 1.1
+        else:
+            time_boost = math.exp(-days_ago / 180.0)
+        
+        return min(weight * time_boost, 10.0)
+    
+    def train_advanced_model(self):
+        rating_matrix, user_to_idx, item_to_idx = self.prepare_enhanced_data()
         
         if rating_matrix is None:
             return False
         
         n_users, n_items = rating_matrix.shape
         
-        self.user_factors = np.random.normal(0, 0.1, (n_users, self.n_factors))
-        self.item_factors = np.random.normal(0, 0.1, (n_items, self.n_factors))
+        self.user_factors = np.random.normal(0, 0.05, (n_users, self.n_factors))
+        self.item_factors = np.random.normal(0, 0.05, (n_items, self.n_factors))
         self.user_biases = np.zeros(n_users)
         self.item_biases = np.zeros(n_items)
-        self.global_bias = np.mean(rating_matrix[rating_matrix > 0])
+        
+        nonzero_ratings = rating_matrix[rating_matrix > 0]
+        self.global_bias = np.mean(nonzero_ratings) if len(nonzero_ratings) > 0 else 3.0
         
         for epoch in range(self.epochs):
+            total_error = 0
+            num_ratings = 0
+            
             for i in range(n_users):
                 for j in range(n_items):
                     if rating_matrix[i, j] > 0:
                         prediction = self.predict_rating(i, j)
                         error = rating_matrix[i, j] - prediction
+                        total_error += error ** 2
+                        num_ratings += 1
                         
-                        user_factor = self.user_factors[i].copy()
+                        user_factor_old = self.user_factors[i].copy()
                         
                         self.user_factors[i] += self.learning_rate * (
                             error * self.item_factors[j] - self.regularization * self.user_factors[i]
                         )
                         self.item_factors[j] += self.learning_rate * (
-                            error * user_factor - self.regularization * self.item_factors[j]
+                            error * user_factor_old - self.regularization * self.item_factors[j]
                         )
                         
                         self.user_biases[i] += self.learning_rate * (
@@ -409,9 +703,14 @@ class MatrixFactorization:
                         self.item_biases[j] += self.learning_rate * (
                             error - self.regularization * self.item_biases[j]
                         )
+            
+            if epoch % 10 == 0 and num_ratings > 0:
+                rmse = np.sqrt(total_error / num_ratings)
+                logger.info(f"Epoch {epoch}, RMSE: {rmse}")
         
         self.user_to_idx = user_to_idx
         self.item_to_idx = item_to_idx
+        self.trained = True
         return True
     
     def predict_rating(self, user_idx, item_idx):
@@ -419,9 +718,9 @@ class MatrixFactorization:
         prediction += np.dot(self.user_factors[user_idx], self.item_factors[item_idx])
         return prediction
     
-    def get_recommendations(self, user_id, limit=20):
-        if self.user_factors is None:
-            if not self.train():
+    def get_precision_recommendations(self, user_id, limit=30):
+        if not self.trained:
+            if not self.train_advanced_model():
                 return []
         
         if user_id not in self.user_to_idx:
@@ -439,632 +738,388 @@ class MatrixFactorization:
         for item_id, item_idx in self.item_to_idx.items():
             if item_id not in user_interactions:
                 predicted_rating = self.predict_rating(user_idx, item_idx)
-                recommendations.append((item_id, predicted_rating))
+                
+                confidence = self._calculate_confidence(user_idx, item_idx)
+                adjusted_score = predicted_rating * confidence
+                
+                recommendations.append((item_id, adjusted_score, {
+                    'predicted_rating': predicted_rating,
+                    'confidence': confidence
+                }))
         
         recommendations.sort(key=lambda x: x[1], reverse=True)
         return recommendations[:limit]
     
-    def _get_interaction_weight(self, interaction):
-        weights = {
-            'view': 1.0,
-            'like': 2.0,
-            'favorite': 3.0,
-            'watchlist': 2.5,
-            'rating': interaction.rating * 0.5 if interaction.rating else 2.0,
-            'search': 0.5
-        }
+    def _calculate_confidence(self, user_idx, item_idx):
+        user_factor_norm = np.linalg.norm(self.user_factors[user_idx])
+        item_factor_norm = np.linalg.norm(self.item_factors[item_idx])
         
-        base_weight = weights.get(interaction.interaction_type, 1.0)
-        
-        days_ago = (datetime.utcnow() - interaction.timestamp).days
-        time_decay = math.exp(-days_ago / 30.0)
-        
-        return base_weight * time_decay
+        confidence = min(user_factor_norm * item_factor_norm / 10.0, 1.0)
+        return max(confidence, 0.1)
 
-class DeepLearningRecommender:
+class BehavioralPatternAnalyzer:
     def __init__(self, db, models):
         self.db = db
         self.User = models['User']
         self.Content = models['Content']
         self.UserInteraction = models['UserInteraction']
-        self.embedding_dim = 50
-        self.user_embeddings = {}
-        self.item_embeddings = {}
         
-    def create_user_embedding(self, user_id):
-        user = self.User.query.get(user_id)
-        if not user:
-            return np.zeros(self.embedding_dim)
-        
-        interactions = self.UserInteraction.query.filter_by(user_id=user_id).all()
+    def analyze_user_behavior_patterns(self, user_id):
+        interactions = self.UserInteraction.query.filter_by(user_id=user_id).order_by(
+            self.UserInteraction.timestamp.asc()
+        ).all()
         
         if not interactions:
-            try:
-                preferences = json.loads(user.preferred_genres or '[]')
-                languages = json.loads(user.preferred_languages or '[]')
-            except:
-                preferences = []
-                languages = []
+            return {}
+        
+        patterns = {
+            'interaction_sequence': [],
+            'temporal_patterns': defaultdict(int),
+            'content_progression': [],
+            'preference_evolution': defaultdict(list),
+            'engagement_intensity': defaultdict(float),
+            'discovery_patterns': defaultdict(int)
+        }
+        
+        for i, interaction in enumerate(interactions):
+            patterns['interaction_sequence'].append({
+                'type': interaction.interaction_type,
+                'content_id': interaction.content_id,
+                'timestamp': interaction.timestamp,
+                'rating': interaction.rating
+            })
             
-            embedding = np.random.normal(0, 0.1, self.embedding_dim)
-            return embedding
-        
-        genre_counts = Counter()
-        language_counts = Counter()
-        type_counts = Counter()
-        rating_sum = 0
-        rating_count = 0
-        
-        for interaction in interactions:
+            hour = interaction.timestamp.hour
+            day_of_week = interaction.timestamp.weekday()
+            patterns['temporal_patterns'][f"hour_{hour}"] += 1
+            patterns['temporal_patterns'][f"day_{day_of_week}"] += 1
+            
             content = self.Content.query.get(interaction.content_id)
             if content:
+                patterns['content_progression'].append({
+                    'content_type': content.content_type,
+                    'rating': content.rating,
+                    'release_year': content.release_date.year if content.release_date else None,
+                    'genres': json.loads(content.genres or '[]')
+                })
+                
                 try:
                     genres = json.loads(content.genres or '[]')
                     for genre in genres:
-                        genre_counts[genre] += self._get_interaction_weight(interaction)
+                        patterns['preference_evolution'][genre].append({
+                            'timestamp': interaction.timestamp,
+                            'interaction_type': interaction.interaction_type,
+                            'user_rating': interaction.rating
+                        })
                 except:
                     pass
                 
-                try:
-                    languages = json.loads(content.languages or '[]')
-                    for language in languages:
-                        language_counts[language] += self._get_interaction_weight(interaction)
-                except:
-                    pass
+                weight = self._calculate_engagement_weight(interaction)
+                patterns['engagement_intensity'][content.content_type] += weight
                 
-                type_counts[content.content_type] += self._get_interaction_weight(interaction)
-                
-                if interaction.rating:
-                    rating_sum += interaction.rating
-                    rating_count += 1
+                if interaction.interaction_type == 'search':
+                    patterns['discovery_patterns']['search_based'] += 1
+                elif i == 0 or interactions[i-1].content_id != interaction.content_id:
+                    patterns['discovery_patterns']['exploration'] += 1
         
-        embedding = np.zeros(self.embedding_dim)
+        return self._analyze_patterns(patterns)
+    
+    def _calculate_engagement_weight(self, interaction):
+        weights = {
+            'view': 1.0,
+            'like': 2.5,
+            'favorite': 4.0,
+            'watchlist': 3.0,
+            'rating': (interaction.rating or 3.0) * 0.8,
+            'search': 0.5
+        }
         
-        top_genres = [genre for genre, _ in genre_counts.most_common(10)]
-        for i, genre in enumerate(top_genres):
-            if i < 20:
-                embedding[i] = genre_counts[genre] / max(sum(genre_counts.values()), 1)
+        return weights.get(interaction.interaction_type, 1.0)
+    
+    def _analyze_patterns(self, patterns):
+        analysis = {}
         
-        top_languages = [lang for lang, _ in language_counts.most_common(5)]
-        for i, lang in enumerate(top_languages):
-            if 20 + i < 30:
-                embedding[20 + i] = language_counts[lang] / max(sum(language_counts.values()), 1)
+        if patterns['temporal_patterns']:
+            peak_hours = sorted(
+                [(hour, count) for hour, count in patterns['temporal_patterns'].items() if hour.startswith('hour_')],
+                key=lambda x: x[1], reverse=True
+            )[:3]
+            analysis['peak_activity_hours'] = [int(hour.split('_')[1]) for hour, _ in peak_hours]
+            
+            peak_days = sorted(
+                [(day, count) for day, count in patterns['temporal_patterns'].items() if day.startswith('day_')],
+                key=lambda x: x[1], reverse=True
+            )[:2]
+            analysis['preferred_days'] = [int(day.split('_')[1]) for day, _ in peak_days]
         
-        if 'movie' in type_counts:
-            embedding[30] = type_counts['movie'] / max(sum(type_counts.values()), 1)
-        if 'tv' in type_counts:
-            embedding[31] = type_counts['tv'] / max(sum(type_counts.values()), 1)
-        if 'anime' in type_counts:
-            embedding[32] = type_counts['anime'] / max(sum(type_counts.values()), 1)
+        if patterns['engagement_intensity']:
+            total_engagement = sum(patterns['engagement_intensity'].values())
+            analysis['content_type_preferences'] = {
+                content_type: round(intensity / total_engagement, 3)
+                for content_type, intensity in patterns['engagement_intensity'].items()
+            }
         
-        if rating_count > 0:
-            embedding[33] = rating_sum / rating_count / 10.0
+        if patterns['preference_evolution']:
+            analysis['evolving_preferences'] = {}
+            for genre, evolution in patterns['preference_evolution'].items():
+                if len(evolution) >= 3:
+                    recent_interactions = evolution[-5:]
+                    early_interactions = evolution[:5]
+                    
+                    recent_avg = sum(1 for i in recent_interactions if i['interaction_type'] in ['like', 'favorite', 'watchlist']) / len(recent_interactions)
+                    early_avg = sum(1 for i in early_interactions if i['interaction_type'] in ['like', 'favorite', 'watchlist']) / len(early_interactions)
+                    
+                    trend = recent_avg - early_avg
+                    if abs(trend) > 0.2:
+                        analysis['evolving_preferences'][genre] = 'increasing' if trend > 0 else 'decreasing'
         
-        embedding[34] = len(interactions) / 100.0
+        if patterns['discovery_patterns']:
+            total_discovery = sum(patterns['discovery_patterns'].values())
+            analysis['discovery_style'] = max(patterns['discovery_patterns'].items(), key=lambda x: x[1])[0]
+        
+        analysis['interaction_diversity'] = len(set(i['type'] for i in patterns['interaction_sequence']))
+        analysis['content_diversity'] = len(set(c['content_type'] for c in patterns['content_progression']))
+        
+        return analysis
+
+class RealTimePersonalizationEngine:
+    def __init__(self, db, models):
+        self.db = db
+        self.User = models['User']
+        self.Content = models['Content']
+        self.UserInteraction = models['UserInteraction']
+        self.real_time_weights = defaultdict(lambda: defaultdict(float))
+        self.session_interactions = defaultdict(list)
+        
+    def process_real_time_interaction(self, user_id, content_id, interaction_type, rating=None, metadata=None):
+        current_time = datetime.utcnow()
+        
+        self.session_interactions[user_id].append({
+            'content_id': content_id,
+            'interaction_type': interaction_type,
+            'rating': rating,
+            'metadata': metadata or {},
+            'timestamp': current_time
+        })
         
         recent_interactions = [
-            interaction for interaction in interactions
-            if (datetime.utcnow() - interaction.timestamp).days <= 7
+            i for i in self.session_interactions[user_id]
+            if (current_time - i['timestamp']).total_seconds() < 3600
         ]
-        embedding[35] = len(recent_interactions) / max(len(interactions), 1)
+        self.session_interactions[user_id] = recent_interactions
         
-        return embedding
+        self._update_real_time_weights(user_id, content_id, interaction_type, rating, metadata)
+        
+        return self._get_immediate_recommendations(user_id)
     
-    def create_item_embedding(self, content_id):
+    def _update_real_time_weights(self, user_id, content_id, interaction_type, rating, metadata):
         content = self.Content.query.get(content_id)
         if not content:
-            return np.zeros(self.embedding_dim)
+            return
         
-        embedding = np.zeros(self.embedding_dim)
+        base_weight = self._calculate_immediate_weight(interaction_type, rating, metadata)
         
         try:
             genres = json.loads(content.genres or '[]')
-            genre_vector = np.zeros(20)
-            common_genres = ['Action', 'Comedy', 'Drama', 'Horror', 'Romance', 'Thriller', 
-                           'Adventure', 'Animation', 'Crime', 'Documentary', 'Fantasy',
-                           'Science Fiction', 'Mystery', 'Family', 'War', 'Western',
-                           'Music', 'History', 'Biography', 'Sport']
-            
-            for i, genre in enumerate(common_genres):
-                if genre in genres:
-                    genre_vector[i] = 1.0
-            
-            embedding[:20] = genre_vector
+            for genre in genres:
+                self.real_time_weights[user_id][f"genre_{genre}"] += base_weight * 0.3
         except:
             pass
         
         try:
             languages = json.loads(content.languages or '[]')
-            language_vector = np.zeros(10)
-            common_languages = ['en', 'hi', 'te', 'ta', 'ml', 'kn', 'ja', 'ko', 'fr', 'es']
-            
-            for i, lang in enumerate(common_languages):
-                if lang in languages:
-                    language_vector[i] = 1.0
-            
-            embedding[20:30] = language_vector
+            for language in languages:
+                self.real_time_weights[user_id][f"language_{language}"] += base_weight * 0.2
         except:
             pass
         
-        type_vector = np.zeros(3)
-        if content.content_type == 'movie':
-            type_vector[0] = 1.0
-        elif content.content_type == 'tv':
-            type_vector[1] = 1.0
-        elif content.content_type == 'anime':
-            type_vector[2] = 1.0
-        
-        embedding[30:33] = type_vector
-        
-        embedding[33] = (content.rating or 0) / 10.0
-        embedding[34] = min((content.popularity or 0) / 1000.0, 1.0)
-        embedding[35] = min((content.vote_count or 0) / 10000.0, 1.0)
+        self.real_time_weights[user_id][f"type_{content.content_type}"] += base_weight * 0.25
         
         if content.release_date:
-            years_since_release = (datetime.now().year - content.release_date.year)
-            embedding[36] = max(0, 1 - years_since_release / 50.0)
+            decade = content.release_date.year // 10 * 10
+            self.real_time_weights[user_id][f"decade_{decade}"] += base_weight * 0.1
         
-        if content.runtime:
-            embedding[37] = min(content.runtime / 300.0, 1.0)
-        
-        return embedding
+        if content.rating:
+            if content.rating >= 8.0:
+                self.real_time_weights[user_id]["high_quality"] += base_weight * 0.15
+            elif content.rating >= 7.0:
+                self.real_time_weights[user_id]["good_quality"] += base_weight * 0.1
     
-    def calculate_deep_similarity(self, user_id, content_id):
-        user_embedding = self.create_user_embedding(user_id)
-        item_embedding = self.create_item_embedding(content_id)
+    def _calculate_immediate_weight(self, interaction_type, rating, metadata):
+        weights = {
+            'view': 1.0,
+            'like': 3.0,
+            'favorite': 5.0,
+            'watchlist': 4.0,
+            'rating': (rating or 3.0) * 1.0,
+            'search': 0.8,
+            'share': 2.5
+        }
         
-        similarity = cosine_similarity(
-            user_embedding.reshape(1, -1), 
-            item_embedding.reshape(1, -1)
-        )[0][0]
+        base_weight = weights.get(interaction_type, 1.0)
         
-        return max(0, similarity)
+        if metadata and interaction_type == 'view':
+            completion = metadata.get('completion_percentage', 0)
+            if completion > 80:
+                base_weight *= 2.0
+            elif completion > 50:
+                base_weight *= 1.5
+        
+        return base_weight
     
-    def get_deep_recommendations(self, user_id, limit=20):
+    def _get_immediate_recommendations(self, user_id, limit=10):
+        if user_id not in self.real_time_weights:
+            return []
+        
+        user_weights = self.real_time_weights[user_id]
+        
+        recent_content_ids = set(
+            i['content_id'] for i in self.session_interactions[user_id]
+        )
+        
+        all_interactions = set(
+            interaction.content_id for interaction in 
+            self.UserInteraction.query.filter_by(user_id=user_id).all()
+        )
+        
+        candidate_content = self.Content.query.limit(1000).all()
+        
+        recommendations = []
+        
+        for content in candidate_content:
+            if content.id not in all_interactions and content.id not in recent_content_ids:
+                score = self._calculate_real_time_score(content, user_weights)
+                if score > 0.5:
+                    recommendations.append((content.id, score))
+        
+        recommendations.sort(key=lambda x: x[1], reverse=True)
+        return recommendations[:limit]
+    
+    def _calculate_real_time_score(self, content, user_weights):
+        score = 0.0
+        
+        try:
+            genres = json.loads(content.genres or '[]')
+            for genre in genres:
+                weight_key = f"genre_{genre}"
+                if weight_key in user_weights:
+                    score += user_weights[weight_key] * 0.3
+        except:
+            pass
+        
+        try:
+            languages = json.loads(content.languages or '[]')
+            for language in languages:
+                weight_key = f"language_{language}"
+                if weight_key in user_weights:
+                    score += user_weights[weight_key] * 0.2
+        except:
+            pass
+        
+        type_key = f"type_{content.content_type}"
+        if type_key in user_weights:
+            score += user_weights[type_key] * 0.25
+        
+        if content.release_date:
+            decade = content.release_date.year // 10 * 10
+            decade_key = f"decade_{decade}"
+            if decade_key in user_weights:
+                score += user_weights[decade_key] * 0.1
+        
+        if content.rating and content.rating >= 8.0 and "high_quality" in user_weights:
+            score += user_weights["high_quality"] * 0.15
+        elif content.rating and content.rating >= 7.0 and "good_quality" in user_weights:
+            score += user_weights["good_quality"] * 0.1
+        
+        return score
+    
+    def get_session_based_recommendations(self, user_id, limit=15):
+        session_data = self.session_interactions.get(user_id, [])
+        
+        if not session_data:
+            return []
+        
+        session_patterns = self._analyze_session_patterns(session_data)
+        
+        return self._generate_session_recommendations(user_id, session_patterns, limit)
+    
+    def _analyze_session_patterns(self, session_data):
+        patterns = {
+            'dominant_genres': Counter(),
+            'content_types': Counter(),
+            'engagement_level': 0.0,
+            'exploration_vs_focused': 'focused'
+        }
+        
+        total_weight = 0
+        unique_content_types = set()
+        
+        for interaction in session_data:
+            weight = self._calculate_immediate_weight(
+                interaction['interaction_type'], 
+                interaction['rating'], 
+                interaction['metadata']
+            )
+            total_weight += weight
+            
+            content = self.Content.query.get(interaction['content_id'])
+            if content:
+                try:
+                    genres = json.loads(content.genres or '[]')
+                    for genre in genres:
+                        patterns['dominant_genres'][genre] += weight
+                except:
+                    pass
+                
+                patterns['content_types'][content.content_type] += weight
+                unique_content_types.add(content.content_type)
+        
+        patterns['engagement_level'] = total_weight / max(len(session_data), 1)
+        
+        if len(unique_content_types) > 2:
+            patterns['exploration_vs_focused'] = 'exploration'
+        
+        return patterns
+    
+    def _generate_session_recommendations(self, user_id, patterns, limit):
+        recommendations = []
+        
+        top_genres = [genre for genre, _ in patterns['dominant_genres'].most_common(3)]
+        preferred_types = [ctype for ctype, _ in patterns['content_types'].most_common(2)]
+        
         user_interactions = set(
             interaction.content_id for interaction in 
             self.UserInteraction.query.filter_by(user_id=user_id).all()
         )
         
-        all_content = self.Content.query.limit(5000).all()
+        session_content = set(
+            i['content_id'] for i in self.session_interactions.get(user_id, [])
+        )
         
-        recommendations = []
+        candidate_content = self.Content.query.limit(2000).all()
         
-        for content in all_content:
-            if content.id not in user_interactions:
-                similarity = self.calculate_deep_similarity(user_id, content.id)
-                recommendations.append((content.id, similarity))
+        for content in candidate_content:
+            if content.id not in user_interactions and content.id not in session_content:
+                score = 0.0
+                
+                try:
+                    content_genres = set(json.loads(content.genres or '[]'))
+                    matching_genres = content_genres & set(top_genres)
+                    if matching_genres:
+                        score += len(matching_genres) / len(content_genres) * 0.6
+                except:
+                    pass
+                
+                if content.content_type in preferred_types:
+                    type_preference = patterns['content_types'][content.content_type]
+                    total_type_preference = sum(patterns['content_types'].values())
+                    score += (type_preference / total_type_preference) * 0.4
+                
+                if patterns['engagement_level'] > 3.0 and content.rating and content.rating >= 8.0:
+                    score *= 1.2
+                
+                if score > 0.3:
+                    recommendations.append((content.id, score))
         
         recommendations.sort(key=lambda x: x[1], reverse=True)
         return recommendations[:limit]
-    
-    def _get_interaction_weight(self, interaction):
-        weights = {
-            'view': 1.0,
-            'like': 2.0,
-            'favorite': 3.0,
-            'watchlist': 2.5,
-            'rating': interaction.rating * 0.5 if interaction.rating else 2.0,
-            'search': 0.5
-        }
-        
-        base_weight = weights.get(interaction.interaction_type, 1.0)
-        
-        days_ago = (datetime.utcnow() - interaction.timestamp).days
-        time_decay = math.exp(-days_ago / 30.0)
-        
-        return base_weight * time_decay
-
-class DiversityOptimizer:
-    def __init__(self, db, models):
-        self.db = db
-        self.Content = models['Content']
-        
-    def calculate_diversity_score(self, content_list):
-        if len(content_list) <= 1:
-            return 0.0
-        
-        total_pairs = len(content_list) * (len(content_list) - 1) / 2
-        dissimilar_pairs = 0
-        
-        for i in range(len(content_list)):
-            for j in range(i + 1, len(content_list)):
-                content1 = self.Content.query.get(content_list[i])
-                content2 = self.Content.query.get(content_list[j])
-                
-                if content1 and content2:
-                    if self._are_dissimilar(content1, content2):
-                        dissimilar_pairs += 1
-        
-        return dissimilar_pairs / total_pairs if total_pairs > 0 else 0.0
-    
-    def _are_dissimilar(self, content1, content2):
-        if content1.content_type != content2.content_type:
-            return True
-        
-        try:
-            genres1 = set(json.loads(content1.genres or '[]'))
-            genres2 = set(json.loads(content2.genres or '[]'))
-            genre_overlap = len(genres1 & genres2) / max(len(genres1 | genres2), 1)
-            if genre_overlap < 0.3:
-                return True
-        except:
-            pass
-        
-        try:
-            languages1 = set(json.loads(content1.languages or '[]'))
-            languages2 = set(json.loads(content2.languages or '[]'))
-            if not languages1 & languages2:
-                return True
-        except:
-            pass
-        
-        if content1.release_date and content2.release_date:
-            year_diff = abs(content1.release_date.year - content2.release_date.year)
-            if year_diff > 10:
-                return True
-        
-        return False
-    
-    def optimize_diversity(self, recommendations, diversity_factor=0.3, limit=20):
-        if not recommendations or len(recommendations) <= limit:
-            return recommendations
-        
-        final_recommendations = []
-        remaining_recommendations = recommendations[:]
-        
-        final_recommendations.append(remaining_recommendations.pop(0))
-        
-        while len(final_recommendations) < limit and remaining_recommendations:
-            best_candidate = None
-            best_score = -1
-            best_idx = -1
-            
-            for idx, (content_id, original_score) in enumerate(remaining_recommendations):
-                current_diversity = self.calculate_diversity_score(
-                    [rec[0] for rec in final_recommendations] + [content_id]
-                )
-                
-                combined_score = (1 - diversity_factor) * original_score + diversity_factor * current_diversity
-                
-                if combined_score > best_score:
-                    best_score = combined_score
-                    best_candidate = (content_id, original_score)
-                    best_idx = idx
-            
-            if best_candidate:
-                final_recommendations.append(best_candidate)
-                remaining_recommendations.pop(best_idx)
-            else:
-                break
-        
-        return final_recommendations
-
-class NoveltyDetector:
-    def __init__(self, db, models):
-        self.db = db
-        self.Content = models['Content']
-        self.UserInteraction = models['UserInteraction']
-        
-    def calculate_novelty_score(self, user_id, content_id):
-        content = self.Content.query.get(content_id)
-        if not content:
-            return 0.0
-        
-        user_interactions = self.UserInteraction.query.filter_by(user_id=user_id).all()
-        
-        if not user_interactions:
-            return 1.0
-        
-        novelty_factors = []
-        
-        try:
-            content_genres = set(json.loads(content.genres or '[]'))
-            user_genres = set()
-            
-            for interaction in user_interactions:
-                interacted_content = self.Content.query.get(interaction.content_id)
-                if interacted_content:
-                    try:
-                        genres = set(json.loads(interacted_content.genres or '[]'))
-                        user_genres.update(genres)
-                    except:
-                        pass
-            
-            if user_genres:
-                genre_novelty = 1 - len(content_genres & user_genres) / max(len(content_genres), 1)
-                novelty_factors.append(genre_novelty * 0.4)
-            else:
-                novelty_factors.append(0.4)
-        except:
-            novelty_factors.append(0.0)
-        
-        user_content_types = set()
-        for interaction in user_interactions:
-            interacted_content = self.Content.query.get(interaction.content_id)
-            if interacted_content:
-                user_content_types.add(interacted_content.content_type)
-        
-        if content.content_type not in user_content_types:
-            novelty_factors.append(0.3)
-        else:
-            novelty_factors.append(0.0)
-        
-        try:
-            content_languages = set(json.loads(content.languages or '[]'))
-            user_languages = set()
-            
-            for interaction in user_interactions:
-                interacted_content = self.Content.query.get(interaction.content_id)
-                if interacted_content:
-                    try:
-                        languages = set(json.loads(interacted_content.languages or '[]'))
-                        user_languages.update(languages)
-                    except:
-                        pass
-            
-            if user_languages:
-                language_novelty = 1 - len(content_languages & user_languages) / max(len(content_languages), 1)
-                novelty_factors.append(language_novelty * 0.3)
-            else:
-                novelty_factors.append(0.3)
-        except:
-            novelty_factors.append(0.0)
-        
-        return min(sum(novelty_factors), 1.0)
-
-class ColdStartHandler:
-    def __init__(self, db, models):
-        self.db = db
-        self.User = models['User']
-        self.Content = models['Content']
-        self.UserInteraction = models['UserInteraction']
-        
-    def get_cold_start_recommendations(self, user_id, limit=20):
-        user = self.User.query.get(user_id)
-        if not user:
-            return self._get_popular_content(limit)
-        
-        try:
-            preferred_genres = json.loads(user.preferred_genres or '[]')
-            preferred_languages = json.loads(user.preferred_languages or '[]')
-        except:
-            preferred_genres = []
-            preferred_languages = []
-        
-        if not preferred_genres and not preferred_languages:
-            return self._get_popular_content(limit)
-        
-        recommendations = []
-        
-        if preferred_genres:
-            for genre in preferred_genres:
-                genre_content = self.Content.query.filter(
-                    self.Content.genres.contains(genre)
-                ).order_by(
-                    self.Content.rating.desc(),
-                    self.Content.popularity.desc()
-                ).limit(5).all()
-                
-                for content in genre_content:
-                    recommendations.append((content.id, content.rating or 0))
-        
-        if preferred_languages:
-            for language in preferred_languages:
-                lang_content = self.Content.query.filter(
-                    self.Content.languages.contains(language)
-                ).order_by(
-                    self.Content.rating.desc(),
-                    self.Content.popularity.desc()
-                ).limit(5).all()
-                
-                for content in lang_content:
-                    recommendations.append((content.id, content.rating or 0))
-        
-        if not recommendations:
-            return self._get_popular_content(limit)
-        
-        seen_ids = set()
-        unique_recommendations = []
-        for content_id, score in recommendations:
-            if content_id not in seen_ids:
-                seen_ids.add(content_id)
-                unique_recommendations.append((content_id, score))
-        
-        unique_recommendations.sort(key=lambda x: x[1], reverse=True)
-        return unique_recommendations[:limit]
-    
-    def _get_popular_content(self, limit):
-        popular_content = self.Content.query.order_by(
-            self.Content.popularity.desc(),
-            self.Content.rating.desc()
-        ).limit(limit).all()
-        
-        return [(content.id, content.popularity or 0) for content in popular_content]
-
-class RealtimeLearning:
-    def __init__(self, db, models):
-        self.db = db
-        self.UserInteraction = models['UserInteraction']
-        self.learning_rate = 0.1
-        self.feedback_weights = {
-            'click': 0.1,
-            'view_time': 0.2,
-            'like': 0.5,
-            'dislike': -0.5,
-            'share': 0.3,
-            'add_to_watchlist': 0.4,
-            'remove_from_watchlist': -0.3
-        }
-        
-    def update_recommendations_with_feedback(self, user_id, content_id, feedback_type, feedback_value=1.0):
-        feedback_weight = self.feedback_weights.get(feedback_type, 0.0)
-        
-        interaction = self.UserInteraction.query.filter_by(
-            user_id=user_id,
-            content_id=content_id,
-            interaction_type='recommendation_feedback'
-        ).first()
-        
-        if interaction:
-            current_metadata = interaction.interaction_metadata or {}
-            current_score = current_metadata.get('cumulative_score', 0.0)
-            new_score = current_score + self.learning_rate * feedback_weight * feedback_value
-            
-            current_metadata['cumulative_score'] = new_score
-            current_metadata['last_updated'] = datetime.utcnow().isoformat()
-            current_metadata['feedback_count'] = current_metadata.get('feedback_count', 0) + 1
-            
-            interaction.interaction_metadata = current_metadata
-        else:
-            new_interaction = self.UserInteraction(
-                user_id=user_id,
-                content_id=content_id,
-                interaction_type='recommendation_feedback',
-                interaction_metadata={
-                    'cumulative_score': self.learning_rate * feedback_weight * feedback_value,
-                    'last_updated': datetime.utcnow().isoformat(),
-                    'feedback_count': 1,
-                    'initial_feedback': feedback_type
-                }
-            )
-            self.db.session.add(new_interaction)
-        
-        self.db.session.commit()
-        
-        return True
-    
-    def get_feedback_adjusted_score(self, user_id, content_id, base_score):
-        feedback_interaction = self.UserInteraction.query.filter_by(
-            user_id=user_id,
-            content_id=content_id,
-            interaction_type='recommendation_feedback'
-        ).first()
-        
-        if feedback_interaction and feedback_interaction.interaction_metadata:
-            feedback_score = feedback_interaction.interaction_metadata.get('cumulative_score', 0.0)
-            return base_score + feedback_score
-        
-        return base_score
-
-class EvaluationMetrics:
-    def __init__(self, db, models):
-        self.db = db
-        self.UserInteraction = models['UserInteraction']
-        self.Content = models['Content']
-        
-    def calculate_precision_at_k(self, user_id, recommendations, k=10):
-        if not recommendations or k <= 0:
-            return 0.0
-        
-        top_k_recommendations = [rec[0] for rec in recommendations[:k]]
-        
-        relevant_interactions = self.UserInteraction.query.filter(
-            self.UserInteraction.user_id == user_id,
-            self.UserInteraction.content_id.in_(top_k_recommendations),
-            self.UserInteraction.interaction_type.in_(['like', 'favorite', 'rating'])
-        ).all()
-        
-        relevant_count = len([
-            interaction for interaction in relevant_interactions
-            if interaction.interaction_type in ['like', 'favorite'] or 
-               (interaction.rating and interaction.rating >= 4.0)
-        ])
-        
-        return relevant_count / k
-    
-    def calculate_ndcg_at_k(self, user_id, recommendations, k=10):
-        if not recommendations or k <= 0:
-            return 0.0
-        
-        top_k_recommendations = [rec[0] for rec in recommendations[:k]]
-        
-        dcg = 0.0
-        for i, content_id in enumerate(top_k_recommendations):
-            relevance = self._get_relevance_score(user_id, content_id)
-            if relevance > 0:
-                dcg += relevance / math.log2(i + 2)
-        
-        user_interactions = self.UserInteraction.query.filter_by(user_id=user_id).all()
-        ideal_relevances = []
-        
-        for interaction in user_interactions:
-            relevance = self._get_relevance_score(user_id, interaction.content_id)
-            if relevance > 0:
-                ideal_relevances.append(relevance)
-        
-        ideal_relevances.sort(reverse=True)
-        
-        idcg = 0.0
-        for i, relevance in enumerate(ideal_relevances[:k]):
-            idcg += relevance / math.log2(i + 2)
-        
-        return dcg / idcg if idcg > 0 else 0.0
-    
-    def _get_relevance_score(self, user_id, content_id):
-        interactions = self.UserInteraction.query.filter_by(
-            user_id=user_id,
-            content_id=content_id
-        ).all()
-        
-        max_relevance = 0.0
-        
-        for interaction in interactions:
-            if interaction.interaction_type == 'favorite':
-                max_relevance = max(max_relevance, 5.0)
-            elif interaction.interaction_type == 'like':
-                max_relevance = max(max_relevance, 4.0)
-            elif interaction.interaction_type == 'watchlist':
-                max_relevance = max(max_relevance, 3.0)
-            elif interaction.interaction_type == 'rating' and interaction.rating:
-                max_relevance = max(max_relevance, interaction.rating)
-            elif interaction.interaction_type == 'view':
-                max_relevance = max(max_relevance, 2.0)
-        
-        return max_relevance
-    
-    def calculate_coverage(self, all_recommendations, total_items):
-        if total_items <= 0:
-            return 0.0
-        
-        unique_items = set()
-        for rec_list in all_recommendations:
-            for content_id, _ in rec_list:
-                unique_items.add(content_id)
-        
-        return len(unique_items) / total_items
-    
-    def calculate_diversity_metric(self, recommendations):
-        if len(recommendations) <= 1:
-            return 0.0
-        
-        total_pairs = 0
-        diverse_pairs = 0
-        
-        for i in range(len(recommendations)):
-            for j in range(i + 1, len(recommendations)):
-                content1 = self.Content.query.get(recommendations[i][0])
-                content2 = self.Content.query.get(recommendations[j][0])
-                
-                if content1 and content2:
-                    total_pairs += 1
-                    if self._are_diverse(content1, content2):
-                        diverse_pairs += 1
-        
-        return diverse_pairs / total_pairs if total_pairs > 0 else 0.0
-    
-    def _are_diverse(self, content1, content2):
-        if content1.content_type != content2.content_type:
-            return True
-        
-        try:
-            genres1 = set(json.loads(content1.genres or '[]'))
-            genres2 = set(json.loads(content2.genres or '[]'))
-            
-            overlap = len(genres1 & genres2) / max(len(genres1 | genres2), 1)
-            if overlap < 0.5:
-                return True
-        except:
-            pass
-        
-        return False

@@ -170,3 +170,10 @@ Evaluation Metrics
 •	Beyond accuracy: Diversity, novelty, coverage, serendipity
 Key Implementation Strategy
 Start with hybrid collaborative + content-based filtering, add deep learning layers, implement real-time feedback, and continuously A/B test different approaches while maintaining diversity in recommendations.
+
+
+
+The personalized recommendation functionality is to based on the users search history, view, like, favorite, watchlist, rating should be keep traking based on that the personalized recommendations should be provided use the best approches to provide the personalized recommendations of movies, tv shows and anime those should be 100% accurate 
+according to the users search history, view, like, favorite, watchlist, rating there should be an personalized movies, anime, tv-show recommendations should be provide according to the users interests
+
+provide the updated files without comments
