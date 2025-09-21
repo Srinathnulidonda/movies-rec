@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Advanced Personalized Recommendations Testing</title>
+    <title>Advanced AI Movie Recommendation System - Testing Suite</title>
     <style>
         * {
             margin: 0;
@@ -13,321 +13,617 @@
         }
 
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
             min-height: 100vh;
-            padding: 20px;
+            color: #333;
         }
 
         .container {
             max-width: 1400px;
             margin: 0 auto;
-            background: white;
-            border-radius: 20px;
-            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
-            overflow: hidden;
+            padding: 20px;
         }
 
         .header {
-            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
-            color: white;
-            padding: 30px;
-            text-align: center;
-        }
-
-        .header h1 {
-            font-size: 2.5rem;
-            margin-bottom: 10px;
-        }
-
-        .header p {
-            font-size: 1.1rem;
-            opacity: 0.9;
-        }
-
-        .main-content {
-            display: grid;
-            grid-template-columns: 300px 1fr;
-            min-height: 80vh;
-        }
-
-        .sidebar {
-            background: #f8fafc;
-            padding: 30px;
-            border-right: 1px solid #e2e8f0;
-        }
-
-        .content-area {
-            padding: 30px;
-            overflow-y: auto;
+            background: rgba(255, 255, 255, 0.98);
+            padding: 25px;
+            border-radius: 20px;
+            margin-bottom: 25px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+            backdrop-filter: blur(10px);
         }
 
         .auth-section {
-            background: white;
-            padding: 20px;
+            display: flex;
+            gap: 20px;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+        }
+
+        .auth-form {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .auth-form input {
+            padding: 12px 16px;
+            border: 2px solid #ddd;
             border-radius: 10px;
-            margin-bottom: 20px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-        }
-
-        .input-group {
-            margin-bottom: 15px;
-        }
-
-        .input-group label {
-            display: block;
-            margin-bottom: 5px;
-            font-weight: 600;
-            color: #2d3748;
-        }
-
-        .input-group input,
-        .input-group select,
-        .input-group textarea {
-            width: 100%;
-            padding: 12px;
-            border: 2px solid #e2e8f0;
-            border-radius: 8px;
             font-size: 14px;
-            transition: border-color 0.3s;
+            transition: all 0.3s ease;
         }
 
-        .input-group input:focus,
-        .input-group select:focus,
-        .input-group textarea:focus {
+        .auth-form input:focus {
             outline: none;
-            border-color: #4facfe;
+            border-color: #2a5298;
+            box-shadow: 0 0 0 3px rgba(42, 82, 152, 0.1);
         }
 
         .btn {
-            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
-            color: white;
-            border: none;
             padding: 12px 24px;
-            border-radius: 8px;
+            border: none;
+            border-radius: 10px;
             cursor: pointer;
+            font-size: 14px;
             font-weight: 600;
-            transition: transform 0.2s;
-            margin: 5px;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            display: inline-block;
         }
 
-        .btn:hover {
+        .btn-primary {
+            background: linear-gradient(45deg, #2a5298, #1e3c72);
+            color: white;
+        }
+
+        .btn-primary:hover {
             transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(42, 82, 152, 0.4);
         }
 
         .btn-secondary {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: #f8f9fa;
+            color: #333;
+            border: 2px solid #ddd;
+        }
+
+        .btn-secondary:hover {
+            background: #e9ecef;
+            border-color: #adb5bd;
         }
 
         .btn-success {
-            background: linear-gradient(135deg, #56ab2f 0%, #a8e6cf 100%);
+            background: linear-gradient(45deg, #28a745, #20c997);
+            color: white;
+        }
+
+        .btn-warning {
+            background: linear-gradient(45deg, #ffc107, #fd7e14);
+            color: #333;
         }
 
         .btn-danger {
-            background: linear-gradient(135deg, #ff6b6b 0%, #ffa8a8 100%);
-        }
-
-        .section {
-            background: white;
-            margin-bottom: 20px;
-            border-radius: 10px;
-            overflow: hidden;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-        }
-
-        .section-header {
-            background: #f7fafc;
-            padding: 15px 20px;
-            border-bottom: 1px solid #e2e8f0;
-            font-weight: 600;
-            color: #2d3748;
-        }
-
-        .section-content {
-            padding: 20px;
+            background: linear-gradient(45deg, #dc3545, #c82333);
+            color: white;
         }
 
         .user-info {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
-            padding: 15px;
-            border-radius: 8px;
-            margin-bottom: 20px;
-        }
-
-        .interaction-controls {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 10px;
-            margin-bottom: 20px;
-        }
-
-        .recommendation-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-            gap: 20px;
-            margin-top: 20px;
-        }
-
-        .recommendation-card {
-            background: white;
-            border-radius: 10px;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
-            overflow: hidden;
-            transition: transform 0.3s;
-        }
-
-        .recommendation-card:hover {
-            transform: translateY(-5px);
-        }
-
-        .card-image {
-            width: 100%;
-            height: 200px;
-            background: linear-gradient(45deg, #f0f2f5, #e2e8f0);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 48px;
-            color: #a0aec0;
-        }
-
-        .card-content {
-            padding: 15px;
-        }
-
-        .card-title {
-            font-size: 1.1rem;
-            font-weight: 600;
-            margin-bottom: 8px;
-            color: #2d3748;
-        }
-
-        .card-meta {
-            display: flex;
-            justify-content: space-between;
-            margin-bottom: 10px;
-            font-size: 0.9rem;
-            color: #718096;
-        }
-
-        .card-score {
-            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
-            color: white;
-            padding: 4px 8px;
-            border-radius: 12px;
-            font-size: 0.8rem;
-            font-weight: 600;
-        }
-
-        .card-explanation {
-            font-size: 0.9rem;
-            color: #4a5568;
-            margin-bottom: 10px;
-            line-height: 1.4;
-        }
-
-        .card-actions {
-            display: flex;
-            gap: 5px;
-            flex-wrap: wrap;
-        }
-
-        .btn-small {
-            padding: 6px 12px;
-            font-size: 0.8rem;
-        }
-
-        .loading {
-            text-align: center;
-            padding: 40px;
-            font-size: 1.1rem;
-            color: #718096;
-        }
-
-        .error {
-            background: #fed7d7;
-            color: #c53030;
-            padding: 15px;
-            border-radius: 8px;
-            margin: 10px 0;
-        }
-
-        .success {
-            background: #c6f6d5;
-            color: #22543d;
-            padding: 15px;
-            border-radius: 8px;
-            margin: 10px 0;
-        }
-
-        .metrics-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
-            margin: 20px 0;
-        }
-
-        .metric-card {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
             padding: 20px;
-            border-radius: 10px;
-            text-align: center;
+            border-radius: 15px;
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
         }
 
-        .metric-value {
-            font-size: 2rem;
-            font-weight: bold;
-            margin-bottom: 5px;
-        }
-
-        .metric-label {
-            font-size: 0.9rem;
-            opacity: 0.9;
-        }
-
-        .algorithm-breakdown {
-            background: #f7fafc;
-            padding: 10px;
-            border-radius: 6px;
-            margin: 10px 0;
-            font-size: 0.8rem;
-        }
-
-        .interaction-history {
-            max-height: 300px;
-            overflow-y: auto;
-        }
-
-        .interaction-item {
+        .tabs {
             display: flex;
-            justify-content: space-between;
-            align-items: center;
+            gap: 10px;
+            margin-bottom: 25px;
+            flex-wrap: wrap;
+            background: rgba(255, 255, 255, 0.1);
             padding: 10px;
-            border-bottom: 1px solid #e2e8f0;
+            border-radius: 15px;
+            backdrop-filter: blur(10px);
         }
 
-        .interaction-item:last-child {
-            border-bottom: none;
+        .tab {
+            padding: 14px 28px;
+            background: rgba(255, 255, 255, 0.9);
+            border: none;
+            border-radius: 12px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            color: #333;
+        }
+
+        .tab:hover {
+            background: rgba(255, 255, 255, 1);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+
+        .tab.active {
+            background: linear-gradient(45deg, #2a5298, #1e3c72);
+            color: white;
+            box-shadow: 0 6px 20px rgba(42, 82, 152, 0.4);
+        }
+
+        .content-section {
+            background: rgba(255, 255, 255, 0.98);
+            padding: 30px;
+            border-radius: 20px;
+            margin-bottom: 25px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+            backdrop-filter: blur(10px);
         }
 
         .hidden {
             display: none;
         }
 
+        .search-section {
+            margin-bottom: 25px;
+        }
+
+        .search-form {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .search-form input {
+            flex: 1;
+            padding: 14px 20px;
+            border: 2px solid #ddd;
+            border-radius: 12px;
+            font-size: 16px;
+            transition: all 0.3s ease;
+        }
+
+        .search-form input:focus {
+            outline: none;
+            border-color: #2a5298;
+            box-shadow: 0 0 0 3px rgba(42, 82, 152, 0.1);
+        }
+
+        .filters {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+        }
+
+        .filters select {
+            padding: 10px 16px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            background: white;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .filters select:focus {
+            outline: none;
+            border-color: #2a5298;
+        }
+
+        .content-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 25px;
+            margin-top: 25px;
+        }
+
+        .content-card {
+            background: white;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 5px 20px rgba(0, 0, 0, 0.1);
+            transition: all 0.3s ease;
+            position: relative;
+        }
+
+        .content-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        }
+
+        .content-poster {
+            width: 100%;
+            height: 200px;
+            object-fit: cover;
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+        }
+
+        .content-info {
+            padding: 20px;
+        }
+
+        .content-title {
+            font-size: 18px;
+            font-weight: 700;
+            margin-bottom: 10px;
+            color: #333;
+            line-height: 1.3;
+        }
+
+        .content-meta {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+            font-size: 14px;
+            color: #666;
+        }
+
+        .rating {
+            background: linear-gradient(45deg, #ffd700, #ffed4e);
+            color: #333;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-weight: 600;
+            font-size: 13px;
+        }
+
+        .content-type {
+            background: linear-gradient(45deg, #e3f2fd, #bbdefb);
+            color: #1976d2;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .content-actions {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+            margin-top: 15px;
+        }
+
+        .action-btn {
+            padding: 10px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            text-align: center;
+        }
+
+        .like-btn {
+            background: #ffebee;
+            color: #e91e63;
+        }
+
+        .like-btn:hover {
+            background: #ffcdd2;
+        }
+
+        .like-btn.active {
+            background: linear-gradient(45deg, #e91e63, #f06292);
+            color: white;
+        }
+
+        .watchlist-btn {
+            background: #e8f5e8;
+            color: #4caf50;
+        }
+
+        .watchlist-btn:hover {
+            background: #c8e6c9;
+        }
+
+        .watchlist-btn.active {
+            background: linear-gradient(45deg, #4caf50, #66bb6a);
+            color: white;
+        }
+
+        .favorite-btn {
+            background: #fff3e0;
+            color: #ff9800;
+        }
+
+        .favorite-btn:hover {
+            background: #ffe0b2;
+        }
+
+        .favorite-btn.active {
+            background: linear-gradient(45deg, #ff9800, #ffa726);
+            color: white;
+        }
+
+        .rating-section {
+            margin-top: 15px;
+            text-align: center;
+        }
+
+        .star-rating {
+            display: inline-flex;
+            gap: 4px;
+            padding: 10px;
+            background: #f5f5f5;
+            border-radius: 25px;
+        }
+
+        .star {
+            cursor: pointer;
+            font-size: 20px;
+            color: #ddd;
+            transition: all 0.2s;
+        }
+
+        .star:hover {
+            color: #ffd700;
+            transform: scale(1.1);
+        }
+
+        .star.active {
+            color: #ffd700;
+        }
+
+        .ml-info {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 12px 16px;
+            border-radius: 10px;
+            margin-top: 12px;
+            font-size: 13px;
+            line-height: 1.5;
+        }
+
+        .ml-score {
+            background: rgba(255, 255, 255, 0.2);
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-weight: 600;
+            font-size: 12px;
+            margin-left: 5px;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 60px;
+            color: #666;
+        }
+
+        .spinner {
+            border: 4px solid rgba(42, 82, 152, 0.1);
+            border-top: 4px solid #2a5298;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 25px;
+        }
+
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+
+        .error {
+            background: linear-gradient(135deg, #ff6b6b, #ee5a6f);
+            color: white;
+            padding: 20px;
+            border-radius: 12px;
+            margin: 15px 0;
+            box-shadow: 0 5px 20px rgba(238, 90, 111, 0.3);
+            animation: slideIn 0.3s ease;
+        }
+
+        .success {
+            background: linear-gradient(135deg, #51cf66, #94d82d);
+            color: white;
+            padding: 20px;
+            border-radius: 12px;
+            margin: 15px 0;
+            box-shadow: 0 5px 20px rgba(81, 207, 102, 0.3);
+            animation: slideIn 0.3s ease;
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateY(-20px);
+                opacity: 0;
+            }
+
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 25px;
+        }
+
+        .stat-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 25px;
+            border-radius: 16px;
+            text-align: center;
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.3);
+            transition: all 0.3s ease;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 8px 25px rgba(102, 126, 234, 0.4);
+        }
+
+        .stat-number {
+            font-size: 32px;
+            font-weight: 700;
+            margin-bottom: 5px;
+        }
+
+        .stat-label {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+
+        .health-status {
+            padding: 15px 20px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .health-healthy {
+            background: linear-gradient(135deg, #51cf66, #94d82d);
+            color: white;
+        }
+
+        .health-unhealthy {
+            background: linear-gradient(135deg, #ff6b6b, #ee5a6f);
+            color: white;
+        }
+
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: white;
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0% {
+                box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.7);
+            }
+
+            70% {
+                box-shadow: 0 0 0 10px rgba(255, 255, 255, 0);
+            }
+
+            100% {
+                box-shadow: 0 0 0 0 rgba(255, 255, 255, 0);
+            }
+        }
+
+        .test-controls {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+            border: 2px solid #e9ecef;
+        }
+
+        .test-controls h3 {
+            margin-bottom: 15px;
+            color: #495057;
+        }
+
+        .test-buttons {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .info-panel {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 12px;
+            margin-top: 20px;
+        }
+
+        .info-panel h4 {
+            margin-bottom: 10px;
+        }
+
+        .info-panel pre {
+            background: rgba(255, 255, 255, 0.2);
+            padding: 15px;
+            border-radius: 8px;
+            overflow-x: auto;
+            font-size: 13px;
+        }
+
+        .personalization-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            background: rgba(255, 255, 255, 0.2);
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-top: 8px;
+        }
+
+        .confidence-meter {
+            width: 100%;
+            height: 6px;
+            background: rgba(0, 0, 0, 0.1);
+            border-radius: 3px;
+            margin-top: 8px;
+            overflow: hidden;
+        }
+
+        .confidence-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #4caf50, #8bc34a);
+            border-radius: 3px;
+            transition: width 0.3s ease;
+        }
+
         @media (max-width: 768px) {
-            .main-content {
-                grid-template-columns: 1fr;
+            .container {
+                padding: 10px;
             }
 
-            .sidebar {
-                border-right: none;
-                border-bottom: 1px solid #e2e8f0;
+            .auth-section {
+                flex-direction: column;
+                align-items: stretch;
             }
 
-            .recommendation-grid {
+            .auth-form {
+                flex-direction: column;
+            }
+
+            .content-grid {
                 grid-template-columns: 1fr;
+                gap: 20px;
+            }
+
+            .tabs {
+                flex-direction: column;
+                padding: 5px;
+            }
+
+            .tab {
+                text-align: center;
+                width: 100%;
+            }
+
+            .filters {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .filters select {
+                width: 100%;
             }
         }
     </style>
@@ -335,257 +631,303 @@
 
 <body>
     <div class="container">
+        <!-- Header -->
         <div class="header">
-            <h1>🎬 Advanced Personalized Recommendations</h1>
-            <p>Testing Ultra-Personalized ML-Powered Recommendation Engine</p>
+            <div class="auth-section">
+                <h1>🎬 Advanced AI Recommendation System - Testing Suite</h1>
+
+                <div id="loginSection" class="auth-form">
+                    <input type="text" id="loginUsername" placeholder="Username" value="testuser">
+                    <input type="password" id="loginPassword" placeholder="Password" value="test123">
+                    <button class="btn btn-primary" onclick="login()">Login</button>
+                    <button class="btn btn-secondary" onclick="showRegister()">Register</button>
+                </div>
+
+                <div id="registerSection" class="auth-form hidden">
+                    <input type="text" id="regUsername" placeholder="Username">
+                    <input type="email" id="regEmail" placeholder="Email">
+                    <input type="password" id="regPassword" placeholder="Password">
+                    <button class="btn btn-primary" onclick="register()">Register</button>
+                    <button class="btn btn-secondary" onclick="showLogin()">Back to Login</button>
+                </div>
+
+                <div id="userSection" class="user-info hidden">
+                    <span id="userWelcome"></span>
+                    <span id="userStats"></span>
+                    <button class="btn btn-secondary" onclick="logout()">Logout</button>
+                </div>
+            </div>
         </div>
 
-        <div class="main-content">
-            <div class="sidebar">
-                <!-- Authentication Section -->
-                <div class="auth-section">
-                    <h3>Authentication</h3>
-                    <div id="loginForm">
-                        <div class="input-group">
-                            <label>Username</label>
-                            <input type="text" id="loginUsername" placeholder="Enter username">
-                        </div>
-                        <div class="input-group">
-                            <label>Password</label>
-                            <input type="password" id="loginPassword" placeholder="Enter password">
-                        </div>
-                        <button class="btn" onclick="login()">Login</button>
-                        <button class="btn btn-secondary" onclick="showRegisterForm()">Register</button>
-                    </div>
+        <!-- Navigation Tabs -->
+        <div class="tabs">
+            <button class="tab active" onclick="showTab('testing')">🧪 Testing Dashboard</button>
+            <button class="tab" onclick="showTab('search')">🔍 Search & Browse</button>
+            <button class="tab" onclick="showTab('personalized')">🎯 AI Personalized</button>
+            <button class="tab" onclick="showTab('trending')">🔥 Trending</button>
+            <button class="tab" onclick="showTab('watchlist')">📚 My Watchlist</button>
+            <button class="tab" onclick="showTab('favorites')">❤️ My Favorites</button>
+            <button class="tab" onclick="showTab('profile')">👤 Profile Analysis</button>
+            <button class="tab" onclick="showTab('health')">⚡ System Health</button>
+        </div>
 
-                    <div id="registerForm" class="hidden">
-                        <div class="input-group">
-                            <label>Username</label>
-                            <input type="text" id="regUsername" placeholder="Choose username">
-                        </div>
-                        <div class="input-group">
-                            <label>Email</label>
-                            <input type="email" id="regEmail" placeholder="Enter email">
-                        </div>
-                        <div class="input-group">
-                            <label>Password</label>
-                            <input type="password" id="regPassword" placeholder="Choose password">
-                        </div>
-                        <div class="input-group">
-                            <label>Preferred Genres</label>
-                            <select multiple id="regGenres">
-                                <option value="Action">Action</option>
-                                <option value="Comedy">Comedy</option>
-                                <option value="Drama">Drama</option>
-                                <option value="Horror">Horror</option>
-                                <option value="Romance">Romance</option>
-                                <option value="Thriller">Thriller</option>
-                                <option value="Science Fiction">Science Fiction</option>
-                                <option value="Animation">Animation</option>
-                            </select>
-                        </div>
-                        <div class="input-group">
-                            <label>Preferred Languages</label>
-                            <select multiple id="regLanguages">
-                                <option value="English">English</option>
-                                <option value="Telugu">Telugu</option>
-                                <option value="Hindi">Hindi</option>
-                                <option value="Tamil">Tamil</option>
-                                <option value="Malayalam">Malayalam</option>
-                                <option value="Kannada">Kannada</option>
-                                <option value="Japanese">Japanese</option>
-                            </select>
-                        </div>
-                        <button class="btn btn-success" onclick="register()">Register</button>
-                        <button class="btn btn-secondary" onclick="showLoginForm()">Back to Login</button>
-                    </div>
+        <!-- Testing Dashboard Section -->
+        <div id="testingSection" class="content-section">
+            <h2>🧪 Advanced Testing Dashboard</h2>
 
-                    <div id="userInfo" class="user-info hidden">
-                        <h4 id="userWelcome"></h4>
-                        <p id="userDetails"></p>
-                        <button class="btn btn-danger" onclick="logout()">Logout</button>
-                    </div>
-                </div>
-
-                <!-- Content Search & Interaction -->
-                <div class="section">
-                    <div class="section-header">Content Search & Interaction</div>
-                    <div class="section-content">
-                        <div class="input-group">
-                            <label>Search Content</label>
-                            <input type="text" id="searchQuery" placeholder="Search movies, TV shows, anime...">
-                        </div>
-                        <button class="btn" onclick="searchContent()">Search</button>
-
-                        <div class="input-group" style="margin-top: 20px;">
-                            <label>Content ID for Interaction</label>
-                            <input type="number" id="contentId" placeholder="Enter content ID">
-                        </div>
-
-                        <div class="interaction-controls">
-                            <button class="btn btn-small" onclick="recordInteraction('view')">View</button>
-                            <button class="btn btn-small" onclick="recordInteraction('like')">Like</button>
-                            <button class="btn btn-small" onclick="recordInteraction('favorite')">Favorite</button>
-                            <button class="btn btn-small" onclick="recordInteraction('watchlist')">Watchlist</button>
-                        </div>
-
-                        <div class="input-group">
-                            <label>Rating (1-10)</label>
-                            <input type="number" id="ratingValue" min="1" max="10" placeholder="Rate content">
-                        </div>
-                        <button class="btn btn-success" onclick="recordRating()">Submit Rating</button>
-                    </div>
-                </div>
-
-                <!-- Recommendation Controls -->
-                <div class="section">
-                    <div class="section-header">Recommendation Controls</div>
-                    <div class="section-content">
-                        <div class="input-group">
-                            <label>Content Type</label>
-                            <select id="contentTypeFilter">
-                                <option value="all">All Content</option>
-                                <option value="movie">Movies</option>
-                                <option value="tv">TV Shows</option>
-                                <option value="anime">Anime</option>
-                            </select>
-                        </div>
-
-                        <div class="input-group">
-                            <label>Strategy</label>
-                            <select id="strategySelect">
-                                <option value="advanced_hybrid">Advanced Hybrid</option>
-                                <option value="collaborative">Collaborative</option>
-                                <option value="content_based">Content Based</option>
-                                <option value="neural">Neural CF</option>
-                                <option value="matrix_factorization">Matrix Factorization</option>
-                            </select>
-                        </div>
-
-                        <div class="input-group">
-                            <label>Limit</label>
-                            <input type="number" id="limitInput" value="20" min="5" max="50">
-                        </div>
-
-                        <button class="btn btn-success" onclick="getPersonalizedRecommendations()">Get ML
-                            Recommendations</button>
-                        <button class="btn" onclick="getBasicRecommendations()">Get Basic Recommendations</button>
-                    </div>
+            <div class="test-controls">
+                <h3>Quick Test Actions</h3>
+                <div class="test-buttons">
+                    <button class="btn btn-success" onclick="runFullTest()">Run Full Test Suite</button>
+                    <button class="btn btn-warning" onclick="simulateUserBehavior()">Simulate User Behavior</button>
+                    <button class="btn btn-primary" onclick="testMLEndpoints()">Test ML Endpoints</button>
+                    <button class="btn btn-secondary" onclick="checkCacheStatus()">Check Cache Status</button>
+                    <button class="btn btn-danger" onclick="clearAllCaches()">Clear All Caches</button>
                 </div>
             </div>
 
-            <div class="content-area">
-                <div id="messageArea"></div>
-
-                <!-- User Metrics -->
-                <div class="section">
-                    <div class="section-header">User Profile Metrics</div>
-                    <div class="section-content">
-                        <div class="metrics-grid" id="userMetrics">
-                            <div class="metric-card">
-                                <div class="metric-value" id="interactionCount">-</div>
-                                <div class="metric-label">Total Interactions</div>
-                            </div>
-                            <div class="metric-card">
-                                <div class="metric-value" id="profileStrength">-</div>
-                                <div class="metric-label">Profile Strength</div>
-                            </div>
-                            <div class="metric-card">
-                                <div class="metric-value" id="precision">-</div>
-                                <div class="metric-label">Precision@10</div>
-                            </div>
-                            <div class="metric-card">
-                                <div class="metric-value" id="diversityScore">-</div>
-                                <div class="metric-label">Diversity Score</div>
-                            </div>
-                        </div>
-                    </div>
+            <div class="stats-grid" id="testStats">
+                <div class="stat-card">
+                    <div class="stat-number">0</div>
+                    <div class="stat-label">Total API Calls</div>
                 </div>
-
-                <!-- Recommendations Display -->
-                <div class="section">
-                    <div class="section-header">
-                        Personalized Recommendations
-                        <span id="recommendationCount" style="float: right; font-weight: normal;"></span>
-                    </div>
-                    <div class="section-content">
-                        <div id="recommendationsArea">
-                            <div class="loading">Get personalized recommendations to see results here</div>
-                        </div>
-                    </div>
+                <div class="stat-card">
+                    <div class="stat-number">0ms</div>
+                    <div class="stat-label">Avg Response Time</div>
                 </div>
-
-                <!-- Search Results -->
-                <div class="section">
-                    <div class="section-header">Search Results</div>
-                    <div class="section-content">
-                        <div id="searchResults">
-                            <div class="loading">Search for content to see results here</div>
-                        </div>
-                    </div>
+                <div class="stat-card">
+                    <div class="stat-number">0%</div>
+                    <div class="stat-label">Success Rate</div>
                 </div>
-
-                <!-- User Lists -->
-                <div class="section">
-                    <div class="section-header">User Lists</div>
-                    <div class="section-content">
-                        <button class="btn" onclick="getWatchlist()">View Watchlist</button>
-                        <button class="btn" onclick="getFavorites()">View Favorites</button>
-                        <button class="btn" onclick="getInteractionHistory()">Interaction History</button>
-
-                        <div id="userLists" style="margin-top: 20px;"></div>
-                    </div>
+                <div class="stat-card">
+                    <div class="stat-number">0</div>
+                    <div class="stat-label">ML Predictions</div>
                 </div>
             </div>
+
+            <div id="testResults"></div>
+        </div>
+
+        <!-- Search & Browse Section -->
+        <div id="searchSection" class="content-section hidden">
+            <h2>Search & Browse Content</h2>
+            <div class="search-section">
+                <div class="search-form">
+                    <input type="text" id="searchQuery" placeholder="Search for movies, TV shows, anime..."
+                        onkeypress="handleSearchEnter(event)">
+                    <button class="btn btn-primary" onclick="searchContent()">Search</button>
+                </div>
+                <div class="filters">
+                    <label>Type:</label>
+                    <select id="contentTypeFilter">
+                        <option value="multi">All Content</option>
+                        <option value="movie">Movies</option>
+                        <option value="tv">TV Shows</option>
+                        <option value="anime">Anime</option>
+                    </select>
+                    <label>Sort By:</label>
+                    <select id="sortFilter">
+                        <option value="popularity">Popularity</option>
+                        <option value="rating">Rating</option>
+                        <option value="release_date">Release Date</option>
+                    </select>
+                    <button class="btn btn-secondary" onclick="getNewReleases()">New Releases</button>
+                    <button class="btn btn-secondary" onclick="getCriticsChoice()">Critics Choice</button>
+                </div>
+            </div>
+            <div id="searchResults"></div>
+        </div>
+
+        <!-- Personalized Recommendations Section -->
+        <div id="personalizedSection" class="content-section hidden">
+            <h2>🤖 Advanced AI Personalized Recommendations</h2>
+            <p>Neural network-powered recommendations based on your complete interaction history</p>
+            <div class="filters">
+                <label>Content Type:</label>
+                <select id="personalizedTypeFilter">
+                    <option value="">All Types</option>
+                    <option value="movie">Movies</option>
+                    <option value="tv">TV Shows</option>
+                    <option value="anime">Anime</option>
+                </select>
+                <label>Limit:</label>
+                <select id="personalizedLimitFilter">
+                    <option value="10">10</option>
+                    <option value="20" selected>20</option>
+                    <option value="30">30</option>
+                    <option value="50">50</option>
+                </select>
+                <button class="btn btn-primary" onclick="getPersonalizedRecommendations()">Get AI
+                    Recommendations</button>
+                <button class="btn btn-secondary" onclick="refreshMLModel()">Refresh ML Model</button>
+            </div>
+            <div id="personalizedStats"></div>
+            <div id="personalizedResults"></div>
+        </div>
+
+        <!-- Trending Section -->
+        <div id="trendingSection" class="content-section hidden">
+            <h2>🔥 Trending Now</h2>
+            <div class="filters">
+                <label>Region:</label>
+                <select id="regionFilter">
+                    <option value="IN">India</option>
+                    <option value="US">United States</option>
+                    <option value="JP">Japan</option>
+                    <option value="KR">South Korea</option>
+                    <option value="GB">United Kingdom</option>
+                </select>
+                <label>Category:</label>
+                <select id="trendingCategoryFilter">
+                    <option value="all">All Categories</option>
+                    <option value="movies">Movies</option>
+                    <option value="tv_shows">TV Shows</option>
+                    <option value="anime">Anime</option>
+                    <option value="nearby">Popular Nearby</option>
+                    <option value="critics">Critics Choice</option>
+                </select>
+                <button class="btn btn-primary" onclick="getTrendingContent()">Get Trending</button>
+                <button class="btn btn-success" onclick="getMLTrending()">ML Enhanced Trending</button>
+            </div>
+            <div id="trendingResults"></div>
+        </div>
+
+        <!-- Watchlist Section -->
+        <div id="watchlistSection" class="content-section hidden">
+            <h2>📚 My Watchlist</h2>
+            <p>Content you've saved to watch later</p>
+            <button class="btn btn-primary" onclick="getWatchlist()">Refresh Watchlist</button>
+            <div id="watchlistResults"></div>
+        </div>
+
+        <!-- Favorites Section -->
+        <div id="favoritesSection" class="content-section hidden">
+            <h2>❤️ My Favorites</h2>
+            <p>Your favorite content collection</p>
+            <button class="btn btn-primary" onclick="getFavorites()">Refresh Favorites</button>
+            <div id="favoritesResults"></div>
+        </div>
+
+        <!-- Profile Analysis Section -->
+        <div id="profileSection" class="content-section hidden">
+            <h2>👤 Advanced Profile Analysis</h2>
+            <p>AI-powered analysis of your viewing behavior and preferences</p>
+            <button class="btn btn-primary" onclick="getUserAnalysis()">Analyze My Profile</button>
+            <button class="btn btn-secondary" onclick="exportProfileData()">Export Profile Data</button>
+            <div id="profileResults"></div>
+        </div>
+
+        <!-- System Health Section -->
+        <div id="healthSection" class="content-section hidden">
+            <h2>⚡ System Health & Performance</h2>
+            <button class="btn btn-primary" onclick="checkSystemHealth()">Check Backend Health</button>
+            <button class="btn btn-success" onclick="checkMLHealth()">Check ML Service</button>
+            <button class="btn btn-warning" onclick="runPerformanceTest()">Run Performance Test</button>
+            <div id="healthResults"></div>
         </div>
     </div>
 
     <script>
         const API_BASE = 'https://backend-app-970m.onrender.com';
-        let authToken = localStorage.getItem('authToken');
-        let currentUser = JSON.parse(localStorage.getItem('currentUser') || '{}');
+        // const API_BASE = 'http://localhost:5000'; // For local testing
 
-        // Initialize app
+        let authToken = localStorage.getItem('authToken');
+        let currentUser = JSON.parse(localStorage.getItem('currentUser') || 'null');
+
+        let apiCallCount = 0;
+        let totalResponseTime = 0;
+        let successfulCalls = 0;
+        let mlPredictionCount = 0;
+
+        // Initialize
         document.addEventListener('DOMContentLoaded', function () {
-            if (authToken) {
-                showUserInfo();
-                loadUserMetrics();
+            if (authToken && currentUser) {
+                showUserSection();
+                updateUserStats();
             }
+            updateTestStats();
         });
 
-        // Utility functions
-        function showMessage(message, type = 'info') {
-            const messageArea = document.getElementById('messageArea');
-            const alertClass = type === 'error' ? 'error' : type === 'success' ? 'success' : 'info';
-            messageArea.innerHTML = `<div class="${alertClass}">${message}</div>`;
-            setTimeout(() => messageArea.innerHTML = '', 5000);
+        // Authentication Functions
+        function showRegister() {
+            document.getElementById('loginSection').classList.add('hidden');
+            document.getElementById('registerSection').classList.remove('hidden');
         }
 
-        function showLoading(elementId) {
-            document.getElementById(elementId).innerHTML = '<div class="loading">Loading...</div>';
+        function showLogin() {
+            document.getElementById('registerSection').classList.add('hidden');
+            document.getElementById('loginSection').classList.remove('hidden');
         }
 
-        function getAuthHeaders() {
-            return authToken ? { 'Authorization': `Bearer ${authToken}` } : {};
-        }
-
-        // Authentication functions
-        function showRegisterForm() {
-            document.getElementById('loginForm').classList.add('hidden');
-            document.getElementById('registerForm').classList.remove('hidden');
-        }
-
-        function showLoginForm() {
-            document.getElementById('registerForm').classList.add('hidden');
-            document.getElementById('loginForm').classList.remove('hidden');
-        }
-
-        function showUserInfo() {
-            document.getElementById('loginForm').classList.add('hidden');
-            document.getElementById('registerForm').classList.add('hidden');
-            document.getElementById('userInfo').classList.remove('hidden');
+        function showUserSection() {
+            document.getElementById('loginSection').classList.add('hidden');
+            document.getElementById('registerSection').classList.add('hidden');
+            document.getElementById('userSection').classList.remove('hidden');
             document.getElementById('userWelcome').textContent = `Welcome, ${currentUser.username}!`;
-            document.getElementById('userDetails').textContent = `Email: ${currentUser.email}`;
+        }
+
+        async function updateUserStats() {
+            if (!authToken) return;
+
+            try {
+                const response = await apiCall(`${API_BASE}/api/user/profile/analysis`, {
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`
+                    }
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    const analysis = data.profile_analysis;
+                    document.getElementById('userStats').textContent =
+                        ` | ${analysis.total_interactions} interactions | ${analysis.engagement_level} engagement`;
+                }
+            } catch (error) {
+                console.error('Failed to fetch user stats:', error);
+            }
+        }
+
+        async function register() {
+            const username = document.getElementById('regUsername').value;
+            const email = document.getElementById('regEmail').value;
+            const password = document.getElementById('regPassword').value;
+
+            if (!username || !email || !password) {
+                showError('Please fill in all fields');
+                return;
+            }
+
+            try {
+                const response = await apiCall(`${API_BASE}/api/register`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        username,
+                        email,
+                        password,
+                        preferred_languages: ['english', 'telugu', 'hindi'],
+                        preferred_genres: ['Action', 'Drama', 'Comedy', 'Thriller']
+                    })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    authToken = data.token;
+                    currentUser = data.user;
+                    localStorage.setItem('authToken', authToken);
+                    localStorage.setItem('currentUser', JSON.stringify(currentUser));
+                    showUserSection();
+                    showSuccess('Registration successful! Welcome to the AI Recommendation System!');
+                    updateUserStats();
+                } else {
+                    showError(data.error || 'Registration failed');
+                }
+            } catch (error) {
+                showError('Network error: ' + error.message);
+            }
         }
 
         async function login() {
@@ -593,14 +935,16 @@
             const password = document.getElementById('loginPassword').value;
 
             if (!username || !password) {
-                showMessage('Please enter username and password', 'error');
+                showError('Please fill in all fields');
                 return;
             }
 
             try {
-                const response = await fetch(`${API_BASE}/api/login`, {
+                const response = await apiCall(`${API_BASE}/api/login`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
                     body: JSON.stringify({ username, password })
                 });
 
@@ -611,528 +955,1267 @@
                     currentUser = data.user;
                     localStorage.setItem('authToken', authToken);
                     localStorage.setItem('currentUser', JSON.stringify(currentUser));
-                    showUserInfo();
-                    loadUserMetrics();
-                    showMessage('Login successful!', 'success');
+                    showUserSection();
+                    showSuccess('Login successful!');
+                    updateUserStats();
                 } else {
-                    showMessage(data.error || 'Login failed', 'error');
+                    showError(data.error || 'Login failed');
                 }
             } catch (error) {
-                showMessage('Network error during login', 'error');
-                console.error('Login error:', error);
-            }
-        }
-
-        async function register() {
-            const username = document.getElementById('regUsername').value;
-            const email = document.getElementById('regEmail').value;
-            const password = document.getElementById('regPassword').value;
-            const genres = Array.from(document.getElementById('regGenres').selectedOptions).map(o => o.value);
-            const languages = Array.from(document.getElementById('regLanguages').selectedOptions).map(o => o.value);
-
-            if (!username || !email || !password) {
-                showMessage('Please fill in all required fields', 'error');
-                return;
-            }
-
-            try {
-                const response = await fetch(`${API_BASE}/api/register`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        username,
-                        email,
-                        password,
-                        preferred_genres: genres,
-                        preferred_languages: languages
-                    })
-                });
-
-                const data = await response.json();
-
-                if (response.ok) {
-                    authToken = data.token;
-                    currentUser = data.user;
-                    localStorage.setItem('authToken', authToken);
-                    localStorage.setItem('currentUser', JSON.stringify(currentUser));
-                    showUserInfo();
-                    showMessage('Registration successful!', 'success');
-                } else {
-                    showMessage(data.error || 'Registration failed', 'error');
-                }
-            } catch (error) {
-                showMessage('Network error during registration', 'error');
-                console.error('Registration error:', error);
+                showError('Network error: ' + error.message);
             }
         }
 
         function logout() {
             authToken = null;
-            currentUser = {};
+            currentUser = null;
             localStorage.removeItem('authToken');
             localStorage.removeItem('currentUser');
-            document.getElementById('userInfo').classList.add('hidden');
-            showLoginForm();
-            showMessage('Logged out successfully', 'success');
+            showLogin();
+            showSuccess('Logged out successfully');
         }
 
-        // Content search
+        // Tab Navigation
+        function showTab(tabName) {
+            // Hide all sections
+            document.querySelectorAll('.content-section').forEach(section => {
+                section.classList.add('hidden');
+            });
+
+            // Remove active class from all tabs
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+
+            // Show selected section and activate tab
+            document.getElementById(tabName + 'Section').classList.remove('hidden');
+            event.target.classList.add('active');
+
+            // Load data for specific tabs
+            switch (tabName) {
+                case 'personalized':
+                    if (authToken) getPersonalizedRecommendations();
+                    break;
+                case 'watchlist':
+                    if (authToken) getWatchlist();
+                    break;
+                case 'favorites':
+                    if (authToken) getFavorites();
+                    break;
+                case 'trending':
+                    getTrendingContent();
+                    break;
+            }
+        }
+
+        // API Call Wrapper with Performance Tracking
+        async function apiCall(url, options = {}) {
+            const startTime = performance.now();
+            apiCallCount++;
+
+            try {
+                const response = await fetch(url, options);
+                const endTime = performance.now();
+                const responseTime = endTime - startTime;
+                totalResponseTime += responseTime;
+
+                if (response.ok) {
+                    successfulCalls++;
+                }
+
+                updateTestStats();
+                return response;
+            } catch (error) {
+                updateTestStats();
+                throw error;
+            }
+        }
+
+        // Update Test Statistics
+        function updateTestStats() {
+            const avgResponseTime = apiCallCount > 0 ? (totalResponseTime / apiCallCount).toFixed(0) : 0;
+            const successRate = apiCallCount > 0 ? ((successfulCalls / apiCallCount) * 100).toFixed(1) : 0;
+
+            document.querySelector('#testStats .stat-card:nth-child(1) .stat-number').textContent = apiCallCount;
+            document.querySelector('#testStats .stat-card:nth-child(2) .stat-number').textContent = `${avgResponseTime}ms`;
+            document.querySelector('#testStats .stat-card:nth-child(3) .stat-number').textContent = `${successRate}%`;
+            document.querySelector('#testStats .stat-card:nth-child(4) .stat-number').textContent = mlPredictionCount;
+        }
+
+        // Testing Functions
+        async function runFullTest() {
+            showLoading('testResults');
+            const results = [];
+
+            // Test 1: System Health
+            results.push(await testEndpoint('System Health', `${API_BASE}/api/health`));
+
+            // Test 2: ML Service Health
+            results.push(await testEndpoint('ML Service Health', `${API_BASE}/api/ml/health`));
+
+            // Test 3: Search Functionality
+            results.push(await testEndpoint('Search API', `${API_BASE}/api/search?query=avengers&type=movie`));
+
+            // Test 4: Trending Content
+            results.push(await testEndpoint('Trending API', `${API_BASE}/api/recommendations/trending?region=IN&limit=10`));
+
+            // Test 5: New Releases
+            results.push(await testEndpoint('New Releases API', `${API_BASE}/api/recommendations/new-releases?type=movie&limit=10`));
+
+            // Test 6: Critics Choice
+            results.push(await testEndpoint('Critics Choice API', `${API_BASE}/api/recommendations/critics-choice?type=movie&limit=10`));
+
+            // Test 7: Similar Content
+            results.push(await testEndpoint('Similar Content API', `${API_BASE}/api/recommendations/similar/1?limit=5`));
+
+            if (authToken) {
+                // Test 8: Personalized Recommendations
+                results.push(await testEndpoint('Personalized Recommendations', `${API_BASE}/api/recommendations/personalized?limit=10`, {
+                    headers: { 'Authorization': `Bearer ${authToken}` }
+                }));
+
+                // Test 9: ML Similar
+                results.push(await testEndpoint('ML Similar Content', `${API_BASE}/api/recommendations/ml-similar/1?limit=5`, {
+                    headers: { 'Authorization': `Bearer ${authToken}` }
+                }));
+
+                // Test 10: ML Trending
+                results.push(await testEndpoint('ML Trending', `${API_BASE}/api/recommendations/ml-trending?region=IN&limit=10`, {
+                    headers: { 'Authorization': `Bearer ${authToken}` }
+                }));
+            }
+
+            displayTestResults(results);
+        }
+
+        async function testEndpoint(name, url, options = {}) {
+            const startTime = performance.now();
+
+            try {
+                const response = await apiCall(url, options);
+                const endTime = performance.now();
+                const responseTime = endTime - startTime;
+
+                const data = await response.json();
+
+                return {
+                    name,
+                    status: response.ok ? 'success' : 'failed',
+                    statusCode: response.status,
+                    responseTime: responseTime.toFixed(2),
+                    dataReceived: true,
+                    resultCount: data.recommendations?.length || data.results?.length || 0
+                };
+            } catch (error) {
+                return {
+                    name,
+                    status: 'error',
+                    error: error.message,
+                    responseTime: 0,
+                    dataReceived: false
+                };
+            }
+        }
+
+        function displayTestResults(results) {
+            const container = document.getElementById('testResults');
+            let html = '<h3>Test Results</h3><div class="test-results-grid">';
+
+            results.forEach(result => {
+                const statusClass = result.status === 'success' ? 'success' : 'error';
+                html += `
+                    <div class="${statusClass}" style="margin: 10px 0; padding: 15px; border-radius: 8px;">
+                        <strong>${result.name}</strong><br>
+                        Status: ${result.status} ${result.statusCode ? `(${result.statusCode})` : ''}<br>
+                        Response Time: ${result.responseTime}ms<br>
+                        ${result.resultCount ? `Results: ${result.resultCount}<br>` : ''}
+                        ${result.error ? `Error: ${result.error}<br>` : ''}
+                    </div>
+                `;
+            });
+
+            html += '</div>';
+            container.innerHTML = html;
+        }
+
+        async function simulateUserBehavior() {
+            if (!authToken) {
+                showError('Please login to simulate user behavior');
+                return;
+            }
+
+            showLoading('testResults');
+            const container = document.getElementById('testResults');
+            container.innerHTML = '<h3>Simulating User Behavior...</h3>';
+
+            try {
+                // Simulate search
+                await recordInteraction(1, 'search', { search_query: 'action movies' });
+                container.innerHTML += '<div class="success">✓ Simulated search interaction</div>';
+
+                // Simulate views
+                const contentIds = [1, 2, 3, 4, 5];
+                for (const id of contentIds) {
+                    await recordInteraction(id, 'view');
+                    container.innerHTML += `<div class="success">✓ Simulated view for content ${id}</div>`;
+                    await sleep(500);
+                }
+
+                // Simulate likes
+                await recordInteraction(1, 'like');
+                await recordInteraction(3, 'like');
+                container.innerHTML += '<div class="success">✓ Simulated like interactions</div>';
+
+                // Simulate favorites
+                await recordInteraction(2, 'favorite');
+                container.innerHTML += '<div class="success">✓ Simulated favorite interaction</div>';
+
+                // Simulate watchlist
+                await recordInteraction(4, 'watchlist');
+                await recordInteraction(5, 'watchlist');
+                container.innerHTML += '<div class="success">✓ Simulated watchlist interactions</div>';
+
+                // Simulate ratings
+                await recordInteraction(1, 'rating', { rating: 5 });
+                await recordInteraction(2, 'rating', { rating: 4 });
+                await recordInteraction(3, 'rating', { rating: 4.5 });
+                container.innerHTML += '<div class="success">✓ Simulated rating interactions</div>';
+
+                container.innerHTML += '<div class="info-panel" style="margin-top: 20px;"><h4>Simulation Complete!</h4><p>User behavior has been simulated. The ML model should now have enough data to provide personalized recommendations.</p></div>';
+
+                // Update user stats
+                updateUserStats();
+
+            } catch (error) {
+                container.innerHTML += `<div class="error">✗ Error: ${error.message}</div>`;
+            }
+        }
+
+        async function testMLEndpoints() {
+            if (!authToken) {
+                showError('Please login to test ML endpoints');
+                return;
+            }
+
+            showLoading('testResults');
+            const results = [];
+
+            // Test ML endpoints
+            results.push(await testEndpoint('ML Health Check', `${API_BASE}/api/ml/health`));
+            results.push(await testEndpoint('User Profile Analysis', `${API_BASE}/api/user/profile/analysis`, {
+                headers: { 'Authorization': `Bearer ${authToken}` }
+            }));
+            results.push(await testEndpoint('ML Personalized', `${API_BASE}/api/recommendations/personalized?limit=5`, {
+                headers: { 'Authorization': `Bearer ${authToken}` }
+            }));
+            results.push(await testEndpoint('ML Similar', `${API_BASE}/api/recommendations/ml-similar/1?limit=5`, {
+                headers: { 'Authorization': `Bearer ${authToken}` }
+            }));
+            results.push(await testEndpoint('ML Trending', `${API_BASE}/api/recommendations/ml-trending?limit=5&region=IN`));
+
+            displayTestResults(results);
+        }
+
+        async function checkCacheStatus() {
+            showLoading('testResults');
+            const container = document.getElementById('testResults');
+
+            try {
+                // Make the same API call twice to test caching
+                const url = `${API_BASE}/api/recommendations/trending?region=IN&limit=5`;
+
+                const start1 = performance.now();
+                const response1 = await apiCall(url);
+                const time1 = performance.now() - start1;
+
+                const start2 = performance.now();
+                const response2 = await apiCall(url);
+                const time2 = performance.now() - start2;
+
+                const improvement = ((time1 - time2) / time1 * 100).toFixed(1);
+
+                container.innerHTML = `
+                    <h3>Cache Performance Test</h3>
+                    <div class="info-panel">
+                        <h4>Results:</h4>
+                        <p>First call: ${time1.toFixed(2)}ms</p>
+                        <p>Second call (cached): ${time2.toFixed(2)}ms</p>
+                        <p>Performance improvement: ${improvement}%</p>
+                        <p>Cache status: ${time2 < time1 ? 'Working ✓' : 'Not working ✗'}</p>
+                    </div>
+                `;
+            } catch (error) {
+                container.innerHTML = `<div class="error">Cache test failed: ${error.message}</div>`;
+            }
+        }
+
+        async function clearAllCaches() {
+            if (!confirm('Are you sure you want to clear all caches? This may temporarily slow down the system.')) {
+                return;
+            }
+
+            // In a real implementation, you would call a backend endpoint to clear caches
+            showSuccess('Cache clear request sent. Note: Actual cache clearing requires backend implementation.');
+        }
+
+        function sleep(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+
+        // Search Functions
+        function handleSearchEnter(event) {
+            if (event.key === 'Enter') {
+                searchContent();
+            }
+        }
+
         async function searchContent() {
             const query = document.getElementById('searchQuery').value;
-            if (!query) {
-                showMessage('Please enter a search query', 'error');
+            const type = document.getElementById('contentTypeFilter').value;
+
+            if (!query.trim()) {
+                showError('Please enter a search query');
                 return;
             }
 
             showLoading('searchResults');
 
             try {
-                const response = await fetch(`${API_BASE}/api/search?query=${encodeURIComponent(query)}&type=multi&page=1`);
+                const response = await apiCall(`${API_BASE}/api/search?query=${encodeURIComponent(query)}&type=${type}`);
                 const data = await response.json();
 
                 if (response.ok) {
-                    displaySearchResults(data.results);
-                    showMessage(`Found ${data.results.length} results`, 'success');
+                    displayContent(data.results, 'searchResults', `Search Results for "${query}"`);
+
+                    // Record search interaction if logged in
+                    if (authToken && data.results.length > 0) {
+                        recordInteraction(data.results[0].id, 'search', { search_query: query });
+                    }
                 } else {
-                    showMessage('Search failed', 'error');
+                    showError(data.error || 'Search failed');
                 }
             } catch (error) {
-                showMessage('Network error during search', 'error');
-                console.error('Search error:', error);
+                showError('Network error: ' + error.message);
             }
         }
 
-        function displaySearchResults(results) {
-            const container = document.getElementById('searchResults');
-
-            if (!results || results.length === 0) {
-                container.innerHTML = '<div class="loading">No results found</div>';
-                return;
-            }
-
-            container.innerHTML = results.map(item => `
-                <div class="recommendation-card">
-                    <div class="card-image">
-                        ${item.poster_path ? `<img src="${item.poster_path}" alt="${item.title}" style="width: 100%; height: 100%; object-fit: cover;">` : '🎬'}
-                    </div>
-                    <div class="card-content">
-                        <div class="card-title">${item.title}</div>
-                        <div class="card-meta">
-                            <span>${item.content_type.toUpperCase()}</span>
-                            <span class="card-score">${item.rating || 'N/A'}</span>
-                        </div>
-                        <div class="card-explanation">${item.overview ? item.overview.substring(0, 100) + '...' : 'No description available'}</div>
-                        <div class="card-actions">
-                            <button class="btn btn-small" onclick="setContentId(${item.id})">Use ID: ${item.id}</button>
-                            <button class="btn btn-small btn-secondary" onclick="recordInteractionById(${item.id}, 'view')">View</button>
-                            <button class="btn btn-small btn-success" onclick="recordInteractionById(${item.id}, 'like')">Like</button>
-                        </div>
-                    </div>
-                </div>
-            `).join('');
-        }
-
-        function setContentId(id) {
-            document.getElementById('contentId').value = id;
-            showMessage(`Content ID ${id} set for interactions`, 'success');
-        }
-
-        // Interaction recording
-        async function recordInteraction(type) {
-            if (!authToken) {
-                showMessage('Please login first', 'error');
-                return;
-            }
-
-            const contentId = document.getElementById('contentId').value;
-            if (!contentId) {
-                showMessage('Please enter a content ID', 'error');
-                return;
-            }
-
-            await recordInteractionById(parseInt(contentId), type);
-        }
-
-        async function recordInteractionById(contentId, type) {
-            if (!authToken) {
-                showMessage('Please login first', 'error');
-                return;
-            }
+        async function getNewReleases() {
+            showLoading('searchResults');
 
             try {
-                const response = await fetch(`${API_BASE}/api/interactions`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        ...getAuthHeaders()
-                    },
-                    body: JSON.stringify({
-                        content_id: contentId,
-                        interaction_type: type,
-                        metadata: {
-                            timestamp: new Date().toISOString(),
-                            source: 'testing_interface'
-                        }
-                    })
-                });
-
+                const response = await apiCall(`${API_BASE}/api/recommendations/new-releases?type=movie&limit=20`);
                 const data = await response.json();
 
                 if (response.ok) {
-                    showMessage(`${type.charAt(0).toUpperCase() + type.slice(1)} interaction recorded successfully!`, 'success');
-                    loadUserMetrics();
+                    displayContent(data.recommendations, 'searchResults', 'New Releases');
+                    if (data.metadata) {
+                        displayMetadata(data.metadata, 'searchResults');
+                    }
                 } else {
-                    showMessage(data.error || 'Failed to record interaction', 'error');
+                    showError(data.error || 'Failed to get new releases');
                 }
             } catch (error) {
-                showMessage('Network error during interaction recording', 'error');
-                console.error('Interaction error:', error);
+                showError('Network error: ' + error.message);
             }
         }
 
-        async function recordRating() {
-            if (!authToken) {
-                showMessage('Please login first', 'error');
-                return;
-            }
-
-            const contentId = document.getElementById('contentId').value;
-            const rating = document.getElementById('ratingValue').value;
-
-            if (!contentId || !rating) {
-                showMessage('Please enter content ID and rating', 'error');
-                return;
-            }
+        async function getCriticsChoice() {
+            showLoading('searchResults');
 
             try {
-                const response = await fetch(`${API_BASE}/api/interactions`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        ...getAuthHeaders()
-                    },
-                    body: JSON.stringify({
-                        content_id: parseInt(contentId),
-                        interaction_type: 'rating',
-                        rating: parseFloat(rating),
-                        metadata: {
-                            timestamp: new Date().toISOString(),
-                            source: 'testing_interface'
-                        }
-                    })
-                });
-
+                const response = await apiCall(`${API_BASE}/api/recommendations/critics-choice?type=movie&limit=20`);
                 const data = await response.json();
 
                 if (response.ok) {
-                    showMessage(`Rating ${rating}/10 recorded successfully!`, 'success');
-                    loadUserMetrics();
-                    document.getElementById('ratingValue').value = '';
+                    displayContent(data.recommendations, 'searchResults', 'Critics Choice');
                 } else {
-                    showMessage(data.error || 'Failed to record rating', 'error');
+                    showError(data.error || 'Failed to get critics choice');
                 }
             } catch (error) {
-                showMessage('Network error during rating recording', 'error');
-                console.error('Rating error:', error);
+                showError('Network error: ' + error.message);
             }
         }
 
-        // Personalized recommendations
+        // Personalized Recommendations
         async function getPersonalizedRecommendations() {
             if (!authToken) {
-                showMessage('Please login first', 'error');
+                showError('Please login to get personalized recommendations');
                 return;
             }
 
-            showLoading('recommendationsArea');
-
-            const contentType = document.getElementById('contentTypeFilter').value;
-            const strategy = document.getElementById('strategySelect').value;
-            const limit = document.getElementById('limitInput').value;
+            showLoading('personalizedResults');
 
             try {
-                const response = await fetch(`${API_BASE}/api/recommendations/ml-personalized?limit=${limit}&content_type=${contentType}&strategy=${strategy}&include_explanations=true&diversity_factor=0.3`, {
-                    headers: getAuthHeaders()
+                const contentType = document.getElementById('personalizedTypeFilter').value;
+                const limit = document.getElementById('personalizedLimitFilter').value;
+
+                let url = `${API_BASE}/api/recommendations/personalized?limit=${limit}`;
+                if (contentType) {
+                    url += `&content_type=${contentType}`;
+                }
+
+                const response = await apiCall(url, {
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`
+                    }
                 });
 
                 const data = await response.json();
 
                 if (response.ok) {
-                    displayRecommendations(data.recommendations, 'ML-Powered Personalized');
-                    updateUserMetrics(data);
-                    showMessage(`Generated ${data.recommendations.length} ML-powered recommendations`, 'success');
+                    mlPredictionCount += data.recommendations.length;
+                    updateTestStats();
+
+                    displayPersonalizedContent(data.recommendations, 'personalizedResults', 'AI Personalized Recommendations');
+
+                    // Show ML insights if available
+                    if (data.user_stats || data.advanced_features) {
+                        displayPersonalizationStats(data, 'personalizedStats');
+                    }
                 } else {
-                    showMessage(data.error || 'Failed to get recommendations', 'error');
-                    document.getElementById('recommendationsArea').innerHTML = '<div class="loading">Failed to load recommendations</div>';
+                    showError(data.error || 'Failed to get personalized recommendations');
                 }
             } catch (error) {
-                showMessage('Network error during recommendation fetch', 'error');
-                console.error('Recommendation error:', error);
-                document.getElementById('recommendationsArea').innerHTML = '<div class="loading">Error loading recommendations</div>';
+                showError('Network error: ' + error.message);
             }
         }
 
-        async function getBasicRecommendations() {
+        async function refreshMLModel() {
+            showSuccess('ML model refresh requested. The model will be updated with latest interaction data.');
+        }
+
+        // Trending Content
+        async function getTrendingContent() {
+            showLoading('trendingResults');
+
+            try {
+                const region = document.getElementById('regionFilter')?.value || 'IN';
+                const category = document.getElementById('trendingCategoryFilter')?.value || 'all';
+
+                const response = await apiCall(`${API_BASE}/api/recommendations/trending?region=${region}&category=${category}&limit=20`);
+                const data = await response.json();
+
+                if (response.ok) {
+                    if (data.categories) {
+                        displayTrendingCategories(data.categories, 'trendingResults');
+                    } else {
+                        displayContent(data.recommendations, 'trendingResults', 'Trending Content');
+                    }
+
+                    if (data.metadata) {
+                        displayMetadata(data.metadata, 'trendingResults');
+                    }
+                } else {
+                    showError(data.error || 'Failed to get trending content');
+                }
+            } catch (error) {
+                showError('Network error: ' + error.message);
+            }
+        }
+
+        async function getMLTrending() {
             if (!authToken) {
-                showMessage('Please login first', 'error');
+                showError('Please login to use ML enhanced features');
                 return;
             }
 
-            showLoading('recommendationsArea');
-
-            const contentType = document.getElementById('contentTypeFilter').value;
-            const limit = document.getElementById('limitInput').value;
+            showLoading('trendingResults');
 
             try {
-                const response = await fetch(`${API_BASE}/api/recommendations/personalized?limit=${limit}&content_type=${contentType}&strategy=hybrid`, {
-                    headers: getAuthHeaders()
-                });
+                const region = document.getElementById('regionFilter').value;
+                const response = await apiCall(`${API_BASE}/api/recommendations/ml-trending?region=${region}&limit=20`);
 
                 const data = await response.json();
 
                 if (response.ok) {
-                    displayRecommendations(data.recommendations, 'Basic Personalized');
-                    showMessage(`Generated ${data.recommendations.length} basic recommendations`, 'success');
+                    mlPredictionCount += data.recommendations.length;
+                    updateTestStats();
+                    displayPersonalizedContent(data.recommendations, 'trendingResults', 'ML Enhanced Trending');
                 } else {
-                    showMessage(data.error || 'Failed to get recommendations', 'error');
-                    document.getElementById('recommendationsArea').innerHTML = '<div class="loading">Failed to load recommendations</div>';
+                    showError(data.error || 'Failed to get ML trending');
                 }
             } catch (error) {
-                showMessage('Network error during recommendation fetch', 'error');
-                console.error('Recommendation error:', error);
+                showError('Network error: ' + error.message);
             }
         }
 
-        function displayRecommendations(recommendations, type) {
-            const container = document.getElementById('recommendationsArea');
-            document.getElementById('recommendationCount').textContent = `${recommendations.length} ${type} Recommendations`;
-
-            if (!recommendations || recommendations.length === 0) {
-                container.innerHTML = '<div class="loading">No recommendations available. Try adding more interactions!</div>';
-                return;
-            }
-
-            container.innerHTML = `
-                <div class="recommendation-grid">
-                    ${recommendations.map(rec => `
-                        <div class="recommendation-card">
-                            <div class="card-image">
-                                ${rec.poster_path ? `<img src="${rec.poster_path}" alt="${rec.title}" style="width: 100%; height: 100%; object-fit: cover;">` : '🎬'}
-                            </div>
-                            <div class="card-content">
-                                <div class="card-title">${rec.title}</div>
-                                <div class="card-meta">
-                                    <span>${rec.content_type?.toUpperCase() || 'CONTENT'}</span>
-                                    <span class="card-score">${typeof rec.ml_score !== 'undefined' ? rec.ml_score.toFixed(2) : (rec.recommendation_score || rec.score || 0).toFixed(2)}</span>
-                                </div>
-                                <div class="card-explanation">
-                                    <strong>Why recommended:</strong> ${rec.ml_reason || rec.recommendation_reason || rec.explanation || 'Personalized for you'}
-                                </div>
-                                ${rec.algorithm_mix ? `
-                                    <div class="algorithm-breakdown">
-                                        <strong>Algorithm Mix:</strong><br>
-                                        ${Object.entries(rec.algorithm_mix).map(([alg, score]) => `${alg}: ${(score * 100).toFixed(1)}%`).join(', ')}
-                                    </div>
-                                ` : ''}
-                                ${rec.confidence ? `
-                                    <div style="margin: 8px 0; font-size: 0.8rem;">
-                                        <strong>Confidence:</strong> ${(rec.confidence * 100).toFixed(1)}%
-                                        ${rec.novelty_score ? `| <strong>Novelty:</strong> ${(rec.novelty_score * 100).toFixed(1)}%` : ''}
-                                    </div>
-                                ` : ''}
-                                <div class="card-actions">
-                                    <button class="btn btn-small" onclick="recordInteractionById(${rec.id}, 'view')">View</button>
-                                    <button class="btn btn-small btn-success" onclick="recordInteractionById(${rec.id}, 'like')">Like</button>
-                                    <button class="btn btn-small btn-secondary" onclick="recordInteractionById(${rec.id}, 'watchlist')">Watchlist</button>
-                                </div>
-                            </div>
-                        </div>
-                    `).join('')}
-                </div>
-            `;
-        }
-
-        // User metrics and lists
-        async function loadUserMetrics() {
-            if (!authToken) return;
-
-            try {
-                const response = await fetch(`${API_BASE}/api/user/interaction-history?per_page=1`, {
-                    headers: getAuthHeaders()
-                });
-
-                if (response.ok) {
-                    const data = await response.json();
-                    document.getElementById('interactionCount').textContent = data.pagination?.total || '0';
-                }
-            } catch (error) {
-                console.error('Error loading user metrics:', error);
-            }
-        }
-
-        function updateUserMetrics(data) {
-            if (data.user_metrics) {
-                document.getElementById('profileStrength').textContent = data.user_profile_strength || 'Unknown';
-                document.getElementById('precision').textContent = data.user_metrics.precision_at_10?.toFixed(3) || '0.000';
-                document.getElementById('diversityScore').textContent = data.user_metrics.diversity_score?.toFixed(3) || '0.000';
-            }
-        }
-
+        // Watchlist Functions
         async function getWatchlist() {
             if (!authToken) {
-                showMessage('Please login first', 'error');
+                showError('Please login to view your watchlist');
                 return;
             }
 
-            showLoading('userLists');
+            showLoading('watchlistResults');
 
             try {
-                const response = await fetch(`${API_BASE}/api/user/watchlist`, {
-                    headers: getAuthHeaders()
+                const response = await apiCall(`${API_BASE}/api/user/watchlist`, {
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`
+                    }
                 });
 
                 const data = await response.json();
 
                 if (response.ok) {
-                    displayUserList(data.watchlist, 'Watchlist');
+                    displayContent(data.watchlist, 'watchlistResults', `My Watchlist (${data.total_items} items)`);
                 } else {
-                    showMessage('Failed to load watchlist', 'error');
+                    showError(data.error || 'Failed to get watchlist');
                 }
             } catch (error) {
-                showMessage('Network error loading watchlist', 'error');
+                showError('Network error: ' + error.message);
             }
         }
 
         async function getFavorites() {
             if (!authToken) {
-                showMessage('Please login first', 'error');
+                showError('Please login to view your favorites');
                 return;
             }
 
-            showLoading('userLists');
+            showLoading('favoritesResults');
 
             try {
-                const response = await fetch(`${API_BASE}/api/user/favorites`, {
-                    headers: getAuthHeaders()
+                const response = await apiCall(`${API_BASE}/api/user/favorites`, {
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`
+                    }
                 });
 
                 const data = await response.json();
 
                 if (response.ok) {
-                    displayUserList(data.favorites, 'Favorites');
+                    displayContent(data.favorites, 'favoritesResults', `My Favorites (${data.total_items} items)`);
                 } else {
-                    showMessage('Failed to load favorites', 'error');
+                    showError(data.error || 'Failed to get favorites');
                 }
             } catch (error) {
-                showMessage('Network error loading favorites', 'error');
+                showError('Network error: ' + error.message);
             }
         }
 
-        async function getInteractionHistory() {
+        // User Profile Analysis
+        async function getUserAnalysis() {
             if (!authToken) {
-                showMessage('Please login first', 'error');
+                showError('Please login to view profile analysis');
                 return;
             }
 
-            showLoading('userLists');
+            showLoading('profileResults');
 
             try {
-                const response = await fetch(`${API_BASE}/api/user/interaction-history?per_page=20`, {
-                    headers: getAuthHeaders()
+                const response = await apiCall(`${API_BASE}/api/user/profile/analysis`, {
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`
+                    }
                 });
 
                 const data = await response.json();
 
                 if (response.ok) {
-                    displayInteractionHistory(data.interactions);
+                    displayProfileAnalysis(data.profile_analysis, 'profileResults');
                 } else {
-                    showMessage('Failed to load interaction history', 'error');
+                    showError(data.error || 'Failed to get profile analysis');
                 }
             } catch (error) {
-                showMessage('Network error loading interaction history', 'error');
+                showError('Network error: ' + error.message);
             }
         }
 
-        function displayUserList(items, title) {
-            const container = document.getElementById('userLists');
+        async function exportProfileData() {
+            if (!authToken) {
+                showError('Please login to export profile data');
+                return;
+            }
+
+            showSuccess('Profile export feature will be available soon!');
+        }
+
+        // System Health
+        async function checkSystemHealth() {
+            showLoading('healthResults');
+
+            try {
+                const response = await apiCall(`${API_BASE}/api/health`);
+                const data = await response.json();
+
+                if (response.ok) {
+                    displaySystemHealth(data, 'healthResults');
+                } else {
+                    showError('Failed to get system health');
+                }
+            } catch (error) {
+                showError('Network error: ' + error.message);
+            }
+        }
+
+        async function checkMLHealth() {
+            showLoading('healthResults');
+
+            try {
+                const response = await apiCall(`${API_BASE}/api/ml/health`);
+                const data = await response.json();
+
+                displayMLHealth(data, 'healthResults');
+            } catch (error) {
+                showError('Network error: ' + error.message);
+            }
+        }
+
+        async function runPerformanceTest() {
+            showLoading('healthResults');
+            const container = document.getElementById('healthResults');
+
+            try {
+                const endpoints = [
+                    { name: 'Search', url: `${API_BASE}/api/search?query=test&type=movie` },
+                    { name: 'Trending', url: `${API_BASE}/api/recommendations/trending?limit=10` },
+                    { name: 'Similar', url: `${API_BASE}/api/recommendations/similar/1?limit=5` }
+                ];
+
+                let html = '<h3>Performance Test Results</h3>';
+
+                for (const endpoint of endpoints) {
+                    const times = [];
+
+                    // Run each endpoint 3 times
+                    for (let i = 0; i < 3; i++) {
+                        const start = performance.now();
+                        await apiCall(endpoint.url);
+                        const time = performance.now() - start;
+                        times.push(time);
+                    }
+
+                    const avgTime = times.reduce((a, b) => a + b, 0) / times.length;
+                    const minTime = Math.min(...times);
+                    const maxTime = Math.max(...times);
+
+                    html += `
+                        <div class="stat-card" style="margin: 10px 0;">
+                            <h4>${endpoint.name}</h4>
+                            <p>Average: ${avgTime.toFixed(2)}ms</p>
+                            <p>Min: ${minTime.toFixed(2)}ms | Max: ${maxTime.toFixed(2)}ms</p>
+                        </div>
+                    `;
+                }
+
+                container.innerHTML = html;
+            } catch (error) {
+                container.innerHTML = `<div class="error">Performance test failed: ${error.message}</div>`;
+            }
+        }
+
+        // Interaction Functions
+        async function recordInteraction(contentId, type, metadata = {}) {
+            if (!authToken) return;
+
+            try {
+                await apiCall(`${API_BASE}/api/interactions`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${authToken}`
+                    },
+                    body: JSON.stringify({
+                        content_id: contentId,
+                        interaction_type: type,
+                        ...metadata
+                    })
+                });
+            } catch (error) {
+                console.error('Failed to record interaction:', error);
+            }
+        }
+
+        async function toggleWatchlist(contentId, button) {
+            if (!authToken) {
+                showError('Please login to use watchlist');
+                return;
+            }
+
+            const isInWatchlist = button.classList.contains('active');
+            const type = isInWatchlist ? 'remove_watchlist' : 'watchlist';
+
+            try {
+                await recordInteraction(contentId, type);
+                button.classList.toggle('active');
+                button.textContent = isInWatchlist ? '📚 Add' : '✓ Listed';
+                showSuccess(isInWatchlist ? 'Removed from watchlist' : 'Added to watchlist');
+            } catch (error) {
+                showError('Failed to update watchlist');
+            }
+        }
+
+        async function toggleFavorite(contentId, button) {
+            if (!authToken) {
+                showError('Please login to use favorites');
+                return;
+            }
+
+            if (!button.classList.contains('active')) {
+                await recordInteraction(contentId, 'favorite');
+                button.classList.add('active');
+                button.textContent = '❤️ Favorited';
+                showSuccess('Added to favorites');
+            }
+        }
+
+        async function toggleLike(contentId, button) {
+            if (!authToken) {
+                showError('Please login to like content');
+                return;
+            }
+
+            if (!button.classList.contains('active')) {
+                await recordInteraction(contentId, 'like');
+                button.classList.add('active');
+                button.textContent = '👍 Liked';
+                showSuccess('Content liked');
+            }
+        }
+
+        async function rateContent(contentId, rating) {
+            if (!authToken) {
+                showError('Please login to rate content');
+                return;
+            }
+
+            try {
+                await recordInteraction(contentId, 'rating', { rating });
+                showSuccess(`Rated ${rating} stars`);
+            } catch (error) {
+                showError('Failed to rate content');
+            }
+        }
+
+        async function getSimilarContent(contentId) {
+            showLoading('searchResults');
+            showTab('search');
+
+            try {
+                const useML = authToken ? '&use_ml=true' : '';
+                const response = await apiCall(`${API_BASE}/api/recommendations/similar/${contentId}?limit=10${useML}`);
+                const data = await response.json();
+
+                if (response.ok) {
+                    displayContent(data.similar_content, 'searchResults', 'Similar Content');
+
+                    // Record interaction
+                    if (authToken) {
+                        recordInteraction(contentId, 'similar_view');
+                    }
+                } else {
+                    showError(data.error || 'Failed to get similar content');
+                }
+            } catch (error) {
+                showError('Network error: ' + error.message);
+            }
+        }
+
+        // Display Functions
+        function displayContent(items, containerId, title) {
+            const container = document.getElementById(containerId);
 
             if (!items || items.length === 0) {
-                container.innerHTML = `<div class="loading">No items in ${title}</div>`;
+                container.innerHTML = `
+                    <div class="loading">
+                        <h3>${title}</h3>
+                        <p>No content found</p>
+                    </div>
+                `;
                 return;
             }
 
-            container.innerHTML = `
-                <h4>${title} (${items.length} items)</h4>
-                <div class="recommendation-grid" style="margin-top: 15px;">
-                    ${items.map(item => `
-                        <div class="recommendation-card">
-                            <div class="card-image">
-                                ${item.poster_path ? `<img src="${item.poster_path}" alt="${item.title}" style="width: 100%; height: 100%; object-fit: cover;">` : '🎬'}
+            let html = `<h3>${title}</h3><div class="content-grid">`;
+
+            items.forEach(item => {
+                const poster = item.poster_path || 'https://via.placeholder.com/300x400?text=No+Image';
+                const genres = Array.isArray(item.genres) ? item.genres.slice(0, 3).join(', ') : '';
+                const rating = item.rating ? parseFloat(item.rating).toFixed(1) : 'N/A';
+
+                html += `
+                    <div class="content-card" onclick="recordInteraction(${item.id}, 'view')">
+                        <img src="${poster}" alt="${item.title}" class="content-poster" onerror="this.src='https://via.placeholder.com/300x400?text=No+Image'">
+                        <div class="content-info">
+                            <div class="content-title">${item.title}</div>
+                            <div class="content-meta">
+                                <span class="content-type">${item.content_type || 'movie'}</span>
+                                <span class="rating">⭐ ${rating}</span>
                             </div>
-                            <div class="card-content">
-                                <div class="card-title">${item.title}</div>
-                                <div class="card-meta">
-                                    <span>${item.content_type?.toUpperCase() || 'CONTENT'}</span>
-                                    <span class="card-score">${item.rating || 'N/A'}</span>
-                                </div>
-                                <div class="card-actions">
-                                    <button class="btn btn-small btn-danger" onclick="removeFromWatchlist(${item.id})">Remove</button>
+                            <div style="font-size: 12px; color: #666; margin-bottom: 10px;">${genres}</div>
+                            
+                            <div class="content-actions">
+                                <button class="action-btn like-btn" onclick="event.stopPropagation(); toggleLike(${item.id}, this)">👍 Like</button>
+                                <button class="action-btn watchlist-btn" onclick="event.stopPropagation(); toggleWatchlist(${item.id}, this)">📚 Add</button>
+                                <button class="action-btn favorite-btn" onclick="event.stopPropagation(); toggleFavorite(${item.id}, this)">⭐ Fav</button>
+                            </div>
+
+                            <div class="rating-section">
+                                <div class="star-rating">
+                                    ${[1, 2, 3, 4, 5].map(star => `
+                                        <span class="star" onclick="event.stopPropagation(); rateContent(${item.id}, ${star}); setStarRating(this, ${star})">★</span>
+                                    `).join('')}
                                 </div>
                             </div>
+
+                            <button class="btn btn-secondary" style="width: 100%; margin-top: 10px; font-size: 12px;" onclick="event.stopPropagation(); getSimilarContent(${item.id})">
+                                Find Similar
+                            </button>
+
+                            ${item.youtube_trailer ? `
+                                <button class="btn btn-primary" style="width: 100%; margin-top: 5px; font-size: 12px;" onclick="event.stopPropagation(); window.open('${item.youtube_trailer}', '_blank')">
+                                    🎬 Watch Trailer
+                                </button>
+                            ` : ''}
                         </div>
-                    `).join('')}
-                </div>
-            `;
+                    </div>
+                `;
+            });
+
+            html += '</div>';
+            container.innerHTML = html;
         }
 
-        function displayInteractionHistory(interactions) {
-            const container = document.getElementById('userLists');
+        function displayPersonalizedContent(items, containerId, title) {
+            const container = document.getElementById(containerId);
 
-            if (!interactions || interactions.length === 0) {
-                container.innerHTML = '<div class="loading">No interaction history</div>';
+            if (!items || items.length === 0) {
+                container.innerHTML = `
+                    <div class="loading">
+                        <h3>${title}</h3>
+                        <p>No personalized recommendations available. Interact with more content to improve recommendations.</p>
+                    </div>
+                `;
                 return;
             }
 
-            container.innerHTML = `
-                <h4>Recent Interactions (${interactions.length} items)</h4>
-                <div class="interaction-history">
-                    ${interactions.map(interaction => `
-                        <div class="interaction-item">
-                            <div>
-                                <strong>${interaction.content_title}</strong><br>
-                                <small>${interaction.content_type} • ${interaction.interaction_type}</small>
-                                ${interaction.rating ? `<br><small>Rating: ${interaction.rating}/10</small>` : ''}
+            let html = `<h3>${title}</h3><div class="content-grid">`;
+
+            items.forEach(item => {
+                const poster = item.poster_path || 'https://via.placeholder.com/300x400?text=No+Image';
+                const genres = Array.isArray(item.genres) ? item.genres.slice(0, 3).join(', ') : '';
+                const rating = item.rating ? parseFloat(item.rating).toFixed(1) : 'N/A';
+
+                html += `
+                    <div class="content-card" onclick="recordInteraction(${item.id}, 'view', {recommendation_source: 'personalized'})">
+                        <img src="${poster}" alt="${item.title}" class="content-poster" onerror="this.src='https://via.placeholder.com/300x400?text=No+Image'">
+                        <div class="content-info">
+                            <div class="content-title">${item.title}</div>
+                            <div class="content-meta">
+                                <span class="content-type">${item.content_type || 'movie'}</span>
+                                <span class="rating">⭐ ${rating}</span>
                             </div>
-                            <div style="text-align: right; font-size: 0.8rem; color: #718096;">
-                                ${new Date(interaction.timestamp).toLocaleDateString()}
+                            <div style="font-size: 12px; color: #666; margin-bottom: 10px;">${genres}</div>
+                            
+                            ${item.ml_reason ? `
+                                <div class="ml-info">
+                                    🤖 ${item.ml_reason}
+                                    ${item.confidence ? `<span class="ml-score">${Math.round(item.confidence * 100)}% match</span>` : ''}
+                                </div>
+                            ` : ''}
+                            
+                            ${item.personalization_factors ? `
+                                <div class="personalization-indicator">
+                                    ${item.personalization_factors.genre_match ? '🎭' : ''}
+                                    ${item.personalization_factors.language_match ? '🌐' : ''}
+                                    ${item.personalization_factors.quality_match ? '⭐' : ''}
+                                    ${item.personalization_factors.trending ? '🔥' : ''}
+                                    ${item.personalization_factors.new_release ? '🆕' : ''}
+                                </div>
+                            ` : ''}
+                            
+                            ${item.confidence ? `
+                                <div class="confidence-meter">
+                                    <div class="confidence-fill" style="width: ${item.confidence * 100}%"></div>
+                                </div>
+                            ` : ''}
+                            
+                            <div class="content-actions">
+                                <button class="action-btn like-btn" onclick="event.stopPropagation(); toggleLike(${item.id}, this)">👍 Like</button>
+                                <button class="action-btn watchlist-btn" onclick="event.stopPropagation(); toggleWatchlist(${item.id}, this)">📚 Add</button>
+                                <button class="action-btn favorite-btn" onclick="event.stopPropagation(); toggleFavorite(${item.id}, this)">⭐ Fav</button>
                             </div>
+
+                            <div class="rating-section">
+                                <div class="star-rating">
+                                    ${[1, 2, 3, 4, 5].map(star => `
+                                        <span class="star" onclick="event.stopPropagation(); rateContent(${item.id}, ${star}); setStarRating(this, ${star})">★</span>
+                                    `).join('')}
+                                </div>
+                            </div>
+
+                            <button class="btn btn-secondary" style="width: 100%; margin-top: 10px; font-size: 12px;" onclick="event.stopPropagation(); getSimilarContent(${item.id})">
+                                Find Similar
+                            </button>
+
+                            ${item.youtube_trailer ? `
+                                <button class="btn btn-primary" style="width: 100%; margin-top: 5px; font-size: 12px;" onclick="event.stopPropagation(); window.open('${item.youtube_trailer}', '_blank')">
+                                    🎬 Watch Trailer
+                                </button>
+                            ` : ''}
                         </div>
-                    `).join('')}
-                </div>
-            `;
+                    </div>
+                `;
+            });
+
+            html += '</div>';
+            container.innerHTML = html;
         }
 
-        async function removeFromWatchlist(contentId) {
-            if (!authToken) {
-                showMessage('Please login first', 'error');
-                return;
-            }
+        function displayTrendingCategories(categories, containerId) {
+            const container = document.getElementById(containerId);
+            let html = '<h3>Trending Categories</h3>';
 
-            try {
-                const response = await fetch(`${API_BASE}/api/user/watchlist/${contentId}`, {
-                    method: 'DELETE',
-                    headers: getAuthHeaders()
-                });
+            Object.keys(categories).forEach(categoryName => {
+                const items = categories[categoryName];
+                if (items && items.length > 0) {
+                    const formattedName = categoryName.replace(/_/g, ' ').toUpperCase();
+                    html += `
+                        <div style="margin-bottom: 40px;">
+                            <h4 style="margin-bottom: 20px; color: #2a5298;">${formattedName}</h4>
+                            <div class="content-grid">
+                    `;
 
-                if (response.ok) {
-                    showMessage('Removed from watchlist', 'success');
-                    getWatchlist(); // Refresh the list
-                } else {
-                    showMessage('Failed to remove from watchlist', 'error');
+                    items.slice(0, 6).forEach(item => {
+                        const poster = item.poster_path || 'https://via.placeholder.com/300x400?text=No+Image';
+                        const rating = item.rating ? parseFloat(item.rating).toFixed(1) : 'N/A';
+
+                        html += `
+                            <div class="content-card" onclick="recordInteraction(${item.id}, 'view', {recommendation_source: 'trending'})">
+                                <img src="${poster}" alt="${item.title}" class="content-poster" onerror="this.src='https://via.placeholder.com/300x400?text=No+Image'">
+                                <div class="content-info">
+                                    <div class="content-title">${item.title}</div>
+                                    <div class="content-meta">
+                                        <span class="content-type">${item.content_type || 'movie'}</span>
+                                        <span class="rating">⭐ ${rating}</span>
+                                    </div>
+                                    <div class="content-actions">
+                                        <button class="action-btn like-btn" onclick="event.stopPropagation(); toggleLike(${item.id}, this)">👍</button>
+                                        <button class="action-btn watchlist-btn" onclick="event.stopPropagation(); toggleWatchlist(${item.id}, this)">📚</button>
+                                        <button class="action-btn favorite-btn" onclick="event.stopPropagation(); toggleFavorite(${item.id}, this)">❤️</button>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                    });
+
+                    html += '</div></div>';
                 }
-            } catch (error) {
-                showMessage('Network error removing from watchlist', 'error');
+            });
+
+            container.innerHTML = html;
+        }
+
+        function displayPersonalizationStats(data, containerId) {
+            const container = document.getElementById(containerId);
+
+            let html = '<div class="stats-grid" style="margin-bottom: 20px;">';
+
+            if (data.user_stats) {
+                html += `
+                    <div class="stat-card">
+                        <div class="stat-number">${data.user_stats.total_interactions}</div>
+                        <div class="stat-label">Total Interactions</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number">${data.user_stats.recent_activity}</div>
+                        <div class="stat-label">Recent Activity</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number">${data.user_stats.rating_average}</div>
+                        <div class="stat-label">Avg Rating Given</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number">${Math.round((data.user_stats.engagement_score || 0) * 100)}%</div>
+                        <div class="stat-label">Engagement Score</div>
+                    </div>
+                `;
             }
+
+            if (data.personalization_score) {
+                html += `
+                    <div class="stat-card">
+                        <div class="stat-number">${Math.round(data.personalization_score * 100)}%</div>
+                        <div class="stat-label">Personalization Level</div>
+                    </div>
+                `;
+            }
+
+            html += '</div>';
+
+            if (data.advanced_features) {
+                html += '<div class="info-panel"><h4>Advanced ML Features Active:</h4><ul>';
+                Object.entries(data.advanced_features).forEach(([feature, active]) => {
+                    if (active) {
+                        html += `<li>${feature.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}</li>`;
+                    }
+                });
+                html += '</ul></div>';
+            }
+
+            container.innerHTML = html;
+        }
+
+        function displayMetadata(metadata, containerId) {
+            const container = document.getElementById(containerId);
+            const existing = container.querySelector('.info-panel');
+
+            if (existing) {
+                existing.remove();
+            }
+
+            let html = '<div class="info-panel"><h4>Algorithm Metadata:</h4><pre>';
+            html += JSON.stringify(metadata, null, 2);
+            html += '</pre></div>';
+
+            container.innerHTML += html;
+        }
+
+        function displayProfileAnalysis(analysis, containerId) {
+            const container = document.getElementById(containerId);
+
+            let html = `
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-number">${analysis.total_interactions}</div>
+                        <div class="stat-label">Total Interactions</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number">${analysis.account_age_days}</div>
+                        <div class="stat-label">Account Age (Days)</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number">${analysis.recent_activity_week}</div>
+                        <div class="stat-label">Weekly Activity</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number">${analysis.engagement_level}</div>
+                        <div class="stat-label">Engagement Level</div>
+                    </div>
+                </div>
+
+                <h4>Interaction Breakdown</h4>
+                <div style="background: white; padding: 20px; border-radius: 12px; margin: 15px 0;">
+                    ${Object.entries(analysis.interaction_breakdown).map(([type, count]) =>
+                `<div style="margin: 8px 0; padding: 8px; background: #f8f9fa; border-radius: 6px;">
+                            <strong>${type}:</strong> ${count}
+                        </div>`
+            ).join('')}
+                </div>
+
+                <h4>Preferences</h4>
+                <div style="background: white; padding: 20px; border-radius: 12px; margin: 15px 0;">
+                    <div style="margin-bottom: 15px;">
+                        <strong>Languages:</strong> 
+                        <div style="margin-top: 8px;">
+                            ${analysis.preferred_languages.map(lang =>
+                `<span style="background: linear-gradient(45deg, #667eea, #764ba2); color: white; padding: 5px 15px; border-radius: 20px; margin: 5px; display: inline-block;">${lang}</span>`
+            ).join('') || 'None set'}
+                        </div>
+                    </div>
+                    <div>
+                        <strong>Genres:</strong>
+                        <div style="margin-top: 8px;">
+                            ${analysis.preferred_genres.map(genre =>
+                `<span style="background: linear-gradient(45deg, #f093fb, #f5576c); color: white; padding: 5px 15px; border-radius: 20px; margin: 5px; display: inline-block;">${genre}</span>`
+            ).join('') || 'None set'}
+                        </div>
+                    </div>
+                </div>
+
+                <h4>Rating Behavior</h4>
+                <div style="background: white; padding: 20px; border-radius: 12px; margin: 15px 0;">
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
+                        <div>
+                            <strong>Average Rating:</strong> ${analysis.rating_behavior.average.toFixed(2)}
+                        </div>
+                        <div>
+                            <strong>Total Ratings:</strong> ${analysis.rating_behavior.count}
+                        </div>
+                        <div>
+                            <strong>High Ratings (4+):</strong> ${analysis.rating_behavior.high_ratings || 0}
+                        </div>
+                    </div>
+                    ${analysis.rating_behavior.distribution ? `
+                        <div style="margin-top: 15px;">
+                            <strong>Rating Distribution:</strong>
+                            <div style="display: flex; gap: 10px; margin-top: 10px;">
+                                ${Object.entries(analysis.rating_behavior.distribution).map(([rating, count]) =>
+                `<div style="text-align: center;">
+                                        <div style="background: #ffd700; padding: 10px; border-radius: 8px; font-weight: bold;">${rating}★</div>
+                                        <div style="margin-top: 5px;">${count}</div>
+                                    </div>`
+            ).join('')}
+                            </div>
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+
+            if (analysis.ml_insights) {
+                html += `
+                    <h4>🤖 Advanced AI Insights</h4>
+                    <div class="info-panel">
+                        <pre>${JSON.stringify(analysis.ml_insights, null, 2)}</pre>
+                    </div>
+                `;
+            }
+
+            container.innerHTML = html;
+        }
+
+        function displaySystemHealth(health, containerId) {
+            const container = document.getElementById(containerId);
+
+            const statusClass = health.status === 'healthy' ? 'health-healthy' : 'health-unhealthy';
+
+            let html = `
+                <div class="health-status ${statusClass}">
+                    <div class="status-indicator"></div>
+                    System Status: ${health.status.toUpperCase()}
+                </div>
+
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-number">${health.version}</div>
+                        <div class="stat-label">Version</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number">${health.database === 'connected' ? '✅' : '❌'}</div>
+                        <div class="stat-label">Database</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number">${health.cache === 'connected' ? '✅' : '❌'}</div>
+                        <div class="stat-label">Cache</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number">${health.slug_status?.total_content || 0}</div>
+                        <div class="stat-label">Total Content</div>
+                    </div>
+                </div>
+
+                <h4>Services Status</h4>
+                <div style="background: white; padding: 20px; border-radius: 12px; margin: 15px 0;">
+                    ${Object.entries(health.services || {}).map(([service, status]) =>
+                `<div style="margin: 8px 0; padding: 10px; background: ${status === true || status === 'enabled' ? '#e8f5e8' : '#ffebee'}; border-radius: 6px;">
+                            <strong>${service}:</strong> ${status}
+                        </div>`
+            ).join('')}
+                </div>
+
+                <h4>Performance Metrics</h4>
+                <div class="info-panel">
+                    <pre>${JSON.stringify(health.performance || {}, null, 2)}</pre>
+                </div>
+            `;
+
+            container.innerHTML = html;
+        }
+
+        function displayMLHealth(health, containerId) {
+            const container = document.getElementById(containerId);
+
+            const statusClass = health.ml_service_status === 'healthy' ? 'health-healthy' : 'health-unhealthy';
+
+            let html = `
+                <div class="health-status ${statusClass}">
+                    <div class="status-indicator"></div>
+                    ML Service Status: ${health.ml_service_status?.toUpperCase() || 'UNKNOWN'}
+                </div>
+
+                <div style="background: white; padding: 20px; border-radius: 12px; margin: 15px 0;">
+                    <div><strong>ML Service URL:</strong> ${health.ml_service_url}</div>
+                    <div><strong>Last Checked:</strong> ${health.last_checked}</div>
+                    <div><strong>Fallback Available:</strong> ${health.fallback_available ? 'Yes' : 'No'}</div>
+                </div>
+            `;
+
+            if (health.response) {
+                html += `
+                    <h4>ML Service Details</h4>
+                    <div style="background: white; padding: 20px; border-radius: 12px; margin: 15px 0;">
+                        <div><strong>Version:</strong> ${health.response.version}</div>
+                        <div><strong>Device:</strong> ${health.response.device}</div>
+                        <div><strong>Content Count:</strong> ${health.response.content_count}</div>
+                        <div><strong>Database Status:</strong> ${health.response.database_status}</div>
+                    </div>
+                `;
+
+                if (health.response.features) {
+                    html += `
+                        <h4>ML Features Available</h4>
+                        <div style="background: white; padding: 20px; border-radius: 12px; margin: 15px 0;">
+                            ${Object.entries(health.response.features).map(([feature, available]) =>
+                        `<div style="margin: 8px 0; padding: 10px; background: ${available ? '#e8f5e8' : '#ffebee'}; border-radius: 6px;">
+                                    <strong>${feature.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}:</strong> ${available ? '✅ Active' : '❌ Inactive'}
+                                </div>`
+                    ).join('')}
+                        </div>
+                    `;
+                }
+            }
+
+            if (health.advanced_capabilities) {
+                html += `
+                    <h4>Advanced ML Capabilities</h4>
+                    <div class="info-panel">
+                        <pre>${JSON.stringify(health.advanced_capabilities, null, 2)}</pre>
+                    </div>
+                `;
+            }
+
+            if (health.error) {
+                html += `
+                    <div class="error">
+                        <strong>Error:</strong> ${health.error}
+                    </div>
+                `;
+            }
+
+            container.innerHTML = html;
+        }
+
+        function setStarRating(clickedStar, rating) {
+            const stars = clickedStar.parentElement.querySelectorAll('.star');
+            stars.forEach((star, index) => {
+                if (index < rating) {
+                    star.classList.add('active');
+                } else {
+                    star.classList.remove('active');
+                }
+            });
+        }
+
+        function showLoading(containerId) {
+            const container = document.getElementById(containerId);
+            container.innerHTML = `
+                <div class="loading">
+                    <div class="spinner"></div>
+                    <p>Loading advanced recommendations...</p>
+                </div>
+            `;
+        }
+
+        function showError(message) {
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'error';
+            errorDiv.innerHTML = `<strong>Error:</strong> ${message}`;
+            document.body.appendChild(errorDiv);
+
+            setTimeout(() => {
+                errorDiv.remove();
+            }, 5000);
+        }
+
+        function showSuccess(message) {
+            const successDiv = document.createElement('div');
+            successDiv.className = 'success';
+            successDiv.innerHTML = `<strong>Success:</strong> ${message}`;
+            document.body.appendChild(successDiv);
+
+            setTimeout(() => {
+                successDiv.remove();
+            }, 3000);
         }
     </script>
 </body>

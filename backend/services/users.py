@@ -1,4 +1,4 @@
-#backend/services/users.py
+# backend/services/users.py (Enhanced Version)
 from flask import Blueprint, request, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta
@@ -6,651 +6,41 @@ import json
 import logging
 import jwt
 from functools import wraps
-import os
-import numpy as np
+from collections import defaultdict, Counter
+from sqlalchemy import func, and_, or_, desc
 
+# Create users blueprint
 users_bp = Blueprint('users', __name__)
 
+# Configure logging
 logger = logging.getLogger(__name__)
 
+# Will be initialized by main app
 db = None
 User = None
 Content = None
 UserInteraction = None
+AnonymousInteraction = None
+Review = None
 http_session = None
-app = None
 cache = None
-
-ML_SERVICE_URL = os.environ.get('ML_SERVICE_URL', 'https://movies-rec-aksq.onrender.com')
+app = None
 
 def init_users(flask_app, database, models, services):
-    global db, User, Content, UserInteraction
-    global http_session, app, cache
+    """Initialize users module with app context and models"""
+    global db, User, Content, UserInteraction, AnonymousInteraction, Review
+    global http_session, cache, app
     
     app = flask_app
     db = database
     User = models['User']
     Content = models['Content']
     UserInteraction = models['UserInteraction']
+    AnonymousInteraction = models.get('AnonymousInteraction')
+    Review = models.get('Review')
     
     http_session = services['http_session']
-    cache = services['cache']
-
-class AdvancedMLServiceClient:
-    
-    @staticmethod
-    def call_ml_service(endpoint, params=None, timeout=20, use_cache=True):
-        try:
-            if not ML_SERVICE_URL:
-                logger.warning("ML service URL not configured")
-                return None
-            
-            cache_key = f"ml_advanced_get:{endpoint}:{json.dumps(params, sort_keys=True)}"
-            
-            if use_cache and cache:
-                cached_result = cache.get(cache_key)
-                if cached_result:
-                    logger.info(f"ML service cache hit for {endpoint}")
-                    return cached_result
-            
-            url = f"{ML_SERVICE_URL}{endpoint}"
-            response = http_session.get(url, params=params, timeout=timeout)
-            
-            if response.status_code == 200:
-                result = response.json()
-                if use_cache and cache:
-                    cache.set(cache_key, result, timeout=1800)
-                logger.info(f"ML service successful response for {endpoint}")
-                return result
-            else:
-                logger.warning(f"ML service returned {response.status_code} for {endpoint}")
-                logger.warning(f"Response: {response.text[:200]}")
-                return None
-                
-        except Exception as e:
-            logger.warning(f"ML service call failed for {endpoint}: {e}")
-            return None
-    
-    @staticmethod
-    def call_ml_service_post(endpoint, data=None, timeout=35, use_cache=True):
-        try:
-            if not ML_SERVICE_URL:
-                logger.warning("ML service URL not configured")
-                return None
-            
-            if data:
-                data = AdvancedMLServiceClient._ensure_json_serializable(data)
-            
-            cache_key = f"ml_advanced_post:{endpoint}:{json.dumps(data, sort_keys=True)}"
-            
-            if use_cache and cache:
-                cached_result = cache.get(cache_key)
-                if cached_result:
-                    logger.info(f"ML service POST cache hit for {endpoint}")
-                    return cached_result
-            
-            url = f"{ML_SERVICE_URL}{endpoint}"
-            headers = {'Content-Type': 'application/json'}
-            
-            try:
-                json_data = json.dumps(data)
-                logger.debug(f"Sending data to ML service: {len(json_data)} characters")
-            except (TypeError, ValueError) as e:
-                logger.error(f"JSON serialization error: {e}")
-                return None
-            
-            response = http_session.post(url, json=data, headers=headers, timeout=timeout)
-            
-            if response.status_code == 200:
-                result = response.json()
-                if use_cache and cache:
-                    cache.set(cache_key, result, timeout=1200)
-                logger.info(f"ML service POST successful response for {endpoint}")
-                return result
-            else:
-                logger.warning(f"ML service POST returned {response.status_code} for {endpoint}")
-                logger.warning(f"Response content: {response.text[:300]}")
-                return None
-                
-        except Exception as e:
-            logger.warning(f"ML service POST call failed for {endpoint}: {e}")
-            return None
-    
-    @staticmethod
-    def _ensure_json_serializable(obj):
-        if isinstance(obj, dict):
-            return {key: AdvancedMLServiceClient._ensure_json_serializable(value) for key, value in obj.items()}
-        elif isinstance(obj, list):
-            return [AdvancedMLServiceClient._ensure_json_serializable(item) for item in obj]
-        elif isinstance(obj, set):
-            return list(obj)
-        elif isinstance(obj, (datetime, )):
-            return obj.isoformat()
-        elif isinstance(obj, np.ndarray):
-            return obj.tolist()
-        elif isinstance(obj, (np.int64, np.int32)):
-            return int(obj)
-        elif isinstance(obj, (np.float64, np.float32)):
-            return float(obj)
-        else:
-            return obj
-    
-    @staticmethod
-    def process_advanced_ml_recommendations(ml_response, limit=20):
-        try:
-            if not ml_response:
-                logger.warning("Empty ML response received")
-                return []
-            
-            if 'recommendations' not in ml_response:
-                logger.warning("No recommendations in ML response")
-                return []
-            
-            recommendations = []
-            ml_recs = ml_response['recommendations'][:limit]
-            metadata = ml_response.get('metadata', {})
-            
-            content_ids = []
-            for rec in ml_recs:
-                if isinstance(rec, dict) and 'content_id' in rec:
-                    content_ids.append(rec['content_id'])
-                elif isinstance(rec, int):
-                    content_ids.append(rec)
-            
-            if not content_ids:
-                logger.warning("No valid content IDs in ML recommendations")
-                return []
-            
-            contents = Content.query.filter(Content.id.in_(content_ids)).all()
-            content_dict = {content.id: content for content in contents}
-            
-            for i, rec in enumerate(ml_recs):
-                content_id = rec['content_id'] if isinstance(rec, dict) else rec
-                content = content_dict.get(content_id)
-                
-                if content:
-                    if not content.slug:
-                        try:
-                            content.ensure_slug()
-                        except:
-                            content.slug = f"content-{content.id}"
-                    
-                    content_data = {
-                        'content': content,
-                        'ml_score': rec.get('score', 0) if isinstance(rec, dict) else 0,
-                        'ml_reason': rec.get('reason', 'AI recommendation') if isinstance(rec, dict) else 'AI recommendation',
-                        'ml_rank': rec.get('rank', i + 1) if isinstance(rec, dict) else i + 1,
-                        'confidence': rec.get('confidence', 0.5) if isinstance(rec, dict) else 0.5,
-                        'content_type': rec.get('content_type', content.content_type) if isinstance(rec, dict) else content.content_type,
-                        'personalization_factors': rec.get('personalization_factors', {}) if isinstance(rec, dict) else {},
-                        'metadata': metadata
-                    }
-                    recommendations.append(content_data)
-            
-            logger.info(f"Processed {len(recommendations)} advanced ML recommendations")
-            return recommendations
-            
-        except Exception as e:
-            logger.error(f"Error processing ML recommendations: {e}")
-            return []
-    
-    @staticmethod
-    def get_comprehensive_user_data(user_id):
-        try:
-            user = User.query.get(user_id)
-            if not user:
-                return None
-            
-            interactions = UserInteraction.query.filter_by(user_id=user_id).order_by(
-                UserInteraction.timestamp.desc()
-            ).limit(1000).all()
-            
-            try:
-                preferred_languages = json.loads(user.preferred_languages) if user.preferred_languages else []
-            except:
-                preferred_languages = []
-            
-            try:
-                preferred_genres = json.loads(user.preferred_genres) if user.preferred_genres else []
-            except:
-                preferred_genres = []
-            
-            interaction_data = []
-            content_types_seen = set()
-            
-            for interaction in interactions:
-                interaction_dict = {
-                    'content_id': interaction.content_id,
-                    'interaction_type': interaction.interaction_type,
-                    'timestamp': interaction.timestamp.isoformat(),
-                    'rating': interaction.rating
-                }
-                
-                if interaction.interaction_metadata:
-                    try:
-                        metadata = json.loads(interaction.interaction_metadata) if isinstance(interaction.interaction_metadata, str) else interaction.interaction_metadata
-                        for key, value in metadata.items():
-                            if isinstance(value, set):
-                                metadata[key] = list(value)
-                        interaction_dict.update(metadata)
-                    except:
-                        pass
-                
-                content = Content.query.get(interaction.content_id)
-                if content:
-                    interaction_dict['content_type'] = content.content_type
-                    content_types_seen.add(content.content_type)
-                
-                interaction_data.append(interaction_dict)
-            
-            user_data = {
-                'user_id': user_id,
-                'username': user.username,
-                'preferred_languages': preferred_languages,
-                'preferred_genres': preferred_genres,
-                'location': user.location,
-                'account_created': user.created_at.isoformat(),
-                'last_active': user.last_active.isoformat() if user.last_active else None,
-                'interactions': interaction_data,
-                'total_interactions': len(interaction_data),
-                'content_types_experienced': list(content_types_seen),
-                'interaction_summary': AdvancedMLServiceClient._generate_interaction_summary(interaction_data)
-            }
-            
-            user_data = AdvancedMLServiceClient._ensure_json_serializable(user_data)
-            
-            return user_data
-            
-        except Exception as e:
-            logger.error(f"Error getting comprehensive user data: {e}")
-            return None
-    
-    @staticmethod
-    def _generate_interaction_summary(interactions):
-        try:
-            summary = {
-                'total_count': len(interactions),
-                'by_type': {},
-                'rating_stats': {
-                    'count': 0,
-                    'average': 0,
-                    'distribution': {},
-                    'high_ratings': 0
-                },
-                'recent_activity': 0,
-                'content_types_interacted': [],
-                'top_interaction_types': [],
-                'engagement_score': 0,
-                'preference_indicators': {}
-            }
-            
-            now = datetime.utcnow()
-            ratings = []
-            content_types_seen = set()
-            high_engagement_interactions = 0
-            
-            for interaction in interactions:
-                interaction_type = interaction.get('interaction_type', 'unknown')
-                summary['by_type'][interaction_type] = summary['by_type'].get(interaction_type, 0) + 1
-                
-                if interaction.get('rating'):
-                    rating = interaction['rating']
-                    ratings.append(rating)
-                    rating_key = str(int(rating))
-                    summary['rating_stats']['distribution'][rating_key] = summary['rating_stats']['distribution'].get(rating_key, 0) + 1
-                    if rating >= 4:
-                        summary['rating_stats']['high_ratings'] += 1
-                
-                try:
-                    interaction_time = datetime.fromisoformat(interaction['timestamp'].replace('Z', '+00:00'))
-                    if (now - interaction_time).days <= 7:
-                        summary['recent_activity'] += 1
-                except:
-                    pass
-                
-                content_type = interaction.get('content_type', 'unknown')
-                content_types_seen.add(content_type)
-                
-                if interaction_type in ['like', 'favorite', 'watchlist']:
-                    high_engagement_interactions += 1
-            
-            if ratings:
-                summary['rating_stats']['count'] = len(ratings)
-                summary['rating_stats']['average'] = sum(ratings) / len(ratings)
-            
-            summary['top_interaction_types'] = sorted(
-                summary['by_type'].items(), 
-                key=lambda x: x[1], 
-                reverse=True
-            )[:5]
-            
-            summary['content_types_interacted'] = list(content_types_seen)
-            summary['engagement_score'] = high_engagement_interactions / len(interactions) if interactions else 0
-            
-            return summary
-            
-        except Exception as e:
-            logger.error(f"Error generating interaction summary: {e}")
-            return {
-                'total_count': 0,
-                'by_type': {},
-                'rating_stats': {'count': 0, 'average': 0, 'distribution': {}, 'high_ratings': 0},
-                'recent_activity': 0,
-                'content_types_interacted': [],
-                'top_interaction_types': [],
-                'engagement_score': 0,
-                'preference_indicators': {}
-            }
-    
-    @staticmethod
-    def get_advanced_personalized_recommendations(user_id, limit=20, content_types=None):
-        try:
-            user_data = AdvancedMLServiceClient.get_comprehensive_user_data(user_id)
-            if not user_data:
-                logger.warning(f"No user data found for user {user_id}")
-                return []
-            
-            if content_types:
-                user_data['preferred_content_types'] = content_types
-            
-            endpoint = "/api/recommendations"
-            params = {'limit': limit}
-            
-            ml_response = AdvancedMLServiceClient.call_ml_service_post(
-                endpoint, user_data, timeout=35, use_cache=True
-            )
-            
-            if ml_response and ml_response.get('recommendations'):
-                recommendations = AdvancedMLServiceClient.process_advanced_ml_recommendations(ml_response, limit)
-                
-                if recommendations:
-                    logger.info(f"Successfully got {len(recommendations)} advanced ML recommendations for user {user_id}")
-                    return recommendations
-                else:
-                    logger.warning(f"ML service returned empty recommendations for user {user_id}")
-            else:
-                logger.warning(f"ML service failed to return recommendations for user {user_id}")
-            
-            return AdvancedMLServiceClient._get_intelligent_fallback_recommendations(user_data, limit)
-        
-        except Exception as e:
-            logger.error(f"Error getting advanced personalized recommendations for user {user_id}: {e}")
-            return []
-    
-    @staticmethod
-    def _get_intelligent_fallback_recommendations(user_data, limit=20):
-        try:
-            preferred_genres = user_data.get('preferred_genres', [])
-            preferred_languages = user_data.get('preferred_languages', [])
-            interaction_summary = user_data.get('interaction_summary', {})
-            content_types_experienced = user_data.get('content_types_experienced', [])
-            
-            query = Content.query
-            
-            filters_applied = []
-            
-            if preferred_genres:
-                genre_conditions = []
-                for genre in preferred_genres:
-                    genre_conditions.append(Content.genres.contains(genre))
-                if genre_conditions:
-                    query = query.filter(db.or_(*genre_conditions))
-                    filters_applied.append(f"genres: {', '.join(preferred_genres[:3])}")
-            
-            if preferred_languages:
-                lang_conditions = []
-                for lang in preferred_languages:
-                    lang_conditions.append(Content.languages.contains(lang))
-                if lang_conditions:
-                    query = query.filter(db.or_(*lang_conditions))
-                    filters_applied.append(f"languages: {', '.join(preferred_languages[:2])}")
-            
-            if content_types_experienced:
-                query = query.filter(Content.content_type.in_(content_types_experienced))
-                filters_applied.append(f"content types: {', '.join(content_types_experienced)}")
-            
-            engagement_score = interaction_summary.get('engagement_score', 0)
-            if engagement_score > 0.3:
-                query = query.filter(Content.rating >= 7.0)
-                filters_applied.append("high quality (7.0+ rating)")
-            else:
-                query = query.filter(Content.rating >= 6.0)
-                filters_applied.append("good quality (6.0+ rating)")
-            
-            fallback_content = query.order_by(
-                Content.popularity.desc(),
-                Content.rating.desc(),
-                Content.vote_count.desc()
-            ).limit(limit * 2).all()
-            
-            if not fallback_content:
-                fallback_content = Content.query.filter(
-                    Content.rating >= 6.5
-                ).order_by(
-                    Content.popularity.desc()
-                ).limit(limit).all()
-                filters_applied = ["popular content (fallback)"]
-            
-            recommendations = []
-            for i, content in enumerate(fallback_content[:limit]):
-                if not content.slug:
-                    try:
-                        content.ensure_slug()
-                    except:
-                        content.slug = f"content-{content.id}"
-                
-                base_score = 0.8 - (i * 0.01)
-                reason_parts = ["Based on your preferences"]
-                if filters_applied:
-                    reason_parts.append(f"({', '.join(filters_applied[:2])})")
-                
-                rec = {
-                    'content': content,
-                    'ml_score': base_score,
-                    'ml_reason': ' '.join(reason_parts),
-                    'ml_rank': i + 1,
-                    'confidence': 0.7,
-                    'content_type': content.content_type,
-                    'personalization_factors': {
-                        'preference_match': True,
-                        'quality_filter': True,
-                        'popularity_boost': content.popularity > 50,
-                        'fallback_applied': True
-                    },
-                    'metadata': {
-                        'algorithm': 'intelligent_fallback',
-                        'filters_applied': filters_applied
-                    }
-                }
-                recommendations.append(rec)
-            
-            logger.info(f"Generated {len(recommendations)} intelligent fallback recommendations")
-            return recommendations
-            
-        except Exception as e:
-            logger.error(f"Error generating intelligent fallback recommendations: {e}")
-            return []
-    
-    @staticmethod
-    def get_advanced_similar_content(content_id, limit=10):
-        try:
-            endpoint = f"/api/similar/{content_id}"
-            params = {'limit': limit}
-            ml_response = AdvancedMLServiceClient.call_ml_service(endpoint, params, timeout=20)
-            
-            if ml_response and ml_response.get('recommendations'):
-                return AdvancedMLServiceClient.process_advanced_ml_recommendations(ml_response, limit)
-            else:
-                return AdvancedMLServiceClient._get_advanced_fallback_similar_content(content_id, limit)
-        
-        except Exception as e:
-            logger.error(f"Error getting advanced similar content for {content_id}: {e}")
-            return []
-    
-    @staticmethod
-    def _get_advanced_fallback_similar_content(content_id, limit=10):
-        try:
-            base_content = Content.query.get(content_id)
-            if not base_content:
-                return []
-            
-            try:
-                base_genres = json.loads(base_content.genres) if base_content.genres else []
-            except:
-                base_genres = []
-            
-            try:
-                base_languages = json.loads(base_content.languages) if base_content.languages else []
-            except:
-                base_languages = []
-            
-            similar_content = Content.query.filter(
-                Content.id != content_id,
-                Content.content_type == base_content.content_type
-            ).order_by(Content.rating.desc(), Content.popularity.desc()).limit(limit * 3).all()
-            
-            recommendations = []
-            for content in similar_content:
-                try:
-                    content_genres = json.loads(content.genres) if content.genres else []
-                    content_languages = json.loads(content.languages) if content.languages else []
-                    
-                    similarity_score = 0.0
-                    similarity_factors = []
-                    
-                    if base_genres and content_genres:
-                        common_genres = set(base_genres).intersection(set(content_genres))
-                        if common_genres:
-                            genre_similarity = len(common_genres) / len(set(base_genres).union(set(content_genres)))
-                            similarity_score += genre_similarity * 0.5
-                            similarity_factors.append(f"shared genres: {', '.join(list(common_genres)[:2])}")
-                    
-                    if base_languages and content_languages:
-                        common_languages = set(base_languages).intersection(set(content_languages))
-                        if common_languages:
-                            lang_similarity = len(common_languages) / len(set(base_languages).union(set(content_languages)))
-                            similarity_score += lang_similarity * 0.3
-                            similarity_factors.append(f"same language")
-                    
-                    if base_content.rating and content.rating:
-                        rating_similarity = 1.0 - abs(base_content.rating - content.rating) / 10.0
-                        similarity_score += rating_similarity * 0.2
-                        if abs(base_content.rating - content.rating) <= 1.0:
-                            similarity_factors.append("similar quality")
-                    
-                    if similarity_score > 0.3:
-                        if not content.slug:
-                            try:
-                                content.ensure_slug()
-                            except:
-                                content.slug = f"content-{content.id}"
-                        
-                        reason = f"Similar content ({', '.join(similarity_factors[:2])})" if similarity_factors else "Similar content"
-                        
-                        rec = {
-                            'content': content,
-                            'ml_score': similarity_score,
-                            'ml_reason': reason,
-                            'ml_rank': len(recommendations) + 1,
-                            'confidence': 0.7,
-                            'content_type': content.content_type,
-                            'personalization_factors': {
-                                'genre_match': bool(set(base_genres).intersection(set(content_genres)) if base_genres and content_genres else False),
-                                'language_match': bool(set(base_languages).intersection(set(content_languages)) if base_languages and content_languages else False),
-                                'quality_match': abs(base_content.rating - content.rating) <= 1.0 if base_content.rating and content.rating else False
-                            }
-                        }
-                        recommendations.append(rec)
-                        
-                        if len(recommendations) >= limit:
-                            break
-                except Exception as e:
-                    logger.warning(f"Error processing similar content {content.id}: {e}")
-                    continue
-            
-            return recommendations
-            
-        except Exception as e:
-            logger.error(f"Error generating advanced fallback similar content: {e}")
-            return []
-    
-    @staticmethod
-    def get_advanced_trending_recommendations(limit=20, region='IN'):
-        try:
-            endpoint = "/api/trending"
-            params = {'limit': limit, 'region': region}
-            ml_response = AdvancedMLServiceClient.call_ml_service(endpoint, params, timeout=20)
-            
-            if ml_response and ml_response.get('recommendations'):
-                return AdvancedMLServiceClient.process_advanced_ml_recommendations(ml_response, limit)
-            else:
-                return AdvancedMLServiceClient._get_advanced_fallback_trending(limit, region)
-        
-        except Exception as e:
-            logger.error(f"Error getting advanced trending recommendations: {e}")
-            return []
-    
-    @staticmethod
-    def _get_advanced_fallback_trending(limit=20, region='IN'):
-        try:
-            trending_content = Content.query.filter(
-                db.or_(
-                    Content.is_trending == True,
-                    Content.is_new_release == True,
-                    Content.popularity > 70.0,
-                    db.and_(Content.rating > 7.5, Content.vote_count > 500)
-                )
-            ).order_by(
-                Content.popularity.desc(),
-                Content.rating.desc(),
-                Content.vote_count.desc()
-            ).limit(limit * 2).all()
-            
-            recommendations = []
-            for i, content in enumerate(trending_content[:limit]):
-                if not content.slug:
-                    try:
-                        content.ensure_slug()
-                    except:
-                        content.slug = f"content-{content.id}"
-                
-                score = 0.8 - (i * 0.01)
-                
-                trending_factors = []
-                if content.is_trending:
-                    trending_factors.append("trending")
-                    score += 0.1
-                if content.is_new_release:
-                    trending_factors.append("new release")
-                    score += 0.05
-                if content.popularity > 70:
-                    trending_factors.append("popular")
-                if content.rating > 7.5:
-                    trending_factors.append("highly rated")
-                
-                reason = f"Trending content ({', '.join(trending_factors[:2])})" if trending_factors else "Trending content"
-                
-                rec = {
-                    'content': content,
-                    'ml_score': score,
-                    'ml_reason': reason,
-                    'ml_rank': i + 1,
-                    'confidence': 0.8,
-                    'content_type': content.content_type,
-                    'personalization_factors': {
-                        'trending': content.is_trending,
-                        'new_release': content.is_new_release,
-                        'popular': content.popularity > 70,
-                        'high_quality': content.rating > 7.5
-                    }
-                }
-                recommendations.append(rec)
-            
-            return recommendations
-            
-        except Exception as e:
-            logger.error(f"Error generating advanced fallback trending: {e}")
-            return []
+    cache = services.get('cache')
 
 def require_auth(f):
     @wraps(f)
@@ -665,43 +55,310 @@ def require_auth(f):
             current_user = User.query.get(data['user_id'])
             if not current_user:
                 return jsonify({'error': 'Invalid token'}), 401
+            
+            # Update last active
+            current_user.last_active = datetime.utcnow()
+            db.session.commit()
+            
         except:
             return jsonify({'error': 'Invalid token'}), 401
         
         return f(current_user, *args, **kwargs)
     return decorated_function
 
+class UserAnalytics:
+    """Enhanced user analytics and insights"""
+    
+    @staticmethod
+    def get_user_stats(user_id: int) -> dict:
+        """Get comprehensive user statistics"""
+        try:
+            interactions = UserInteraction.query.filter_by(user_id=user_id).all()
+            
+            if not interactions:
+                return {
+                    'total_interactions': 0,
+                    'content_watched': 0,
+                    'favorites': 0,
+                    'watchlist_items': 0,
+                    'ratings_given': 0,
+                    'average_rating': 0,
+                    'most_watched_genre': None,
+                    'preferred_content_type': None,
+                    'viewing_streak': 0,
+                    'discovery_score': 0.0
+                }
+            
+            # Basic stats
+            stats = {
+                'total_interactions': len(interactions),
+                'content_watched': len([i for i in interactions if i.interaction_type == 'view']),
+                'favorites': len([i for i in interactions if i.interaction_type == 'favorite']),
+                'watchlist_items': len([i for i in interactions if i.interaction_type == 'watchlist']),
+                'ratings_given': len([i for i in interactions if i.interaction_type == 'rating']),
+                'likes_given': len([i for i in interactions if i.interaction_type == 'like'])
+            }
+            
+            # Average rating
+            ratings = [i.rating for i in interactions if i.rating is not None]
+            stats['average_rating'] = round(sum(ratings) / len(ratings), 1) if ratings else 0
+            
+            # Get content for analysis
+            content_ids = list(set([i.content_id for i in interactions]))
+            contents = Content.query.filter(Content.id.in_(content_ids)).all()
+            content_map = {c.id: c for c in contents}
+            
+            # Genre analysis
+            genre_counts = defaultdict(int)
+            content_type_counts = defaultdict(int)
+            
+            for interaction in interactions:
+                content = content_map.get(interaction.content_id)
+                if content:
+                    # Count content types
+                    content_type_counts[content.content_type] += 1
+                    
+                    # Count genres
+                    try:
+                        genres = json.loads(content.genres or '[]')
+                        for genre in genres:
+                            genre_counts[genre.lower()] += 1
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+            
+            stats['most_watched_genre'] = max(genre_counts, key=genre_counts.get) if genre_counts else None
+            stats['preferred_content_type'] = max(content_type_counts, key=content_type_counts.get) if content_type_counts else None
+            
+            # Viewing streak (consecutive days with interactions)
+            stats['viewing_streak'] = UserAnalytics._calculate_viewing_streak(interactions)
+            
+            # Discovery score (how much new content user explores)
+            stats['discovery_score'] = UserAnalytics._calculate_discovery_score(interactions, contents)
+            
+            # Monthly activity
+            stats['monthly_activity'] = UserAnalytics._get_monthly_activity(interactions)
+            
+            # Content quality preference
+            quality_ratings = [content_map[i.content_id].rating for i in interactions 
+                             if i.content_id in content_map and content_map[i.content_id].rating]
+            stats['preferred_content_quality'] = round(sum(quality_ratings) / len(quality_ratings), 1) if quality_ratings else 0
+            
+            return stats
+            
+        except Exception as e:
+            logger.error(f"Error getting user stats: {e}")
+            return {}
+    
+    @staticmethod
+    def _calculate_viewing_streak(interactions):
+        """Calculate consecutive days with viewing activity"""
+        if not interactions:
+            return 0
+        
+        # Group interactions by date
+        dates = set()
+        for interaction in interactions:
+            dates.add(interaction.timestamp.date())
+        
+        if not dates:
+            return 0
+        
+        # Sort dates and find streak
+        sorted_dates = sorted(dates, reverse=True)
+        streak = 1
+        
+        for i in range(1, len(sorted_dates)):
+            if (sorted_dates[i-1] - sorted_dates[i]).days == 1:
+                streak += 1
+            else:
+                break
+        
+        return streak
+    
+    @staticmethod
+    def _calculate_discovery_score(interactions, contents):
+        """Calculate how much new/diverse content user explores"""
+        if not interactions or not contents:
+            return 0.0
+        
+        # Calculate genre diversity
+        all_genres = set()
+        for content in contents:
+            try:
+                genres = json.loads(content.genres or '[]')
+                all_genres.update([g.lower() for g in genres])
+            except (json.JSONDecodeError, TypeError):
+                pass
+        
+        # Calculate popularity distribution
+        popularities = [c.popularity for c in contents if c.popularity]
+        avg_popularity = sum(popularities) / len(popularities) if popularities else 100
+        
+        # Discovery score based on genre diversity and exploring less popular content
+        genre_diversity = len(all_genres) / 20.0 if all_genres else 0  # Normalize by expected max genres
+        popularity_exploration = max(0, (200 - avg_popularity) / 200) if avg_popularity else 0.5
+        
+        return min((genre_diversity + popularity_exploration) / 2, 1.0)
+    
+    @staticmethod
+    def _get_monthly_activity(interactions):
+        """Get monthly activity breakdown"""
+        monthly_counts = defaultdict(int)
+        
+        for interaction in interactions:
+            month_key = interaction.timestamp.strftime('%Y-%m')
+            monthly_counts[month_key] += 1
+        
+        # Get last 6 months
+        current_date = datetime.utcnow()
+        last_6_months = []
+        
+        for i in range(6):
+            date = current_date - timedelta(days=30*i)
+            month_key = date.strftime('%Y-%m')
+            last_6_months.append({
+                'month': month_key,
+                'count': monthly_counts.get(month_key, 0)
+            })
+        
+        return list(reversed(last_6_months))
+
+class SmartRecommendationTracker:
+    """Track and learn from user interactions with recommendations"""
+    
+    @staticmethod
+    def record_recommendation_interaction(user_id: int, content_id: int, 
+                                        interaction_type: str, recommendation_context: dict = None):
+        """Record how user interacts with recommended content"""
+        try:
+            # Create interaction with recommendation context
+            interaction = UserInteraction(
+                user_id=user_id,
+                content_id=content_id,
+                interaction_type=interaction_type,
+                interaction_metadata=json.dumps(recommendation_context or {})
+            )
+            
+            db.session.add(interaction)
+            db.session.commit()
+            
+            # Clear user's recommendation cache if it exists
+            if cache:
+                cache.delete(f"user_profile:{user_id}")
+                cache.delete(f"recommendations:{user_id}")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error recording recommendation interaction: {e}")
+            db.session.rollback()
+            return False
+    
+    @staticmethod
+    def get_recommendation_effectiveness(user_id: int):
+        """Analyze how effective recommendations have been for user"""
+        try:
+            # Get interactions that came from recommendations
+            recommendation_interactions = UserInteraction.query.filter(
+                UserInteraction.user_id == user_id,
+                UserInteraction.interaction_metadata.isnot(None)
+            ).all()
+            
+            if not recommendation_interactions:
+                return {
+                    'total_recommended': 0,
+                    'clicked_recommendations': 0,
+                    'click_through_rate': 0.0,
+                    'favorite_from_recommendations': 0,
+                    'rating_satisfaction': 0.0
+                }
+            
+            clicked_count = 0
+            favorite_count = 0
+            ratings = []
+            
+            for interaction in recommendation_interactions:
+                try:
+                    metadata = json.loads(interaction.interaction_metadata or '{}')
+                    
+                    if metadata.get('from_recommendation'):
+                        if interaction.interaction_type in ['view', 'like', 'favorite', 'watchlist']:
+                            clicked_count += 1
+                        
+                        if interaction.interaction_type == 'favorite':
+                            favorite_count += 1
+                        
+                        if interaction.interaction_type == 'rating' and interaction.rating:
+                            ratings.append(interaction.rating)
+                
+                except (json.JSONDecodeError, TypeError):
+                    continue
+            
+            total_recommended = len(recommendation_interactions)
+            click_through_rate = (clicked_count / total_recommended * 100) if total_recommended > 0 else 0
+            avg_rating = sum(ratings) / len(ratings) if ratings else 0
+            
+            return {
+                'total_recommended': total_recommended,
+                'clicked_recommendations': clicked_count,
+                'click_through_rate': round(click_through_rate, 1),
+                'favorite_from_recommendations': favorite_count,
+                'rating_satisfaction': round(avg_rating, 1),
+                'engagement_score': round((click_through_rate + avg_rating * 10) / 2, 1)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error analyzing recommendation effectiveness: {e}")
+            return {}
+
+# Enhanced Authentication Routes
 @users_bp.route('/api/register', methods=['POST'])
 def register():
     try:
         data = request.get_json()
         
+        # Enhanced validation
         required_fields = ['username', 'email', 'password']
-        if not all(field in data for field in required_fields):
+        if not all(field in data and data[field].strip() for field in required_fields):
             return jsonify({'error': 'Missing required fields'}), 400
         
+        # Username validation
+        if len(data['username']) < 3 or len(data['username']) > 50:
+            return jsonify({'error': 'Username must be between 3 and 50 characters'}), 400
+        
+        # Password validation
+        if len(data['password']) < 6:
+            return jsonify({'error': 'Password must be at least 6 characters'}), 400
+        
+        # Check if user exists
         if User.query.filter_by(username=data['username']).first():
             return jsonify({'error': 'Username already exists'}), 400
         
         if User.query.filter_by(email=data['email']).first():
             return jsonify({'error': 'Email already exists'}), 400
         
+        # Enhanced user creation with preferences
         user = User(
-            username=data['username'],
-            email=data['email'],
+            username=data['username'].strip(),
+            email=data['email'].strip().lower(),
             password_hash=generate_password_hash(data['password']),
             preferred_languages=json.dumps(data.get('preferred_languages', ['english', 'telugu'])),
-            preferred_genres=json.dumps(data.get('preferred_genres', ['Action', 'Drama', 'Comedy'])),
-            location=data.get('location', '')
+            preferred_genres=json.dumps(data.get('preferred_genres', [])),
+            location=data.get('location', ''),
+            avatar_url=data.get('avatar_url', '')
         )
         
         db.session.add(user)
         db.session.commit()
         
+        # Generate token
         token = jwt.encode({
             'user_id': user.id,
             'exp': datetime.utcnow() + timedelta(days=30)
         }, app.secret_key, algorithm='HS256')
+        
+        # Get initial user stats
+        stats = UserAnalytics.get_user_stats(user.id)
         
         return jsonify({
             'message': 'User registered successfully',
@@ -712,7 +369,11 @@ def register():
                 'email': user.email,
                 'is_admin': user.is_admin,
                 'preferred_languages': json.loads(user.preferred_languages or '[]'),
-                'preferred_genres': json.loads(user.preferred_genres or '[]')
+                'preferred_genres': json.loads(user.preferred_genres or '[]'),
+                'location': user.location,
+                'avatar_url': user.avatar_url,
+                'created_at': user.created_at.isoformat(),
+                'stats': stats
             }
         }), 201
         
@@ -734,13 +395,21 @@ def login():
         if not user or not check_password_hash(user.password_hash, data['password']):
             return jsonify({'error': 'Invalid credentials'}), 401
         
+        # Update last active
         user.last_active = datetime.utcnow()
         db.session.commit()
         
+        # Generate token
         token = jwt.encode({
             'user_id': user.id,
             'exp': datetime.utcnow() + timedelta(days=30)
         }, app.secret_key, algorithm='HS256')
+        
+        # Get user stats
+        stats = UserAnalytics.get_user_stats(user.id)
+        
+        # Get recommendation effectiveness
+        rec_effectiveness = SmartRecommendationTracker.get_recommendation_effectiveness(user.id)
         
         return jsonify({
             'message': 'Login successful',
@@ -752,7 +421,11 @@ def login():
                 'is_admin': user.is_admin,
                 'preferred_languages': json.loads(user.preferred_languages or '[]'),
                 'preferred_genres': json.loads(user.preferred_genres or '[]'),
-                'location': user.location
+                'location': user.location,
+                'avatar_url': user.avatar_url,
+                'last_active': user.last_active.isoformat() if user.last_active else None,
+                'stats': stats,
+                'recommendation_effectiveness': rec_effectiveness
             }
         }), 200
         
@@ -760,6 +433,91 @@ def login():
         logger.error(f"Login error: {e}")
         return jsonify({'error': 'Login failed'}), 500
 
+# Enhanced User Profile Management
+@users_bp.route('/api/user/profile', methods=['GET'])
+@require_auth
+def get_user_profile(current_user):
+    """Get comprehensive user profile"""
+    try:
+        stats = UserAnalytics.get_user_stats(current_user.id)
+        rec_effectiveness = SmartRecommendationTracker.get_recommendation_effectiveness(current_user.id)
+        
+        # Get recent activity
+        recent_interactions = UserInteraction.query.filter_by(
+            user_id=current_user.id
+        ).order_by(UserInteraction.timestamp.desc()).limit(10).all()
+        
+        recent_activity = []
+        for interaction in recent_interactions:
+            content = Content.query.get(interaction.content_id)
+            if content:
+                recent_activity.append({
+                    'content_id': content.id,
+                    'content_title': content.title,
+                    'content_type': content.content_type,
+                    'interaction_type': interaction.interaction_type,
+                    'timestamp': interaction.timestamp.isoformat(),
+                    'rating': interaction.rating
+                })
+        
+        profile_data = {
+            'user': {
+                'id': current_user.id,
+                'username': current_user.username,
+                'email': current_user.email,
+                'is_admin': current_user.is_admin,
+                'preferred_languages': json.loads(current_user.preferred_languages or '[]'),
+                'preferred_genres': json.loads(current_user.preferred_genres or '[]'),
+                'location': current_user.location,
+                'avatar_url': current_user.avatar_url,
+                'created_at': current_user.created_at.isoformat(),
+                'last_active': current_user.last_active.isoformat() if current_user.last_active else None
+            },
+            'stats': stats,
+            'recommendation_effectiveness': rec_effectiveness,
+            'recent_activity': recent_activity
+        }
+        
+        return jsonify(profile_data), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting user profile: {e}")
+        return jsonify({'error': 'Failed to get user profile'}), 500
+
+@users_bp.route('/api/user/profile', methods=['PUT'])
+@require_auth
+def update_user_profile(current_user):
+    """Update user profile and preferences"""
+    try:
+        data = request.get_json()
+        
+        # Update basic info
+        if 'preferred_languages' in data:
+            current_user.preferred_languages = json.dumps(data['preferred_languages'])
+        
+        if 'preferred_genres' in data:
+            current_user.preferred_genres = json.dumps(data['preferred_genres'])
+        
+        if 'location' in data:
+            current_user.location = data['location']
+        
+        if 'avatar_url' in data:
+            current_user.avatar_url = data['avatar_url']
+        
+        db.session.commit()
+        
+        # Clear user caches
+        if cache:
+            cache.delete(f"user_profile:{current_user.id}")
+        
+        return jsonify({'message': 'Profile updated successfully'}), 200
+        
+    except Exception as e:
+        logger.error(f"Error updating user profile: {e}")
+        db.session.rollback()
+        return jsonify({'error': 'Failed to update profile'}), 500
+
+# Enhanced Interaction Routes
 @users_bp.route('/api/interactions', methods=['POST'])
 @require_auth
 def record_interaction(current_user):
@@ -770,183 +528,296 @@ def record_interaction(current_user):
         if not all(field in data for field in required_fields):
             return jsonify({'error': 'Missing required fields'}), 400
         
-        content_id = data['content_id']
-        interaction_type = data['interaction_type']
-        
-        if interaction_type == 'remove_watchlist':
+        # Handle remove_watchlist specially
+        if data['interaction_type'] == 'remove_watchlist':
             interaction = UserInteraction.query.filter_by(
                 user_id=current_user.id,
-                content_id=content_id,
+                content_id=data['content_id'],
                 interaction_type='watchlist'
             ).first()
             
             if interaction:
                 db.session.delete(interaction)
                 db.session.commit()
-                
-                cache_keys_to_invalidate = [
-                    f"ml_advanced_post:/api/recommendations:{current_user.id}",
-                    f"advanced_personalized:{current_user.id}:20",
-                    f"advanced_personalized:{current_user.id}:10"
-                ]
-                
-                if cache:
-                    for key_pattern in cache_keys_to_invalidate:
-                        cache.delete(key_pattern)
-                
                 return jsonify({'message': 'Removed from watchlist'}), 200
             else:
                 return jsonify({'message': 'Content not in watchlist'}), 404
         
-        if interaction_type == 'watchlist':
+        # For adding to watchlist, check if already exists
+        if data['interaction_type'] == 'watchlist':
             existing = UserInteraction.query.filter_by(
                 user_id=current_user.id,
-                content_id=content_id,
+                content_id=data['content_id'],
                 interaction_type='watchlist'
             ).first()
             
             if existing:
                 return jsonify({'message': 'Already in watchlist'}), 200
         
-        metadata = {
-            'timestamp': datetime.utcnow().isoformat(),
+        # Enhanced interaction recording with metadata
+        interaction_metadata = {
+            'from_recommendation': data.get('from_recommendation', False),
+            'recommendation_score': data.get('recommendation_score'),
+            'recommendation_method': data.get('recommendation_method'),
             'user_agent': request.headers.get('User-Agent', ''),
-            'ip_address': request.remote_addr,
-            'interaction_context': 'web_interface'
+            'timestamp': datetime.utcnow().isoformat()
         }
-        
-        if 'search_query' in data:
-            metadata['search_query'] = data['search_query']
-        
-        if 'recommendation_source' in data:
-            metadata['recommendation_source'] = data['recommendation_source']
-        
-        if 'content_context' in data:
-            metadata['content_context'] = data['content_context']
         
         interaction = UserInteraction(
             user_id=current_user.id,
-            content_id=content_id,
-            interaction_type=interaction_type,
+            content_id=data['content_id'],
+            interaction_type=data['interaction_type'],
             rating=data.get('rating'),
-            interaction_metadata=json.dumps(metadata)
+            interaction_metadata=json.dumps(interaction_metadata)
         )
         
         db.session.add(interaction)
         db.session.commit()
         
-        cache_keys_to_invalidate = [
-            f"ml_advanced_post:/api/recommendations:{current_user.id}",
-            f"advanced_personalized:{current_user.id}:20",
-            f"advanced_personalized:{current_user.id}:10",
-            f"advanced_similar:{content_id}:10"
-        ]
-        
+        # Clear user caches
         if cache:
-            for key_pattern in cache_keys_to_invalidate:
-                cache.delete(key_pattern)
+            cache.delete(f"user_profile:{current_user.id}")
         
-        current_user.last_active = datetime.utcnow()
-        db.session.commit()
-        
-        return jsonify({
-            'message': 'Interaction recorded successfully',
-            'interaction_id': interaction.id,
-            'cache_invalidated': True
-        }), 201
+        return jsonify({'message': 'Interaction recorded successfully'}), 201
         
     except Exception as e:
         logger.error(f"Interaction recording error: {e}")
         db.session.rollback()
         return jsonify({'error': 'Failed to record interaction'}), 500
 
+# Enhanced Watchlist Management
 @users_bp.route('/api/user/watchlist', methods=['GET'])
 @require_auth
 def get_watchlist(current_user):
     try:
-        watchlist_interactions = UserInteraction.query.filter_by(
+        # Get watchlist with sorting options
+        sort_by = request.args.get('sort_by', 'added_date')  # added_date, title, rating, release_date
+        order = request.args.get('order', 'desc')  # asc, desc
+        
+        watchlist_query = UserInteraction.query.filter_by(
             user_id=current_user.id,
             interaction_type='watchlist'
-        ).order_by(UserInteraction.timestamp.desc()).all()
+        )
         
+        if sort_by == 'added_date':
+            if order == 'desc':
+                watchlist_query = watchlist_query.order_by(UserInteraction.timestamp.desc())
+            else:
+                watchlist_query = watchlist_query.order_by(UserInteraction.timestamp.asc())
+        
+        watchlist_interactions = watchlist_query.all()
         content_ids = [interaction.content_id for interaction in watchlist_interactions]
-        contents = Content.query.filter(Content.id.in_(content_ids)).all()
-        content_dict = {content.id: content for content in contents}
+        
+        if not content_ids:
+            return jsonify({'watchlist': [], 'count': 0}), 200
+        
+        contents_query = Content.query.filter(Content.id.in_(content_ids))
+        
+        # Apply additional sorting if needed
+        if sort_by == 'title':
+            if order == 'desc':
+                contents_query = contents_query.order_by(Content.title.desc())
+            else:
+                contents_query = contents_query.order_by(Content.title.asc())
+        elif sort_by == 'rating':
+            if order == 'desc':
+                contents_query = contents_query.order_by(Content.rating.desc())
+            else:
+                contents_query = contents_query.order_by(Content.rating.asc())
+        elif sort_by == 'release_date':
+            if order == 'desc':
+                contents_query = contents_query.order_by(Content.release_date.desc())
+            else:
+                contents_query = contents_query.order_by(Content.release_date.asc())
+        
+        contents = contents_query.all()
+        
+        # Create interaction mapping for added_date info
+        interaction_map = {i.content_id: i for i in watchlist_interactions}
         
         result = []
-        for interaction in watchlist_interactions:
-            content = content_dict.get(interaction.content_id)
-            if content:
-                if not content.slug:
-                    try:
-                        content.ensure_slug()
-                    except:
-                        content.slug = f"content-{content.id}"
-                
-                youtube_url = None
-                if content.youtube_trailer_id:
-                    youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
-                
-                try:
-                    genres = json.loads(content.genres or '[]')
-                except:
-                    genres = []
-                
-                result.append({
-                    'id': content.id,
-                    'slug': content.slug,
-                    'title': content.title,
-                    'content_type': content.content_type,
-                    'genres': genres,
-                    'rating': content.rating,
-                    'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
-                    'youtube_trailer': youtube_url,
-                    'added_to_watchlist': interaction.timestamp.isoformat()
-                })
+        for content in contents:
+            interaction = interaction_map.get(content.id)
+            
+            youtube_url = None
+            if content.youtube_trailer_id:
+                youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
+            
+            content_data = {
+                'id': content.id,
+                'slug': content.slug,
+                'title': content.title,
+                'content_type': content.content_type,
+                'genres': json.loads(content.genres or '[]'),
+                'languages': json.loads(content.languages or '[]'),
+                'rating': content.rating,
+                'release_date': content.release_date.isoformat() if content.release_date else None,
+                'runtime': content.runtime,
+                'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
+                'overview': content.overview[:200] + '...' if content.overview and len(content.overview) > 200 else content.overview,
+                'youtube_trailer': youtube_url,
+                'added_to_watchlist': interaction.timestamp.isoformat() if interaction else None
+            }
+            
+            result.append(content_data)
         
         return jsonify({
             'watchlist': result,
-            'total_items': len(result)
+            'count': len(result),
+            'sort_by': sort_by,
+            'order': order
         }), 200
         
     except Exception as e:
         logger.error(f"Watchlist error: {e}")
         return jsonify({'error': 'Failed to get watchlist'}), 500
 
-@users_bp.route('/api/user/watchlist/<int:content_id>', methods=['DELETE'])
+# Enhanced Favorites Management
+@users_bp.route('/api/user/favorites', methods=['GET'])
 @require_auth
-def remove_from_watchlist(current_user, content_id):
+def get_favorites(current_user):
     try:
-        interaction = UserInteraction.query.filter_by(
-            user_id=current_user.id,
-            content_id=content_id,
-            interaction_type='watchlist'
-        ).first()
+        content_type_filter = request.args.get('type')  # movie, tv, anime
         
-        if interaction:
-            db.session.delete(interaction)
-            db.session.commit()
+        favorites_query = UserInteraction.query.filter_by(
+            user_id=current_user.id,
+            interaction_type='favorite'
+        ).order_by(UserInteraction.timestamp.desc())
+        
+        favorite_interactions = favorites_query.all()
+        content_ids = [interaction.content_id for interaction in favorite_interactions]
+        
+        if not content_ids:
+            return jsonify({'favorites': [], 'count': 0}), 200
+        
+        contents_query = Content.query.filter(Content.id.in_(content_ids))
+        
+        if content_type_filter:
+            contents_query = contents_query.filter(Content.content_type == content_type_filter)
+        
+        contents = contents_query.all()
+        
+        # Group by content type
+        grouped_favorites = {
+            'movies': [],
+            'tv_shows': [],
+            'anime': []
+        }
+        
+        all_favorites = []
+        
+        for content in contents:
+            youtube_url = None
+            if content.youtube_trailer_id:
+                youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
             
-            if cache:
-                cache_keys = [
-                    f"ml_advanced_post:/api/recommendations:{current_user.id}",
-                    f"advanced_personalized:{current_user.id}:20"
-                ]
-                for key in cache_keys:
-                    cache.delete(key)
+            content_data = {
+                'id': content.id,
+                'slug': content.slug,
+                'title': content.title,
+                'content_type': content.content_type,
+                'genres': json.loads(content.genres or '[]'),
+                'languages': json.loads(content.languages or '[]'),
+                'rating': content.rating,
+                'release_date': content.release_date.isoformat() if content.release_date else None,
+                'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
+                'overview': content.overview[:200] + '...' if content.overview and len(content.overview) > 200 else content.overview,
+                'youtube_trailer': youtube_url
+            }
             
-            return jsonify({'message': 'Removed from watchlist'}), 200
-        else:
-            return jsonify({'message': 'Content not in watchlist'}), 404
+            all_favorites.append(content_data)
             
+            # Group by type
+            if content.content_type == 'movie':
+                grouped_favorites['movies'].append(content_data)
+            elif content.content_type == 'tv':
+                grouped_favorites['tv_shows'].append(content_data)
+            elif content.content_type == 'anime':
+                grouped_favorites['anime'].append(content_data)
+        
+        response = {
+            'favorites': all_favorites,
+            'grouped_favorites': grouped_favorites,
+            'count': len(all_favorites),
+            'count_by_type': {
+                'movies': len(grouped_favorites['movies']),
+                'tv_shows': len(grouped_favorites['tv_shows']),
+                'anime': len(grouped_favorites['anime'])
+            }
+        }
+        
+        if content_type_filter:
+            type_map = {'movie': 'movies', 'tv': 'tv_shows', 'anime': 'anime'}
+            filtered_type = type_map.get(content_type_filter)
+            if filtered_type:
+                response['favorites'] = grouped_favorites[filtered_type]
+                response['count'] = len(grouped_favorites[filtered_type])
+        
+        return jsonify(response), 200
+        
     except Exception as e:
-        logger.error(f"Remove from watchlist error: {e}")
-        db.session.rollback()
-        return jsonify({'error': 'Failed to remove from watchlist'}), 500
+        logger.error(f"Favorites error: {e}")
+        return jsonify({'error': 'Failed to get favorites'}), 500
 
+# User Analytics and Insights
+@users_bp.route('/api/user/analytics', methods=['GET'])
+@require_auth
+def get_user_analytics(current_user):
+    """Get detailed user analytics and insights"""
+    try:
+        stats = UserAnalytics.get_user_stats(current_user.id)
+        rec_effectiveness = SmartRecommendationTracker.get_recommendation_effectiveness(current_user.id)
+        
+        # Get viewing patterns
+        interactions = UserInteraction.query.filter_by(user_id=current_user.id).all()
+        
+        # Analyze viewing patterns by time
+        hourly_activity = defaultdict(int)
+        daily_activity = defaultdict(int)
+        
+        for interaction in interactions:
+            hour = interaction.timestamp.hour
+            day = interaction.timestamp.strftime('%A')
+            hourly_activity[hour] += 1
+            daily_activity[day] += 1
+        
+        # Get content type distribution over time
+        monthly_content_types = defaultdict(lambda: defaultdict(int))
+        
+        for interaction in interactions:
+            content = Content.query.get(interaction.content_id)
+            if content:
+                month_key = interaction.timestamp.strftime('%Y-%m')
+                monthly_content_types[month_key][content.content_type] += 1
+        
+        analytics_data = {
+            'user_stats': stats,
+            'recommendation_effectiveness': rec_effectiveness,
+            'viewing_patterns': {
+                'hourly_activity': dict(hourly_activity),
+                'daily_activity': dict(daily_activity),
+                'most_active_hour': max(hourly_activity, key=hourly_activity.get) if hourly_activity else None,
+                'most_active_day': max(daily_activity, key=daily_activity.get) if daily_activity else None
+            },
+            'content_evolution': dict(monthly_content_types),
+            'engagement_level': UserAnalytics._calculate_engagement_level(stats),
+            'recommendations': {
+                'profile_completeness': UserAnalytics._calculate_profile_completeness(current_user),
+                'discovery_suggestions': UserAnalytics._get_discovery_suggestions(current_user.id)
+            }
+        }
+        
+        return jsonify(analytics_data), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting user analytics: {e}")
+        return jsonify({'error': 'Failed to get analytics'}), 500
+
+# Watchlist status check (optimized)
 @users_bp.route('/api/user/watchlist/<int:content_id>', methods=['GET'])
 @require_auth
 def check_watchlist_status(current_user, content_id):
+    """Check if content is in user's watchlist"""
     try:
         interaction = UserInteraction.query.filter_by(
             user_id=current_user.id,
@@ -963,344 +834,143 @@ def check_watchlist_status(current_user, content_id):
         logger.error(f"Check watchlist status error: {e}")
         return jsonify({'error': 'Failed to check watchlist status'}), 500
 
-@users_bp.route('/api/user/favorites', methods=['GET'])
+@users_bp.route('/api/user/watchlist/<int:content_id>', methods=['DELETE'])
 @require_auth
-def get_favorites(current_user):
+def remove_from_watchlist(current_user, content_id):
+    """Remove content from user's watchlist"""
     try:
-        favorite_interactions = UserInteraction.query.filter_by(
+        interaction = UserInteraction.query.filter_by(
             user_id=current_user.id,
-            interaction_type='favorite'
-        ).order_by(UserInteraction.timestamp.desc()).all()
+            content_id=content_id,
+            interaction_type='watchlist'
+        ).first()
         
-        content_ids = [interaction.content_id for interaction in favorite_interactions]
-        contents = Content.query.filter(Content.id.in_(content_ids)).all()
-        content_dict = {content.id: content for content in contents}
-        
-        result = []
-        for interaction in favorite_interactions:
-            content = content_dict.get(interaction.content_id)
-            if content:
-                if not content.slug:
-                    try:
-                        content.ensure_slug()
-                    except:
-                        content.slug = f"content-{content.id}"
-                
-                youtube_url = None
-                if content.youtube_trailer_id:
-                    youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
-                
-                try:
-                    genres = json.loads(content.genres or '[]')
-                except:
-                    genres = []
-                
-                result.append({
-                    'id': content.id,
-                    'slug': content.slug,
-                    'title': content.title,
-                    'content_type': content.content_type,
-                    'genres': genres,
-                    'rating': content.rating,
-                    'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
-                    'youtube_trailer': youtube_url,
-                    'favorited_date': interaction.timestamp.isoformat()
-                })
-        
-        return jsonify({
-            'favorites': result,
-            'total_items': len(result)
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"Favorites error: {e}")
-        return jsonify({'error': 'Failed to get favorites'}), 500
-
-@users_bp.route('/api/recommendations/personalized', methods=['GET'])
-@require_auth
-def get_personalized_recommendations(current_user):
-    try:
-        limit = min(int(request.args.get('limit', 20)), 50)
-        content_types = request.args.getlist('content_type')
-        
-        ml_recommendations = AdvancedMLServiceClient.get_advanced_personalized_recommendations(
-            current_user.id, limit, content_types if content_types else None
-        )
-        
-        if ml_recommendations:
-            result = []
-            for rec in ml_recommendations:
-                content = rec['content']
-                
-                youtube_url = None
-                if content.youtube_trailer_id:
-                    youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
-                
-                try:
-                    genres = json.loads(content.genres or '[]')
-                except:
-                    genres = []
-                
-                result.append({
-                    'id': content.id,
-                    'slug': content.slug,
-                    'title': content.title,
-                    'content_type': content.content_type,
-                    'genres': genres,
-                    'rating': content.rating,
-                    'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
-                    'overview': content.overview[:150] + '...' if content.overview else '',
-                    'youtube_trailer': youtube_url,
-                    'ml_score': rec['ml_score'],
-                    'ml_reason': rec['ml_reason'],
-                    'ml_rank': rec['ml_rank'],
-                    'confidence': rec['confidence'],
-                    'personalization_factors': rec['personalization_factors'],
-                    'recommendation_source': 'advanced_ml_personalized'
-                })
+        if interaction:
+            db.session.delete(interaction)
+            db.session.commit()
             
-            user_data = AdvancedMLServiceClient.get_comprehensive_user_data(current_user.id)
-            interaction_summary = user_data.get('interaction_summary', {}) if user_data else {}
+            # Clear cache
+            if cache:
+                cache.delete(f"user_profile:{current_user.id}")
             
-            metadata = ml_recommendations[0].get('metadata', {}) if ml_recommendations else {}
-            
-            return jsonify({
-                'recommendations': result,
-                'total_recommendations': len(result),
-                'user_stats': {
-                    'total_interactions': interaction_summary.get('total_count', 0),
-                    'recent_activity': interaction_summary.get('recent_activity', 0),
-                    'rating_average': round(interaction_summary.get('rating_stats', {}).get('average', 0), 1),
-                    'engagement_score': round(interaction_summary.get('engagement_score', 0), 2),
-                    'top_interaction_types': interaction_summary.get('top_interaction_types', [])[:3]
-                },
-                'source': 'advanced_ml_service',
-                'algorithm': metadata.get('algorithm', 'advanced_hybrid_neural_personalized'),
-                'personalization_score': metadata.get('personalization_score', 0),
-                'advanced_features': {
-                    'neural_enhancement': metadata.get('neural_enhancement', False),
-                    'content_breadth': metadata.get('content_breadth', 0),
-                    'preference_strength': metadata.get('preference_strength', 0),
-                    'discovery_efficiency': metadata.get('discovery_efficiency', 0)
-                }
-            }), 200
-        
-        return jsonify({
-            'recommendations': [], 
-            'source': 'ml_service_unavailable',
-            'message': 'Advanced ML service temporarily unavailable'
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"Personalized recommendations error: {e}")
-        return jsonify({
-            'recommendations': [], 
-            'error': 'Failed to get personalized recommendations',
-            'source': 'error'
-        }), 500
-
-@users_bp.route('/api/recommendations/ml-similar/<int:content_id>', methods=['GET'])
-def get_ml_similar_recommendations(content_id):
-    try:
-        limit = min(int(request.args.get('limit', 10)), 20)
-        
-        ml_recommendations = AdvancedMLServiceClient.get_advanced_similar_content(content_id, limit)
-        
-        if ml_recommendations:
-            result = []
-            for rec in ml_recommendations:
-                content = rec['content']
-                
-                youtube_url = None
-                if content.youtube_trailer_id:
-                    youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
-                
-                try:
-                    genres = json.loads(content.genres or '[]')
-                except:
-                    genres = []
-                
-                result.append({
-                    'id': content.id,
-                    'slug': content.slug,
-                    'title': content.title,
-                    'content_type': content.content_type,
-                    'genres': genres,
-                    'rating': content.rating,
-                    'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
-                    'overview': content.overview[:150] + '...' if content.overview else '',
-                    'youtube_trailer': youtube_url,
-                    'ml_score': rec['ml_score'],
-                    'ml_reason': rec['ml_reason'],
-                    'similarity_score': rec['ml_score'],
-                    'match_type': 'advanced_ml_similarity',
-                    'personalization_factors': rec['personalization_factors']
-                })
-            
-            return jsonify({
-                'similar_content': result,
-                'source': 'advanced_ml_service',
-                'algorithm': 'advanced_multi_factor_similarity',
-                'base_content_id': content_id
-            }), 200
-        
-        return jsonify({
-            'similar_content': [],
-            'source': 'ml_service_unavailable',
-            'message': 'Advanced ML service temporarily unavailable'
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"ML similar recommendations error: {e}")
-        return jsonify({
-            'similar_content': [],
-            'error': 'Failed to get similar recommendations'
-        }), 500
-
-@users_bp.route('/api/recommendations/ml-trending', methods=['GET'])
-def get_ml_trending_recommendations():
-    try:
-        limit = min(int(request.args.get('limit', 20)), 50)
-        region = request.args.get('region', 'IN')
-        
-        ml_recommendations = AdvancedMLServiceClient.get_advanced_trending_recommendations(limit, region)
-        
-        if ml_recommendations:
-            result = []
-            for rec in ml_recommendations:
-                content = rec['content']
-                
-                youtube_url = None
-                if content.youtube_trailer_id:
-                    youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
-                
-                try:
-                    genres = json.loads(content.genres or '[]')
-                except:
-                    genres = []
-                
-                result.append({
-                    'id': content.id,
-                    'slug': content.slug,
-                    'title': content.title,
-                    'content_type': content.content_type,
-                    'genres': genres,
-                    'rating': content.rating,
-                    'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
-                    'overview': content.overview[:150] + '...' if content.overview else '',
-                    'youtube_trailer': youtube_url,
-                    'ml_score': rec['ml_score'],
-                    'ml_reason': rec['ml_reason'],
-                    'trending_score': rec['ml_score'],
-                    'confidence': rec['confidence'],
-                    'personalization_factors': rec['personalization_factors']
-                })
-            
-            return jsonify({
-                'recommendations': result,
-                'source': 'advanced_ml_service',
-                'region': region,
-                'algorithm': 'advanced_multi_factor_trending'
-            }), 200
-        
-        return jsonify({
-            'recommendations': [],
-            'source': 'ml_service_unavailable',
-            'message': 'Advanced ML service temporarily unavailable'
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"ML trending recommendations error: {e}")
-        return jsonify({
-            'recommendations': [],
-            'error': 'Failed to get trending recommendations'
-        }), 500
-
-@users_bp.route('/api/user/profile/analysis', methods=['GET'])
-@require_auth
-def get_user_profile_analysis(current_user):
-    try:
-        user_data = AdvancedMLServiceClient.get_comprehensive_user_data(current_user.id)
-        if not user_data:
-            return jsonify({'error': 'User data not found'}), 404
-        
-        interaction_summary = user_data.get('interaction_summary', {})
-        
-        analysis = {
-            'user_id': current_user.id,
-            'username': current_user.username,
-            'account_age_days': (datetime.utcnow() - current_user.created_at).days,
-            'total_interactions': interaction_summary.get('total_count', 0),
-            'recent_activity_week': interaction_summary.get('recent_activity', 0),
-            'interaction_breakdown': interaction_summary.get('by_type', {}),
-            'rating_behavior': interaction_summary.get('rating_stats', {}),
-            'engagement_score': interaction_summary.get('engagement_score', 0),
-            'preferred_languages': json.loads(current_user.preferred_languages or '[]'),
-            'preferred_genres': json.loads(current_user.preferred_genres or '[]'),
-            'content_types_experienced': user_data.get('content_types_experienced', []),
-            'engagement_level': 'high' if interaction_summary.get('engagement_score', 0) > 0.4 else 'medium' if interaction_summary.get('engagement_score', 0) > 0.2 else 'low',
-            'recommendation_readiness': 'advanced' if interaction_summary.get('total_count', 0) >= 10 else 'ready' if interaction_summary.get('total_count', 0) >= 3 else 'building_profile'
-        }
-        
-        endpoint = "/api/analytics/user-profile"
-        ml_analysis = AdvancedMLServiceClient.call_ml_service_post(
-            endpoint, user_data, timeout=25, use_cache=True
-        )
-        
-        if ml_analysis and 'insights' in ml_analysis:
-            analysis['ml_insights'] = ml_analysis['insights']
-            analysis['ml_profile'] = ml_analysis.get('user_profile', {})
-        
-        return jsonify({
-            'profile_analysis': analysis,
-            'data_source': 'advanced_with_ml' if ml_analysis else 'basic_analysis',
-            'advanced_features': {
-                'neural_profiling': bool(ml_analysis),
-                'behavioral_analysis': True,
-                'personalization_ready': analysis['recommendation_readiness'] in ['ready', 'advanced']
-            }
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"User profile analysis error: {e}")
-        return jsonify({'error': 'Failed to analyze user profile'}), 500
-
-@users_bp.route('/api/ml/health', methods=['GET'])
-def check_ml_service_health():
-    try:
-        health_response = AdvancedMLServiceClient.call_ml_service('/health', use_cache=False, timeout=15)
-        
-        if health_response:
-            return jsonify({
-                'ml_service_status': 'healthy',
-                'ml_service_url': ML_SERVICE_URL,
-                'response': health_response,
-                'features_available': health_response.get('features', {}),
-                'algorithms': health_response.get('algorithms', {}),
-                'libraries': health_response.get('libraries', {}),
-                'advanced_capabilities': {
-                    'neural_collaborative_filtering': health_response.get('features', {}).get('neural_collaborative_filtering', False),
-                    'matrix_factorization': health_response.get('features', {}).get('matrix_factorization', False),
-                    'advanced_personalization': health_response.get('features', {}).get('advanced_personalization', False),
-                    'contextual_recommendations': health_response.get('features', {}).get('contextual_popularity_scoring', False)
-                },
-                'last_checked': datetime.utcnow().isoformat()
-            }), 200
+            return jsonify({'message': 'Removed from watchlist'}), 200
         else:
-            return jsonify({
-                'ml_service_status': 'unhealthy',
-                'ml_service_url': ML_SERVICE_URL,
-                'error': 'No response from advanced ML service',
-                'fallback_available': True,
-                'last_checked': datetime.utcnow().isoformat()
-            }), 503
+            return jsonify({'message': 'Content not in watchlist'}), 404
             
     except Exception as e:
-        logger.error(f"ML service health check error: {e}")
-        return jsonify({
-            'ml_service_status': 'error',
-            'ml_service_url': ML_SERVICE_URL,
-            'error': str(e),
-            'fallback_available': True,
-            'last_checked': datetime.utcnow().isoformat()
-        }), 503
+        logger.error(f"Remove from watchlist error: {e}")
+        db.session.rollback()
+        return jsonify({'error': 'Failed to remove from watchlist'}), 500
+
+# Enhanced helper methods for UserAnalytics
+def _calculate_engagement_level(stats):
+    """Calculate user engagement level"""
+    score = 0
+    
+    # Base activity score
+    if stats['total_interactions'] > 100:
+        score += 40
+    elif stats['total_interactions'] > 50:
+        score += 30
+    elif stats['total_interactions'] > 20:
+        score += 20
+    elif stats['total_interactions'] > 5:
+        score += 10
+    
+    # Diversity score
+    if stats['discovery_score'] > 0.7:
+        score += 20
+    elif stats['discovery_score'] > 0.5:
+        score += 15
+    elif stats['discovery_score'] > 0.3:
+        score += 10
+    
+    # Rating activity
+    if stats['ratings_given'] > 20:
+        score += 20
+    elif stats['ratings_given'] > 10:
+        score += 15
+    elif stats['ratings_given'] > 5:
+        score += 10
+    
+    # Consistency (viewing streak)
+    if stats['viewing_streak'] > 30:
+        score += 20
+    elif stats['viewing_streak'] > 14:
+        score += 15
+    elif stats['viewing_streak'] > 7:
+        score += 10
+    
+    return min(score, 100)
+
+def _calculate_profile_completeness(user):
+    """Calculate how complete user's profile is"""
+    score = 0
+    
+    if user.preferred_languages and json.loads(user.preferred_languages or '[]'):
+        score += 25
+    
+    if user.preferred_genres and json.loads(user.preferred_genres or '[]'):
+        score += 25
+    
+    if user.location:
+        score += 20
+    
+    if user.avatar_url:
+        score += 10
+    
+    # Check if user has interactions
+    interaction_count = UserInteraction.query.filter_by(user_id=user.id).count()
+    if interaction_count > 10:
+        score += 20
+    elif interaction_count > 5:
+        score += 10
+    
+    return score
+
+def _get_discovery_suggestions(user_id):
+    """Get suggestions to help user discover new content"""
+    suggestions = []
+    
+    # Get user's interaction patterns
+    interactions = UserInteraction.query.filter_by(user_id=user_id).all()
+    
+    if not interactions:
+        suggestions.append("Start by rating some movies and shows you've watched!")
+        suggestions.append("Add content to your watchlist to get better recommendations")
+        return suggestions
+    
+    # Analyze what user hasn't explored
+    content_ids = [i.content_id for i in interactions]
+    contents = Content.query.filter(Content.id.in_(content_ids)).all()
+    
+    # Check content types
+    content_types = set([c.content_type for c in contents])
+    
+    if 'anime' not in content_types:
+        suggestions.append("Try exploring anime - you might discover something new!")
+    
+    if 'tv' not in content_types:
+        suggestions.append("Consider watching some TV series for longer storytelling")
+    
+    # Check language diversity
+    all_languages = set()
+    for content in contents:
+        try:
+            languages = json.loads(content.languages or '[]')
+            all_languages.update(languages)
+        except (json.JSONDecodeError, TypeError):
+            pass
+    
+    if 'hindi' not in [lang.lower() for lang in all_languages]:
+        suggestions.append("Explore Bollywood movies for great storytelling")
+    
+    if 'telugu' not in [lang.lower() for lang in all_languages]:
+        suggestions.append("Check out Telugu cinema for amazing regional content")
+    
+    return suggestions[:3]  # Return top 3 suggestions
+
+# Add these methods to UserAnalytics class
+UserAnalytics._calculate_engagement_level = staticmethod(_calculate_engagement_level)
+UserAnalytics._calculate_profile_completeness = staticmethod(_calculate_profile_completeness)
+UserAnalytics._get_discovery_suggestions = staticmethod(_get_discovery_suggestions)

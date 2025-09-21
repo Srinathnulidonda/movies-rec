@@ -43,6 +43,7 @@ from services.algorithms import (
     HybridRecommendationEngine,
     UltraPowerfulSimilarityEngine
 )
+from services.personalized import personalized_bp, init_personalized
 from services.details import init_details_service, SlugManager, ContentService
 import re
 
@@ -705,6 +706,14 @@ services = {
     'cache': cache
 }
 
+try:
+    init_personalized(app, db, models, services, cache)
+    app.register_blueprint(personalized_bp)
+    logger.info("Personalized recommendation service initialized successfully")
+except Exception as e:
+    logger.error(f"Failed to initialize personalized service: {e}")
+
+
 app.register_blueprint(auth_bp)
 app.register_blueprint(admin_bp)
 app.register_blueprint(users_bp)
@@ -712,6 +721,7 @@ init_auth(app, db, User)
 
 init_admin(app, db, models, services)
 init_users(app, db, models, services)
+init_users(app, db, models, {**services, 'cache': cache})
 
 @app.route('/api/details/<slug>', methods=['GET'])
 def get_content_details_by_slug(slug):

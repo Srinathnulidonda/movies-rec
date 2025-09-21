@@ -177,3 +177,12 @@ The personalized recommendation functionality is to based on the users search hi
 according to the users search history, view, like, favorite, watchlist, rating there should be an personalized movies, anime, tv-show recommendations should be provide according to the users interests
 
 provide the updated files without comments
+
+
+
+Create a backend/services/personalized.py file that implements an advanced personalized recommendation system for movies, TV shows, and anime. The service must:
+1.	Continuously track user interactions including search history, views, likes, favorites, watchlist, and ratings.
+2.	Generate highly accurate, user-specific recommendations based on these signals.
+3.	Apply the best recommendation approaches (e.g., hybrid filtering, collaborative filtering, content-based filtering, sequence-aware models, embeddings, context-aware ranking) to ensure 100% relevance.
+4.	Provide personalized recommendations across categories (movies, anime, TV shows) tailored precisely to each user’s interests.
+5.	Be structured with production-ready, modular, and scalable code, following clean architecture and best practices.
