@@ -77,6 +77,9 @@ class EnhancedMLServiceClient:
                 logger.warning("ML service URL not configured")
                 return None
             
+            if data:
+                data = EnhancedMLServiceClient._ensure_json_serializable(data)
+            
             cache_key = f"ml_post:{endpoint}:{json.dumps(data, sort_keys=True)}"
             
             if use_cache and cache:
@@ -87,6 +90,14 @@ class EnhancedMLServiceClient:
             
             url = f"{ML_SERVICE_URL}{endpoint}"
             headers = {'Content-Type': 'application/json'}
+            
+            try:
+                json_data = json.dumps(data)
+            except (TypeError, ValueError) as e:
+                logger.error(f"JSON serialization error: {e}")
+                logger.error(f"Problematic data: {data}")
+                return None
+            
             response = http_session.post(url, json=data, headers=headers, timeout=timeout)
             
             if response.status_code == 200:
@@ -103,6 +114,19 @@ class EnhancedMLServiceClient:
         except Exception as e:
             logger.warning(f"ML service POST call failed for {endpoint}: {e}")
             return None
+    
+    @staticmethod
+    def _ensure_json_serializable(obj):
+        if isinstance(obj, dict):
+            return {key: EnhancedMLServiceClient._ensure_json_serializable(value) for key, value in obj.items()}
+        elif isinstance(obj, list):
+            return [EnhancedMLServiceClient._ensure_json_serializable(item) for item in obj]
+        elif isinstance(obj, set):
+            return list(obj)
+        elif isinstance(obj, (datetime, )):
+            return obj.isoformat()
+        else:
+            return obj
     
     @staticmethod
     def process_ml_recommendations(ml_response, limit=20):
@@ -192,6 +216,9 @@ class EnhancedMLServiceClient:
                 if interaction.interaction_metadata:
                     try:
                         metadata = json.loads(interaction.interaction_metadata) if isinstance(interaction.interaction_metadata, str) else interaction.interaction_metadata
+                        for key, value in metadata.items():
+                            if isinstance(value, set):
+                                metadata[key] = list(value)
                         interaction_dict.update(metadata)
                     except:
                         pass
@@ -211,6 +238,8 @@ class EnhancedMLServiceClient:
                 'interaction_summary': EnhancedMLServiceClient._generate_interaction_summary(interaction_data)
             }
             
+            user_data = EnhancedMLServiceClient._ensure_json_serializable(user_data)
+            
             return user_data
             
         except Exception as e:
@@ -229,12 +258,13 @@ class EnhancedMLServiceClient:
                     'distribution': {}
                 },
                 'recent_activity': 0,
-                'content_types_interacted': set(),
+                'content_types_interacted': [],
                 'top_interaction_types': []
             }
             
             now = datetime.utcnow()
             ratings = []
+            content_types_seen = set()
             
             for interaction in interactions:
                 interaction_type = interaction.get('interaction_type', 'unknown')
@@ -251,6 +281,9 @@ class EnhancedMLServiceClient:
                         summary['recent_activity'] += 1
                 except:
                     pass
+                
+                content_type = interaction.get('content_type', 'unknown')
+                content_types_seen.add(content_type)
             
             if ratings:
                 summary['rating_stats']['count'] = len(ratings)
@@ -262,11 +295,20 @@ class EnhancedMLServiceClient:
                 reverse=True
             )[:5]
             
+            summary['content_types_interacted'] = list(content_types_seen)
+            
             return summary
             
         except Exception as e:
             logger.error(f"Error generating interaction summary: {e}")
-            return {}
+            return {
+                'total_count': 0,
+                'by_type': {},
+                'rating_stats': {'count': 0, 'average': 0, 'distribution': {}},
+                'recent_activity': 0,
+                'content_types_interacted': [],
+                'top_interaction_types': []
+            }
     
     @staticmethod
     def get_personalized_recommendations(user_id, limit=20, content_types=None):
