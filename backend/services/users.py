@@ -36,16 +36,16 @@ def init_users(flask_app, database, models, services):
     http_session = services['http_session']
     cache = services['cache']
 
-class EnhancedMLServiceClient:
+class AdvancedMLServiceClient:
     
     @staticmethod
-    def call_ml_service(endpoint, params=None, timeout=15, use_cache=True):
+    def call_ml_service(endpoint, params=None, timeout=20, use_cache=True):
         try:
             if not ML_SERVICE_URL:
                 logger.warning("ML service URL not configured")
                 return None
             
-            cache_key = f"ml_get:{endpoint}:{json.dumps(params, sort_keys=True)}"
+            cache_key = f"ml_advanced_get:{endpoint}:{json.dumps(params, sort_keys=True)}"
             
             if use_cache and cache:
                 cached_result = cache.get(cache_key)
@@ -64,6 +64,7 @@ class EnhancedMLServiceClient:
                 return result
             else:
                 logger.warning(f"ML service returned {response.status_code} for {endpoint}")
+                logger.warning(f"Response: {response.text[:200]}")
                 return None
                 
         except Exception as e:
@@ -71,16 +72,16 @@ class EnhancedMLServiceClient:
             return None
     
     @staticmethod
-    def call_ml_service_post(endpoint, data=None, timeout=30, use_cache=True):
+    def call_ml_service_post(endpoint, data=None, timeout=35, use_cache=True):
         try:
             if not ML_SERVICE_URL:
                 logger.warning("ML service URL not configured")
                 return None
             
             if data:
-                data = EnhancedMLServiceClient._ensure_json_serializable(data)
+                data = AdvancedMLServiceClient._ensure_json_serializable(data)
             
-            cache_key = f"ml_post:{endpoint}:{json.dumps(data, sort_keys=True)}"
+            cache_key = f"ml_advanced_post:{endpoint}:{json.dumps(data, sort_keys=True)}"
             
             if use_cache and cache:
                 cached_result = cache.get(cache_key)
@@ -93,9 +94,9 @@ class EnhancedMLServiceClient:
             
             try:
                 json_data = json.dumps(data)
+                logger.debug(f"Sending data to ML service: {len(json_data)} characters")
             except (TypeError, ValueError) as e:
                 logger.error(f"JSON serialization error: {e}")
-                logger.error(f"Problematic data: {data}")
                 return None
             
             response = http_session.post(url, json=data, headers=headers, timeout=timeout)
@@ -108,7 +109,7 @@ class EnhancedMLServiceClient:
                 return result
             else:
                 logger.warning(f"ML service POST returned {response.status_code} for {endpoint}")
-                logger.warning(f"Response content: {response.text[:200]}")
+                logger.warning(f"Response content: {response.text[:300]}")
                 return None
                 
         except Exception as e:
@@ -118,18 +119,24 @@ class EnhancedMLServiceClient:
     @staticmethod
     def _ensure_json_serializable(obj):
         if isinstance(obj, dict):
-            return {key: EnhancedMLServiceClient._ensure_json_serializable(value) for key, value in obj.items()}
+            return {key: AdvancedMLServiceClient._ensure_json_serializable(value) for key, value in obj.items()}
         elif isinstance(obj, list):
-            return [EnhancedMLServiceClient._ensure_json_serializable(item) for item in obj]
+            return [AdvancedMLServiceClient._ensure_json_serializable(item) for item in obj]
         elif isinstance(obj, set):
             return list(obj)
         elif isinstance(obj, (datetime, )):
             return obj.isoformat()
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        elif isinstance(obj, (np.int64, np.int32)):
+            return int(obj)
+        elif isinstance(obj, (np.float64, np.float32)):
+            return float(obj)
         else:
             return obj
     
     @staticmethod
-    def process_ml_recommendations(ml_response, limit=20):
+    def process_advanced_ml_recommendations(ml_response, limit=20):
         try:
             if not ml_response:
                 logger.warning("Empty ML response received")
@@ -141,6 +148,7 @@ class EnhancedMLServiceClient:
             
             recommendations = []
             ml_recs = ml_response['recommendations'][:limit]
+            metadata = ml_response.get('metadata', {})
             
             content_ids = []
             for rec in ml_recs:
@@ -170,13 +178,16 @@ class EnhancedMLServiceClient:
                     content_data = {
                         'content': content,
                         'ml_score': rec.get('score', 0) if isinstance(rec, dict) else 0,
-                        'ml_reason': rec.get('reason', 'ML recommendation') if isinstance(rec, dict) else 'ML recommendation',
-                        'ml_rank': i + 1,
+                        'ml_reason': rec.get('reason', 'AI recommendation') if isinstance(rec, dict) else 'AI recommendation',
+                        'ml_rank': rec.get('rank', i + 1) if isinstance(rec, dict) else i + 1,
                         'confidence': rec.get('confidence', 0.5) if isinstance(rec, dict) else 0.5,
-                        'content_type': rec.get('content_type', content.content_type) if isinstance(rec, dict) else content.content_type
+                        'content_type': rec.get('content_type', content.content_type) if isinstance(rec, dict) else content.content_type,
+                        'personalization_factors': rec.get('personalization_factors', {}) if isinstance(rec, dict) else {},
+                        'metadata': metadata
                     }
                     recommendations.append(content_data)
             
+            logger.info(f"Processed {len(recommendations)} advanced ML recommendations")
             return recommendations
             
         except Exception as e:
@@ -192,7 +203,7 @@ class EnhancedMLServiceClient:
             
             interactions = UserInteraction.query.filter_by(user_id=user_id).order_by(
                 UserInteraction.timestamp.desc()
-            ).all()
+            ).limit(1000).all()
             
             try:
                 preferred_languages = json.loads(user.preferred_languages) if user.preferred_languages else []
@@ -205,6 +216,8 @@ class EnhancedMLServiceClient:
                 preferred_genres = []
             
             interaction_data = []
+            content_types_seen = set()
+            
             for interaction in interactions:
                 interaction_dict = {
                     'content_id': interaction.content_id,
@@ -223,6 +236,11 @@ class EnhancedMLServiceClient:
                     except:
                         pass
                 
+                content = Content.query.get(interaction.content_id)
+                if content:
+                    interaction_dict['content_type'] = content.content_type
+                    content_types_seen.add(content.content_type)
+                
                 interaction_data.append(interaction_dict)
             
             user_data = {
@@ -235,10 +253,11 @@ class EnhancedMLServiceClient:
                 'last_active': user.last_active.isoformat() if user.last_active else None,
                 'interactions': interaction_data,
                 'total_interactions': len(interaction_data),
-                'interaction_summary': EnhancedMLServiceClient._generate_interaction_summary(interaction_data)
+                'content_types_experienced': list(content_types_seen),
+                'interaction_summary': AdvancedMLServiceClient._generate_interaction_summary(interaction_data)
             }
             
-            user_data = EnhancedMLServiceClient._ensure_json_serializable(user_data)
+            user_data = AdvancedMLServiceClient._ensure_json_serializable(user_data)
             
             return user_data
             
@@ -255,25 +274,32 @@ class EnhancedMLServiceClient:
                 'rating_stats': {
                     'count': 0,
                     'average': 0,
-                    'distribution': {}
+                    'distribution': {},
+                    'high_ratings': 0
                 },
                 'recent_activity': 0,
                 'content_types_interacted': [],
-                'top_interaction_types': []
+                'top_interaction_types': [],
+                'engagement_score': 0,
+                'preference_indicators': {}
             }
             
             now = datetime.utcnow()
             ratings = []
             content_types_seen = set()
+            high_engagement_interactions = 0
             
             for interaction in interactions:
                 interaction_type = interaction.get('interaction_type', 'unknown')
                 summary['by_type'][interaction_type] = summary['by_type'].get(interaction_type, 0) + 1
                 
                 if interaction.get('rating'):
-                    ratings.append(interaction['rating'])
-                    rating_key = str(int(interaction['rating']))
+                    rating = interaction['rating']
+                    ratings.append(rating)
+                    rating_key = str(int(rating))
                     summary['rating_stats']['distribution'][rating_key] = summary['rating_stats']['distribution'].get(rating_key, 0) + 1
+                    if rating >= 4:
+                        summary['rating_stats']['high_ratings'] += 1
                 
                 try:
                     interaction_time = datetime.fromisoformat(interaction['timestamp'].replace('Z', '+00:00'))
@@ -284,6 +310,9 @@ class EnhancedMLServiceClient:
                 
                 content_type = interaction.get('content_type', 'unknown')
                 content_types_seen.add(content_type)
+                
+                if interaction_type in ['like', 'favorite', 'watchlist']:
+                    high_engagement_interactions += 1
             
             if ratings:
                 summary['rating_stats']['count'] = len(ratings)
@@ -296,6 +325,7 @@ class EnhancedMLServiceClient:
             )[:5]
             
             summary['content_types_interacted'] = list(content_types_seen)
+            summary['engagement_score'] = high_engagement_interactions / len(interactions) if interactions else 0
             
             return summary
             
@@ -304,16 +334,18 @@ class EnhancedMLServiceClient:
             return {
                 'total_count': 0,
                 'by_type': {},
-                'rating_stats': {'count': 0, 'average': 0, 'distribution': {}},
+                'rating_stats': {'count': 0, 'average': 0, 'distribution': {}, 'high_ratings': 0},
                 'recent_activity': 0,
                 'content_types_interacted': [],
-                'top_interaction_types': []
+                'top_interaction_types': [],
+                'engagement_score': 0,
+                'preference_indicators': {}
             }
     
     @staticmethod
-    def get_personalized_recommendations(user_id, limit=20, content_types=None):
+    def get_advanced_personalized_recommendations(user_id, limit=20, content_types=None):
         try:
-            user_data = EnhancedMLServiceClient.get_comprehensive_user_data(user_id)
+            user_data = AdvancedMLServiceClient.get_comprehensive_user_data(user_id)
             if not user_data:
                 logger.warning(f"No user data found for user {user_id}")
                 return []
@@ -324,34 +356,38 @@ class EnhancedMLServiceClient:
             endpoint = "/api/recommendations"
             params = {'limit': limit}
             
-            ml_response = EnhancedMLServiceClient.call_ml_service_post(
-                endpoint, user_data, timeout=30, use_cache=True
+            ml_response = AdvancedMLServiceClient.call_ml_service_post(
+                endpoint, user_data, timeout=35, use_cache=True
             )
             
             if ml_response and ml_response.get('recommendations'):
-                recommendations = EnhancedMLServiceClient.process_ml_recommendations(ml_response, limit)
+                recommendations = AdvancedMLServiceClient.process_advanced_ml_recommendations(ml_response, limit)
                 
                 if recommendations:
-                    logger.info(f"Successfully got {len(recommendations)} ML recommendations for user {user_id}")
+                    logger.info(f"Successfully got {len(recommendations)} advanced ML recommendations for user {user_id}")
                     return recommendations
                 else:
                     logger.warning(f"ML service returned empty recommendations for user {user_id}")
             else:
                 logger.warning(f"ML service failed to return recommendations for user {user_id}")
             
-            return EnhancedMLServiceClient._get_fallback_recommendations(user_data, limit)
+            return AdvancedMLServiceClient._get_intelligent_fallback_recommendations(user_data, limit)
         
         except Exception as e:
-            logger.error(f"Error getting personalized recommendations for user {user_id}: {e}")
+            logger.error(f"Error getting advanced personalized recommendations for user {user_id}: {e}")
             return []
     
     @staticmethod
-    def _get_fallback_recommendations(user_data, limit=20):
+    def _get_intelligent_fallback_recommendations(user_data, limit=20):
         try:
             preferred_genres = user_data.get('preferred_genres', [])
             preferred_languages = user_data.get('preferred_languages', [])
+            interaction_summary = user_data.get('interaction_summary', {})
+            content_types_experienced = user_data.get('content_types_experienced', [])
             
             query = Content.query
+            
+            filters_applied = []
             
             if preferred_genres:
                 genre_conditions = []
@@ -359,6 +395,7 @@ class EnhancedMLServiceClient:
                     genre_conditions.append(Content.genres.contains(genre))
                 if genre_conditions:
                     query = query.filter(db.or_(*genre_conditions))
+                    filters_applied.append(f"genres: {', '.join(preferred_genres[:3])}")
             
             if preferred_languages:
                 lang_conditions = []
@@ -366,55 +403,92 @@ class EnhancedMLServiceClient:
                     lang_conditions.append(Content.languages.contains(lang))
                 if lang_conditions:
                     query = query.filter(db.or_(*lang_conditions))
+                    filters_applied.append(f"languages: {', '.join(preferred_languages[:2])}")
+            
+            if content_types_experienced:
+                query = query.filter(Content.content_type.in_(content_types_experienced))
+                filters_applied.append(f"content types: {', '.join(content_types_experienced)}")
+            
+            engagement_score = interaction_summary.get('engagement_score', 0)
+            if engagement_score > 0.3:
+                query = query.filter(Content.rating >= 7.0)
+                filters_applied.append("high quality (7.0+ rating)")
+            else:
+                query = query.filter(Content.rating >= 6.0)
+                filters_applied.append("good quality (6.0+ rating)")
             
             fallback_content = query.order_by(
+                Content.popularity.desc(),
                 Content.rating.desc(),
-                Content.popularity.desc()
-            ).limit(limit).all()
+                Content.vote_count.desc()
+            ).limit(limit * 2).all()
+            
+            if not fallback_content:
+                fallback_content = Content.query.filter(
+                    Content.rating >= 6.5
+                ).order_by(
+                    Content.popularity.desc()
+                ).limit(limit).all()
+                filters_applied = ["popular content (fallback)"]
             
             recommendations = []
-            for i, content in enumerate(fallback_content):
+            for i, content in enumerate(fallback_content[:limit]):
                 if not content.slug:
                     try:
                         content.ensure_slug()
                     except:
                         content.slug = f"content-{content.id}"
                 
+                base_score = 0.8 - (i * 0.01)
+                reason_parts = ["Based on your preferences"]
+                if filters_applied:
+                    reason_parts.append(f"({', '.join(filters_applied[:2])})")
+                
                 rec = {
                     'content': content,
-                    'ml_score': 0.7 - (i * 0.01),
-                    'ml_reason': 'Based on your preferences (fallback)',
+                    'ml_score': base_score,
+                    'ml_reason': ' '.join(reason_parts),
                     'ml_rank': i + 1,
-                    'confidence': 0.6,
-                    'content_type': content.content_type
+                    'confidence': 0.7,
+                    'content_type': content.content_type,
+                    'personalization_factors': {
+                        'preference_match': True,
+                        'quality_filter': True,
+                        'popularity_boost': content.popularity > 50,
+                        'fallback_applied': True
+                    },
+                    'metadata': {
+                        'algorithm': 'intelligent_fallback',
+                        'filters_applied': filters_applied
+                    }
                 }
                 recommendations.append(rec)
             
-            logger.info(f"Generated {len(recommendations)} fallback recommendations")
+            logger.info(f"Generated {len(recommendations)} intelligent fallback recommendations")
             return recommendations
             
         except Exception as e:
-            logger.error(f"Error generating fallback recommendations: {e}")
+            logger.error(f"Error generating intelligent fallback recommendations: {e}")
             return []
     
     @staticmethod
-    def get_similar_content(content_id, limit=10):
+    def get_advanced_similar_content(content_id, limit=10):
         try:
             endpoint = f"/api/similar/{content_id}"
             params = {'limit': limit}
-            ml_response = EnhancedMLServiceClient.call_ml_service(endpoint, params, timeout=15)
+            ml_response = AdvancedMLServiceClient.call_ml_service(endpoint, params, timeout=20)
             
             if ml_response and ml_response.get('recommendations'):
-                return EnhancedMLServiceClient.process_ml_recommendations(ml_response, limit)
+                return AdvancedMLServiceClient.process_advanced_ml_recommendations(ml_response, limit)
             else:
-                return EnhancedMLServiceClient._get_fallback_similar_content(content_id, limit)
+                return AdvancedMLServiceClient._get_advanced_fallback_similar_content(content_id, limit)
         
         except Exception as e:
-            logger.error(f"Error getting similar content for {content_id}: {e}")
+            logger.error(f"Error getting advanced similar content for {content_id}: {e}")
             return []
     
     @staticmethod
-    def _get_fallback_similar_content(content_id, limit=10):
+    def _get_advanced_fallback_similar_content(content_id, limit=10):
         try:
             base_content = Content.query.get(content_id)
             if not base_content:
@@ -425,101 +499,157 @@ class EnhancedMLServiceClient:
             except:
                 base_genres = []
             
+            try:
+                base_languages = json.loads(base_content.languages) if base_content.languages else []
+            except:
+                base_languages = []
+            
             similar_content = Content.query.filter(
                 Content.id != content_id,
                 Content.content_type == base_content.content_type
-            ).order_by(Content.rating.desc()).limit(limit * 2).all()
+            ).order_by(Content.rating.desc(), Content.popularity.desc()).limit(limit * 3).all()
             
             recommendations = []
             for content in similar_content:
                 try:
                     content_genres = json.loads(content.genres) if content.genres else []
+                    content_languages = json.loads(content.languages) if content.languages else []
+                    
+                    similarity_score = 0.0
+                    similarity_factors = []
                     
                     if base_genres and content_genres:
                         common_genres = set(base_genres).intersection(set(content_genres))
                         if common_genres:
-                            similarity_score = len(common_genres) / len(set(base_genres).union(set(content_genres)))
-                            
-                            if similarity_score > 0.2:
-                                if not content.slug:
-                                    try:
-                                        content.ensure_slug()
-                                    except:
-                                        content.slug = f"content-{content.id}"
-                                
-                                rec = {
-                                    'content': content,
-                                    'ml_score': similarity_score,
-                                    'ml_reason': f'Similar content (fallback)',
-                                    'ml_rank': len(recommendations) + 1,
-                                    'confidence': 0.6,
-                                    'content_type': content.content_type
-                                }
-                                recommendations.append(rec)
-                                
-                                if len(recommendations) >= limit:
-                                    break
-                except:
+                            genre_similarity = len(common_genres) / len(set(base_genres).union(set(content_genres)))
+                            similarity_score += genre_similarity * 0.5
+                            similarity_factors.append(f"shared genres: {', '.join(list(common_genres)[:2])}")
+                    
+                    if base_languages and content_languages:
+                        common_languages = set(base_languages).intersection(set(content_languages))
+                        if common_languages:
+                            lang_similarity = len(common_languages) / len(set(base_languages).union(set(content_languages)))
+                            similarity_score += lang_similarity * 0.3
+                            similarity_factors.append(f"same language")
+                    
+                    if base_content.rating and content.rating:
+                        rating_similarity = 1.0 - abs(base_content.rating - content.rating) / 10.0
+                        similarity_score += rating_similarity * 0.2
+                        if abs(base_content.rating - content.rating) <= 1.0:
+                            similarity_factors.append("similar quality")
+                    
+                    if similarity_score > 0.3:
+                        if not content.slug:
+                            try:
+                                content.ensure_slug()
+                            except:
+                                content.slug = f"content-{content.id}"
+                        
+                        reason = f"Similar content ({', '.join(similarity_factors[:2])})" if similarity_factors else "Similar content"
+                        
+                        rec = {
+                            'content': content,
+                            'ml_score': similarity_score,
+                            'ml_reason': reason,
+                            'ml_rank': len(recommendations) + 1,
+                            'confidence': 0.7,
+                            'content_type': content.content_type,
+                            'personalization_factors': {
+                                'genre_match': bool(set(base_genres).intersection(set(content_genres)) if base_genres and content_genres else False),
+                                'language_match': bool(set(base_languages).intersection(set(content_languages)) if base_languages and content_languages else False),
+                                'quality_match': abs(base_content.rating - content.rating) <= 1.0 if base_content.rating and content.rating else False
+                            }
+                        }
+                        recommendations.append(rec)
+                        
+                        if len(recommendations) >= limit:
+                            break
+                except Exception as e:
+                    logger.warning(f"Error processing similar content {content.id}: {e}")
                     continue
             
             return recommendations
             
         except Exception as e:
-            logger.error(f"Error generating fallback similar content: {e}")
+            logger.error(f"Error generating advanced fallback similar content: {e}")
             return []
     
     @staticmethod
-    def get_trending_recommendations(limit=20, region='IN'):
+    def get_advanced_trending_recommendations(limit=20, region='IN'):
         try:
             endpoint = "/api/trending"
             params = {'limit': limit, 'region': region}
-            ml_response = EnhancedMLServiceClient.call_ml_service(endpoint, params, timeout=15)
+            ml_response = AdvancedMLServiceClient.call_ml_service(endpoint, params, timeout=20)
             
             if ml_response and ml_response.get('recommendations'):
-                return EnhancedMLServiceClient.process_ml_recommendations(ml_response, limit)
+                return AdvancedMLServiceClient.process_advanced_ml_recommendations(ml_response, limit)
             else:
-                return EnhancedMLServiceClient._get_fallback_trending(limit)
+                return AdvancedMLServiceClient._get_advanced_fallback_trending(limit, region)
         
         except Exception as e:
-            logger.error(f"Error getting trending recommendations: {e}")
+            logger.error(f"Error getting advanced trending recommendations: {e}")
             return []
     
     @staticmethod
-    def _get_fallback_trending(limit=20):
+    def _get_advanced_fallback_trending(limit=20, region='IN'):
         try:
             trending_content = Content.query.filter(
                 db.or_(
                     Content.is_trending == True,
                     Content.is_new_release == True,
-                    Content.popularity > 50.0
+                    Content.popularity > 70.0,
+                    db.and_(Content.rating > 7.5, Content.vote_count > 500)
                 )
             ).order_by(
                 Content.popularity.desc(),
-                Content.rating.desc()
-            ).limit(limit).all()
+                Content.rating.desc(),
+                Content.vote_count.desc()
+            ).limit(limit * 2).all()
             
             recommendations = []
-            for i, content in enumerate(trending_content):
+            for i, content in enumerate(trending_content[:limit]):
                 if not content.slug:
                     try:
                         content.ensure_slug()
                     except:
                         content.slug = f"content-{content.id}"
                 
+                score = 0.8 - (i * 0.01)
+                
+                trending_factors = []
+                if content.is_trending:
+                    trending_factors.append("trending")
+                    score += 0.1
+                if content.is_new_release:
+                    trending_factors.append("new release")
+                    score += 0.05
+                if content.popularity > 70:
+                    trending_factors.append("popular")
+                if content.rating > 7.5:
+                    trending_factors.append("highly rated")
+                
+                reason = f"Trending content ({', '.join(trending_factors[:2])})" if trending_factors else "Trending content"
+                
                 rec = {
                     'content': content,
-                    'ml_score': 0.8 - (i * 0.01),
-                    'ml_reason': 'Trending content (fallback)',
+                    'ml_score': score,
+                    'ml_reason': reason,
                     'ml_rank': i + 1,
-                    'confidence': 0.7,
-                    'content_type': content.content_type
+                    'confidence': 0.8,
+                    'content_type': content.content_type,
+                    'personalization_factors': {
+                        'trending': content.is_trending,
+                        'new_release': content.is_new_release,
+                        'popular': content.popularity > 70,
+                        'high_quality': content.rating > 7.5
+                    }
                 }
                 recommendations.append(rec)
             
             return recommendations
             
         except Exception as e:
-            logger.error(f"Error generating fallback trending: {e}")
+            logger.error(f"Error generating advanced fallback trending: {e}")
             return []
 
 def require_auth(f):
@@ -560,8 +690,8 @@ def register():
             username=data['username'],
             email=data['email'],
             password_hash=generate_password_hash(data['password']),
-            preferred_languages=json.dumps(data.get('preferred_languages', [])),
-            preferred_genres=json.dumps(data.get('preferred_genres', [])),
+            preferred_languages=json.dumps(data.get('preferred_languages', ['english', 'telugu'])),
+            preferred_genres=json.dumps(data.get('preferred_genres', ['Action', 'Drama', 'Comedy'])),
             location=data.get('location', '')
         )
         
@@ -654,9 +784,15 @@ def record_interaction(current_user):
                 db.session.delete(interaction)
                 db.session.commit()
                 
-                cache_key = f"personalized_v2:{current_user.id}:20"
+                cache_keys_to_invalidate = [
+                    f"ml_advanced_post:/api/recommendations:{current_user.id}",
+                    f"advanced_personalized:{current_user.id}:20",
+                    f"advanced_personalized:{current_user.id}:10"
+                ]
+                
                 if cache:
-                    cache.delete(cache_key)
+                    for key_pattern in cache_keys_to_invalidate:
+                        cache.delete(key_pattern)
                 
                 return jsonify({'message': 'Removed from watchlist'}), 200
             else:
@@ -675,7 +811,8 @@ def record_interaction(current_user):
         metadata = {
             'timestamp': datetime.utcnow().isoformat(),
             'user_agent': request.headers.get('User-Agent', ''),
-            'ip_address': request.remote_addr
+            'ip_address': request.remote_addr,
+            'interaction_context': 'web_interface'
         }
         
         if 'search_query' in data:
@@ -683,6 +820,9 @@ def record_interaction(current_user):
         
         if 'recommendation_source' in data:
             metadata['recommendation_source'] = data['recommendation_source']
+        
+        if 'content_context' in data:
+            metadata['content_context'] = data['content_context']
         
         interaction = UserInteraction(
             user_id=current_user.id,
@@ -696,21 +836,23 @@ def record_interaction(current_user):
         db.session.commit()
         
         cache_keys_to_invalidate = [
-            f"personalized_v2:{current_user.id}:20",
-            f"personalized_v2:{current_user.id}:10",
-            f"similar_v2:{content_id}:10"
+            f"ml_advanced_post:/api/recommendations:{current_user.id}",
+            f"advanced_personalized:{current_user.id}:20",
+            f"advanced_personalized:{current_user.id}:10",
+            f"advanced_similar:{content_id}:10"
         ]
         
         if cache:
-            for key in cache_keys_to_invalidate:
-                cache.delete(key)
+            for key_pattern in cache_keys_to_invalidate:
+                cache.delete(key_pattern)
         
         current_user.last_active = datetime.utcnow()
         db.session.commit()
         
         return jsonify({
             'message': 'Interaction recorded successfully',
-            'interaction_id': interaction.id
+            'interaction_id': interaction.id,
+            'cache_invalidated': True
         }), 201
         
     except Exception as e:
@@ -786,8 +928,12 @@ def remove_from_watchlist(current_user, content_id):
             db.session.commit()
             
             if cache:
-                cache_key = f"personalized_v2:{current_user.id}:20"
-                cache.delete(cache_key)
+                cache_keys = [
+                    f"ml_advanced_post:/api/recommendations:{current_user.id}",
+                    f"advanced_personalized:{current_user.id}:20"
+                ]
+                for key in cache_keys:
+                    cache.delete(key)
             
             return jsonify({'message': 'Removed from watchlist'}), 200
         else:
@@ -877,7 +1023,7 @@ def get_personalized_recommendations(current_user):
         limit = min(int(request.args.get('limit', 20)), 50)
         content_types = request.args.getlist('content_type')
         
-        ml_recommendations = EnhancedMLServiceClient.get_personalized_recommendations(
+        ml_recommendations = AdvancedMLServiceClient.get_advanced_personalized_recommendations(
             current_user.id, limit, content_types if content_types else None
         )
         
@@ -909,11 +1055,14 @@ def get_personalized_recommendations(current_user):
                     'ml_reason': rec['ml_reason'],
                     'ml_rank': rec['ml_rank'],
                     'confidence': rec['confidence'],
-                    'recommendation_source': 'ml_personalized'
+                    'personalization_factors': rec['personalization_factors'],
+                    'recommendation_source': 'advanced_ml_personalized'
                 })
             
-            user_data = EnhancedMLServiceClient.get_comprehensive_user_data(current_user.id)
+            user_data = AdvancedMLServiceClient.get_comprehensive_user_data(current_user.id)
             interaction_summary = user_data.get('interaction_summary', {}) if user_data else {}
+            
+            metadata = ml_recommendations[0].get('metadata', {}) if ml_recommendations else {}
             
             return jsonify({
                 'recommendations': result,
@@ -922,16 +1071,24 @@ def get_personalized_recommendations(current_user):
                     'total_interactions': interaction_summary.get('total_count', 0),
                     'recent_activity': interaction_summary.get('recent_activity', 0),
                     'rating_average': round(interaction_summary.get('rating_stats', {}).get('average', 0), 1),
+                    'engagement_score': round(interaction_summary.get('engagement_score', 0), 2),
                     'top_interaction_types': interaction_summary.get('top_interaction_types', [])[:3]
                 },
-                'source': 'ml_service_enhanced',
-                'algorithm': 'advanced_hybrid_personalized'
+                'source': 'advanced_ml_service',
+                'algorithm': metadata.get('algorithm', 'advanced_hybrid_neural_personalized'),
+                'personalization_score': metadata.get('personalization_score', 0),
+                'advanced_features': {
+                    'neural_enhancement': metadata.get('neural_enhancement', False),
+                    'content_breadth': metadata.get('content_breadth', 0),
+                    'preference_strength': metadata.get('preference_strength', 0),
+                    'discovery_efficiency': metadata.get('discovery_efficiency', 0)
+                }
             }), 200
         
         return jsonify({
             'recommendations': [], 
             'source': 'ml_service_unavailable',
-            'message': 'ML service temporarily unavailable'
+            'message': 'Advanced ML service temporarily unavailable'
         }), 200
         
     except Exception as e:
@@ -947,7 +1104,7 @@ def get_ml_similar_recommendations(content_id):
     try:
         limit = min(int(request.args.get('limit', 10)), 20)
         
-        ml_recommendations = EnhancedMLServiceClient.get_similar_content(content_id, limit)
+        ml_recommendations = AdvancedMLServiceClient.get_advanced_similar_content(content_id, limit)
         
         if ml_recommendations:
             result = []
@@ -976,20 +1133,21 @@ def get_ml_similar_recommendations(content_id):
                     'ml_score': rec['ml_score'],
                     'ml_reason': rec['ml_reason'],
                     'similarity_score': rec['ml_score'],
-                    'match_type': 'ml_content_similarity'
+                    'match_type': 'advanced_ml_similarity',
+                    'personalization_factors': rec['personalization_factors']
                 })
             
             return jsonify({
                 'similar_content': result,
-                'source': 'ml_service_enhanced',
-                'algorithm': 'advanced_content_similarity',
+                'source': 'advanced_ml_service',
+                'algorithm': 'advanced_multi_factor_similarity',
                 'base_content_id': content_id
             }), 200
         
         return jsonify({
             'similar_content': [],
             'source': 'ml_service_unavailable',
-            'message': 'ML service temporarily unavailable'
+            'message': 'Advanced ML service temporarily unavailable'
         }), 200
         
     except Exception as e:
@@ -1005,7 +1163,7 @@ def get_ml_trending_recommendations():
         limit = min(int(request.args.get('limit', 20)), 50)
         region = request.args.get('region', 'IN')
         
-        ml_recommendations = EnhancedMLServiceClient.get_trending_recommendations(limit, region)
+        ml_recommendations = AdvancedMLServiceClient.get_advanced_trending_recommendations(limit, region)
         
         if ml_recommendations:
             result = []
@@ -1034,20 +1192,21 @@ def get_ml_trending_recommendations():
                     'ml_score': rec['ml_score'],
                     'ml_reason': rec['ml_reason'],
                     'trending_score': rec['ml_score'],
-                    'confidence': rec['confidence']
+                    'confidence': rec['confidence'],
+                    'personalization_factors': rec['personalization_factors']
                 })
             
             return jsonify({
                 'recommendations': result,
-                'source': 'ml_service_enhanced',
+                'source': 'advanced_ml_service',
                 'region': region,
-                'algorithm': 'advanced_trending_analysis'
+                'algorithm': 'advanced_multi_factor_trending'
             }), 200
         
         return jsonify({
             'recommendations': [],
             'source': 'ml_service_unavailable',
-            'message': 'ML service temporarily unavailable'
+            'message': 'Advanced ML service temporarily unavailable'
         }), 200
         
     except Exception as e:
@@ -1061,7 +1220,7 @@ def get_ml_trending_recommendations():
 @require_auth
 def get_user_profile_analysis(current_user):
     try:
-        user_data = EnhancedMLServiceClient.get_comprehensive_user_data(current_user.id)
+        user_data = AdvancedMLServiceClient.get_comprehensive_user_data(current_user.id)
         if not user_data:
             return jsonify({'error': 'User data not found'}), 404
         
@@ -1075,15 +1234,17 @@ def get_user_profile_analysis(current_user):
             'recent_activity_week': interaction_summary.get('recent_activity', 0),
             'interaction_breakdown': interaction_summary.get('by_type', {}),
             'rating_behavior': interaction_summary.get('rating_stats', {}),
+            'engagement_score': interaction_summary.get('engagement_score', 0),
             'preferred_languages': json.loads(current_user.preferred_languages or '[]'),
             'preferred_genres': json.loads(current_user.preferred_genres or '[]'),
-            'engagement_level': 'high' if interaction_summary.get('total_count', 0) > 20 else 'medium' if interaction_summary.get('total_count', 0) > 5 else 'low',
-            'recommendation_readiness': 'ready' if interaction_summary.get('total_count', 0) >= 3 else 'building_profile'
+            'content_types_experienced': user_data.get('content_types_experienced', []),
+            'engagement_level': 'high' if interaction_summary.get('engagement_score', 0) > 0.4 else 'medium' if interaction_summary.get('engagement_score', 0) > 0.2 else 'low',
+            'recommendation_readiness': 'advanced' if interaction_summary.get('total_count', 0) >= 10 else 'ready' if interaction_summary.get('total_count', 0) >= 3 else 'building_profile'
         }
         
         endpoint = "/api/analytics/user-profile"
-        ml_analysis = EnhancedMLServiceClient.call_ml_service_post(
-            endpoint, user_data, timeout=20, use_cache=True
+        ml_analysis = AdvancedMLServiceClient.call_ml_service_post(
+            endpoint, user_data, timeout=25, use_cache=True
         )
         
         if ml_analysis and 'insights' in ml_analysis:
@@ -1092,7 +1253,12 @@ def get_user_profile_analysis(current_user):
         
         return jsonify({
             'profile_analysis': analysis,
-            'data_source': 'enhanced_with_ml' if ml_analysis else 'basic_analysis'
+            'data_source': 'advanced_with_ml' if ml_analysis else 'basic_analysis',
+            'advanced_features': {
+                'neural_profiling': bool(ml_analysis),
+                'behavioral_analysis': True,
+                'personalization_ready': analysis['recommendation_readiness'] in ['ready', 'advanced']
+            }
         }), 200
         
     except Exception as e:
@@ -1102,7 +1268,7 @@ def get_user_profile_analysis(current_user):
 @users_bp.route('/api/ml/health', methods=['GET'])
 def check_ml_service_health():
     try:
-        health_response = EnhancedMLServiceClient.call_ml_service('/health', use_cache=False, timeout=10)
+        health_response = AdvancedMLServiceClient.call_ml_service('/health', use_cache=False, timeout=15)
         
         if health_response:
             return jsonify({
@@ -1110,14 +1276,21 @@ def check_ml_service_health():
                 'ml_service_url': ML_SERVICE_URL,
                 'response': health_response,
                 'features_available': health_response.get('features', {}),
+                'algorithms': health_response.get('algorithms', {}),
                 'libraries': health_response.get('libraries', {}),
+                'advanced_capabilities': {
+                    'neural_collaborative_filtering': health_response.get('features', {}).get('neural_collaborative_filtering', False),
+                    'matrix_factorization': health_response.get('features', {}).get('matrix_factorization', False),
+                    'advanced_personalization': health_response.get('features', {}).get('advanced_personalization', False),
+                    'contextual_recommendations': health_response.get('features', {}).get('contextual_popularity_scoring', False)
+                },
                 'last_checked': datetime.utcnow().isoformat()
             }), 200
         else:
             return jsonify({
                 'ml_service_status': 'unhealthy',
                 'ml_service_url': ML_SERVICE_URL,
-                'error': 'No response from ML service',
+                'error': 'No response from advanced ML service',
                 'fallback_available': True,
                 'last_checked': datetime.utcnow().isoformat()
             }), 503
