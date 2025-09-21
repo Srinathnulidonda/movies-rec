@@ -1,3 +1,4 @@
+#backend/services/users.py
 from flask import Blueprint, request, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta
@@ -19,7 +20,7 @@ http_session = None
 app = None
 cache = None
 
-ML_SERVICE_URL = os.environ.get('ML_SERVICE_URL', 'https://movies-rec-xmf5.onrender.com')
+ML_SERVICE_URL = os.environ.get('ML_SERVICE_URL', 'https://movies-rec-aksq.onrender.com')
 
 def init_users(flask_app, database, models, services):
     global db, User, Content, UserInteraction
