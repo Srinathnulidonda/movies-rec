@@ -98,7 +98,6 @@ def create_http_session():
     return session
 
 http_session = create_http_session()
-
 executor = ThreadPoolExecutor(max_workers=3)
 
 REGIONAL_LANGUAGES = {
@@ -625,7 +624,6 @@ class AnonymousRecommendationEngine:
     def get_recommendations_for_anonymous(session_id, ip_address, limit=20):
         try:
             location = get_user_location(ip_address)
-            
             interactions = AnonymousInteraction.query.filter_by(session_id=session_id).all()
             
             recommendations = []
@@ -713,8 +711,7 @@ app.register_blueprint(users_bp)
 init_auth(app, db, User)
 
 init_admin(app, db, models, services)
-services_for_users = {k: v for k, v in services.items() if k not in ['MLServiceClient', 'ML_SERVICE_URL']}
-init_users(app, db, models, services_for_users)
+init_users(app, db, models, services)
 
 @app.route('/api/details/<slug>', methods=['GET'])
 def get_content_details_by_slug(slug):
@@ -1129,7 +1126,6 @@ def get_new_releases():
         limit = int(request.args.get('limit', 20))
         
         all_new_releases = []
-        
         priority_languages = ['telugu', 'english', 'hindi', 'malayalam', 'kannada', 'tamil']
         
         for language in priority_languages:
@@ -1831,7 +1827,6 @@ def add_review(slug):
             return jsonify({'error': 'Content not found'}), 404
         
         user_id = request.user_id
-        
         review_data = request.json
         
         if details_service:
@@ -2027,7 +2022,7 @@ def health_check():
         health_info = {
             'status': 'healthy',
             'timestamp': datetime.utcnow().isoformat(),
-            'version': '6.0.0',
+            'version': '5.2.0',
             'python_version': '3.13.4'
         }
         
@@ -2057,8 +2052,7 @@ def health_check():
             'slug_support': 'comprehensive_enabled',
             'details_service': 'enabled' if details_service else 'disabled',
             'content_service': 'enabled' if content_service else 'disabled',
-            'cast_crew': 'fully_enabled',
-            'ml_services': 'local_advanced_enabled'
+            'cast_crew': 'fully_enabled'
         }
         
         try:
@@ -2091,13 +2085,14 @@ def health_check():
         health_info['performance'] = {
             'optimizations_applied': [
                 'python_3.13_compatibility',
-                'local_ml_services',
-                'advanced_personalization',
+                'reduced_api_timeouts', 
+                'optimized_thread_pools',
                 'enhanced_caching',
+                'error_handling_improvements',
                 'cast_crew_optimization'
             ],
-            'ml_services': 'local_advanced',
-            'recommendation_accuracy': '100%_targeted'
+            'memory_optimizations': 'enabled',
+            'unicode_fixes': 'applied'
         }
         
         return jsonify(health_info), 200
@@ -2214,15 +2209,16 @@ if __name__ == '__main__':
     debug = os.environ.get('FLASK_ENV') == 'development'
     app.run(host='0.0.0.0', port=port, debug=debug)
 else:
-    print("=== Flask app imported by Gunicorn - LOCAL ML SERVICES VERSION ===")
+    print("=== Flask app imported by Gunicorn - OPTIMIZED VERSION WITH CAST/CREW ===")
     print(f"App name: {app.name}")
     print(f"Python version: 3.13.4")
     print(f"Database URI configured: {'Yes' if app.config.get('SQLALCHEMY_DATABASE_URI') else 'No'}")
     print(f"Cache type: {app.config.get('CACHE_TYPE', 'Not configured')}")
     print(f"Details service status: {'Initialized' if details_service else 'Failed to initialize'}")
     print(f"Content service status: {'Initialized' if content_service else 'Failed to initialize'}")
-    print(f"ML Services: Local Advanced Personalization Engine")
-    print(f"Recommendation Accuracy: 100% User-Targeted")
+    print(f"Performance optimizations: Applied")
+    print(f"Unicode fixes: Applied")
+    print(f"Cast/Crew support: Fully enabled")
     
     print("\n=== Registered Routes ===")
     for rule in app.url_map.iter_rules():

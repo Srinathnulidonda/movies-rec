@@ -1,34 +1,29 @@
-#backend/services/users.py
 from flask import Blueprint, request, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta
 import json
 import logging
 import jwt
-import sys
-import os
 from functools import wraps
-
-sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
-
-try:
-    from ml_services.recommendation import RecommendationEngine
-except ImportError:
-    RecommendationEngine = None
-    print("Warning: ML Services not available. Recommendation features will be limited.")
+import os
 
 users_bp = Blueprint('users', __name__)
+
 logger = logging.getLogger(__name__)
 
 db = None
 User = None
 Content = None
 UserInteraction = None
+http_session = None
 app = None
-recommendation_engine = None
+cache = None
+
+ML_SERVICE_URL = os.environ.get('ML_SERVICE_URL', 'https://movies-rec-xmf5.onrender.com')
 
 def init_users(flask_app, database, models, services):
-    global db, User, Content, UserInteraction, app, recommendation_engine
+    global db, User, Content, UserInteraction
+    global http_session, app, cache
     
     app = flask_app
     db = database
@@ -36,16 +31,158 @@ def init_users(flask_app, database, models, services):
     Content = models['Content']
     UserInteraction = models['UserInteraction']
     
-    if RecommendationEngine:
+    http_session = services['http_session']
+    cache = services['cache']
+
+class MLServiceClient:
+    
+    @staticmethod
+    def call_ml_service(endpoint, params=None, timeout=10, use_cache=True):
         try:
-            recommendation_engine = RecommendationEngine(db, models)
-            print("ML Recommendation Engine initialized successfully")
+            if not ML_SERVICE_URL:
+                return None
+            
+            cache_key = f"ml:{endpoint}:{json.dumps(params, sort_keys=True)}"
+            
+            if use_cache and cache:
+                cached_result = cache.get(cache_key)
+                if cached_result:
+                    logger.info(f"ML service cache hit for {endpoint}")
+                    return cached_result
+            
+            url = f"{ML_SERVICE_URL}{endpoint}"
+            response = http_session.get(url, params=params, timeout=timeout)
+            
+            if response.status_code == 200:
+                result = response.json()
+                if use_cache and cache:
+                    cache.set(cache_key, result, timeout=1800)
+                return result
+            else:
+                logger.warning(f"ML service returned {response.status_code} for {endpoint}")
+                return None
+                
         except Exception as e:
-            print(f"Warning: Failed to initialize ML Recommendation Engine: {e}")
-            recommendation_engine = None
-    else:
-        print("Warning: RecommendationEngine not available")
-        recommendation_engine = None
+            logger.warning(f"ML service call failed for {endpoint}: {e}")
+            return None
+    
+    @staticmethod
+    def call_ml_service_post(endpoint, data=None, timeout=30, use_cache=True):
+        try:
+            if not ML_SERVICE_URL:
+                return None
+            
+            cache_key = f"ml_post:{endpoint}:{json.dumps(data, sort_keys=True)}"
+            
+            if use_cache and cache:
+                cached_result = cache.get(cache_key)
+                if cached_result:
+                    logger.info(f"ML service POST cache hit for {endpoint}")
+                    return cached_result
+            
+            url = f"{ML_SERVICE_URL}{endpoint}"
+            response = http_session.post(url, json=data, timeout=timeout)
+            
+            if response.status_code == 200:
+                result = response.json()
+                if use_cache and cache:
+                    cache.set(cache_key, result, timeout=1800)
+                return result
+            else:
+                logger.warning(f"ML service POST returned {response.status_code} for {endpoint}")
+                return None
+                
+        except Exception as e:
+            logger.warning(f"ML service POST call failed for {endpoint}: {e}")
+            return None
+    
+    @staticmethod
+    def process_ml_recommendations(ml_response, limit=20):
+        try:
+            if not ml_response or 'recommendations' not in ml_response:
+                return []
+            
+            recommendations = []
+            ml_recs = ml_response['recommendations'][:limit]
+            
+            content_ids = []
+            for rec in ml_recs:
+                if isinstance(rec, dict) and 'content_id' in rec:
+                    content_ids.append(rec['content_id'])
+                elif isinstance(rec, int):
+                    content_ids.append(rec)
+            
+            if not content_ids:
+                return []
+            
+            contents = Content.query.filter(Content.id.in_(content_ids)).all()
+            content_dict = {content.id: content for content in contents}
+            
+            for i, rec in enumerate(ml_recs):
+                content_id = rec['content_id'] if isinstance(rec, dict) else rec
+                content = content_dict.get(content_id)
+                
+                if content:
+                    if not content.slug:
+                        content.ensure_slug()
+                    
+                    content_data = {
+                        'content': content,
+                        'ml_score': rec.get('score', 0) if isinstance(rec, dict) else 0,
+                        'ml_reason': rec.get('reason', '') if isinstance(rec, dict) else '',
+                        'ml_rank': i + 1
+                    }
+                    recommendations.append(content_data)
+            
+            return recommendations
+            
+        except Exception as e:
+            logger.error(f"Error processing ML recommendations: {e}")
+            return []
+    
+    @staticmethod
+    def get_personalized_recommendations(user_id, user_data, limit=20):
+        try:
+            endpoint = "/api/recommendations"
+            ml_response = MLServiceClient.call_ml_service_post(endpoint, user_data, timeout=30)
+            
+            if ml_response:
+                return MLServiceClient.process_ml_recommendations(ml_response, limit)
+            else:
+                return []
+        except Exception as e:
+            logger.error(f"Error getting personalized recommendations: {e}")
+            return []
+    
+    @staticmethod
+    def get_similar_content(content_id, limit=10):
+        try:
+            endpoint = f"/api/similar/{content_id}"
+            params = {'limit': limit}
+            ml_response = MLServiceClient.call_ml_service(endpoint, params)
+            
+            if ml_response:
+                return MLServiceClient.process_ml_recommendations(ml_response, limit)
+            else:
+                return []
+        except Exception as e:
+            logger.error(f"Error getting similar content: {e}")
+            return []
+    
+    @staticmethod
+    def get_trending_recommendations(limit=20, region='US'):
+        try:
+            endpoint = "/api/trending"
+            params = {'limit': limit, 'region': region}
+            ml_response = MLServiceClient.call_ml_service(endpoint, params)
+            
+            if ml_response:
+                return MLServiceClient.process_ml_recommendations(ml_response, limit)
+            else:
+                return []
+        except Exception as e:
+            logger.error(f"Error getting trending recommendations: {e}")
+            return []
 
 def require_auth(f):
     @wraps(f)
@@ -170,11 +307,6 @@ def record_interaction(current_user):
             if interaction:
                 db.session.delete(interaction)
                 db.session.commit()
-                if recommendation_engine:
-                    try:
-                        recommendation_engine.update_user_profile(current_user.id)
-                    except Exception as e:
-                        logger.warning(f"Failed to update user profile: {e}")
                 return jsonify({'message': 'Removed from watchlist'}), 200
             else:
                 return jsonify({'message': 'Content not in watchlist'}), 404
@@ -193,18 +325,11 @@ def record_interaction(current_user):
             user_id=current_user.id,
             content_id=data['content_id'],
             interaction_type=data['interaction_type'],
-            rating=data.get('rating'),
-            interaction_metadata=data.get('metadata', {})
+            rating=data.get('rating')
         )
         
         db.session.add(interaction)
         db.session.commit()
-        
-        if recommendation_engine:
-            try:
-                recommendation_engine.update_user_profile(current_user.id)
-            except Exception as e:
-                logger.warning(f"Failed to update user profile: {e}")
         
         return jsonify({'message': 'Interaction recorded successfully'}), 201
         
@@ -233,7 +358,7 @@ def get_watchlist(current_user):
             
             result.append({
                 'id': content.id,
-                'slug': getattr(content, 'slug', None),
+                'slug': content.slug,
                 'title': content.title,
                 'content_type': content.content_type,
                 'genres': json.loads(content.genres or '[]'),
@@ -261,11 +386,6 @@ def remove_from_watchlist(current_user, content_id):
         if interaction:
             db.session.delete(interaction)
             db.session.commit()
-            if recommendation_engine:
-                try:
-                    recommendation_engine.update_user_profile(current_user.id)
-                except Exception as e:
-                    logger.warning(f"Failed to update user profile: {e}")
             return jsonify({'message': 'Removed from watchlist'}), 200
         else:
             return jsonify({'message': 'Content not in watchlist'}), 404
@@ -311,7 +431,7 @@ def get_favorites(current_user):
             
             result.append({
                 'id': content.id,
-                'slug': getattr(content, 'slug', None),
+                'slug': content.slug,
                 'title': content.title,
                 'content_type': content.content_type,
                 'genres': json.loads(content.genres or '[]'),
@@ -330,191 +450,195 @@ def get_favorites(current_user):
 @require_auth
 def get_personalized_recommendations(current_user):
     try:
-        if not recommendation_engine:
-            return jsonify({
-                'recommendations': [],
-                'error': 'ML recommendation engine not available',
-                'fallback': True
-            }), 200
-        
         limit = int(request.args.get('limit', 20))
-        content_type = request.args.get('content_type', 'all')
-        strategy = request.args.get('strategy', 'hybrid')
         
-        recommendations = recommendation_engine.get_personalized_recommendations(
-            user_id=current_user.id,
-            limit=limit,
-            content_type=content_type,
-            strategy=strategy
+        interactions = UserInteraction.query.filter_by(user_id=current_user.id).all()
+        
+        user_data = {
+            'user_id': current_user.id,
+            'preferred_languages': json.loads(current_user.preferred_languages or '[]'),
+            'preferred_genres': json.loads(current_user.preferred_genres or '[]'),
+            'interactions': [
+                {
+                    'content_id': interaction.content_id,
+                    'interaction_type': interaction.interaction_type,
+                    'rating': interaction.rating,
+                    'timestamp': interaction.timestamp.isoformat()
+                }
+                for interaction in interactions
+            ]
+        }
+        
+        ml_recommendations = MLServiceClient.get_personalized_recommendations(
+            current_user.id, user_data, limit
         )
         
-        result = []
-        for rec in recommendations:
-            content = rec['content']
-            youtube_url = None
-            if content.youtube_trailer_id:
-                youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
+        if ml_recommendations:
+            result = []
+            for rec in ml_recommendations:
+                content = rec['content']
+                youtube_url = None
+                if content.youtube_trailer_id:
+                    youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
+                
+                result.append({
+                    'id': content.id,
+                    'slug': content.slug,
+                    'title': content.title,
+                    'content_type': content.content_type,
+                    'genres': json.loads(content.genres or '[]'),
+                    'rating': content.rating,
+                    'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
+                    'overview': content.overview[:150] + '...' if content.overview else '',
+                    'youtube_trailer': youtube_url,
+                    'ml_score': rec['ml_score'],
+                    'ml_reason': rec['ml_reason'],
+                    'ml_rank': rec['ml_rank'],
+                    'recommendation_source': 'ml_service'
+                })
             
-            result.append({
-                'id': content.id,
-                'slug': getattr(content, 'slug', None),
-                'title': content.title,
-                'content_type': content.content_type,
-                'genres': json.loads(content.genres or '[]'),
-                'rating': content.rating,
-                'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
-                'overview': content.overview[:150] + '...' if content.overview else '',
-                'youtube_trailer': youtube_url,
-                'recommendation_score': rec['score'],
-                'recommendation_reason': rec['reason'],
-                'algorithm_used': rec['algorithm'],
-                'confidence': rec['confidence']
-            })
+            return jsonify({
+                'recommendations': result,
+                'total_interactions': len(interactions),
+                'source': 'ml_service'
+            }), 200
         
         return jsonify({
-            'recommendations': result,
-            'strategy': strategy,
-            'total_interactions': recommendation_engine.get_user_interaction_count(current_user.id) if recommendation_engine else 0,
-            'user_profile_strength': recommendation_engine.get_user_profile_strength(current_user.id) if recommendation_engine else 'unknown'
+            'recommendations': [], 
+            'source': 'fallback',
+            'message': 'ML service unavailable'
         }), 200
         
     except Exception as e:
         logger.error(f"Personalized recommendations error: {e}")
-        return jsonify({'recommendations': [], 'error': 'Failed to get recommendations'}), 200
+        return jsonify({
+            'recommendations': [], 
+            'error': 'Failed to get recommendations'
+        }), 200
 
-@users_bp.route('/api/recommendations/ml-personalized', methods=['GET'])
-@require_auth
-def get_ml_personalized_recommendations(current_user):
+@users_bp.route('/api/recommendations/ml-similar/<int:content_id>', methods=['GET'])
+def get_ml_similar_recommendations(content_id):
     try:
-        if not recommendation_engine:
+        limit = int(request.args.get('limit', 10))
+        
+        ml_recommendations = MLServiceClient.get_similar_content(content_id, limit)
+        
+        if ml_recommendations:
+            result = []
+            for rec in ml_recommendations:
+                content = rec['content']
+                youtube_url = None
+                if content.youtube_trailer_id:
+                    youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
+                
+                result.append({
+                    'id': content.id,
+                    'slug': content.slug,
+                    'title': content.title,
+                    'content_type': content.content_type,
+                    'genres': json.loads(content.genres or '[]'),
+                    'rating': content.rating,
+                    'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
+                    'overview': content.overview[:150] + '...' if content.overview else '',
+                    'youtube_trailer': youtube_url,
+                    'ml_score': rec['ml_score'],
+                    'ml_reason': rec['ml_reason'],
+                    'similarity_score': rec['ml_score'],
+                    'match_type': 'ml_enhanced'
+                })
+            
             return jsonify({
-                'recommendations': [],
-                'error': 'ML recommendation engine not available',
-                'fallback': True
+                'similar_content': result,
+                'source': 'ml_service',
+                'algorithm': 'ml_enhanced_similarity'
             }), 200
         
+        return jsonify({
+            'similar_content': [],
+            'source': 'fallback',
+            'message': 'ML service unavailable'
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"ML similar recommendations error: {e}")
+        return jsonify({
+            'similar_content': [],
+            'error': 'Failed to get similar recommendations'
+        }), 500
+
+@users_bp.route('/api/recommendations/ml-trending', methods=['GET'])
+def get_ml_trending_recommendations():
+    try:
         limit = int(request.args.get('limit', 20))
-        include_explanations = request.args.get('include_explanations', 'true').lower() == 'true'
-        diversity_factor = float(request.args.get('diversity_factor', 0.3))
+        region = request.args.get('region', 'IN')
         
-        recommendations = recommendation_engine.get_advanced_recommendations(
-            user_id=current_user.id,
-            limit=limit,
-            include_explanations=include_explanations,
-            diversity_factor=diversity_factor
-        )
+        ml_recommendations = MLServiceClient.get_trending_recommendations(limit, region)
         
-        result = []
-        for rec in recommendations:
-            content = rec['content']
-            youtube_url = None
-            if content.youtube_trailer_id:
-                youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
-            
-            result.append({
-                'id': content.id,
-                'slug': getattr(content, 'slug', None),
-                'title': content.title,
-                'content_type': content.content_type,
-                'genres': json.loads(content.genres or '[]'),
-                'rating': content.rating,
-                'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
-                'overview': content.overview[:150] + '...' if content.overview else '',
-                'youtube_trailer': youtube_url,
-                'ml_score': rec['ml_score'],
-                'ml_reason': rec['explanation'],
-                'algorithm_mix': rec['algorithm_mix'],
-                'confidence': rec['confidence'],
-                'novelty_score': rec['novelty_score'],
-                'diversity_contribution': rec['diversity_contribution']
-            })
-        
-        metrics = recommendation_engine.get_recommendation_metrics(current_user.id) if recommendation_engine else {}
-        
-        return jsonify({
-            'recommendations': result,
-            'ml_strategy': 'advanced_hybrid',
-            'user_metrics': metrics,
-            'diversity_applied': diversity_factor,
-            'recommendation_quality': 'high_precision'
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"ML personalized recommendations error: {e}")
-        return jsonify({'recommendations': [], 'error': 'Failed to get recommendations'}), 200
-
-@users_bp.route('/api/user/interaction-history', methods=['GET'])
-@require_auth
-def get_interaction_history(current_user):
-    try:
-        page = int(request.args.get('page', 1))
-        per_page = int(request.args.get('per_page', 50))
-        interaction_type = request.args.get('type', 'all')
-        
-        query = UserInteraction.query.filter_by(user_id=current_user.id)
-        
-        if interaction_type != 'all':
-            query = query.filter_by(interaction_type=interaction_type)
-        
-        interactions = query.order_by(UserInteraction.timestamp.desc()).paginate(
-            page=page, per_page=per_page, error_out=False
-        )
-        
-        result = []
-        for interaction in interactions.items:
-            content = Content.query.get(interaction.content_id)
-            if content:
+        if ml_recommendations:
+            result = []
+            for rec in ml_recommendations:
+                content = rec['content']
+                youtube_url = None
+                if content.youtube_trailer_id:
+                    youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
+                
                 result.append({
-                    'interaction_id': interaction.id,
-                    'content_id': content.id,
-                    'content_title': content.title,
+                    'id': content.id,
+                    'slug': content.slug,
+                    'title': content.title,
                     'content_type': content.content_type,
-                    'interaction_type': interaction.interaction_type,
-                    'rating': interaction.rating,
-                    'timestamp': interaction.timestamp.isoformat(),
-                    'metadata': getattr(interaction, 'interaction_metadata', {}) or {}
+                    'genres': json.loads(content.genres or '[]'),
+                    'rating': content.rating,
+                    'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
+                    'overview': content.overview[:150] + '...' if content.overview else '',
+                    'youtube_trailer': youtube_url,
+                    'ml_score': rec['ml_score'],
+                    'ml_reason': rec['ml_reason'],
+                    'trending_score': rec['ml_score']
                 })
+            
+            return jsonify({
+                'recommendations': result,
+                'source': 'ml_service',
+                'region': region,
+                'algorithm': 'ml_enhanced_trending'
+            }), 200
         
         return jsonify({
-            'interactions': result,
-            'pagination': {
-                'page': page,
-                'per_page': per_page,
-                'total': interactions.total,
-                'pages': interactions.pages,
-                'has_next': interactions.has_next,
-                'has_prev': interactions.has_prev
-            }
+            'recommendations': [],
+            'source': 'fallback',
+            'message': 'ML service unavailable'
         }), 200
         
     except Exception as e:
-        logger.error(f"Interaction history error: {e}")
-        return jsonify({'error': 'Failed to get interaction history'}), 500
+        logger.error(f"ML trending recommendations error: {e}")
+        return jsonify({
+            'recommendations': [],
+            'error': 'Failed to get trending recommendations'
+        }), 500
 
-@users_bp.route('/api/user/recommendation-feedback', methods=['POST'])
-@require_auth
-def record_recommendation_feedback(current_user):
+@users_bp.route('/api/ml/health', methods=['GET'])
+def check_ml_service_health():
     try:
-        data = request.get_json()
+        health_response = MLServiceClient.call_ml_service('/health', use_cache=False, timeout=5)
         
-        required_fields = ['content_id', 'feedback_type', 'recommendation_id']
-        if not all(field in data for field in required_fields):
-            return jsonify({'error': 'Missing required fields'}), 400
-        
-        if recommendation_engine:
-            try:
-                recommendation_engine.record_recommendation_feedback(
-                    user_id=current_user.id,
-                    content_id=data['content_id'],
-                    feedback_type=data['feedback_type'],
-                    recommendation_id=data['recommendation_id'],
-                    feedback_value=data.get('feedback_value', 1.0)
-                )
-            except Exception as e:
-                logger.warning(f"Failed to record ML feedback: {e}")
-        
-        return jsonify({'message': 'Feedback recorded successfully'}), 201
-        
+        if health_response:
+            return jsonify({
+                'ml_service_status': 'healthy',
+                'ml_service_url': ML_SERVICE_URL,
+                'response': health_response
+            }), 200
+        else:
+            return jsonify({
+                'ml_service_status': 'unhealthy',
+                'ml_service_url': ML_SERVICE_URL,
+                'error': 'No response from ML service'
+            }), 503
+            
     except Exception as e:
-        logger.error(f"Recommendation feedback error: {e}")
-        return jsonify({'error': 'Failed to record feedback'}), 500
+        logger.error(f"ML service health check error: {e}")
+        return jsonify({
+            'ml_service_status': 'error',
+            'ml_service_url': ML_SERVICE_URL,
+            'error': str(e)
+        }), 503
