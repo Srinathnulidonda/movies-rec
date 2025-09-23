@@ -663,10 +663,18 @@ def save_external_content(current_user):
             return jsonify({'error': 'No content data provided'}), 400
         
         existing_content = None
+        
+        # Handle both string and numeric IDs properly
         if data.get('source') == 'anime' and data.get('id'):
-            existing_content = Content.query.filter_by(mal_id=data['id']).first()
+            mal_id = data['id']
+            if isinstance(mal_id, str) and mal_id.isdigit():
+                mal_id = int(mal_id)
+            existing_content = Content.query.filter_by(mal_id=mal_id).first()
         elif data.get('id'):
-            existing_content = Content.query.filter_by(tmdb_id=data['id']).first()
+            tmdb_id = data['id']
+            if isinstance(tmdb_id, str) and tmdb_id.isdigit():
+                tmdb_id = int(tmdb_id)
+            existing_content = Content.query.filter_by(tmdb_id=tmdb_id).first()
         
         if existing_content:
             return jsonify({
@@ -685,8 +693,12 @@ def save_external_content(current_user):
             youtube_trailer_id = ContentService.get_youtube_trailer(data.get('title'), data.get('content_type')) if ContentService else None
             
             if data.get('source') == 'anime':
+                mal_id = data.get('id')
+                if isinstance(mal_id, str) and mal_id.isdigit():
+                    mal_id = int(mal_id)
+                
                 content = Content(
-                    mal_id=data.get('id'),
+                    mal_id=mal_id,
                     title=data.get('title'),
                     original_title=data.get('original_title'),
                     content_type='anime',
@@ -700,8 +712,12 @@ def save_external_content(current_user):
                     youtube_trailer_id=youtube_trailer_id
                 )
             else:
+                tmdb_id = data.get('id')
+                if isinstance(tmdb_id, str) and tmdb_id.isdigit():
+                    tmdb_id = int(tmdb_id)
+                
                 content = Content(
-                    tmdb_id=data.get('id'),
+                    tmdb_id=tmdb_id,
                     title=data.get('title'),
                     original_title=data.get('original_title'),
                     content_type=data.get('content_type', 'movie'),
@@ -736,7 +752,8 @@ def save_external_content(current_user):
     except Exception as e:
         logger.error(f"Save content error: {e}")
         return jsonify({'error': 'Failed to process content'}), 500
-
+    
+    
 @admin_bp.route('/api/admin/recommendations', methods=['POST'])
 @require_admin
 def create_admin_recommendation(current_user):

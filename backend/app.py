@@ -70,6 +70,18 @@ else:
     app.config['CACHE_TYPE'] = 'simple'
     app.config['CACHE_DEFAULT_TIMEOUT'] = 1800
 
+
+if DATABASE_URL and DATABASE_URL.startswith('postgresql://'):
+    app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL + '?sslmode=require'
+    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+        'pool_pre_ping': True,
+        'pool_recycle': 300,
+        'connect_args': {
+            'sslmode': 'require',
+            'connect_timeout': 10
+        }
+    }
+
 db = SQLAlchemy(app)
 CORS(app)
 cache = Cache(app)
