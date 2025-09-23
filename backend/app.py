@@ -29,6 +29,7 @@ from flask_mail import Mail
 from services.upcoming import UpcomingContentService, ContentType, LanguagePriority
 import asyncio
 import services.auth as auth
+from services.support import support_bp, init_support
 from services.auth import init_auth, auth_bp
 from services.admin import admin_bp, init_admin
 from services.users import users_bp, init_users
@@ -706,6 +707,31 @@ services = {
     'cache': cache
 }
 
+# Update your existing models dictionary to include support models
+models = {
+    'User': User,
+    'Content': Content,
+    'UserInteraction': UserInteraction,
+    'AdminRecommendation': AdminRecommendation,
+    'Review': Review,
+    'Person': Person,
+    'ContentPerson': ContentPerson,
+    # Add support models
+    'SupportTicket': None,  # Will be set by init_support
+    'SupportResponse': None,
+    'FAQ': None,
+    'Feedback': None,
+    'SupportCategory': None,
+    'TicketActivity': None
+}
+
+# Add this after your existing service initializations
+try:
+    init_support(app, db, models, services)
+    app.register_blueprint(support_bp)
+    logger.info("Support service initialized successfully")
+except Exception as e:
+    logger.error(f"Failed to initialize support service: {e}")
 try:
     init_personalized(app, db, models, services, cache)
     app.register_blueprint(personalized_bp)
@@ -2195,8 +2221,9 @@ def populate_cast_crew_cli():
 def create_tables():
     try:
         with app.app_context():
-            db.create_all()
+            db.create_all()  # This will create all tables including support tables
             
+            # Your existing admin user creation code
             admin = User.query.filter_by(username='admin').first()
             if not admin:
                 admin = User(
@@ -2208,6 +2235,8 @@ def create_tables():
                 db.session.add(admin)
                 db.session.commit()
                 logger.info("Admin user created with username: admin, password: admin123")
+                
+            logger.info("Database tables created successfully including support tables")
     except Exception as e:
         logger.error(f"Database initialization error: {e}")
 

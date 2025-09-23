@@ -1,4 +1,4 @@
-# backend/auth.py
+# backend/services/auth.py
 from flask import Blueprint, request, jsonify
 from flask_mail import Mail, Message
 from itsdangerous import URLSafeTimedSerializer, SignatureExpired, BadTimeSignature
