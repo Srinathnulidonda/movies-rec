@@ -742,13 +742,14 @@ def setup_support_monitoring():
                 with app.app_context():
                     try:
                         from services.admin import AdminNotificationService
+                        from services.support import TicketStatus, TicketPriority
                         
                         if 'SupportTicket' in models and models['SupportTicket']:
                             SupportTicket = models['SupportTicket']
                             overdue_tickets = db.session.query(SupportTicket).filter(
                                 SupportTicket.sla_deadline < datetime.utcnow(),
                                 SupportTicket.sla_breached == False,
-                                SupportTicket.status.in_(['open', 'in_progress'])
+                                SupportTicket.status.in_([TicketStatus.OPEN, TicketStatus.IN_PROGRESS])
                             ).all()
                             
                             for ticket in overdue_tickets:
@@ -761,7 +762,7 @@ def setup_support_monitoring():
                         if 'SupportTicket' in models and models['SupportTicket']:
                             SupportTicket = models['SupportTicket']
                             urgent_tickets = db.session.query(SupportTicket).filter(
-                                SupportTicket.priority == 'urgent',
+                                SupportTicket.priority == TicketPriority.URGENT,
                                 SupportTicket.first_response_at.is_(None),
                                 SupportTicket.created_at < datetime.utcnow() - timedelta(hours=1)
                             ).all()

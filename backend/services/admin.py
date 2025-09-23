@@ -238,16 +238,21 @@ class TelegramAdminService:
                 func.date(SupportTicket.resolved_at) == today
             ).count()
             
-            open_tickets = SupportTicket.query.filter(
-                SupportTicket.status.in_(['open', 'in_progress'])
-            ).count()
-            
-            urgent_tickets = SupportTicket.query.filter(
-                and_(
-                    SupportTicket.priority == 'urgent',
-                    SupportTicket.status.in_(['open', 'in_progress'])
-                )
-            ).count()
+            try:
+                from services.support import TicketStatus, TicketPriority
+                open_tickets = SupportTicket.query.filter(
+                    SupportTicket.status.in_([TicketStatus.OPEN, TicketStatus.IN_PROGRESS])
+                ).count()
+                
+                urgent_tickets = SupportTicket.query.filter(
+                    and_(
+                        SupportTicket.priority == TicketPriority.URGENT,
+                        SupportTicket.status.in_([TicketStatus.OPEN, TicketStatus.IN_PROGRESS])
+                    )
+                ).count()
+            except:
+                open_tickets = 0
+                urgent_tickets = 0
             
             new_feedback = Feedback.query.filter(
                 func.date(Feedback.created_at) == today
@@ -781,6 +786,48 @@ def create_admin_recommendation(current_user):
         db.session.rollback()
         return jsonify({'error': 'Failed to create recommendation'}), 500
 
+@admin_bp.route('/api/admin/recommendations', methods=['GET'])
+@require_admin
+def get_admin_recommendations(current_user):
+    try:
+        page = int(request.args.get('page', 1))
+        per_page = int(request.args.get('per_page', 20))
+        
+        admin_recs = AdminRecommendation.query.filter_by(is_active=True)\
+            .order_by(AdminRecommendation.created_at.desc())\
+            .paginate(page=page, per_page=per_page, error_out=False)
+        
+        result = []
+        for rec in admin_recs.items:
+            content = Content.query.get(rec.content_id)
+            admin = User.query.get(rec.admin_id)
+            
+            result.append({
+                'id': rec.id,
+                'recommendation_type': rec.recommendation_type,
+                'description': rec.description,
+                'created_at': rec.created_at.isoformat(),
+                'admin_name': admin.username if admin else 'Unknown',
+                'content': {
+                    'id': content.id,
+                    'title': content.title,
+                    'content_type': content.content_type,
+                    'rating': content.rating,
+                    'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path
+                }
+            })
+        
+        return jsonify({
+            'recommendations': result,
+            'total': admin_recs.total,
+            'pages': admin_recs.pages,
+            'current_page': page
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Get admin recommendations error: {e}")
+        return jsonify({'error': 'Failed to get recommendations'}), 500
+
 @admin_bp.route('/api/admin/support/dashboard', methods=['GET'])
 @require_admin
 def get_support_dashboard(current_user):
@@ -794,7 +841,8 @@ def get_support_dashboard(current_user):
         
         total_tickets = SupportTicket.query.count()
         
-        if TicketStatus:
+        try:
+            from services.support import TicketStatus, TicketPriority
             open_tickets = SupportTicket.query.filter(
                 SupportTicket.status.in_([TicketStatus.OPEN, TicketStatus.IN_PROGRESS, TicketStatus.WAITING_FOR_USER])
             ).count()
@@ -804,7 +852,7 @@ def get_support_dashboard(current_user):
                     SupportTicket.priority == TicketPriority.URGENT,
                     SupportTicket.status.in_([TicketStatus.OPEN, TicketStatus.IN_PROGRESS])
                 )
-            ).count() if TicketPriority else 0
+            ).count()
             
             sla_breached = SupportTicket.query.filter(
                 and_(
@@ -812,10 +860,18 @@ def get_support_dashboard(current_user):
                     SupportTicket.status.in_([TicketStatus.OPEN, TicketStatus.IN_PROGRESS])
                 )
             ).count()
-        else:
+            
+            priority_stats = db.session.query(
+                SupportTicket.priority,
+                func.count(SupportTicket.id).label('count')
+            ).filter(
+                SupportTicket.status.in_([TicketStatus.OPEN, TicketStatus.IN_PROGRESS])
+            ).group_by(SupportTicket.priority).all()
+        except:
             open_tickets = 0
             urgent_tickets = 0
             sla_breached = 0
+            priority_stats = []
         
         today_tickets = SupportTicket.query.filter(
             func.date(SupportTicket.created_at) == today
@@ -835,16 +891,6 @@ def get_support_dashboard(current_user):
             SupportCategory.name,
             func.count(SupportTicket.id).label('count')
         ).join(SupportTicket).group_by(SupportCategory.name).all() if SupportCategory else []
-        
-        if TicketStatus:
-            priority_stats = db.session.query(
-                SupportTicket.priority,
-                func.count(SupportTicket.id).label('count')
-            ).filter(
-                SupportTicket.status.in_([TicketStatus.OPEN, TicketStatus.IN_PROGRESS])
-            ).group_by(SupportTicket.priority).all()
-        else:
-            priority_stats = []
         
         recent_tickets = SupportTicket.query.order_by(
             SupportTicket.created_at.desc()
@@ -931,19 +977,24 @@ def get_support_tickets(current_user):
         
         query = SupportTicket.query
         
-        if status and status != 'all' and TicketStatus:
-            try:
-                status_enum = TicketStatus(status)
-                query = query.filter(SupportTicket.status == status_enum)
-            except ValueError:
-                pass
-        
-        if priority and priority != 'all' and TicketPriority:
-            try:
-                priority_enum = TicketPriority(priority)
-                query = query.filter(SupportTicket.priority == priority_enum)
-            except ValueError:
-                pass
+        try:
+            from services.support import TicketStatus, TicketPriority
+            
+            if status and status != 'all':
+                try:
+                    status_enum = TicketStatus(status)
+                    query = query.filter(SupportTicket.status == status_enum)
+                except ValueError:
+                    pass
+            
+            if priority and priority != 'all':
+                try:
+                    priority_enum = TicketPriority(priority)
+                    query = query.filter(SupportTicket.priority == priority_enum)
+                except ValueError:
+                    pass
+        except ImportError:
+            pass
         
         if category_id:
             query = query.filter(SupportTicket.category_id == category_id)
@@ -1010,6 +1061,179 @@ def get_support_tickets(current_user):
         logger.error(f"Get support tickets error: {e}")
         return jsonify({'error': 'Failed to get support tickets'}), 500
 
+@admin_bp.route('/api/admin/support/feedback', methods=['GET'])
+@require_admin
+def get_feedback_list(current_user):
+    try:
+        if not Feedback:
+            return jsonify({'error': 'Feedback system not available'}), 503
+        
+        page = int(request.args.get('page', 1))
+        per_page = min(int(request.args.get('per_page', 20)), 100)
+        feedback_type = request.args.get('type')
+        is_read = request.args.get('is_read')
+        search = request.args.get('search', '').strip()
+        
+        query = Feedback.query
+        
+        try:
+            from services.support import FeedbackType
+            if feedback_type and feedback_type != 'all':
+                try:
+                    feedback_type_enum = FeedbackType(feedback_type)
+                    query = query.filter(Feedback.feedback_type == feedback_type_enum)
+                except ValueError:
+                    pass
+        except ImportError:
+            pass
+        
+        if is_read and is_read != 'all':
+            query = query.filter(Feedback.is_read == (is_read == 'true'))
+        
+        if search:
+            query = query.filter(
+                or_(
+                    Feedback.subject.contains(search),
+                    Feedback.user_name.contains(search),
+                    Feedback.user_email.contains(search)
+                )
+            )
+        
+        feedback_items = query.order_by(
+            Feedback.is_read.asc(),
+            Feedback.created_at.desc()
+        ).paginate(page=page, per_page=per_page, error_out=False)
+        
+        result = []
+        for feedback in feedback_items.items:
+            result.append({
+                'id': feedback.id,
+                'subject': feedback.subject,
+                'message': feedback.message[:200] + '...' if len(feedback.message) > 200 else feedback.message,
+                'user_name': feedback.user_name,
+                'user_email': feedback.user_email,
+                'user_id': feedback.user_id,
+                'feedback_type': feedback.feedback_type.value if hasattr(feedback, 'feedback_type') and feedback.feedback_type else 'general',
+                'rating': feedback.rating,
+                'page_url': feedback.page_url,
+                'is_read': feedback.is_read,
+                'created_at': feedback.created_at.isoformat(),
+                'admin_notes': feedback.admin_notes
+            })
+        
+        return jsonify({
+            'feedback': result,
+            'pagination': {
+                'current_page': page,
+                'per_page': per_page,
+                'total': feedback_items.total,
+                'pages': feedback_items.pages,
+                'has_prev': feedback_items.has_prev,
+                'has_next': feedback_items.has_next
+            }
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Get feedback list error: {e}")
+        return jsonify({'error': 'Failed to get feedback list'}), 500
+
+@admin_bp.route('/api/admin/notifications', methods=['GET'])
+@require_admin
+def get_admin_notifications(current_user):
+    try:
+        page = int(request.args.get('page', 1))
+        per_page = min(int(request.args.get('per_page', 20)), 100)
+        unread_only = request.args.get('unread_only', 'false').lower() == 'true'
+        
+        recent_notifications = []
+        if redis_client:
+            try:
+                notifications_json = redis_client.lrange('admin_notifications', 0, 19)
+                for notif_json in notifications_json:
+                    recent_notifications.append(json.loads(notif_json))
+            except Exception as e:
+                logger.error(f"Redis notification retrieval error: {e}")
+        
+        db_notifications = []
+        if globals().get('AdminNotification'):
+            query = globals()['AdminNotification'].query
+            
+            if unread_only:
+                query = query.filter_by(is_read=False)
+            
+            notifications = query.order_by(
+                globals()['AdminNotification'].created_at.desc()
+            ).paginate(page=page, per_page=per_page, error_out=False)
+            
+            for notif in notifications.items:
+                related_ticket = None
+                if notif.related_ticket_id and SupportTicket:
+                    ticket = SupportTicket.query.get(notif.related_ticket_id)
+                    if ticket:
+                        related_ticket = {
+                            'id': ticket.id,
+                            'ticket_number': ticket.ticket_number,
+                            'subject': ticket.subject
+                        }
+                
+                db_notifications.append({
+                    'id': notif.id,
+                    'type': notif.notification_type.value,
+                    'title': notif.title,
+                    'message': notif.message,
+                    'is_read': notif.is_read,
+                    'is_urgent': notif.is_urgent,
+                    'action_required': notif.action_required,
+                    'action_url': notif.action_url,
+                    'related_ticket': related_ticket,
+                    'metadata': notif.notification_metadata,
+                    'created_at': notif.created_at.isoformat(),
+                    'read_at': notif.read_at.isoformat() if notif.read_at else None
+                })
+        else:
+            notifications = None
+        
+        return jsonify({
+            'recent_notifications': recent_notifications,
+            'notifications': db_notifications,
+            'pagination': {
+                'current_page': page,
+                'per_page': per_page,
+                'total': notifications.total if notifications else 0,
+                'pages': notifications.pages if notifications else 0,
+                'has_prev': notifications.has_prev if notifications else False,
+                'has_next': notifications.has_next if notifications else False
+            }
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Get admin notifications error: {e}")
+        return jsonify({'error': 'Failed to get notifications'}), 500
+
+@admin_bp.route('/api/admin/notifications/mark-all-read', methods=['PUT'])
+@require_admin
+def mark_all_notifications_read(current_user):
+    try:
+        if not globals().get('AdminNotification'):
+            return jsonify({'error': 'Notification system not available'}), 503
+        
+        globals()['AdminNotification'].query.filter_by(is_read=False).update({
+            'is_read': True,
+            'read_at': datetime.utcnow()
+        })
+        
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': 'All notifications marked as read'
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Mark all notifications read error: {e}")
+        db.session.rollback()
+        return jsonify({'error': 'Failed to mark all notifications as read'}), 500
+
 @admin_bp.route('/api/admin/analytics', methods=['GET'])
 @require_admin
 def get_analytics(current_user):
@@ -1054,13 +1278,14 @@ def get_analytics(current_user):
             User.created_at >= datetime.utcnow() - timedelta(days=30)
         ).count()
         
-        support_stats = {}
+        support_stats = {'total_tickets': 0, 'open_tickets': 0, 'resolved_today': 0, 'total_feedback': 0}
         if SupportTicket:
             try:
+                from services.support import TicketStatus
                 support_stats = {
                     'total_tickets': SupportTicket.query.count(),
                     'open_tickets': SupportTicket.query.filter(
-                        SupportTicket.status.in_(['open', 'in_progress'])
+                        SupportTicket.status.in_([TicketStatus.OPEN, TicketStatus.IN_PROGRESS])
                     ).count(),
                     'resolved_today': SupportTicket.query.filter(
                         func.date(SupportTicket.resolved_at) == datetime.utcnow().date()
@@ -1069,12 +1294,7 @@ def get_analytics(current_user):
                 }
             except Exception as e:
                 logger.error(f"Support stats error: {e}")
-                support_stats = {
-                    'total_tickets': 0,
-                    'open_tickets': 0,
-                    'resolved_today': 0,
-                    'total_feedback': 0
-                }
+                support_stats = {'total_tickets': 0, 'open_tickets': 0, 'resolved_today': 0, 'total_feedback': 0}
         
         return jsonify({
             'total_users': total_users,
@@ -1152,6 +1372,56 @@ def get_users_management(current_user):
         logger.error(f"Users management error: {e}")
         return jsonify({'error': 'Failed to get users'}), 500
 
+@admin_bp.route('/api/admin/content/manage', methods=['GET'])
+@require_admin
+def get_content_management(current_user):
+    try:
+        page = int(request.args.get('page', 1))
+        per_page = int(request.args.get('per_page', 20))
+        content_type = request.args.get('type', 'all')
+        search = request.args.get('search', '')
+        
+        query = Content.query
+        
+        if content_type != 'all':
+            query = query.filter_by(content_type=content_type)
+        
+        if search:
+            query = query.filter(Content.title.contains(search))
+        
+        contents = query.order_by(Content.created_at.desc()).paginate(
+            page=page, per_page=per_page, error_out=False
+        )
+        
+        result = []
+        for content in contents.items:
+            interaction_count = UserInteraction.query.filter_by(content_id=content.id).count()
+            
+            result.append({
+                'id': content.id,
+                'title': content.title,
+                'content_type': content.content_type,
+                'rating': content.rating,
+                'release_date': content.release_date.isoformat() if content.release_date else None,
+                'created_at': content.created_at.isoformat(),
+                'interaction_count': interaction_count,
+                'genres': json.loads(content.genres or '[]'),
+                'tmdb_id': content.tmdb_id,
+                'mal_id': content.mal_id,
+                'poster_path': content.poster_path
+            })
+        
+        return jsonify({
+            'content': result,
+            'total': contents.total,
+            'pages': contents.pages,
+            'current_page': page
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Content management error: {e}")
+        return jsonify({'error': 'Failed to get content'}), 500
+
 @admin_bp.route('/api/admin/cache/clear', methods=['POST'])
 @require_admin
 def clear_cache(current_user):
@@ -1178,6 +1448,37 @@ def clear_cache(current_user):
     except Exception as e:
         logger.error(f"Cache clear error: {e}")
         return jsonify({'error': 'Failed to clear cache'}), 500
+
+@admin_bp.route('/api/admin/cache/stats', methods=['GET'])
+@require_admin
+def get_cache_stats(current_user):
+    try:
+        cache_info = {
+            'type': app.config.get('CACHE_TYPE', 'unknown'),
+            'default_timeout': app.config.get('CACHE_DEFAULT_TIMEOUT', 0),
+        }
+        
+        if app.config.get('CACHE_TYPE') == 'redis':
+            try:
+                import redis
+                REDIS_URL = app.config.get('CACHE_REDIS_URL')
+                if REDIS_URL:
+                    r = redis.from_url(REDIS_URL)
+                    redis_info = r.info()
+                    cache_info['redis'] = {
+                        'used_memory': redis_info.get('used_memory_human', 'N/A'),
+                        'connected_clients': redis_info.get('connected_clients', 0),
+                        'total_commands_processed': redis_info.get('total_commands_processed', 0),
+                        'uptime_in_seconds': redis_info.get('uptime_in_seconds', 0)
+                    }
+            except:
+                cache_info['redis'] = {'status': 'Unable to connect'}
+        
+        return jsonify(cache_info), 200
+        
+    except Exception as e:
+        logger.error(f"Cache stats error: {e}")
+        return jsonify({'error': 'Failed to get cache stats'}), 500
 
 @admin_bp.route('/api/admin/system-health', methods=['GET'])
 @require_admin
@@ -1214,7 +1515,8 @@ def get_system_health(current_user):
         }
         
         try:
-            if SupportTicket and TicketStatus:
+            if SupportTicket:
+                from services.support import TicketStatus
                 health_data['components']['support_system'] = {
                     'status': 'healthy',
                     'total_tickets': SupportTicket.query.count(),
@@ -1249,74 +1551,3 @@ def get_system_health(current_user):
             'error': str(e),
             'timestamp': datetime.utcnow().isoformat()
         }), 500
-
-@admin_bp.route('/api/admin/notifications', methods=['GET'])
-@require_admin
-def get_admin_notifications(current_user):
-    try:
-        page = int(request.args.get('page', 1))
-        per_page = min(int(request.args.get('per_page', 20)), 100)
-        unread_only = request.args.get('unread_only', 'false').lower() == 'true'
-        
-        recent_notifications = []
-        if redis_client:
-            try:
-                notifications_json = redis_client.lrange('admin_notifications', 0, 19)
-                for notif_json in notifications_json:
-                    recent_notifications.append(json.loads(notif_json))
-            except Exception as e:
-                logger.error(f"Redis notification retrieval error: {e}")
-        
-        db_notifications = []
-        if globals().get('AdminNotification'):
-            query = globals()['AdminNotification'].query
-            
-            if unread_only:
-                query = query.filter_by(is_read=False)
-            
-            notifications = query.order_by(
-                globals()['AdminNotification'].created_at.desc()
-            ).paginate(page=page, per_page=per_page, error_out=False)
-            
-            for notif in notifications.items:
-                related_ticket = None
-                if notif.related_ticket_id and SupportTicket:
-                    ticket = SupportTicket.query.get(notif.related_ticket_id)
-                    if ticket:
-                        related_ticket = {
-                            'id': ticket.id,
-                            'ticket_number': ticket.ticket_number,
-                            'subject': ticket.subject
-                        }
-                
-                db_notifications.append({
-                    'id': notif.id,
-                    'type': notif.notification_type.value,
-                    'title': notif.title,
-                    'message': notif.message,
-                    'is_read': notif.is_read,
-                    'is_urgent': notif.is_urgent,
-                    'action_required': notif.action_required,
-                    'action_url': notif.action_url,
-                    'related_ticket': related_ticket,
-                    'metadata': notif.notification_metadata,
-                    'created_at': notif.created_at.isoformat(),
-                    'read_at': notif.read_at.isoformat() if notif.read_at else None
-                })
-        
-        return jsonify({
-            'recent_notifications': recent_notifications,
-            'notifications': db_notifications,
-            'pagination': {
-                'current_page': page,
-                'per_page': per_page,
-                'total': notifications.total if 'notifications' in locals() else 0,
-                'pages': notifications.pages if 'notifications' in locals() else 0,
-                'has_prev': notifications.has_prev if 'notifications' in locals() else False,
-                'has_next': notifications.has_next if 'notifications' in locals() else False
-            }
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"Get admin notifications error: {e}")
-        return jsonify({'error': 'Failed to get notifications'}), 500
