@@ -143,7 +143,7 @@ def create_admin_models(database):
         action_required = database.Column(database.Boolean, default=False)
         action_url = database.Column(database.String(500))
         
-        metadata = database.Column(database.JSON)
+        notification_metadata = database.Column(database.JSON)
         
         created_at = database.Column(database.DateTime, default=datetime.utcnow)
         read_at = database.Column(database.DateTime)
@@ -422,7 +422,7 @@ class AdminNotificationService:
                 is_urgent=is_urgent,
                 action_required=action_required,
                 action_url=action_url,
-                metadata=metadata or {}
+                notification_metadata=metadata or {}
             )
             
             db.session.add(notification)
@@ -1412,7 +1412,7 @@ def get_admin_notifications(current_user):
                     'action_required': notif.action_required,
                     'action_url': notif.action_url,
                     'related_ticket': related_ticket,
-                    'metadata': notif.metadata,
+                    'metadata': notif.notification_metadata,
                     'created_at': notif.created_at.isoformat(),
                     'read_at': notif.read_at.isoformat() if notif.read_at else None
                 })
