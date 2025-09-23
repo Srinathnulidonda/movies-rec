@@ -21,6 +21,15 @@ import redis
 from typing import Dict, List, Optional
 import enum
 
+try:
+    from services.support import TicketStatus, TicketPriority, TicketType, FeedbackType
+except ImportError:
+    logging.warning("Support enums not available - some admin functions may not work")
+    TicketStatus = None
+    TicketPriority = None
+    TicketType = None
+    FeedbackType = None
+
 admin_bp = Blueprint('admin', __name__)
 
 logger = logging.getLogger(__name__)
@@ -340,13 +349,13 @@ class TelegramAdminService:
             ).count()
             
             open_tickets = SupportTicket.query.filter(
-                SupportTicket.status.in_(['open', 'in_progress'])
+                SupportTicket.status.in_([TicketStatus.OPEN, TicketStatus.IN_PROGRESS]) if TicketStatus else []
             ).count()
             
             urgent_tickets = SupportTicket.query.filter(
                 and_(
-                    SupportTicket.priority == 'urgent',
-                    SupportTicket.status.in_(['open', 'in_progress'])
+                    SupportTicket.priority == (TicketPriority.URGENT if TicketPriority else 'urgent'),
+                    SupportTicket.status.in_([TicketStatus.OPEN, TicketStatus.IN_PROGRESS] if TicketStatus else [])
                 )
             ).count()
             
@@ -724,23 +733,29 @@ def get_support_dashboard(current_user):
         month_ago = today - timedelta(days=30)
         
         total_tickets = SupportTicket.query.count()
-        open_tickets = SupportTicket.query.filter(
-            SupportTicket.status.in_(['open', 'in_progress', 'waiting_for_user'])
-        ).count()
         
-        urgent_tickets = SupportTicket.query.filter(
-            and_(
-                SupportTicket.priority == 'urgent',
-                SupportTicket.status.in_(['open', 'in_progress'])
-            )
-        ).count()
-        
-        sla_breached = SupportTicket.query.filter(
-            and_(
-                SupportTicket.sla_breached == True,
-                SupportTicket.status.in_(['open', 'in_progress'])
-            )
-        ).count()
+        if TicketStatus:
+            open_tickets = SupportTicket.query.filter(
+                SupportTicket.status.in_([TicketStatus.OPEN, TicketStatus.IN_PROGRESS, TicketStatus.WAITING_FOR_USER])
+            ).count()
+            
+            urgent_tickets = SupportTicket.query.filter(
+                and_(
+                    SupportTicket.priority == TicketPriority.URGENT,
+                    SupportTicket.status.in_([TicketStatus.OPEN, TicketStatus.IN_PROGRESS])
+                )
+            ).count() if TicketPriority else 0
+            
+            sla_breached = SupportTicket.query.filter(
+                and_(
+                    SupportTicket.sla_breached == True,
+                    SupportTicket.status.in_([TicketStatus.OPEN, TicketStatus.IN_PROGRESS])
+                )
+            ).count()
+        else:
+            open_tickets = 0
+            urgent_tickets = 0
+            sla_breached = 0
         
         today_tickets = SupportTicket.query.filter(
             func.date(SupportTicket.created_at) == today
@@ -757,14 +772,17 @@ def get_support_dashboard(current_user):
         category_stats = db.session.query(
             SupportCategory.name,
             func.count(SupportTicket.id).label('count')
-        ).join(SupportTicket).group_by(SupportCategory.name).all()
+        ).join(SupportTicket).group_by(SupportCategory.name).all() if SupportCategory else []
         
-        priority_stats = db.session.query(
-            SupportTicket.priority,
-            func.count(SupportTicket.id).label('count')
-        ).filter(
-            SupportTicket.status.in_(['open', 'in_progress'])
-        ).group_by(SupportTicket.priority).all()
+        if TicketStatus:
+            priority_stats = db.session.query(
+                SupportTicket.priority,
+                func.count(SupportTicket.id).label('count')
+            ).filter(
+                SupportTicket.status.in_([TicketStatus.OPEN, TicketStatus.IN_PROGRESS])
+            ).group_by(SupportTicket.priority).all()
+        else:
+            priority_stats = []
         
         recent_tickets = SupportTicket.query.order_by(
             SupportTicket.created_at.desc()
@@ -851,11 +869,19 @@ def get_support_tickets(current_user):
         
         query = SupportTicket.query
         
-        if status and status != 'all':
-            query = query.filter(SupportTicket.status == status)
+        if status and status != 'all' and TicketStatus:
+            try:
+                status_enum = TicketStatus(status)
+                query = query.filter(SupportTicket.status == status_enum)
+            except ValueError:
+                pass
         
-        if priority and priority != 'all':
-            query = query.filter(SupportTicket.priority == priority)
+        if priority and priority != 'all' and TicketPriority:
+            try:
+                priority_enum = TicketPriority(priority)
+                query = query.filter(SupportTicket.priority == priority_enum)
+            except ValueError:
+                pass
         
         if category_id:
             query = query.filter(SupportTicket.category_id == category_id)
@@ -1027,8 +1053,8 @@ def respond_to_ticket(current_user, ticket_id):
         if not ticket.first_response_at:
             ticket.first_response_at = datetime.utcnow()
         
-        if ticket.status.value == 'open':
-            ticket.status = 'in_progress'
+        if TicketStatus and ticket.status.value == 'open':
+            ticket.status = TicketStatus.IN_PROGRESS
         
         db.session.add(response)
         
@@ -1068,10 +1094,18 @@ def update_ticket_status(current_user, ticket_id):
         if not new_status:
             return jsonify({'error': 'Status is required'}), 400
         
+        if TicketStatus:
+            try:
+                new_status_enum = TicketStatus(new_status)
+            except ValueError:
+                return jsonify({'error': 'Invalid status value'}), 400
+        else:
+            return jsonify({'error': 'Ticket status not available'}), 503
+        
         ticket = SupportTicket.query.get_or_404(ticket_id)
         old_status = ticket.status.value
         
-        ticket.status = new_status
+        ticket.status = new_status_enum
         
         if new_status == 'resolved' and not ticket.resolved_at:
             ticket.resolved_at = datetime.utcnow()
@@ -1117,8 +1151,12 @@ def get_feedback_list(current_user):
         
         query = Feedback.query
         
-        if feedback_type and feedback_type != 'all':
-            query = query.filter(Feedback.feedback_type == feedback_type)
+        if feedback_type and feedback_type != 'all' and FeedbackType:
+            try:
+                feedback_type_enum = FeedbackType(feedback_type)
+                query = query.filter(Feedback.feedback_type == feedback_type_enum)
+            except ValueError:
+                pass
         
         if is_read and is_read != 'all':
             query = query.filter(Feedback.is_read == (is_read == 'true'))
@@ -1569,16 +1607,25 @@ def get_analytics(current_user):
         
         support_stats = {}
         if SupportTicket:
-            support_stats = {
-                'total_tickets': SupportTicket.query.count(),
-                'open_tickets': SupportTicket.query.filter(
-                    SupportTicket.status.in_(['open', 'in_progress'])
-                ).count(),
-                'resolved_today': SupportTicket.query.filter(
-                    func.date(SupportTicket.resolved_at) == datetime.utcnow().date()
-                ).count(),
-                'total_feedback': Feedback.query.count() if Feedback else 0
-            }
+            try:
+                support_stats = {
+                    'total_tickets': SupportTicket.query.count(),
+                    'open_tickets': SupportTicket.query.filter(
+                        SupportTicket.status.in_([TicketStatus.OPEN, TicketStatus.IN_PROGRESS]) if TicketStatus else []
+                    ).count(),
+                    'resolved_today': SupportTicket.query.filter(
+                        func.date(SupportTicket.resolved_at) == datetime.utcnow().date()
+                    ).count(),
+                    'total_feedback': Feedback.query.count() if Feedback else 0
+                }
+            except Exception as e:
+                logger.error(f"Support stats error: {e}")
+                support_stats = {
+                    'total_tickets': 0,
+                    'open_tickets': 0,
+                    'resolved_today': 0,
+                    'total_feedback': 0
+                }
         
         return jsonify({
             'total_users': total_users,
@@ -1798,14 +1845,32 @@ def get_system_health(current_user):
             'telegram': 'configured' if bot else 'not_configured'
         }
         
-        health_data['components']['support_system'] = {
-            'status': 'healthy' if SupportTicket else 'not_available',
-            'total_tickets': SupportTicket.query.count() if SupportTicket else 0,
-            'open_tickets': SupportTicket.query.filter(
-                SupportTicket.status.in_(['open', 'in_progress'])
-            ).count() if SupportTicket else 0,
-            'total_feedback': Feedback.query.count() if Feedback else 0
-        }
+        try:
+            if SupportTicket and TicketStatus:
+                health_data['components']['support_system'] = {
+                    'status': 'healthy',
+                    'total_tickets': SupportTicket.query.count(),
+                    'open_tickets': SupportTicket.query.filter(
+                        SupportTicket.status.in_([TicketStatus.OPEN, TicketStatus.IN_PROGRESS])
+                    ).count(),
+                    'total_feedback': Feedback.query.count() if Feedback else 0
+                }
+            else:
+                health_data['components']['support_system'] = {
+                    'status': 'not_available',
+                    'total_tickets': 0,
+                    'open_tickets': 0,
+                    'total_feedback': 0
+                }
+        except Exception as e:
+            logger.error(f"Support system health check error: {e}")
+            health_data['components']['support_system'] = {
+                'status': 'error',
+                'error': str(e),
+                'total_tickets': 0,
+                'open_tickets': 0,
+                'total_feedback': 0
+            }
         
         return jsonify(health_data), 200
         
