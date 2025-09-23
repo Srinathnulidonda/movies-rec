@@ -740,38 +740,43 @@ def setup_support_monitoring():
                     continue
                 
                 with app.app_context():
-                    from services.admin import AdminNotificationService
-                    
-                    if 'SupportTicket' in globals():
-                        overdue_tickets = db.session.query(globals()['SupportTicket']).filter(
-                            globals()['SupportTicket'].sla_deadline < datetime.utcnow(),
-                            globals()['SupportTicket'].sla_breached == False,
-                            globals()['SupportTicket'].status.in_(['open', 'in_progress'])
-                        ).all()
+                    try:
+                        from services.admin import AdminNotificationService
                         
-                        for ticket in overdue_tickets:
-                            ticket.sla_breached = True
-                            AdminNotificationService.notify_sla_breach(ticket)
+                        if 'SupportTicket' in models and models['SupportTicket']:
+                            SupportTicket = models['SupportTicket']
+                            overdue_tickets = db.session.query(SupportTicket).filter(
+                                SupportTicket.sla_deadline < datetime.utcnow(),
+                                SupportTicket.sla_breached == False,
+                                SupportTicket.status.in_(['open', 'in_progress'])
+                            ).all()
+                            
+                            for ticket in overdue_tickets:
+                                ticket.sla_breached = True
+                                AdminNotificationService.notify_sla_breach(ticket)
+                            
+                            if overdue_tickets:
+                                db.session.commit()
                         
-                        if overdue_tickets:
-                            db.session.commit()
-                    
-                    if 'SupportTicket' in globals():
-                        urgent_tickets = db.session.query(globals()['SupportTicket']).filter(
-                            globals()['SupportTicket'].priority == 'urgent',
-                            globals()['SupportTicket'].first_response_at.is_(None),
-                            globals()['SupportTicket'].created_at < datetime.utcnow() - timedelta(hours=1)
-                        ).all()
-                        
-                        for ticket in urgent_tickets:
-                            AdminNotificationService.create_notification(
-                                'urgent_ticket',
-                                f"Urgent Ticket Needs Attention",
-                                f"Ticket #{ticket.ticket_number} has been open for over 1 hour without response",
-                                related_ticket_id=ticket.id,
-                                is_urgent=True,
-                                action_required=True
-                            )
+                        if 'SupportTicket' in models and models['SupportTicket']:
+                            SupportTicket = models['SupportTicket']
+                            urgent_tickets = db.session.query(SupportTicket).filter(
+                                SupportTicket.priority == 'urgent',
+                                SupportTicket.first_response_at.is_(None),
+                                SupportTicket.created_at < datetime.utcnow() - timedelta(hours=1)
+                            ).all()
+                            
+                            for ticket in urgent_tickets:
+                                AdminNotificationService.create_notification(
+                                    'urgent_ticket',
+                                    f"Urgent Ticket Needs Attention",
+                                    f"Ticket #{ticket.ticket_number} has been open for over 1 hour without response",
+                                    related_ticket_id=ticket.id,
+                                    is_urgent=True,
+                                    action_required=True
+                                )
+                    except Exception as e:
+                        logger.error(f"Support monitoring inner error: {e}")
                 
                 time.sleep(300)
                 
@@ -2339,7 +2344,6 @@ def create_tables():
             logger.info("Database tables created successfully including support tables with monitoring")
     except Exception as e:
         logger.error(f"Database initialization error: {e}")
-
 create_tables()
 
 if __name__ == '__main__':

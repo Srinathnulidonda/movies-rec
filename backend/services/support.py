@@ -40,13 +40,6 @@ User = None
 cache = None
 redis_client = None
 
-SupportCategory = None
-SupportTicket = None
-SupportResponse = None
-FAQ = None
-Feedback = None
-TicketActivity = None
-
 class TicketStatus(enum.Enum):
     OPEN = "open"
     IN_PROGRESS = "in_progress"
@@ -74,142 +67,6 @@ class FeedbackType(enum.Enum):
     UI_UX = "ui_ux"
     PERFORMANCE = "performance"
     CONTENT_SUGGESTION = "content_suggestion"
-
-def create_support_models(database):
-    class SupportCategory(database.Model):
-        __tablename__ = 'support_categories'
-        
-        id = database.Column(database.Integer, primary_key=True)
-        name = database.Column(database.String(100), nullable=False, unique=True)
-        description = database.Column(database.Text)
-        icon = database.Column(database.String(50))
-        sort_order = database.Column(database.Integer, default=0)
-        is_active = database.Column(database.Boolean, default=True)
-        created_at = database.Column(database.DateTime, default=datetime.utcnow)
-        
-        tickets = database.relationship('SupportTicket', backref='category', lazy='dynamic')
-        faqs = database.relationship('FAQ', backref='category', lazy='dynamic')
-
-    class SupportTicket(database.Model):
-        __tablename__ = 'support_tickets'
-        
-        id = database.Column(database.Integer, primary_key=True)
-        ticket_number = database.Column(database.String(20), unique=True, nullable=False)
-        subject = database.Column(database.String(255), nullable=False)
-        description = database.Column(database.Text, nullable=False)
-        
-        user_id = database.Column(database.Integer, database.ForeignKey('user.id'), nullable=True)
-        user_email = database.Column(database.String(255), nullable=False)
-        user_name = database.Column(database.String(255), nullable=False)
-        
-        category_id = database.Column(database.Integer, database.ForeignKey('support_categories.id'), nullable=False)
-        ticket_type = database.Column(database.Enum(TicketType), nullable=False)
-        priority = database.Column(database.Enum(TicketPriority), default=TicketPriority.NORMAL)
-        status = database.Column(database.Enum(TicketStatus), default=TicketStatus.OPEN)
-        
-        browser_info = database.Column(database.Text)
-        device_info = database.Column(database.Text)
-        ip_address = database.Column(database.String(45))
-        user_agent = database.Column(database.Text)
-        page_url = database.Column(database.String(500))
-        
-        created_at = database.Column(database.DateTime, default=datetime.utcnow)
-        first_response_at = database.Column(database.DateTime)
-        resolved_at = database.Column(database.DateTime)
-        closed_at = database.Column(database.DateTime)
-        sla_deadline = database.Column(database.DateTime)
-        sla_breached = database.Column(database.Boolean, default=False)
-        
-        assigned_to = database.Column(database.Integer, database.ForeignKey('user.id'), nullable=True)
-        
-        responses = database.relationship('SupportResponse', backref='ticket', lazy='dynamic', cascade='all, delete-orphan')
-        activities = database.relationship('TicketActivity', backref='ticket', lazy='dynamic', cascade='all, delete-orphan')
-
-    class SupportResponse(database.Model):
-        __tablename__ = 'support_responses'
-        
-        id = database.Column(database.Integer, primary_key=True)
-        ticket_id = database.Column(database.Integer, database.ForeignKey('support_tickets.id'), nullable=False)
-        message = database.Column(database.Text, nullable=False)
-        
-        is_from_staff = database.Column(database.Boolean, default=False)
-        staff_id = database.Column(database.Integer, database.ForeignKey('user.id'), nullable=True)
-        staff_name = database.Column(database.String(255))
-        
-        created_at = database.Column(database.DateTime, default=datetime.utcnow)
-        
-        email_sent = database.Column(database.Boolean, default=False)
-        email_sent_at = database.Column(database.DateTime)
-
-    class FAQ(database.Model):
-        __tablename__ = 'faqs'
-        
-        id = database.Column(database.Integer, primary_key=True)
-        question = database.Column(database.String(500), nullable=False)
-        answer = database.Column(database.Text, nullable=False)
-        
-        category_id = database.Column(database.Integer, database.ForeignKey('support_categories.id'), nullable=False)
-        tags = database.Column(database.Text)
-        
-        sort_order = database.Column(database.Integer, default=0)
-        is_featured = database.Column(database.Boolean, default=False)
-        is_published = database.Column(database.Boolean, default=True)
-        
-        view_count = database.Column(database.Integer, default=0)
-        helpful_count = database.Column(database.Integer, default=0)
-        not_helpful_count = database.Column(database.Integer, default=0)
-        
-        created_at = database.Column(database.DateTime, default=datetime.utcnow)
-        updated_at = database.Column(database.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-    class Feedback(database.Model):
-        __tablename__ = 'feedback'
-        
-        id = database.Column(database.Integer, primary_key=True)
-        subject = database.Column(database.String(255), nullable=False)
-        message = database.Column(database.Text, nullable=False)
-        
-        user_id = database.Column(database.Integer, database.ForeignKey('user.id'), nullable=True)
-        user_email = database.Column(database.String(255), nullable=False)
-        user_name = database.Column(database.String(255), nullable=False)
-        
-        feedback_type = database.Column(database.Enum(FeedbackType), default=FeedbackType.GENERAL)
-        rating = database.Column(database.Integer)
-        
-        page_url = database.Column(database.String(500))
-        browser_info = database.Column(database.Text)
-        ip_address = database.Column(database.String(45))
-        
-        is_read = database.Column(database.Boolean, default=False)
-        admin_notes = database.Column(database.Text)
-        
-        created_at = database.Column(database.DateTime, default=datetime.utcnow)
-
-    class TicketActivity(database.Model):
-        __tablename__ = 'ticket_activities'
-        
-        id = database.Column(database.Integer, primary_key=True)
-        ticket_id = database.Column(database.Integer, database.ForeignKey('support_tickets.id'), nullable=False)
-        
-        action = database.Column(database.String(100), nullable=False)
-        description = database.Column(database.Text)
-        old_value = database.Column(database.Text)
-        new_value = database.Column(database.Text)
-        
-        actor_type = database.Column(database.String(20), nullable=False)
-        actor_id = database.Column(database.Integer, nullable=True)
-        actor_name = database.Column(database.String(255))
-        
-        created_at = database.Column(database.DateTime, default=datetime.utcnow)
-
-    return {
-        'SupportCategory': SupportCategory,
-        'SupportTicket': SupportTicket,
-        'SupportResponse': SupportResponse,
-        'FAQ': FAQ,
-        'Feedback': Feedback,
-        'TicketActivity': TicketActivity
-    }
 
 def init_redis():
     global redis_client
@@ -1001,6 +858,12 @@ class CacheService:
 
 email_service = None
 support_service = None
+SupportCategory = None
+SupportTicket = None
+SupportResponse = None
+FAQ = None
+Feedback = None
+TicketActivity = None
 
 def init_support(flask_app, database, models, services):
     global app, db, User, cache, email_service, support_service, redis_client
@@ -1019,15 +882,149 @@ def init_support(flask_app, database, models, services):
     email_service = SupportEmailService(gmail_username, gmail_password)
     support_service = SupportService(email_service)
     
-    support_models = create_support_models(database)
-    SupportCategory = support_models['SupportCategory']
-    SupportTicket = support_models['SupportTicket']
-    SupportResponse = support_models['SupportResponse']
-    FAQ = support_models['FAQ']
-    Feedback = support_models['Feedback']
-    TicketActivity = support_models['TicketActivity']
+    class SupportCategory(database.Model):
+        __tablename__ = 'support_categories'
+        
+        id = database.Column(database.Integer, primary_key=True)
+        name = database.Column(database.String(100), nullable=False, unique=True)
+        description = database.Column(database.Text)
+        icon = database.Column(database.String(50))
+        sort_order = database.Column(database.Integer, default=0)
+        is_active = database.Column(database.Boolean, default=True)
+        created_at = database.Column(database.DateTime, default=datetime.utcnow)
+        
+        tickets = database.relationship('SupportTicket', backref='category', lazy='dynamic')
+        faqs = database.relationship('FAQ', backref='category', lazy='dynamic')
+
+    class SupportTicket(database.Model):
+        __tablename__ = 'support_tickets'
+        
+        id = database.Column(database.Integer, primary_key=True)
+        ticket_number = database.Column(database.String(20), unique=True, nullable=False)
+        subject = database.Column(database.String(255), nullable=False)
+        description = database.Column(database.Text, nullable=False)
+        
+        user_id = database.Column(database.Integer, database.ForeignKey('user.id'), nullable=True)
+        user_email = database.Column(database.String(255), nullable=False)
+        user_name = database.Column(database.String(255), nullable=False)
+        
+        category_id = database.Column(database.Integer, database.ForeignKey('support_categories.id'), nullable=False)
+        ticket_type = database.Column(database.Enum(TicketType), nullable=False)
+        priority = database.Column(database.Enum(TicketPriority), default=TicketPriority.NORMAL)
+        status = database.Column(database.Enum(TicketStatus), default=TicketStatus.OPEN)
+        
+        browser_info = database.Column(database.Text)
+        device_info = database.Column(database.Text)
+        ip_address = database.Column(database.String(45))
+        user_agent = database.Column(database.Text)
+        page_url = database.Column(database.String(500))
+        
+        created_at = database.Column(database.DateTime, default=datetime.utcnow)
+        first_response_at = database.Column(database.DateTime)
+        resolved_at = database.Column(database.DateTime)
+        closed_at = database.Column(database.DateTime)
+        sla_deadline = database.Column(database.DateTime)
+        sla_breached = database.Column(database.Boolean, default=False)
+        
+        assigned_to = database.Column(database.Integer, database.ForeignKey('user.id'), nullable=True)
+        
+        responses = database.relationship('SupportResponse', backref='ticket', lazy='dynamic', cascade='all, delete-orphan')
+        activities = database.relationship('TicketActivity', backref='ticket', lazy='dynamic', cascade='all, delete-orphan')
+
+    class SupportResponse(database.Model):
+        __tablename__ = 'support_responses'
+        
+        id = database.Column(database.Integer, primary_key=True)
+        ticket_id = database.Column(database.Integer, database.ForeignKey('support_tickets.id'), nullable=False)
+        message = database.Column(database.Text, nullable=False)
+        
+        is_from_staff = database.Column(database.Boolean, default=False)
+        staff_id = database.Column(database.Integer, database.ForeignKey('user.id'), nullable=True)
+        staff_name = database.Column(database.String(255))
+        
+        created_at = database.Column(database.DateTime, default=datetime.utcnow)
+        
+        email_sent = database.Column(database.Boolean, default=False)
+        email_sent_at = database.Column(database.DateTime)
+
+    class FAQ(database.Model):
+        __tablename__ = 'faqs'
+        
+        id = database.Column(database.Integer, primary_key=True)
+        question = database.Column(database.String(500), nullable=False)
+        answer = database.Column(database.Text, nullable=False)
+        
+        category_id = database.Column(database.Integer, database.ForeignKey('support_categories.id'), nullable=False)
+        tags = database.Column(database.Text)
+        
+        sort_order = database.Column(database.Integer, default=0)
+        is_featured = database.Column(database.Boolean, default=False)
+        is_published = database.Column(database.Boolean, default=True)
+        
+        view_count = database.Column(database.Integer, default=0)
+        helpful_count = database.Column(database.Integer, default=0)
+        not_helpful_count = database.Column(database.Integer, default=0)
+        
+        created_at = database.Column(database.DateTime, default=datetime.utcnow)
+        updated_at = database.Column(database.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    class Feedback(database.Model):
+        __tablename__ = 'feedback'
+        
+        id = database.Column(database.Integer, primary_key=True)
+        subject = database.Column(database.String(255), nullable=False)
+        message = database.Column(database.Text, nullable=False)
+        
+        user_id = database.Column(database.Integer, database.ForeignKey('user.id'), nullable=True)
+        user_email = database.Column(database.String(255), nullable=False)
+        user_name = database.Column(database.String(255), nullable=False)
+        
+        feedback_type = database.Column(database.Enum(FeedbackType), default=FeedbackType.GENERAL)
+        rating = database.Column(database.Integer)
+        
+        page_url = database.Column(database.String(500))
+        browser_info = database.Column(database.Text)
+        ip_address = database.Column(database.String(45))
+        
+        is_read = database.Column(database.Boolean, default=False)
+        admin_notes = database.Column(database.Text)
+        
+        created_at = database.Column(database.DateTime, default=datetime.utcnow)
+
+    class TicketActivity(database.Model):
+        __tablename__ = 'ticket_activities'
+        
+        id = database.Column(database.Integer, primary_key=True)
+        ticket_id = database.Column(database.Integer, database.ForeignKey('support_tickets.id'), nullable=False)
+        
+        action = database.Column(database.String(100), nullable=False)
+        description = database.Column(database.Text)
+        old_value = database.Column(database.Text)
+        new_value = database.Column(database.Text)
+        
+        actor_type = database.Column(database.String(20), nullable=False)
+        actor_id = database.Column(database.Integer, nullable=True)
+        actor_name = database.Column(database.String(255))
+        
+        created_at = database.Column(database.DateTime, default=datetime.utcnow)
+
+    globals().update({
+        'SupportCategory': SupportCategory,
+        'SupportTicket': SupportTicket,
+        'SupportResponse': SupportResponse,
+        'FAQ': FAQ,
+        'Feedback': Feedback,
+        'TicketActivity': TicketActivity
+    })
     
-    models.update(support_models)
+    models.update({
+        'SupportCategory': SupportCategory,
+        'SupportTicket': SupportTicket,
+        'SupportResponse': SupportResponse,
+        'FAQ': FAQ,
+        'Feedback': Feedback,
+        'TicketActivity': TicketActivity
+    })
     
     try:
         with app.app_context():
@@ -1525,17 +1522,3 @@ def after_request(response):
         response.headers['Access-Control-Allow-Credentials'] = 'true'
     
     return response
-
-__all__ = [
-    'support_bp',
-    'init_support',
-    'SupportTicket',
-    'SupportResponse',
-    'FAQ',
-    'Feedback',
-    'SupportCategory',
-    'TicketActivity',
-    'SupportService',
-    'RateLimitService',
-    'CacheService'
-]
