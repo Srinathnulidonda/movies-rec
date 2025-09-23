@@ -1,4 +1,4 @@
-# backend/services/support.py
+#backend/services/support.py
 from flask import Blueprint, request, jsonify
 from datetime import datetime, timedelta
 from email.mime.multipart import MIMEMultipart
@@ -23,29 +23,23 @@ from sqlalchemy import func, desc, and_, or_
 from collections import defaultdict
 import enum
 
-# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Create blueprint
 support_bp = Blueprint('support', __name__)
 
-# Configuration
 FRONTEND_URL = os.environ.get('FRONTEND_URL', 'https://cinebrain.vercel.app')
 BACKEND_URL = os.environ.get('BACKEND_URL', 'https://backend-app-970m.onrender.com')
 REDIS_URL = os.environ.get('REDIS_URL', 'redis://red-d2qlbuje5dus73c71qog:xp7inVzgblGCbo9I4taSGLdKUg0xY91I@red-d2qlbuje5dus73c71qog:6379')
 
-# Email validation regex
 EMAIL_REGEX = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
 
-# Global variables - will be initialized by init_support
 app = None
 db = None
 User = None
 cache = None
 redis_client = None
 
-# Enums for better data consistency
 class TicketStatus(enum.Enum):
     OPEN = "open"
     IN_PROGRESS = "in_progress"
@@ -74,157 +68,133 @@ class FeedbackType(enum.Enum):
     PERFORMANCE = "performance"
     CONTENT_SUGGESTION = "content_suggestion"
 
-# Database Models
-class SupportCategory(db.Model if db else object):
+class SupportCategory(db.Model):
     __tablename__ = 'support_categories'
     
-    id = db.Column(db.Integer, primary_key=True) if db else None
-    name = db.Column(db.String(100), nullable=False, unique=True) if db else None
-    description = db.Column(db.Text) if db else None
-    icon = db.Column(db.String(50)) if db else None
-    sort_order = db.Column(db.Integer, default=0) if db else None
-    is_active = db.Column(db.Boolean, default=True) if db else None
-    created_at = db.Column(db.DateTime, default=datetime.utcnow) if db else None
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False, unique=True)
+    description = db.Column(db.Text)
+    icon = db.Column(db.String(50))
+    sort_order = db.Column(db.Integer, default=0)
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
-    # Relationships
-    tickets = db.relationship('SupportTicket', backref='category', lazy='dynamic') if db else None
-    faqs = db.relationship('FAQ', backref='category', lazy='dynamic') if db else None
+    tickets = db.relationship('SupportTicket', backref='category', lazy='dynamic')
+    faqs = db.relationship('FAQ', backref='category', lazy='dynamic')
 
-class SupportTicket(db.Model if db else object):
+class SupportTicket(db.Model):
     __tablename__ = 'support_tickets'
     
-    id = db.Column(db.Integer, primary_key=True) if db else None
-    ticket_number = db.Column(db.String(20), unique=True, nullable=False) if db else None
-    subject = db.Column(db.String(255), nullable=False) if db else None
-    description = db.Column(db.Text, nullable=False) if db else None
+    id = db.Column(db.Integer, primary_key=True)
+    ticket_number = db.Column(db.String(20), unique=True, nullable=False)
+    subject = db.Column(db.String(255), nullable=False)
+    description = db.Column(db.Text, nullable=False)
     
-    # User information
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True) if db else None
-    user_email = db.Column(db.String(255), nullable=False) if db else None
-    user_name = db.Column(db.String(255), nullable=False) if db else None
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    user_email = db.Column(db.String(255), nullable=False)
+    user_name = db.Column(db.String(255), nullable=False)
     
-    # Categorization
-    category_id = db.Column(db.Integer, db.ForeignKey('support_categories.id'), nullable=False) if db else None
-    ticket_type = db.Column(db.Enum(TicketType), nullable=False) if db else None
-    priority = db.Column(db.Enum(TicketPriority), default=TicketPriority.NORMAL) if db else None
-    status = db.Column(db.Enum(TicketStatus), default=TicketStatus.OPEN) if db else None
+    category_id = db.Column(db.Integer, db.ForeignKey('support_categories.id'), nullable=False)
+    ticket_type = db.Column(db.Enum(TicketType), nullable=False)
+    priority = db.Column(db.Enum(TicketPriority), default=TicketPriority.NORMAL)
+    status = db.Column(db.Enum(TicketStatus), default=TicketStatus.OPEN)
     
-    # Technical details
-    browser_info = db.Column(db.Text) if db else None
-    device_info = db.Column(db.Text) if db else None
-    ip_address = db.Column(db.String(45)) if db else None
-    user_agent = db.Column(db.Text) if db else None
-    page_url = db.Column(db.String(500)) if db else None
+    browser_info = db.Column(db.Text)
+    device_info = db.Column(db.Text)
+    ip_address = db.Column(db.String(45))
+    user_agent = db.Column(db.Text)
+    page_url = db.Column(db.String(500))
     
-    # SLA tracking
-    created_at = db.Column(db.DateTime, default=datetime.utcnow) if db else None
-    first_response_at = db.Column(db.DateTime) if db else None
-    resolved_at = db.Column(db.DateTime) if db else None
-    closed_at = db.Column(db.DateTime) if db else None
-    sla_deadline = db.Column(db.DateTime) if db else None
-    sla_breached = db.Column(db.Boolean, default=False) if db else None
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    first_response_at = db.Column(db.DateTime)
+    resolved_at = db.Column(db.DateTime)
+    closed_at = db.Column(db.DateTime)
+    sla_deadline = db.Column(db.DateTime)
+    sla_breached = db.Column(db.Boolean, default=False)
     
-    # Assignment
-    assigned_to = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True) if db else None
+    assigned_to = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
     
-    # Relationships
-    responses = db.relationship('SupportResponse', backref='ticket', lazy='dynamic', cascade='all, delete-orphan') if db else None
-    activities = db.relationship('TicketActivity', backref='ticket', lazy='dynamic', cascade='all, delete-orphan') if db else None
+    responses = db.relationship('SupportResponse', backref='ticket', lazy='dynamic', cascade='all, delete-orphan')
+    activities = db.relationship('TicketActivity', backref='ticket', lazy='dynamic', cascade='all, delete-orphan')
 
-class SupportResponse(db.Model if db else object):
+class SupportResponse(db.Model):
     __tablename__ = 'support_responses'
     
-    id = db.Column(db.Integer, primary_key=True) if db else None
-    ticket_id = db.Column(db.Integer, db.ForeignKey('support_tickets.id'), nullable=False) if db else None
-    message = db.Column(db.Text, nullable=False) if db else None
+    id = db.Column(db.Integer, primary_key=True)
+    ticket_id = db.Column(db.Integer, db.ForeignKey('support_tickets.id'), nullable=False)
+    message = db.Column(db.Text, nullable=False)
     
-    # Response metadata
-    is_from_staff = db.Column(db.Boolean, default=False) if db else None
-    staff_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True) if db else None
-    staff_name = db.Column(db.String(255)) if db else None
+    is_from_staff = db.Column(db.Boolean, default=False)
+    staff_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    staff_name = db.Column(db.String(255))
     
-    # Timestamps
-    created_at = db.Column(db.DateTime, default=datetime.utcnow) if db else None
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
-    # Email tracking
-    email_sent = db.Column(db.Boolean, default=False) if db else None
-    email_sent_at = db.Column(db.DateTime) if db else None
+    email_sent = db.Column(db.Boolean, default=False)
+    email_sent_at = db.Column(db.DateTime)
 
-class FAQ(db.Model if db else object):
+class FAQ(db.Model):
     __tablename__ = 'faqs'
     
-    id = db.Column(db.Integer, primary_key=True) if db else None
-    question = db.Column(db.String(500), nullable=False) if db else None
-    answer = db.Column(db.Text, nullable=False) if db else None
+    id = db.Column(db.Integer, primary_key=True)
+    question = db.Column(db.String(500), nullable=False)
+    answer = db.Column(db.Text, nullable=False)
     
-    # Categorization
-    category_id = db.Column(db.Integer, db.ForeignKey('support_categories.id'), nullable=False) if db else None
-    tags = db.Column(db.Text) if db else None  # JSON array of tags
+    category_id = db.Column(db.Integer, db.ForeignKey('support_categories.id'), nullable=False)
+    tags = db.Column(db.Text)
     
-    # Display options
-    sort_order = db.Column(db.Integer, default=0) if db else None
-    is_featured = db.Column(db.Boolean, default=False) if db else None
-    is_published = db.Column(db.Boolean, default=True) if db else None
+    sort_order = db.Column(db.Integer, default=0)
+    is_featured = db.Column(db.Boolean, default=False)
+    is_published = db.Column(db.Boolean, default=True)
     
-    # Metrics
-    view_count = db.Column(db.Integer, default=0) if db else None
-    helpful_count = db.Column(db.Integer, default=0) if db else None
-    not_helpful_count = db.Column(db.Integer, default=0) if db else None
+    view_count = db.Column(db.Integer, default=0)
+    helpful_count = db.Column(db.Integer, default=0)
+    not_helpful_count = db.Column(db.Integer, default=0)
     
-    # Timestamps
-    created_at = db.Column(db.DateTime, default=datetime.utcnow) if db else None
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow) if db else None
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-class Feedback(db.Model if db else object):
+class Feedback(db.Model):
     __tablename__ = 'feedback'
     
-    id = db.Column(db.Integer, primary_key=True) if db else None
-    subject = db.Column(db.String(255), nullable=False) if db else None
-    message = db.Column(db.Text, nullable=False) if db else None
+    id = db.Column(db.Integer, primary_key=True)
+    subject = db.Column(db.String(255), nullable=False)
+    message = db.Column(db.Text, nullable=False)
     
-    # User information
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True) if db else None
-    user_email = db.Column(db.String(255), nullable=False) if db else None
-    user_name = db.Column(db.String(255), nullable=False) if db else None
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    user_email = db.Column(db.String(255), nullable=False)
+    user_name = db.Column(db.String(255), nullable=False)
     
-    # Categorization
-    feedback_type = db.Column(db.Enum(FeedbackType), default=FeedbackType.GENERAL) if db else None
-    rating = db.Column(db.Integer) if db else None  # 1-5 stars
+    feedback_type = db.Column(db.Enum(FeedbackType), default=FeedbackType.GENERAL)
+    rating = db.Column(db.Integer)
     
-    # Technical details
-    page_url = db.Column(db.String(500)) if db else None
-    browser_info = db.Column(db.Text) if db else None
-    ip_address = db.Column(db.String(45)) if db else None
+    page_url = db.Column(db.String(500))
+    browser_info = db.Column(db.Text)
+    ip_address = db.Column(db.String(45))
     
-    # Status
-    is_read = db.Column(db.Boolean, default=False) if db else None
-    admin_notes = db.Column(db.Text) if db else None
+    is_read = db.Column(db.Boolean, default=False)
+    admin_notes = db.Column(db.Text)
     
-    # Timestamps
-    created_at = db.Column(db.DateTime, default=datetime.utcnow) if db else None
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-class TicketActivity(db.Model if db else object):
+class TicketActivity(db.Model):
     __tablename__ = 'ticket_activities'
     
-    id = db.Column(db.Integer, primary_key=True) if db else None
-    ticket_id = db.Column(db.Integer, db.ForeignKey('support_tickets.id'), nullable=False) if db else None
+    id = db.Column(db.Integer, primary_key=True)
+    ticket_id = db.Column(db.Integer, db.ForeignKey('support_tickets.id'), nullable=False)
     
-    # Activity details
-    action = db.Column(db.String(100), nullable=False) if db else None  # created, status_changed, assigned, etc.
-    description = db.Column(db.Text) if db else None
-    old_value = db.Column(db.Text) if db else None
-    new_value = db.Column(db.Text) if db else None
+    action = db.Column(db.String(100), nullable=False)
+    description = db.Column(db.Text)
+    old_value = db.Column(db.Text)
+    new_value = db.Column(db.Text)
     
-    # Actor information
-    actor_type = db.Column(db.String(20), nullable=False) if db else None  # user, admin, system
-    actor_id = db.Column(db.Integer, nullable=True) if db else None
-    actor_name = db.Column(db.String(255)) if db else None
+    actor_type = db.Column(db.String(20), nullable=False)
+    actor_id = db.Column(db.Integer, nullable=True)
+    actor_name = db.Column(db.String(255))
     
-    # Timestamp
-    created_at = db.Column(db.DateTime, default=datetime.utcnow) if db else None
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 def init_redis():
-    """Initialize Redis connection"""
     global redis_client
     try:
         url = urlparse(REDIS_URL)
@@ -246,8 +216,6 @@ def init_redis():
         return None
 
 class SupportEmailService:
-    """Professional email service for support system"""
-    
     def __init__(self, username, password):
         self.smtp_server = "smtp.gmail.com"
         self.smtp_port = 587
@@ -261,7 +229,6 @@ class SupportEmailService:
         self.start_email_worker()
     
     def start_email_worker(self):
-        """Start background thread for sending support emails"""
         def worker():
             while True:
                 try:
@@ -278,13 +245,12 @@ class SupportEmailService:
                     logger.error(f"Support email worker error: {e}")
                     time.sleep(5)
         
-        for i in range(2):  # 2 worker threads for support emails
+        for i in range(2):
             thread = threading.Thread(target=worker, daemon=True, name=f"SupportEmailWorker-{i}")
             thread.start()
             logger.info(f"Started support email worker thread {i}")
     
     def _send_email_smtp(self, email_data: Dict):
-        """Send email using Gmail SMTP"""
         max_retries = 3
         retry_count = email_data.get('retry_count', 0)
         
@@ -297,19 +263,16 @@ class SupportEmailService:
             msg['Date'] = formatdate(localtime=True)
             msg['Message-ID'] = f"<{email_data.get('id', uuid.uuid4())}@support.cinebrain.com>"
             
-            # Support-specific headers
             msg['X-Support-Category'] = email_data.get('category', 'general')
             msg['X-Ticket-Number'] = email_data.get('ticket_number', '')
             msg['X-Auto-Response-Suppress'] = 'All'
             msg['X-Priority'] = '1' if email_data.get('priority') == 'urgent' else '3'
             
-            # Add content
             text_part = MIMEText(email_data['text'], 'plain', 'utf-8')
             html_part = MIMEText(email_data['html'], 'html', 'utf-8')
             msg.attach(text_part)
             msg.attach(html_part)
             
-            # Send email
             context = ssl.create_default_context()
             with smtplib.SMTP(self.smtp_server, self.smtp_port, timeout=30) as server:
                 server.ehlo()
@@ -334,7 +297,6 @@ class SupportEmailService:
                     ).start()
     
     def queue_email(self, to: str, subject: str, html: str, text: str, **kwargs):
-        """Add support email to queue"""
         email_id = str(uuid.uuid4())
         email_data = {
             'id': email_id,
@@ -362,7 +324,6 @@ class SupportEmailService:
             return False
     
     def get_template(self, template_type: str, **kwargs) -> tuple:
-        """Get professional email templates for support"""
         base_css = """
         <style type="text/css">
             body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
@@ -434,7 +395,6 @@ class SupportEmailService:
             return self._get_generic_template(base_css, **kwargs)
     
     def _get_ticket_created_template(self, base_css: str, **kwargs) -> tuple:
-        """Ticket created confirmation template"""
         ticket_number = kwargs.get('ticket_number', '')
         user_name = kwargs.get('user_name', 'there')
         subject = kwargs.get('subject', '')
@@ -550,7 +510,6 @@ Our team will respond within 24 hours. You can track your ticket at:
         return html, text
     
     def _get_feedback_received_template(self, base_css: str, **kwargs) -> tuple:
-        """Feedback received confirmation template"""
         user_name = kwargs.get('user_name', 'there')
         feedback_type = kwargs.get('feedback_type', 'general')
         subject = kwargs.get('subject', '')
@@ -629,7 +588,6 @@ Our team reviews all feedback carefully. Check our changelog for updates!
         return html, text
     
     def _get_ticket_response_template(self, base_css: str, **kwargs) -> tuple:
-        """Ticket response notification template"""
         ticket_number = kwargs.get('ticket_number', '')
         user_name = kwargs.get('user_name', 'there')
         staff_name = kwargs.get('staff_name', 'Support Team')
@@ -709,7 +667,6 @@ You can reply to this email to continue the conversation.
         return html, text
     
     def _get_issue_report_template(self, base_css: str, **kwargs) -> tuple:
-        """Issue report confirmation template"""
         user_name = kwargs.get('user_name', 'there')
         issue_type = kwargs.get('issue_type', 'bug report')
         
@@ -784,7 +741,6 @@ What happens next:
         return html, text
     
     def _get_generic_template(self, base_css: str, **kwargs) -> tuple:
-        """Generic support email template"""
         subject = kwargs.get('subject', 'CineBrain Support')
         content = kwargs.get('content', '')
         
@@ -817,23 +773,18 @@ What happens next:
         return html, text
 
 class SupportService:
-    """Main support service with business logic"""
-    
     def __init__(self, email_service):
         self.email_service = email_service
     
     def generate_ticket_number(self) -> str:
-        """Generate unique ticket number"""
         import random
         import string
         
-        # Format: CB-YYYYMMDD-XXXX (CB = CineBrain)
         date_str = datetime.now().strftime('%Y%m%d')
         random_str = ''.join(random.choices(string.digits, k=4))
         
         ticket_number = f"CB-{date_str}-{random_str}"
         
-        # Ensure uniqueness
         while SupportTicket.query.filter_by(ticket_number=ticket_number).first():
             random_str = ''.join(random.choices(string.digits, k=4))
             ticket_number = f"CB-{date_str}-{random_str}"
@@ -841,29 +792,24 @@ class SupportService:
         return ticket_number
     
     def calculate_sla_deadline(self, priority: TicketPriority) -> datetime:
-        """Calculate SLA deadline based on priority"""
         now = datetime.utcnow()
         
         sla_hours = {
-            TicketPriority.URGENT: 4,    # 4 hours
-            TicketPriority.HIGH: 24,     # 24 hours
-            TicketPriority.NORMAL: 48,   # 48 hours
-            TicketPriority.LOW: 72       # 72 hours
+            TicketPriority.URGENT: 4,
+            TicketPriority.HIGH: 24,
+            TicketPriority.NORMAL: 48,
+            TicketPriority.LOW: 72
         }
         
         hours = sla_hours.get(priority, 48)
         return now + timedelta(hours=hours)
     
     def create_ticket(self, data: Dict) -> Dict:
-        """Create a new support ticket"""
         try:
-            # Generate ticket number
             ticket_number = self.generate_ticket_number()
             
-            # Determine priority
             priority = TicketPriority(data.get('priority', 'normal'))
             
-            # Create ticket
             ticket = SupportTicket(
                 ticket_number=ticket_number,
                 subject=data['subject'],
@@ -883,9 +829,8 @@ class SupportService:
             )
             
             db.session.add(ticket)
-            db.session.flush()  # Get the ID
+            db.session.flush()
             
-            # Create activity log
             activity = TicketActivity(
                 ticket_id=ticket.id,
                 action='created',
@@ -898,7 +843,6 @@ class SupportService:
             
             db.session.commit()
             
-            # Send confirmation email
             category = SupportCategory.query.get(data['category_id'])
             html, text = self.email_service.get_template(
                 'ticket_created',
@@ -934,7 +878,6 @@ class SupportService:
             return {'success': False, 'error': str(e)}
     
     def submit_feedback(self, data: Dict) -> Dict:
-        """Submit user feedback"""
         try:
             feedback = Feedback(
                 subject=data['subject'],
@@ -952,7 +895,6 @@ class SupportService:
             db.session.add(feedback)
             db.session.commit()
             
-            # Send confirmation email
             html, text = self.email_service.get_template(
                 'feedback_received',
                 user_name=data['user_name'],
@@ -977,11 +919,9 @@ class SupportService:
             logger.error(f"Error submitting feedback: {e}")
             return {'success': False, 'error': str(e)}
 
-# Rate limiting service
 class RateLimitService:
     @staticmethod
     def check_rate_limit(identifier: str, max_requests: int = 5, window: int = 300) -> bool:
-        """Check rate limit using Redis"""
         if not redis_client:
             return True
         
@@ -999,11 +939,9 @@ class RateLimitService:
             logger.error(f"Rate limit check error: {e}")
             return True
 
-# Cache service
 class CacheService:
     @staticmethod
     def get_faqs(category_id: int = None, featured_only: bool = False) -> List[Dict]:
-        """Get cached FAQ data"""
         cache_key = f"faqs:{category_id}:{featured_only}"
         
         if cache:
@@ -1011,7 +949,6 @@ class CacheService:
             if cached_data:
                 return cached_data
         
-        # Query database
         query = FAQ.query.filter_by(is_published=True)
         
         if category_id:
@@ -1022,7 +959,6 @@ class CacheService:
         
         faqs = query.order_by(FAQ.sort_order, FAQ.created_at.desc()).all()
         
-        # Format data
         result = []
         for faq in faqs:
             category = SupportCategory.query.get(faq.category_id)
@@ -1041,18 +977,15 @@ class CacheService:
                 'is_featured': faq.is_featured
             })
         
-        # Cache for 30 minutes
         if cache:
             cache.set(cache_key, result, timeout=1800)
         
         return result
 
-# Initialize services
 email_service = None
 support_service = None
 
 def init_support(flask_app, database, models, services):
-    """Initialize support service"""
     global app, db, User, cache, email_service, support_service, redis_client
     
     app = flask_app
@@ -1060,132 +993,147 @@ def init_support(flask_app, database, models, services):
     User = models['User']
     cache = services.get('cache')
     
-    # Initialize Redis
     redis_client = init_redis()
     
-    # Initialize email service
     gmail_username = os.environ.get('GMAIL_USERNAME', 'projects.srinath@gmail.com')
     gmail_password = os.environ.get('GMAIL_APP_PASSWORD', 'wuus nsow nbee xewv')
     
     email_service = SupportEmailService(gmail_username, gmail_password)
     support_service = SupportService(email_service)
     
-    # Create tables
-    with app.app_context():
-        db.create_all()
-        create_default_data()
+    models.update({
+        'SupportCategory': SupportCategory,
+        'SupportTicket': SupportTicket,
+        'SupportResponse': SupportResponse,
+        'FAQ': FAQ,
+        'Feedback': Feedback,
+        'TicketActivity': TicketActivity
+    })
+    
+    try:
+        with app.app_context():
+            db.create_all()
+            from threading import Timer
+            Timer(3.0, create_default_data).start()
+    except Exception as e:
+        logger.error(f"Error creating support tables: {e}")
     
     logger.info("✅ Support service initialized successfully")
 
 def create_default_data():
-    """Create default support categories and FAQs"""
     try:
-        # Create support categories
-        categories = [
-            {'name': 'Account & Login', 'description': 'Issues with account creation, login, password reset', 'icon': '👤', 'sort_order': 1},
-            {'name': 'Technical Issues', 'description': 'App crashes, loading issues, performance problems', 'icon': '🔧', 'sort_order': 2},
-            {'name': 'Features & Functions', 'description': 'How to use features, feature requests', 'icon': '⚡', 'sort_order': 3},
-            {'name': 'Content & Recommendations', 'description': 'Issues with movies, shows, recommendations', 'icon': '🎬', 'sort_order': 4},
-            {'name': 'Billing & Subscription', 'description': 'Payment issues, subscription questions', 'icon': '💳', 'sort_order': 5},
-            {'name': 'General Support', 'description': 'Other questions and general inquiries', 'icon': '❓', 'sort_order': 6}
-        ]
-        
-        for cat_data in categories:
-            if not SupportCategory.query.filter_by(name=cat_data['name']).first():
-                category = SupportCategory(**cat_data)
-                db.session.add(category)
-        
-        db.session.commit()
-        
-        # Create sample FAQs
-        account_category = SupportCategory.query.filter_by(name='Account & Login').first()
-        tech_category = SupportCategory.query.filter_by(name='Technical Issues').first()
-        features_category = SupportCategory.query.filter_by(name='Features & Functions').first()
-        content_category = SupportCategory.query.filter_by(name='Content & Recommendations').first()
-        
-        faqs = [
-            {
-                'category_id': account_category.id,
-                'question': 'How do I reset my password?',
-                'answer': '''<p>To reset your password:</p>
-                <ol>
-                    <li>Go to the login page and click "Forgot Password"</li>
-                    <li>Enter your email address</li>
-                    <li>Check your email for reset instructions</li>
-                    <li>Click the reset link and create a new password</li>
-                </ol>
-                <p>If you don't receive the email, check your spam folder or contact us for assistance.</p>''',
-                'tags': '["password", "reset", "login", "account"]',
-                'is_featured': True,
-                'sort_order': 1
-            },
-            {
-                'category_id': tech_category.id,
-                'question': 'The app is loading slowly. What can I do?',
-                'answer': '''<p>Try these troubleshooting steps:</p>
-                <ol>
-                    <li><strong>Check your internet connection</strong> - Ensure you have a stable connection</li>
-                    <li><strong>Clear browser cache</strong> - Clear cookies and cached data</li>
-                    <li><strong>Disable browser extensions</strong> - Some extensions can slow down performance</li>
-                    <li><strong>Try incognito/private mode</strong> - This helps identify extension issues</li>
-                    <li><strong>Update your browser</strong> - Use the latest version for best performance</li>
-                </ol>
-                <p>If issues persist, please report the problem with your browser and device details.</p>''',
-                'tags': '["performance", "loading", "slow", "browser"]',
-                'is_featured': True,
-                'sort_order': 1
-            },
-            {
-                'category_id': features_category.id,
-                'question': 'How do movie recommendations work?',
-                'answer': '''<p>CineBrain uses advanced AI algorithms to provide personalized recommendations:</p>
-                <ul>
-                    <li><strong>Viewing History</strong> - Analyzes movies and shows you've watched</li>
-                    <li><strong>Ratings & Reviews</strong> - Considers your ratings and feedback</li>
-                    <li><strong>Genre Preferences</strong> - Learns your favorite genres over time</li>
-                    <li><strong>Collaborative Filtering</strong> - Finds users with similar tastes</li>
-                    <li><strong>Content Analysis</strong> - Matches similar movies by plot, cast, and themes</li>
-                </ul>
-                <p>The more you interact with content, the better our recommendations become!</p>''',
-                'tags': '["recommendations", "algorithm", "AI", "personalization"]',
-                'is_featured': True,
-                'sort_order': 1
-            },
-            {
-                'category_id': content_category.id,
-                'question': 'Can I request movies or shows to be added?',
-                'answer': '''<p>Yes! We welcome content suggestions:</p>
-                <ol>
-                    <li><strong>Use the feedback form</strong> - Select "Content Suggestion" as the type</li>
-                    <li><strong>Provide details</strong> - Include movie/show title, year, and why you'd like it added</li>
-                    <li><strong>Multiple requests</strong> - Popular requests are prioritized</li>
-                </ol>
-                <p>We regularly update our database with new releases and user-requested content. 
-                Follow our <a href="/changelog">changelog</a> to see recent additions!</p>
-                <div style="background: #e8f0fe; padding: 15px; border-radius: 8px; margin: 15px 0;">
-                    <strong>Note:</strong> We focus on legal, publicly available content and may not be able to add all requests.
-                </div>''',
-                'tags': '["content", "request", "movies", "shows", "database"]',
-                'is_featured': False,
-                'sort_order': 2
-            }
-        ]
-        
-        for faq_data in faqs:
-            if not FAQ.query.filter_by(question=faq_data['question']).first():
-                faq = FAQ(**faq_data)
-                db.session.add(faq)
-        
-        db.session.commit()
-        logger.info("Default support data created successfully")
-        
+        if not app:
+            logger.warning("App not initialized, skipping default data creation")
+            return
+            
+        with app.app_context():
+            if SupportCategory.query.first():
+                logger.info("Support categories already exist, skipping default data creation")
+                return
+                
+            categories = [
+                {'name': 'Account & Login', 'description': 'Issues with account creation, login, password reset', 'icon': '👤', 'sort_order': 1},
+                {'name': 'Technical Issues', 'description': 'App crashes, loading issues, performance problems', 'icon': '🔧', 'sort_order': 2},
+                {'name': 'Features & Functions', 'description': 'How to use features, feature requests', 'icon': '⚡', 'sort_order': 3},
+                {'name': 'Content & Recommendations', 'description': 'Issues with movies, shows, recommendations', 'icon': '🎬', 'sort_order': 4},
+                {'name': 'Billing & Subscription', 'description': 'Payment issues, subscription questions', 'icon': '💳', 'sort_order': 5},
+                {'name': 'General Support', 'description': 'Other questions and general inquiries', 'icon': '❓', 'sort_order': 6}
+            ]
+            
+            for cat_data in categories:
+                if not SupportCategory.query.filter_by(name=cat_data['name']).first():
+                    category = SupportCategory(**cat_data)
+                    db.session.add(category)
+            
+            db.session.commit()
+            
+            account_category = SupportCategory.query.filter_by(name='Account & Login').first()
+            tech_category = SupportCategory.query.filter_by(name='Technical Issues').first()
+            features_category = SupportCategory.query.filter_by(name='Features & Functions').first()
+            content_category = SupportCategory.query.filter_by(name='Content & Recommendations').first()
+            
+            faqs = [
+                {
+                    'category_id': account_category.id,
+                    'question': 'How do I reset my password?',
+                    'answer': '''<p>To reset your password:</p>
+                    <ol>
+                        <li>Go to the login page and click "Forgot Password"</li>
+                        <li>Enter your email address</li>
+                        <li>Check your email for reset instructions</li>
+                        <li>Click the reset link and create a new password</li>
+                    </ol>
+                    <p>If you don't receive the email, check your spam folder or contact us for assistance.</p>''',
+                    'tags': '["password", "reset", "login", "account"]',
+                    'is_featured': True,
+                    'sort_order': 1
+                },
+                {
+                    'category_id': tech_category.id,
+                    'question': 'The app is loading slowly. What can I do?',
+                    'answer': '''<p>Try these troubleshooting steps:</p>
+                    <ol>
+                        <li><strong>Check your internet connection</strong> - Ensure you have a stable connection</li>
+                        <li><strong>Clear browser cache</strong> - Clear cookies and cached data</li>
+                        <li><strong>Disable browser extensions</strong> - Some extensions can slow down performance</li>
+                        <li><strong>Try incognito/private mode</strong> - This helps identify extension issues</li>
+                        <li><strong>Update your browser</strong> - Use the latest version for best performance</li>
+                    </ol>
+                    <p>If issues persist, please report the problem with your browser and device details.</p>''',
+                    'tags': '["performance", "loading", "slow", "browser"]',
+                    'is_featured': True,
+                    'sort_order': 1
+                },
+                {
+                    'category_id': features_category.id,
+                    'question': 'How do movie recommendations work?',
+                    'answer': '''<p>CineBrain uses advanced AI algorithms to provide personalized recommendations:</p>
+                    <ul>
+                        <li><strong>Viewing History</strong> - Analyzes movies and shows you've watched</li>
+                        <li><strong>Ratings & Reviews</strong> - Considers your ratings and feedback</li>
+                        <li><strong>Genre Preferences</strong> - Learns your favorite genres over time</li>
+                        <li><strong>Collaborative Filtering</strong> - Finds users with similar tastes</li>
+                        <li><strong>Content Analysis</strong> - Matches similar movies by plot, cast, and themes</li>
+                    </ul>
+                    <p>The more you interact with content, the better our recommendations become!</p>''',
+                    'tags': '["recommendations", "algorithm", "AI", "personalization"]',
+                    'is_featured': True,
+                    'sort_order': 1
+                },
+                {
+                    'category_id': content_category.id,
+                    'question': 'Can I request movies or shows to be added?',
+                    'answer': '''<p>Yes! We welcome content suggestions:</p>
+                    <ol>
+                        <li><strong>Use the feedback form</strong> - Select "Content Suggestion" as the type</li>
+                        <li><strong>Provide details</strong> - Include movie/show title, year, and why you'd like it added</li>
+                        <li><strong>Multiple requests</strong> - Popular requests are prioritized</li>
+                    </ol>
+                    <p>We regularly update our database with new releases and user-requested content. 
+                    Follow our <a href="/changelog">changelog</a> to see recent additions!</p>
+                    <div style="background: #e8f0fe; padding: 15px; border-radius: 8px; margin: 15px 0;">
+                        <strong>Note:</strong> We focus on legal, publicly available content and may not be able to add all requests.
+                    </div>''',
+                    'tags': '["content", "request", "movies", "shows", "database"]',
+                    'is_featured': False,
+                    'sort_order': 2
+                }
+            ]
+            
+            for faq_data in faqs:
+                if not FAQ.query.filter_by(question=faq_data['question']).first():
+                    faq = FAQ(**faq_data)
+                    db.session.add(faq)
+            
+            db.session.commit()
+            logger.info("Default support data created successfully")
+            
     except Exception as e:
         logger.error(f"Error creating default support data: {e}")
-        db.session.rollback()
+        if db:
+            db.session.rollback()
 
-# Authentication helper
 def get_user_from_token():
-    """Get user from JWT token"""
     auth_header = request.headers.get('Authorization')
     if not auth_header or not auth_header.startswith('Bearer '):
         return None
@@ -1198,7 +1146,6 @@ def get_user_from_token():
         return None
 
 def get_request_info():
-    """Get request information for logging"""
     ip_address = request.headers.get('X-Forwarded-For', request.remote_addr)
     if ip_address:
         ip_address = ip_address.split(',')[0].strip()
@@ -1212,35 +1159,28 @@ def get_request_info():
         'page_url': request.headers.get('Referer', '')
     }
 
-# API Routes
 @support_bp.route('/api/support/contact', methods=['POST', 'OPTIONS'])
 def submit_contact_form():
-    """Submit contact form and create support ticket"""
     if request.method == 'OPTIONS':
         return '', 200
     
     try:
         data = request.get_json()
         
-        # Validate required fields
         required_fields = ['name', 'email', 'subject', 'message', 'category_id']
         for field in required_fields:
             if not data.get(field):
                 return jsonify({'error': f'{field.replace("_", " ").title()} is required'}), 400
         
-        # Validate email
         if not EMAIL_REGEX.match(data['email']):
             return jsonify({'error': 'Please provide a valid email address'}), 400
         
-        # Rate limiting
         if not RateLimitService.check_rate_limit(f"contact:{data['email']}", max_requests=3, window=900):
             return jsonify({'error': 'Too many requests. Please try again in 15 minutes.'}), 429
         
-        # Get user if authenticated
         user = get_user_from_token()
         request_info = get_request_info()
         
-        # Prepare ticket data
         ticket_data = {
             'subject': data['subject'],
             'description': data['message'],
@@ -1253,7 +1193,6 @@ def submit_contact_form():
             **request_info
         }
         
-        # Create ticket
         result = support_service.create_ticket(ticket_data)
         
         if result['success']:
@@ -1271,32 +1210,26 @@ def submit_contact_form():
 
 @support_bp.route('/api/support/feedback', methods=['POST', 'OPTIONS'])
 def submit_feedback():
-    """Submit user feedback"""
     if request.method == 'OPTIONS':
         return '', 200
     
     try:
         data = request.get_json()
         
-        # Validate required fields
         required_fields = ['name', 'email', 'subject', 'message']
         for field in required_fields:
             if not data.get(field):
                 return jsonify({'error': f'{field.replace("_", " ").title()} is required'}), 400
         
-        # Validate email
         if not EMAIL_REGEX.match(data['email']):
             return jsonify({'error': 'Please provide a valid email address'}), 400
         
-        # Rate limiting
         if not RateLimitService.check_rate_limit(f"feedback:{data['email']}", max_requests=5, window=900):
             return jsonify({'error': 'Too many feedback submissions. Please try again in 15 minutes.'}), 429
         
-        # Get user if authenticated
         user = get_user_from_token()
         request_info = get_request_info()
         
-        # Prepare feedback data
         feedback_data = {
             'subject': data['subject'],
             'message': data['message'],
@@ -1308,7 +1241,6 @@ def submit_feedback():
             **request_info
         }
         
-        # Submit feedback
         result = support_service.submit_feedback(feedback_data)
         
         if result['success']:
@@ -1325,37 +1257,30 @@ def submit_feedback():
 
 @support_bp.route('/api/support/report-issue', methods=['POST', 'OPTIONS'])
 def report_issue():
-    """Report bug or technical issue"""
     if request.method == 'OPTIONS':
         return '', 200
     
     try:
         data = request.get_json()
         
-        # Validate required fields
         required_fields = ['name', 'email', 'subject', 'description']
         for field in required_fields:
             if not data.get(field):
                 return jsonify({'error': f'{field.replace("_", " ").title()} is required'}), 400
         
-        # Validate email
         if not EMAIL_REGEX.match(data['email']):
             return jsonify({'error': 'Please provide a valid email address'}), 400
         
-        # Rate limiting
         if not RateLimitService.check_rate_limit(f"issue:{data['email']}", max_requests=5, window=900):
             return jsonify({'error': 'Too many issue reports. Please try again in 15 minutes.'}), 429
         
-        # Get user if authenticated
         user = get_user_from_token()
         request_info = get_request_info()
         
-        # Find or create technical issues category
         tech_category = SupportCategory.query.filter_by(name='Technical Issues').first()
         if not tech_category:
-            tech_category = SupportCategory.query.first()  # Fallback to first category
+            tech_category = SupportCategory.query.first()
         
-        # Prepare ticket data
         ticket_data = {
             'subject': f"[BUG REPORT] {data['subject']}",
             'description': f"Steps to reproduce:\n{data.get('steps', 'Not provided')}\n\nExpected behavior:\n{data.get('expected', 'Not provided')}\n\nActual behavior:\n{data['description']}\n\nAdditional info:\n{data.get('additional_info', 'None')}",
@@ -1368,11 +1293,9 @@ def report_issue():
             **request_info
         }
         
-        # Create ticket
         result = support_service.create_ticket(ticket_data)
         
         if result['success']:
-            # Send issue report confirmation
             html, text = email_service.get_template(
                 'issue_report',
                 user_name=data['name'],
@@ -1401,16 +1324,13 @@ def report_issue():
 
 @support_bp.route('/api/support/faq', methods=['GET'])
 def get_faqs():
-    """Get FAQ entries with optional filtering"""
     try:
         category_id = request.args.get('category_id', type=int)
         featured_only = request.args.get('featured', 'false').lower() == 'true'
         search = request.args.get('search', '').strip()
         
-        # Get FAQs from cache
         faqs = CacheService.get_faqs(category_id, featured_only)
         
-        # Apply search filter if provided
         if search:
             search_lower = search.lower()
             faqs = [
@@ -1418,7 +1338,6 @@ def get_faqs():
                 if search_lower in faq['question'].lower() or search_lower in faq['answer'].lower()
             ]
         
-        # Get categories for the response
         categories = SupportCategory.query.filter_by(is_active=True).order_by(SupportCategory.sort_order).all()
         
         return jsonify({
@@ -1442,12 +1361,10 @@ def get_faqs():
 
 @support_bp.route('/api/support/faq/<int:faq_id>/helpful', methods=['POST'])
 def mark_faq_helpful(faq_id):
-    """Mark FAQ as helpful or not helpful"""
     try:
         data = request.get_json()
         is_helpful = data.get('helpful', True)
         
-        # Rate limiting
         ip_address = request.headers.get('X-Forwarded-For', request.remote_addr)
         if not RateLimitService.check_rate_limit(f"faq_vote:{ip_address}:{faq_id}", max_requests=1, window=3600):
             return jsonify({'error': 'You can only vote once per hour per FAQ'}), 429
@@ -1474,15 +1391,11 @@ def mark_faq_helpful(faq_id):
 
 @support_bp.route('/api/support/help-center', methods=['GET'])
 def get_help_center_data():
-    """Get help center data including categories, featured FAQs, and quick links"""
     try:
-        # Get categories with FAQ counts
         categories = SupportCategory.query.filter_by(is_active=True).order_by(SupportCategory.sort_order).all()
         
-        # Get featured FAQs
         featured_faqs = CacheService.get_faqs(featured_only=True)
         
-        # Get recent tickets count (for authenticated users)
         user = get_user_from_token()
         recent_tickets_count = 0
         if user:
@@ -1491,7 +1404,6 @@ def get_help_center_data():
                 SupportTicket.created_at >= datetime.utcnow() - timedelta(days=30)
             ).count()
         
-        # Quick links
         quick_links = [
             {
                 'title': 'Contact Support',
@@ -1530,7 +1442,7 @@ def get_help_center_data():
                 }
                 for cat in categories
             ],
-            'featured_faqs': featured_faqs[:6],  # Limit to 6 featured FAQs
+            'featured_faqs': featured_faqs[:6],
             'quick_links': quick_links,
             'stats': {
                 'total_faqs': FAQ.query.filter_by(is_published=True).count(),
@@ -1545,7 +1457,6 @@ def get_help_center_data():
 
 @support_bp.route('/api/support/categories', methods=['GET'])
 def get_support_categories():
-    """Get support categories for forms"""
     try:
         categories = SupportCategory.query.filter_by(is_active=True).order_by(SupportCategory.sort_order).all()
         
@@ -1567,14 +1478,11 @@ def get_support_categories():
 
 @support_bp.route('/api/support/health', methods=['GET'])
 def support_health():
-    """Support service health check"""
     try:
-        # Test database
         categories_count = SupportCategory.query.count()
         faqs_count = FAQ.query.count()
         tickets_count = SupportTicket.query.count()
         
-        # Test Redis
         redis_status = 'not_configured'
         email_queue_size = 0
         if redis_client:
@@ -1585,7 +1493,6 @@ def support_health():
             except:
                 redis_status = 'disconnected'
         
-        # Test email service
         email_status = 'configured' if email_service else 'not_configured'
         
         return jsonify({
@@ -1619,10 +1526,8 @@ def support_health():
             'timestamp': datetime.utcnow().isoformat()
         }), 500
 
-# CORS headers
 @support_bp.after_request
 def after_request(response):
-    """Add CORS headers"""
     origin = request.headers.get('Origin')
     allowed_origins = [FRONTEND_URL, 'http://127.0.0.1:5500', 'http://127.0.0.1:5501']
     
@@ -1634,7 +1539,6 @@ def after_request(response):
     
     return response
 
-# Export everything needed
 __all__ = [
     'support_bp',
     'init_support',

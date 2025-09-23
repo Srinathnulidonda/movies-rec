@@ -29,10 +29,10 @@ from flask_mail import Mail
 from services.upcoming import UpcomingContentService, ContentType, LanguagePriority
 import asyncio
 import services.auth as auth
-from services.support import support_bp, init_support
 from services.auth import init_auth, auth_bp
 from services.admin import admin_bp, init_admin
 from services.users import users_bp, init_users
+from services.support import support_bp, init_support
 from services.algorithms import (
     RecommendationOrchestrator,
     PopularityRanking,
@@ -686,7 +686,8 @@ models = {
     'AdminRecommendation': AdminRecommendation,
     'Review': Review,
     'Person': Person,
-    'ContentPerson': ContentPerson
+    'ContentPerson': ContentPerson,
+    'AnonymousInteraction': AnonymousInteraction
 }
 
 details_service = None
@@ -707,38 +708,19 @@ services = {
     'cache': cache
 }
 
-# Update your existing models dictionary to include support models
-models = {
-    'User': User,
-    'Content': Content,
-    'UserInteraction': UserInteraction,
-    'AdminRecommendation': AdminRecommendation,
-    'Review': Review,
-    'Person': Person,
-    'ContentPerson': ContentPerson,
-    # Add support models
-    'SupportTicket': None,  # Will be set by init_support
-    'SupportResponse': None,
-    'FAQ': None,
-    'Feedback': None,
-    'SupportCategory': None,
-    'TicketActivity': None
-}
-
-# Add this after your existing service initializations
 try:
     init_support(app, db, models, services)
     app.register_blueprint(support_bp)
     logger.info("Support service initialized successfully")
 except Exception as e:
     logger.error(f"Failed to initialize support service: {e}")
+
 try:
     init_personalized(app, db, models, services, cache)
     app.register_blueprint(personalized_bp)
     logger.info("Personalized recommendation service initialized successfully")
 except Exception as e:
     logger.error(f"Failed to initialize personalized service: {e}")
-
 
 app.register_blueprint(auth_bp)
 app.register_blueprint(admin_bp)
@@ -2088,7 +2070,8 @@ def health_check():
             'slug_support': 'comprehensive_enabled',
             'details_service': 'enabled' if details_service else 'disabled',
             'content_service': 'enabled' if content_service else 'disabled',
-            'cast_crew': 'fully_enabled'
+            'cast_crew': 'fully_enabled',
+            'support_service': 'enabled'
         }
         
         try:
@@ -2125,7 +2108,8 @@ def health_check():
                 'optimized_thread_pools',
                 'enhanced_caching',
                 'error_handling_improvements',
-                'cast_crew_optimization'
+                'cast_crew_optimization',
+                'support_service_integration'
             ],
             'memory_optimizations': 'enabled',
             'unicode_fixes': 'applied'
@@ -2221,9 +2205,8 @@ def populate_cast_crew_cli():
 def create_tables():
     try:
         with app.app_context():
-            db.create_all()  # This will create all tables including support tables
+            db.create_all()
             
-            # Your existing admin user creation code
             admin = User.query.filter_by(username='admin').first()
             if not admin:
                 admin = User(
@@ -2248,7 +2231,7 @@ if __name__ == '__main__':
     debug = os.environ.get('FLASK_ENV') == 'development'
     app.run(host='0.0.0.0', port=port, debug=debug)
 else:
-    print("=== Flask app imported by Gunicorn - OPTIMIZED VERSION WITH CAST/CREW ===")
+    print("=== Flask app imported by Gunicorn - OPTIMIZED VERSION WITH CAST/CREW & SUPPORT ===")
     print(f"App name: {app.name}")
     print(f"Python version: 3.13.4")
     print(f"Database URI configured: {'Yes' if app.config.get('SQLALCHEMY_DATABASE_URI') else 'No'}")
@@ -2258,6 +2241,7 @@ else:
     print(f"Performance optimizations: Applied")
     print(f"Unicode fixes: Applied")
     print(f"Cast/Crew support: Fully enabled")
+    print(f"Support service: Integrated")
     
     print("\n=== Registered Routes ===")
     for rule in app.url_map.iter_rules():
