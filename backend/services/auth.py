@@ -23,6 +23,7 @@ import hashlib
 import json
 import redis
 from urllib.parse import urlparse
+from collections import defaultdict, Counter
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -45,6 +46,8 @@ EMAIL_REGEX = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
 app = None
 db = None
 User = None
+UserInteraction = None
+Content = None
 mail = None
 serializer = None
 redis_client = None
@@ -78,6 +81,226 @@ def init_redis():
         logger.error(f"Redis connection failed: {e}")
         # Fall back to in-memory storage if Redis fails
         return None
+
+class UserAnalytics:
+    """Enhanced user analytics and insights for auth module"""
+    
+    @staticmethod
+    def get_user_stats(user_id: int) -> dict:
+        """Get comprehensive user statistics"""
+        try:
+            if not UserInteraction:
+                return {
+                    'total_interactions': 0,
+                    'content_watched': 0,
+                    'favorites': 0,
+                    'watchlist_items': 0,
+                    'ratings_given': 0,
+                    'average_rating': 0,
+                    'most_watched_genre': None,
+                    'preferred_content_type': None,
+                    'viewing_streak': 0,
+                    'discovery_score': 0.0
+                }
+            
+            interactions = UserInteraction.query.filter_by(user_id=user_id).all()
+            
+            if not interactions:
+                return {
+                    'total_interactions': 0,
+                    'content_watched': 0,
+                    'favorites': 0,
+                    'watchlist_items': 0,
+                    'ratings_given': 0,
+                    'average_rating': 0,
+                    'most_watched_genre': None,
+                    'preferred_content_type': None,
+                    'viewing_streak': 0,
+                    'discovery_score': 0.0
+                }
+            
+            # Basic stats
+            stats = {
+                'total_interactions': len(interactions),
+                'content_watched': len([i for i in interactions if i.interaction_type == 'view']),
+                'favorites': len([i for i in interactions if i.interaction_type == 'favorite']),
+                'watchlist_items': len([i for i in interactions if i.interaction_type == 'watchlist']),
+                'ratings_given': len([i for i in interactions if i.interaction_type == 'rating']),
+                'likes_given': len([i for i in interactions if i.interaction_type == 'like'])
+            }
+            
+            # Average rating
+            ratings = [i.rating for i in interactions if i.rating is not None]
+            stats['average_rating'] = round(sum(ratings) / len(ratings), 1) if ratings else 0
+            
+            # Get content for analysis
+            if Content:
+                content_ids = list(set([i.content_id for i in interactions]))
+                contents = Content.query.filter(Content.id.in_(content_ids)).all()
+                content_map = {c.id: c for c in contents}
+                
+                # Genre analysis
+                genre_counts = defaultdict(int)
+                content_type_counts = defaultdict(int)
+                
+                for interaction in interactions:
+                    content = content_map.get(interaction.content_id)
+                    if content:
+                        # Count content types
+                        content_type_counts[content.content_type] += 1
+                        
+                        # Count genres
+                        try:
+                            genres = json.loads(content.genres or '[]')
+                            for genre in genres:
+                                genre_counts[genre.lower()] += 1
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+                
+                stats['most_watched_genre'] = max(genre_counts, key=genre_counts.get) if genre_counts else None
+                stats['preferred_content_type'] = max(content_type_counts, key=content_type_counts.get) if content_type_counts else None
+                
+                # Discovery score (how much new content user explores)
+                stats['discovery_score'] = UserAnalytics._calculate_discovery_score(interactions, contents)
+                
+                # Content quality preference
+                quality_ratings = [content_map[i.content_id].rating for i in interactions 
+                                 if i.content_id in content_map and content_map[i.content_id].rating]
+                stats['preferred_content_quality'] = round(sum(quality_ratings) / len(quality_ratings), 1) if quality_ratings else 0
+            else:
+                stats['most_watched_genre'] = None
+                stats['preferred_content_type'] = None
+                stats['discovery_score'] = 0.0
+                stats['preferred_content_quality'] = 0
+            
+            # Viewing streak (consecutive days with interactions)
+            stats['viewing_streak'] = UserAnalytics._calculate_viewing_streak(interactions)
+            
+            return stats
+            
+        except Exception as e:
+            logger.error(f"Error getting user stats: {e}")
+            return {}
+    
+    @staticmethod
+    def _calculate_viewing_streak(interactions):
+        """Calculate consecutive days with viewing activity"""
+        if not interactions:
+            return 0
+        
+        # Group interactions by date
+        dates = set()
+        for interaction in interactions:
+            dates.add(interaction.timestamp.date())
+        
+        if not dates:
+            return 0
+        
+        # Sort dates and find streak
+        sorted_dates = sorted(dates, reverse=True)
+        streak = 1
+        
+        for i in range(1, len(sorted_dates)):
+            if (sorted_dates[i-1] - sorted_dates[i]).days == 1:
+                streak += 1
+            else:
+                break
+        
+        return streak
+    
+    @staticmethod
+    def _calculate_discovery_score(interactions, contents):
+        """Calculate how much new/diverse content user explores"""
+        if not interactions or not contents:
+            return 0.0
+        
+        # Calculate genre diversity
+        all_genres = set()
+        for content in contents:
+            try:
+                genres = json.loads(content.genres or '[]')
+                all_genres.update([g.lower() for g in genres])
+            except (json.JSONDecodeError, TypeError):
+                pass
+        
+        # Calculate popularity distribution
+        popularities = [c.popularity for c in contents if c.popularity]
+        avg_popularity = sum(popularities) / len(popularities) if popularities else 100
+        
+        # Discovery score based on genre diversity and exploring less popular content
+        genre_diversity = len(all_genres) / 20.0 if all_genres else 0  # Normalize by expected max genres
+        popularity_exploration = max(0, (200 - avg_popularity) / 200) if avg_popularity else 0.5
+        
+        return min((genre_diversity + popularity_exploration) / 2, 1.0)
+
+class SmartRecommendationTracker:
+    """Track and learn from user interactions with recommendations"""
+    
+    @staticmethod
+    def get_recommendation_effectiveness(user_id: int):
+        """Analyze how effective recommendations have been for user"""
+        try:
+            if not UserInteraction:
+                return {
+                    'total_recommended': 0,
+                    'clicked_recommendations': 0,
+                    'click_through_rate': 0.0,
+                    'favorite_from_recommendations': 0,
+                    'rating_satisfaction': 0.0
+                }
+            
+            # Get interactions that came from recommendations
+            recommendation_interactions = UserInteraction.query.filter(
+                UserInteraction.user_id == user_id,
+                UserInteraction.interaction_metadata.isnot(None)
+            ).all()
+            
+            if not recommendation_interactions:
+                return {
+                    'total_recommended': 0,
+                    'clicked_recommendations': 0,
+                    'click_through_rate': 0.0,
+                    'favorite_from_recommendations': 0,
+                    'rating_satisfaction': 0.0
+                }
+            
+            clicked_count = 0
+            favorite_count = 0
+            ratings = []
+            
+            for interaction in recommendation_interactions:
+                try:
+                    metadata = json.loads(interaction.interaction_metadata or '{}')
+                    
+                    if metadata.get('from_recommendation'):
+                        if interaction.interaction_type in ['view', 'like', 'favorite', 'watchlist']:
+                            clicked_count += 1
+                        
+                        if interaction.interaction_type == 'favorite':
+                            favorite_count += 1
+                        
+                        if interaction.interaction_type == 'rating' and interaction.rating:
+                            ratings.append(interaction.rating)
+                
+                except (json.JSONDecodeError, TypeError):
+                    continue
+            
+            total_recommended = len(recommendation_interactions)
+            click_through_rate = (clicked_count / total_recommended * 100) if total_recommended > 0 else 0
+            avg_rating = sum(ratings) / len(ratings) if ratings else 0
+            
+            return {
+                'total_recommended': total_recommended,
+                'clicked_recommendations': clicked_count,
+                'click_through_rate': round(click_through_rate, 1),
+                'favorite_from_recommendations': favorite_count,
+                'rating_satisfaction': round(avg_rating, 1),
+                'engagement_score': round((click_through_rate + avg_rating * 10) / 2, 1)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error analyzing recommendation effectiveness: {e}")
+            return {}
 
 class ProfessionalEmailService:
     """Professional email service using Gmail SMTP with Redis queue"""
@@ -805,11 +1028,20 @@ email_service = None
 
 def init_auth(flask_app, database, user_model):
     """Initialize auth module with Flask app and models"""
-    global app, db, User, mail, serializer, email_service, redis_client
+    global app, db, User, UserInteraction, Content, mail, serializer, email_service, redis_client
     
     app = flask_app
     db = database
     User = user_model
+    
+    # Try to get additional models for analytics
+    try:
+        UserInteraction = db.Model.registry._class_registry.get('UserInteraction')
+        Content = db.Model.registry._class_registry.get('Content')
+    except:
+        UserInteraction = None
+        Content = None
+        logger.warning("UserInteraction and Content models not available for analytics")
     
     # Initialize Redis
     redis_client = init_redis()
@@ -949,7 +1181,134 @@ def get_request_info(request):
     
     return ip_address, location, device
 
-# Authentication routes
+# Enhanced Authentication Routes
+@auth_bp.route('/api/register', methods=['POST'])
+def register():
+    try:
+        data = request.get_json()
+        
+        # Enhanced validation
+        required_fields = ['username', 'email', 'password']
+        if not all(field in data and data[field].strip() for field in required_fields):
+            return jsonify({'error': 'Missing required fields'}), 400
+        
+        # Username validation
+        if len(data['username']) < 3 or len(data['username']) > 50:
+            return jsonify({'error': 'Username must be between 3 and 50 characters'}), 400
+        
+        # Email validation
+        if not EMAIL_REGEX.match(data['email']):
+            return jsonify({'error': 'Please provide a valid email address'}), 400
+        
+        # Password validation
+        is_valid, message = validate_password(data['password'])
+        if not is_valid:
+            return jsonify({'error': message}), 400
+        
+        # Check if user exists
+        if User.query.filter_by(username=data['username']).first():
+            return jsonify({'error': 'Username already exists'}), 400
+        
+        if User.query.filter_by(email=data['email']).first():
+            return jsonify({'error': 'Email already exists'}), 400
+        
+        # Enhanced user creation with preferences
+        user = User(
+            username=data['username'].strip(),
+            email=data['email'].strip().lower(),
+            password_hash=generate_password_hash(data['password']),
+            preferred_languages=json.dumps(data.get('preferred_languages', ['english', 'telugu'])),
+            preferred_genres=json.dumps(data.get('preferred_genres', [])),
+            location=data.get('location', ''),
+            avatar_url=data.get('avatar_url', '')
+        )
+        
+        db.session.add(user)
+        db.session.commit()
+        
+        # Generate token
+        token = jwt.encode({
+            'user_id': user.id,
+            'exp': datetime.utcnow() + timedelta(days=30)
+        }, app.secret_key, algorithm='HS256')
+        
+        # Get initial user stats
+        stats = UserAnalytics.get_user_stats(user.id)
+        
+        return jsonify({
+            'message': 'User registered successfully',
+            'token': token,
+            'user': {
+                'id': user.id,
+                'username': user.username,
+                'email': user.email,
+                'is_admin': user.is_admin,
+                'preferred_languages': json.loads(user.preferred_languages or '[]'),
+                'preferred_genres': json.loads(user.preferred_genres or '[]'),
+                'location': user.location,
+                'avatar_url': user.avatar_url,
+                'created_at': user.created_at.isoformat(),
+                'stats': stats
+            }
+        }), 201
+        
+    except Exception as e:
+        logger.error(f"Registration error: {e}")
+        db.session.rollback()
+        return jsonify({'error': 'Registration failed'}), 500
+
+@auth_bp.route('/api/login', methods=['POST'])
+def login():
+    try:
+        data = request.get_json()
+        
+        if not data.get('username') or not data.get('password'):
+            return jsonify({'error': 'Missing username or password'}), 400
+        
+        user = User.query.filter_by(username=data['username']).first()
+        
+        if not user or not check_password_hash(user.password_hash, data['password']):
+            return jsonify({'error': 'Invalid credentials'}), 401
+        
+        # Update last active
+        user.last_active = datetime.utcnow()
+        db.session.commit()
+        
+        # Generate token
+        token = jwt.encode({
+            'user_id': user.id,
+            'exp': datetime.utcnow() + timedelta(days=30)
+        }, app.secret_key, algorithm='HS256')
+        
+        # Get user stats
+        stats = UserAnalytics.get_user_stats(user.id)
+        
+        # Get recommendation effectiveness
+        rec_effectiveness = SmartRecommendationTracker.get_recommendation_effectiveness(user.id)
+        
+        return jsonify({
+            'message': 'Login successful',
+            'token': token,
+            'user': {
+                'id': user.id,
+                'username': user.username,
+                'email': user.email,
+                'is_admin': user.is_admin,
+                'preferred_languages': json.loads(user.preferred_languages or '[]'),
+                'preferred_genres': json.loads(user.preferred_genres or '[]'),
+                'location': user.location,
+                'avatar_url': user.avatar_url,
+                'last_active': user.last_active.isoformat() if user.last_active else None,
+                'stats': stats,
+                'recommendation_effectiveness': rec_effectiveness
+            }
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Login error: {e}")
+        return jsonify({'error': 'Login failed'}), 500
+
+# Password reset routes (existing)
 @auth_bp.route('/api/auth/forgot-password', methods=['POST', 'OPTIONS'])
 def forgot_password():
     """Request password reset with professional email"""
@@ -1084,6 +1443,9 @@ def reset_password():
             'iat': datetime.utcnow()
         }, app.secret_key, algorithm='HS256')
         
+        # Get user stats for response
+        stats = UserAnalytics.get_user_stats(user.id)
+        
         logger.info(f"Password reset successful for {email}")
         
         return jsonify({
@@ -1094,7 +1456,12 @@ def reset_password():
                 'id': user.id,
                 'username': user.username,
                 'email': user.email,
-                'is_admin': user.is_admin
+                'is_admin': user.is_admin,
+                'preferred_languages': json.loads(user.preferred_languages or '[]'),
+                'preferred_genres': json.loads(user.preferred_genres or '[]'),
+                'location': user.location,
+                'avatar_url': user.avatar_url,
+                'stats': stats
             }
         }), 200
         
