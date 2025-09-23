@@ -40,6 +40,13 @@ User = None
 cache = None
 redis_client = None
 
+SupportCategory = None
+SupportTicket = None
+SupportResponse = None
+FAQ = None
+Feedback = None
+TicketActivity = None
+
 class TicketStatus(enum.Enum):
     OPEN = "open"
     IN_PROGRESS = "in_progress"
@@ -68,131 +75,141 @@ class FeedbackType(enum.Enum):
     PERFORMANCE = "performance"
     CONTENT_SUGGESTION = "content_suggestion"
 
-class SupportCategory(db.Model):
-    __tablename__ = 'support_categories'
-    
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(100), nullable=False, unique=True)
-    description = db.Column(db.Text)
-    icon = db.Column(db.String(50))
-    sort_order = db.Column(db.Integer, default=0)
-    is_active = db.Column(db.Boolean, default=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    
-    tickets = db.relationship('SupportTicket', backref='category', lazy='dynamic')
-    faqs = db.relationship('FAQ', backref='category', lazy='dynamic')
+def create_support_models(database):
+    class SupportCategory(database.Model):
+        __tablename__ = 'support_categories'
+        
+        id = database.Column(database.Integer, primary_key=True)
+        name = database.Column(database.String(100), nullable=False, unique=True)
+        description = database.Column(database.Text)
+        icon = database.Column(database.String(50))
+        sort_order = database.Column(database.Integer, default=0)
+        is_active = database.Column(database.Boolean, default=True)
+        created_at = database.Column(database.DateTime, default=datetime.utcnow)
+        
+        tickets = database.relationship('SupportTicket', backref='category', lazy='dynamic')
+        faqs = database.relationship('FAQ', backref='category', lazy='dynamic')
 
-class SupportTicket(db.Model):
-    __tablename__ = 'support_tickets'
-    
-    id = db.Column(db.Integer, primary_key=True)
-    ticket_number = db.Column(db.String(20), unique=True, nullable=False)
-    subject = db.Column(db.String(255), nullable=False)
-    description = db.Column(db.Text, nullable=False)
-    
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
-    user_email = db.Column(db.String(255), nullable=False)
-    user_name = db.Column(db.String(255), nullable=False)
-    
-    category_id = db.Column(db.Integer, db.ForeignKey('support_categories.id'), nullable=False)
-    ticket_type = db.Column(db.Enum(TicketType), nullable=False)
-    priority = db.Column(db.Enum(TicketPriority), default=TicketPriority.NORMAL)
-    status = db.Column(db.Enum(TicketStatus), default=TicketStatus.OPEN)
-    
-    browser_info = db.Column(db.Text)
-    device_info = db.Column(db.Text)
-    ip_address = db.Column(db.String(45))
-    user_agent = db.Column(db.Text)
-    page_url = db.Column(db.String(500))
-    
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    first_response_at = db.Column(db.DateTime)
-    resolved_at = db.Column(db.DateTime)
-    closed_at = db.Column(db.DateTime)
-    sla_deadline = db.Column(db.DateTime)
-    sla_breached = db.Column(db.Boolean, default=False)
-    
-    assigned_to = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
-    
-    responses = db.relationship('SupportResponse', backref='ticket', lazy='dynamic', cascade='all, delete-orphan')
-    activities = db.relationship('TicketActivity', backref='ticket', lazy='dynamic', cascade='all, delete-orphan')
+    class SupportTicket(database.Model):
+        __tablename__ = 'support_tickets'
+        
+        id = database.Column(database.Integer, primary_key=True)
+        ticket_number = database.Column(database.String(20), unique=True, nullable=False)
+        subject = database.Column(database.String(255), nullable=False)
+        description = database.Column(database.Text, nullable=False)
+        
+        user_id = database.Column(database.Integer, database.ForeignKey('user.id'), nullable=True)
+        user_email = database.Column(database.String(255), nullable=False)
+        user_name = database.Column(database.String(255), nullable=False)
+        
+        category_id = database.Column(database.Integer, database.ForeignKey('support_categories.id'), nullable=False)
+        ticket_type = database.Column(database.Enum(TicketType), nullable=False)
+        priority = database.Column(database.Enum(TicketPriority), default=TicketPriority.NORMAL)
+        status = database.Column(database.Enum(TicketStatus), default=TicketStatus.OPEN)
+        
+        browser_info = database.Column(database.Text)
+        device_info = database.Column(database.Text)
+        ip_address = database.Column(database.String(45))
+        user_agent = database.Column(database.Text)
+        page_url = database.Column(database.String(500))
+        
+        created_at = database.Column(database.DateTime, default=datetime.utcnow)
+        first_response_at = database.Column(database.DateTime)
+        resolved_at = database.Column(database.DateTime)
+        closed_at = database.Column(database.DateTime)
+        sla_deadline = database.Column(database.DateTime)
+        sla_breached = database.Column(database.Boolean, default=False)
+        
+        assigned_to = database.Column(database.Integer, database.ForeignKey('user.id'), nullable=True)
+        
+        responses = database.relationship('SupportResponse', backref='ticket', lazy='dynamic', cascade='all, delete-orphan')
+        activities = database.relationship('TicketActivity', backref='ticket', lazy='dynamic', cascade='all, delete-orphan')
 
-class SupportResponse(db.Model):
-    __tablename__ = 'support_responses'
-    
-    id = db.Column(db.Integer, primary_key=True)
-    ticket_id = db.Column(db.Integer, db.ForeignKey('support_tickets.id'), nullable=False)
-    message = db.Column(db.Text, nullable=False)
-    
-    is_from_staff = db.Column(db.Boolean, default=False)
-    staff_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
-    staff_name = db.Column(db.String(255))
-    
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    
-    email_sent = db.Column(db.Boolean, default=False)
-    email_sent_at = db.Column(db.DateTime)
+    class SupportResponse(database.Model):
+        __tablename__ = 'support_responses'
+        
+        id = database.Column(database.Integer, primary_key=True)
+        ticket_id = database.Column(database.Integer, database.ForeignKey('support_tickets.id'), nullable=False)
+        message = database.Column(database.Text, nullable=False)
+        
+        is_from_staff = database.Column(database.Boolean, default=False)
+        staff_id = database.Column(database.Integer, database.ForeignKey('user.id'), nullable=True)
+        staff_name = database.Column(database.String(255))
+        
+        created_at = database.Column(database.DateTime, default=datetime.utcnow)
+        
+        email_sent = database.Column(database.Boolean, default=False)
+        email_sent_at = database.Column(database.DateTime)
 
-class FAQ(db.Model):
-    __tablename__ = 'faqs'
-    
-    id = db.Column(db.Integer, primary_key=True)
-    question = db.Column(db.String(500), nullable=False)
-    answer = db.Column(db.Text, nullable=False)
-    
-    category_id = db.Column(db.Integer, db.ForeignKey('support_categories.id'), nullable=False)
-    tags = db.Column(db.Text)
-    
-    sort_order = db.Column(db.Integer, default=0)
-    is_featured = db.Column(db.Boolean, default=False)
-    is_published = db.Column(db.Boolean, default=True)
-    
-    view_count = db.Column(db.Integer, default=0)
-    helpful_count = db.Column(db.Integer, default=0)
-    not_helpful_count = db.Column(db.Integer, default=0)
-    
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    class FAQ(database.Model):
+        __tablename__ = 'faqs'
+        
+        id = database.Column(database.Integer, primary_key=True)
+        question = database.Column(database.String(500), nullable=False)
+        answer = database.Column(database.Text, nullable=False)
+        
+        category_id = database.Column(database.Integer, database.ForeignKey('support_categories.id'), nullable=False)
+        tags = database.Column(database.Text)
+        
+        sort_order = database.Column(database.Integer, default=0)
+        is_featured = database.Column(database.Boolean, default=False)
+        is_published = database.Column(database.Boolean, default=True)
+        
+        view_count = database.Column(database.Integer, default=0)
+        helpful_count = database.Column(database.Integer, default=0)
+        not_helpful_count = database.Column(database.Integer, default=0)
+        
+        created_at = database.Column(database.DateTime, default=datetime.utcnow)
+        updated_at = database.Column(database.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-class Feedback(db.Model):
-    __tablename__ = 'feedback'
-    
-    id = db.Column(db.Integer, primary_key=True)
-    subject = db.Column(db.String(255), nullable=False)
-    message = db.Column(db.Text, nullable=False)
-    
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
-    user_email = db.Column(db.String(255), nullable=False)
-    user_name = db.Column(db.String(255), nullable=False)
-    
-    feedback_type = db.Column(db.Enum(FeedbackType), default=FeedbackType.GENERAL)
-    rating = db.Column(db.Integer)
-    
-    page_url = db.Column(db.String(500))
-    browser_info = db.Column(db.Text)
-    ip_address = db.Column(db.String(45))
-    
-    is_read = db.Column(db.Boolean, default=False)
-    admin_notes = db.Column(db.Text)
-    
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    class Feedback(database.Model):
+        __tablename__ = 'feedback'
+        
+        id = database.Column(database.Integer, primary_key=True)
+        subject = database.Column(database.String(255), nullable=False)
+        message = database.Column(database.Text, nullable=False)
+        
+        user_id = database.Column(database.Integer, database.ForeignKey('user.id'), nullable=True)
+        user_email = database.Column(database.String(255), nullable=False)
+        user_name = database.Column(database.String(255), nullable=False)
+        
+        feedback_type = database.Column(database.Enum(FeedbackType), default=FeedbackType.GENERAL)
+        rating = database.Column(database.Integer)
+        
+        page_url = database.Column(database.String(500))
+        browser_info = database.Column(database.Text)
+        ip_address = database.Column(database.String(45))
+        
+        is_read = database.Column(database.Boolean, default=False)
+        admin_notes = database.Column(database.Text)
+        
+        created_at = database.Column(database.DateTime, default=datetime.utcnow)
 
-class TicketActivity(db.Model):
-    __tablename__ = 'ticket_activities'
-    
-    id = db.Column(db.Integer, primary_key=True)
-    ticket_id = db.Column(db.Integer, db.ForeignKey('support_tickets.id'), nullable=False)
-    
-    action = db.Column(db.String(100), nullable=False)
-    description = db.Column(db.Text)
-    old_value = db.Column(db.Text)
-    new_value = db.Column(db.Text)
-    
-    actor_type = db.Column(db.String(20), nullable=False)
-    actor_id = db.Column(db.Integer, nullable=True)
-    actor_name = db.Column(db.String(255))
-    
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    class TicketActivity(database.Model):
+        __tablename__ = 'ticket_activities'
+        
+        id = database.Column(database.Integer, primary_key=True)
+        ticket_id = database.Column(database.Integer, database.ForeignKey('support_tickets.id'), nullable=False)
+        
+        action = database.Column(database.String(100), nullable=False)
+        description = database.Column(database.Text)
+        old_value = database.Column(database.Text)
+        new_value = database.Column(database.Text)
+        
+        actor_type = database.Column(database.String(20), nullable=False)
+        actor_id = database.Column(database.Integer, nullable=True)
+        actor_name = database.Column(database.String(255))
+        
+        created_at = database.Column(database.DateTime, default=datetime.utcnow)
+
+    return {
+        'SupportCategory': SupportCategory,
+        'SupportTicket': SupportTicket,
+        'SupportResponse': SupportResponse,
+        'FAQ': FAQ,
+        'Feedback': Feedback,
+        'TicketActivity': TicketActivity
+    }
 
 def init_redis():
     global redis_client
@@ -987,6 +1004,7 @@ support_service = None
 
 def init_support(flask_app, database, models, services):
     global app, db, User, cache, email_service, support_service, redis_client
+    global SupportCategory, SupportTicket, SupportResponse, FAQ, Feedback, TicketActivity
     
     app = flask_app
     db = database
@@ -1001,14 +1019,15 @@ def init_support(flask_app, database, models, services):
     email_service = SupportEmailService(gmail_username, gmail_password)
     support_service = SupportService(email_service)
     
-    models.update({
-        'SupportCategory': SupportCategory,
-        'SupportTicket': SupportTicket,
-        'SupportResponse': SupportResponse,
-        'FAQ': FAQ,
-        'Feedback': Feedback,
-        'TicketActivity': TicketActivity
-    })
+    support_models = create_support_models(database)
+    SupportCategory = support_models['SupportCategory']
+    SupportTicket = support_models['SupportTicket']
+    SupportResponse = support_models['SupportResponse']
+    FAQ = support_models['FAQ']
+    Feedback = support_models['Feedback']
+    TicketActivity = support_models['TicketActivity']
+    
+    models.update(support_models)
     
     try:
         with app.app_context():
@@ -1052,80 +1071,48 @@ def create_default_data():
             features_category = SupportCategory.query.filter_by(name='Features & Functions').first()
             content_category = SupportCategory.query.filter_by(name='Content & Recommendations').first()
             
-            faqs = [
-                {
-                    'category_id': account_category.id,
-                    'question': 'How do I reset my password?',
-                    'answer': '''<p>To reset your password:</p>
-                    <ol>
-                        <li>Go to the login page and click "Forgot Password"</li>
-                        <li>Enter your email address</li>
-                        <li>Check your email for reset instructions</li>
-                        <li>Click the reset link and create a new password</li>
-                    </ol>
-                    <p>If you don't receive the email, check your spam folder or contact us for assistance.</p>''',
-                    'tags': '["password", "reset", "login", "account"]',
-                    'is_featured': True,
-                    'sort_order': 1
-                },
-                {
-                    'category_id': tech_category.id,
-                    'question': 'The app is loading slowly. What can I do?',
-                    'answer': '''<p>Try these troubleshooting steps:</p>
-                    <ol>
-                        <li><strong>Check your internet connection</strong> - Ensure you have a stable connection</li>
-                        <li><strong>Clear browser cache</strong> - Clear cookies and cached data</li>
-                        <li><strong>Disable browser extensions</strong> - Some extensions can slow down performance</li>
-                        <li><strong>Try incognito/private mode</strong> - This helps identify extension issues</li>
-                        <li><strong>Update your browser</strong> - Use the latest version for best performance</li>
-                    </ol>
-                    <p>If issues persist, please report the problem with your browser and device details.</p>''',
-                    'tags': '["performance", "loading", "slow", "browser"]',
-                    'is_featured': True,
-                    'sort_order': 1
-                },
-                {
-                    'category_id': features_category.id,
-                    'question': 'How do movie recommendations work?',
-                    'answer': '''<p>CineBrain uses advanced AI algorithms to provide personalized recommendations:</p>
-                    <ul>
-                        <li><strong>Viewing History</strong> - Analyzes movies and shows you've watched</li>
-                        <li><strong>Ratings & Reviews</strong> - Considers your ratings and feedback</li>
-                        <li><strong>Genre Preferences</strong> - Learns your favorite genres over time</li>
-                        <li><strong>Collaborative Filtering</strong> - Finds users with similar tastes</li>
-                        <li><strong>Content Analysis</strong> - Matches similar movies by plot, cast, and themes</li>
-                    </ul>
-                    <p>The more you interact with content, the better our recommendations become!</p>''',
-                    'tags': '["recommendations", "algorithm", "AI", "personalization"]',
-                    'is_featured': True,
-                    'sort_order': 1
-                },
-                {
-                    'category_id': content_category.id,
-                    'question': 'Can I request movies or shows to be added?',
-                    'answer': '''<p>Yes! We welcome content suggestions:</p>
-                    <ol>
-                        <li><strong>Use the feedback form</strong> - Select "Content Suggestion" as the type</li>
-                        <li><strong>Provide details</strong> - Include movie/show title, year, and why you'd like it added</li>
-                        <li><strong>Multiple requests</strong> - Popular requests are prioritized</li>
-                    </ol>
-                    <p>We regularly update our database with new releases and user-requested content. 
-                    Follow our <a href="/changelog">changelog</a> to see recent additions!</p>
-                    <div style="background: #e8f0fe; padding: 15px; border-radius: 8px; margin: 15px 0;">
-                        <strong>Note:</strong> We focus on legal, publicly available content and may not be able to add all requests.
-                    </div>''',
-                    'tags': '["content", "request", "movies", "shows", "database"]',
-                    'is_featured': False,
-                    'sort_order': 2
-                }
-            ]
+            if account_category and tech_category and features_category and content_category:
+                faqs = [
+                    {
+                        'category_id': account_category.id,
+                        'question': 'How do I reset my password?',
+                        'answer': '''<p>To reset your password:</p>
+                        <ol>
+                            <li>Go to the login page and click "Forgot Password"</li>
+                            <li>Enter your email address</li>
+                            <li>Check your email for reset instructions</li>
+                            <li>Click the reset link and create a new password</li>
+                        </ol>
+                        <p>If you don't receive the email, check your spam folder or contact us for assistance.</p>''',
+                        'tags': '["password", "reset", "login", "account"]',
+                        'is_featured': True,
+                        'sort_order': 1
+                    },
+                    {
+                        'category_id': tech_category.id,
+                        'question': 'The app is loading slowly. What can I do?',
+                        'answer': '''<p>Try these troubleshooting steps:</p>
+                        <ol>
+                            <li><strong>Check your internet connection</strong> - Ensure you have a stable connection</li>
+                            <li><strong>Clear browser cache</strong> - Clear cookies and cached data</li>
+                            <li><strong>Disable browser extensions</strong> - Some extensions can slow down performance</li>
+                            <li><strong>Try incognito/private mode</strong> - This helps identify extension issues</li>
+                            <li><strong>Update your browser</strong> - Use the latest version for best performance</li>
+                        </ol>
+                        <p>If issues persist, please report the problem with your browser and device details.</p>''',
+                        'tags': '["performance", "loading", "slow", "browser"]',
+                        'is_featured': True,
+                        'sort_order': 1
+                    }
+                ]
+                
+                for faq_data in faqs:
+                    if not FAQ.query.filter_by(question=faq_data['question']).first():
+                        faq = FAQ(**faq_data)
+                        db.session.add(faq)
+                
+                db.session.commit()
             
-            for faq_data in faqs:
-                if not FAQ.query.filter_by(question=faq_data['question']).first():
-                    faq = FAQ(**faq_data)
-                    db.session.add(faq)
-            
-            db.session.commit()
             logger.info("Default support data created successfully")
             
     except Exception as e:
