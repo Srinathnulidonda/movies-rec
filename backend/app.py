@@ -2211,7 +2211,7 @@ def create_tables():
             if not admin:
                 admin = User(
                     username='admin',
-                    email='srinathnani09@gmail.com',
+                    email='srinathnulidonda.dev@gmail.com',
                     password_hash=generate_password_hash('admin123'),
                     is_admin=True
                 )
