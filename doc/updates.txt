@@ -186,3 +186,66 @@ Create a backend/services/personalized.py file that implements an advanced perso
 3.	Apply the best recommendation approaches (e.g., hybrid filtering, collaborative filtering, content-based filtering, sequence-aware models, embeddings, context-aware ranking) to ensure 100% relevance.
 4.	Provide personalized recommendations across categories (movies, anime, TV shows) tailored precisely to each user’s interests.
 5.	Be structured with production-ready, modular, and scalable code, following clean architecture and best practices.
+
+personalized recommendation according to the users search history, view, like, favorite, watchlist, rating there should be an personalized movies, anime, tv-show recommendations should be provide according to the users interests
+
+
+there are several issues and errors in the backend/services/users.py, backend/services/personalized.py solve all the issues and errors and provide the production grade code
+provide the updated production grade files without comments
+
+
+
+provide me the production grade code for support.py file no place holders use frontend url = https://cinebrain.vercel.app/ make more best production grade code
+use the above smtp from the above backend/services/auth.py file
+
+
+
+according to the above app.py file, index.html, content-card, files and below backend/services/auth.py create backend/services/support.py file which should contain the backend
+Help Center, Contact Us, FAQ, Feedback, Report Issue
+production grade code use the same smtp details GMAIL_USERNAME, GMAIL_APP_PASSWORD
+
+
+this is my backend/services/auth.py file
+
+
+
+
+
+
+1.	POST /api/support/contact - Contact form submission:
+•	Enterprise-grade validation
+•	Rate limiting
+•	Async ticket creation
+•	Correlation ID tracking
+•	Metrics recording
+2.	POST /api/support/feedback - Feedback submission:
+•	Multi-type feedback support
+•	Screenshot handling
+•	Sentiment analysis ready
+•	Auto-categorization
+3.	POST /api/support/report-issue - Bug reporting:
+•	Detailed issue tracking
+•	Priority auto-calculation
+•	Technical metadata capture
+4.	GET /api/support/faq - FAQ retrieval:
+•	Advanced search functionality
+•	Category filtering
+•	Analytics tracking
+•	Multi-language support
+5.	GET /api/support/faq/<id>/helpful - FAQ rating
+6.	GET /api/support/categories - Category listing
+7.	GET /api/support/help-center - Help center data
+8.	GET /api/support/ticket/<ticket_id> - Ticket status
+Admin Endpoints
+9.	GET /api/admin/support/tickets - Ticket management
+10.	POST /api/admin/support/ticket/<id>/respond - Staff responses
+11.	GET /api/admin/support/feedback - Feedback review
+System Endpoints
+12.	GET /api/support/health - Comprehensive health check
+
+
+
+
+make sure that all the support related thing also should be send and mannaged by the admin all the oparation related the above backend/services/support.py and the notifications should be send to the admin login dashboard and gmail 
+and add some useful and best features in this also
+provide me the updated production grade code

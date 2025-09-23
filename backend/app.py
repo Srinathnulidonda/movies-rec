@@ -731,6 +731,104 @@ init_admin(app, db, models, services)
 init_users(app, db, models, services)
 init_users(app, db, models, {**services, 'cache': cache})
 
+def setup_support_monitoring():
+    def support_monitor():
+        while True:
+            try:
+                if not app or not db:
+                    time.sleep(60)
+                    continue
+                
+                with app.app_context():
+                    from services.admin import AdminNotificationService
+                    
+                    if 'SupportTicket' in globals():
+                        overdue_tickets = db.session.query(globals()['SupportTicket']).filter(
+                            globals()['SupportTicket'].sla_deadline < datetime.utcnow(),
+                            globals()['SupportTicket'].sla_breached == False,
+                            globals()['SupportTicket'].status.in_(['open', 'in_progress'])
+                        ).all()
+                        
+                        for ticket in overdue_tickets:
+                            ticket.sla_breached = True
+                            AdminNotificationService.notify_sla_breach(ticket)
+                        
+                        if overdue_tickets:
+                            db.session.commit()
+                    
+                    if 'SupportTicket' in globals():
+                        urgent_tickets = db.session.query(globals()['SupportTicket']).filter(
+                            globals()['SupportTicket'].priority == 'urgent',
+                            globals()['SupportTicket'].first_response_at.is_(None),
+                            globals()['SupportTicket'].created_at < datetime.utcnow() - timedelta(hours=1)
+                        ).all()
+                        
+                        for ticket in urgent_tickets:
+                            AdminNotificationService.create_notification(
+                                'urgent_ticket',
+                                f"Urgent Ticket Needs Attention",
+                                f"Ticket #{ticket.ticket_number} has been open for over 1 hour without response",
+                                related_ticket_id=ticket.id,
+                                is_urgent=True,
+                                action_required=True
+                            )
+                
+                time.sleep(300)
+                
+            except Exception as e:
+                logger.error(f"Support monitoring error: {e}")
+                time.sleep(300)
+    
+    monitor_thread = threading.Thread(target=support_monitor, daemon=True)
+    monitor_thread.start()
+    logger.info("Support monitoring thread started")
+
+def on_new_support_ticket(ticket):
+    try:
+        from services.admin import AdminNotificationService
+        AdminNotificationService.notify_new_ticket(ticket)
+    except Exception as e:
+        logger.error(f"Error handling new ticket notification: {e}")
+
+def on_new_feedback(feedback):
+    try:
+        from services.admin import AdminNotificationService
+        AdminNotificationService.notify_feedback_received(feedback)
+    except Exception as e:
+        logger.error(f"Error handling new feedback notification: {e}")
+
+@app.route('/api/webhooks/support/ticket-created', methods=['POST'])
+def webhook_ticket_created():
+    try:
+        data = request.get_json()
+        ticket_id = data.get('ticket_id')
+        
+        if ticket_id and 'SupportTicket' in globals():
+            ticket = globals()['SupportTicket'].query.get(ticket_id)
+            if ticket:
+                on_new_support_ticket(ticket)
+        
+        return jsonify({'success': True}), 200
+    except Exception as e:
+        logger.error(f"Webhook error: {e}")
+        return jsonify({'error': 'Webhook processing failed'}), 500
+
+@app.route('/api/webhooks/support/feedback-created', methods=['POST'])
+def webhook_feedback_created():
+    try:
+        data = request.get_json()
+        feedback_id = data.get('feedback_id')
+        
+        if feedback_id and 'Feedback' in globals():
+            feedback = globals()['Feedback'].query.get(feedback_id)
+            if feedback:
+                on_new_feedback(feedback)
+        
+        return jsonify({'success': True}), 200
+    except Exception as e:
+        logger.error(f"Feedback webhook error: {e}")
+        return jsonify({'error': 'Webhook processing failed'}), 500
+
 @app.route('/api/details/<slug>', methods=['GET'])
 def get_content_details_by_slug(slug):
     try:
@@ -2040,7 +2138,7 @@ def health_check():
         health_info = {
             'status': 'healthy',
             'timestamp': datetime.utcnow().isoformat(),
-            'version': '5.2.0',
+            'version': '5.3.0',
             'python_version': '3.13.4'
         }
         
@@ -2071,7 +2169,9 @@ def health_check():
             'details_service': 'enabled' if details_service else 'disabled',
             'content_service': 'enabled' if content_service else 'disabled',
             'cast_crew': 'fully_enabled',
-            'support_service': 'enabled'
+            'support_service': 'enabled' if 'support_bp' in app.blueprints else 'disabled',
+            'admin_notifications': 'enabled',
+            'monitoring': 'active'
         }
         
         try:
@@ -2101,6 +2201,18 @@ def health_check():
         except Exception as e:
             health_info['cast_crew_status'] = {'error': str(e)}
         
+        try:
+            if 'SupportTicket' in globals():
+                health_info['support_status'] = {
+                    'total_tickets': globals()['SupportTicket'].query.count(),
+                    'open_tickets': globals()['SupportTicket'].query.filter(
+                        globals()['SupportTicket'].status.in_(['open', 'in_progress'])
+                    ).count(),
+                    'total_feedback': globals()['Feedback'].query.count() if 'Feedback' in globals() else 0
+                }
+        except Exception as e:
+            health_info['support_status'] = {'error': str(e)}
+        
         health_info['performance'] = {
             'optimizations_applied': [
                 'python_3.13_compatibility',
@@ -2109,10 +2221,13 @@ def health_check():
                 'enhanced_caching',
                 'error_handling_improvements',
                 'cast_crew_optimization',
-                'support_service_integration'
+                'support_service_integration',
+                'admin_notification_system',
+                'real_time_monitoring'
             ],
             'memory_optimizations': 'enabled',
-            'unicode_fixes': 'applied'
+            'unicode_fixes': 'applied',
+            'monitoring': 'background_threads_active'
         }
         
         return jsonify(health_info), 200
@@ -2218,30 +2333,47 @@ def create_tables():
                 db.session.add(admin)
                 db.session.commit()
                 logger.info("Admin user created with username: admin, password: admin123")
-                
-            logger.info("Database tables created successfully including support tables")
+            
+            setup_support_monitoring()
+            
+            logger.info("Database tables created successfully including support tables with monitoring")
     except Exception as e:
         logger.error(f"Database initialization error: {e}")
 
 create_tables()
 
 if __name__ == '__main__':
-    print("=== Running Flask in development mode ===")
+    print("=== Running Flask in development mode with Full Support Management ===")
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('FLASK_ENV') == 'development'
     app.run(host='0.0.0.0', port=port, debug=debug)
 else:
-    print("=== Flask app imported by Gunicorn - OPTIMIZED VERSION WITH CAST/CREW & SUPPORT ===")
+    print("=== Flask app imported by Gunicorn - COMPREHENSIVE ADMIN & SUPPORT VERSION ===")
     print(f"App name: {app.name}")
     print(f"Python version: 3.13.4")
     print(f"Database URI configured: {'Yes' if app.config.get('SQLALCHEMY_DATABASE_URI') else 'No'}")
     print(f"Cache type: {app.config.get('CACHE_TYPE', 'Not configured')}")
     print(f"Details service status: {'Initialized' if details_service else 'Failed to initialize'}")
     print(f"Content service status: {'Initialized' if content_service else 'Failed to initialize'}")
+    print(f"Support service status: {'Integrated' if 'support_bp' in app.blueprints else 'Not integrated'}")
+    print(f"Admin support management: Fully enabled")
+    print(f"Real-time notifications: Enabled")
+    print(f"Email notifications: Enabled")
+    print(f"Telegram integration: Enabled")
+    print(f"Background monitoring: Active")
     print(f"Performance optimizations: Applied")
-    print(f"Unicode fixes: Applied")
-    print(f"Cast/Crew support: Fully enabled")
-    print(f"Support service: Integrated")
+    
+    print("\n=== Support Management Features ===")
+    print("✅ Complete support ticket management")
+    print("✅ Real-time admin notifications")
+    print("✅ Email alerts for urgent issues")
+    print("✅ Telegram channel integration")
+    print("✅ FAQ management system")
+    print("✅ Feedback collection and review")
+    print("✅ SLA monitoring and breach alerts")
+    print("✅ Comprehensive analytics dashboard")
+    print("✅ Automated background monitoring")
+    print("✅ Webhook support for integrations")
     
     print("\n=== Registered Routes ===")
     for rule in app.url_map.iter_rules():

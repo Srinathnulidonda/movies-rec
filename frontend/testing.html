@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Advanced AI Movie Recommendation System - Testing Suite</title>
+    <title>CineBrain Admin Dashboard - Testing Interface</title>
     <style>
         * {
             margin: 0;
@@ -13,9 +13,8 @@
         }
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
-            min-height: 100vh;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f5f5f5;
             color: #333;
         }
 
@@ -25,383 +24,444 @@
             padding: 20px;
         }
 
+        /* Header */
         .header {
-            background: rgba(255, 255, 255, 0.98);
-            padding: 25px;
-            border-radius: 20px;
-            margin-bottom: 25px;
-            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
-            backdrop-filter: blur(10px);
+            background: #1a73e8;
+            color: white;
+            padding: 15px 0;
+            margin-bottom: 20px;
+            border-radius: 8px;
         }
 
+        .header h1 {
+            text-align: center;
+            font-size: 24px;
+        }
+
+        /* Navigation */
+        .nav-tabs {
+            display: flex;
+            background: white;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            overflow-x: auto;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .nav-tab {
+            padding: 15px 20px;
+            cursor: pointer;
+            border-bottom: 3px solid transparent;
+            white-space: nowrap;
+            transition: all 0.3s;
+        }
+
+        .nav-tab:hover {
+            background: #f8f9fa;
+        }
+
+        .nav-tab.active {
+            border-bottom-color: #1a73e8;
+            color: #1a73e8;
+            font-weight: 600;
+        }
+
+        /* Auth Section */
         .auth-section {
-            display: flex;
-            gap: 20px;
-            align-items: center;
-            justify-content: space-between;
-            flex-wrap: wrap;
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            max-width: 400px;
+            margin: 50px auto;
         }
 
-        .auth-form {
-            display: flex;
-            gap: 10px;
-            align-items: center;
+        /* Content Sections */
+        .content-section {
+            display: none;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            margin-bottom: 20px;
         }
 
-        .auth-form input {
-            padding: 12px 16px;
-            border: 2px solid #ddd;
-            border-radius: 10px;
+        .content-section.active {
+            display: block;
+        }
+
+        /* Form Styles */
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+        }
+
+        .form-control {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
             font-size: 14px;
-            transition: all 0.3s ease;
         }
 
-        .auth-form input:focus {
+        .form-control:focus {
             outline: none;
-            border-color: #2a5298;
-            box-shadow: 0 0 0 3px rgba(42, 82, 152, 0.1);
+            border-color: #1a73e8;
+            box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.2);
         }
 
         .btn {
-            padding: 12px 24px;
+            padding: 10px 20px;
             border: none;
-            border-radius: 10px;
+            border-radius: 4px;
             cursor: pointer;
             font-size: 14px;
-            font-weight: 600;
-            transition: all 0.3s ease;
-            text-decoration: none;
-            display: inline-block;
+            transition: all 0.3s;
+            margin-right: 10px;
+            margin-bottom: 10px;
         }
 
         .btn-primary {
-            background: linear-gradient(45deg, #2a5298, #1e3c72);
+            background: #1a73e8;
             color: white;
         }
 
         .btn-primary:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(42, 82, 152, 0.4);
-        }
-
-        .btn-secondary {
-            background: #f8f9fa;
-            color: #333;
-            border: 2px solid #ddd;
-        }
-
-        .btn-secondary:hover {
-            background: #e9ecef;
-            border-color: #adb5bd;
+            background: #1557b0;
         }
 
         .btn-success {
-            background: linear-gradient(45deg, #28a745, #20c997);
+            background: #34a853;
             color: white;
+        }
+
+        .btn-success:hover {
+            background: #2d8f47;
         }
 
         .btn-warning {
-            background: linear-gradient(45deg, #ffc107, #fd7e14);
+            background: #fbbc04;
             color: #333;
+        }
+
+        .btn-warning:hover {
+            background: #f9ab00;
         }
 
         .btn-danger {
-            background: linear-gradient(45deg, #dc3545, #c82333);
+            background: #ea4335;
             color: white;
         }
 
-        .user-info {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        .btn-danger:hover {
+            background: #d93025;
+        }
+
+        .btn-secondary {
+            background: #5f6368;
             color: white;
-            padding: 20px;
-            border-radius: 15px;
-            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
         }
 
-        .tabs {
-            display: flex;
-            gap: 10px;
-            margin-bottom: 25px;
-            flex-wrap: wrap;
-            background: rgba(255, 255, 255, 0.1);
-            padding: 10px;
-            border-radius: 15px;
-            backdrop-filter: blur(10px);
+        .btn-secondary:hover {
+            background: #4a4d52;
         }
 
-        .tab {
-            padding: 14px 28px;
-            background: rgba(255, 255, 255, 0.9);
-            border: none;
-            border-radius: 12px;
-            cursor: pointer;
-            font-weight: 600;
-            transition: all 0.3s ease;
-            color: #333;
-        }
-
-        .tab:hover {
-            background: rgba(255, 255, 255, 1);
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-        }
-
-        .tab.active {
-            background: linear-gradient(45deg, #2a5298, #1e3c72);
-            color: white;
-            box-shadow: 0 6px 20px rgba(42, 82, 152, 0.4);
-        }
-
-        .content-section {
-            background: rgba(255, 255, 255, 0.98);
-            padding: 30px;
-            border-radius: 20px;
-            margin-bottom: 25px;
-            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
-            backdrop-filter: blur(10px);
-        }
-
-        .hidden {
-            display: none;
-        }
-
-        .search-section {
-            margin-bottom: 25px;
-        }
-
-        .search-form {
-            display: flex;
-            gap: 10px;
-            margin-bottom: 20px;
-        }
-
-        .search-form input {
-            flex: 1;
-            padding: 14px 20px;
-            border: 2px solid #ddd;
-            border-radius: 12px;
-            font-size: 16px;
-            transition: all 0.3s ease;
-        }
-
-        .search-form input:focus {
-            outline: none;
-            border-color: #2a5298;
-            box-shadow: 0 0 0 3px rgba(42, 82, 152, 0.1);
-        }
-
-        .filters {
-            display: flex;
-            gap: 15px;
-            align-items: center;
-            flex-wrap: wrap;
-            margin-bottom: 20px;
-        }
-
-        .filters select {
-            padding: 10px 16px;
-            border: 2px solid #ddd;
+        /* Cards */
+        .card {
+            background: white;
             border-radius: 8px;
-            background: white;
-            cursor: pointer;
-            transition: all 0.3s ease;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            margin-bottom: 20px;
         }
 
-        .filters select:focus {
-            outline: none;
-            border-color: #2a5298;
+        .card-header {
+            padding: 15px 20px;
+            border-bottom: 1px solid #eee;
+            font-weight: 600;
+            background: #f8f9fa;
+            border-radius: 8px 8px 0 0;
         }
 
-        .content-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-            gap: 25px;
-            margin-top: 25px;
-        }
-
-        .content-card {
-            background: white;
-            border-radius: 16px;
-            overflow: hidden;
-            box-shadow: 0 5px 20px rgba(0, 0, 0, 0.1);
-            transition: all 0.3s ease;
-            position: relative;
-        }
-
-        .content-card:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
-        }
-
-        .content-poster {
-            width: 100%;
-            height: 200px;
-            object-fit: cover;
-            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
-        }
-
-        .content-info {
+        .card-body {
             padding: 20px;
         }
 
-        .content-title {
-            font-size: 18px;
-            font-weight: 700;
-            margin-bottom: 10px;
-            color: #333;
-            line-height: 1.3;
+        /* Grid */
+        .row {
+            display: flex;
+            flex-wrap: wrap;
+            margin: -10px;
         }
 
-        .content-meta {
+        .col-1 {
+            flex: 0 0 8.333%;
+        }
+
+        .col-2 {
+            flex: 0 0 16.666%;
+        }
+
+        .col-3 {
+            flex: 0 0 25%;
+        }
+
+        .col-4 {
+            flex: 0 0 33.333%;
+        }
+
+        .col-6 {
+            flex: 0 0 50%;
+        }
+
+        .col-8 {
+            flex: 0 0 66.666%;
+        }
+
+        .col-12 {
+            flex: 0 0 100%;
+        }
+
+        .col-1,
+        .col-2,
+        .col-3,
+        .col-4,
+        .col-6,
+        .col-8,
+        .col-12 {
+            padding: 10px;
+        }
+
+        /* Tables */
+        .table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+
+        .table th,
+        .table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #eee;
+        }
+
+        .table th {
+            background: #f8f9fa;
+            font-weight: 600;
+        }
+
+        .table tbody tr:hover {
+            background: #f8f9fa;
+        }
+
+        /* Status Badges */
+        .badge {
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        .badge-success {
+            background: #e8f5e8;
+            color: #2d8f47;
+        }
+
+        .badge-warning {
+            background: #fff8e1;
+            color: #f57c00;
+        }
+
+        .badge-danger {
+            background: #fce8e6;
+            color: #d93025;
+        }
+
+        .badge-info {
+            background: #e3f2fd;
+            color: #1976d2;
+        }
+
+        .badge-secondary {
+            background: #f5f5f5;
+            color: #5f6368;
+        }
+
+        /* Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+        }
+
+        .modal-content {
+            background-color: white;
+            margin: 5% auto;
+            padding: 0;
+            border-radius: 8px;
+            width: 90%;
+            max-width: 600px;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        .modal-header {
+            padding: 20px;
+            border-bottom: 1px solid #eee;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 12px;
-            font-size: 14px;
-            color: #666;
         }
 
-        .rating {
-            background: linear-gradient(45deg, #ffd700, #ffed4e);
-            color: #333;
-            padding: 4px 10px;
-            border-radius: 20px;
-            font-weight: 600;
-            font-size: 13px;
+        .modal-body {
+            padding: 20px;
         }
 
-        .content-type {
-            background: linear-gradient(45deg, #e3f2fd, #bbdefb);
-            color: #1976d2;
-            padding: 4px 10px;
-            border-radius: 20px;
-            font-size: 12px;
-            font-weight: 600;
-            text-transform: uppercase;
+        .modal-footer {
+            padding: 20px;
+            border-top: 1px solid #eee;
+            text-align: right;
         }
 
-        .content-actions {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 8px;
-            margin-top: 15px;
-        }
-
-        .action-btn {
-            padding: 10px;
-            border: none;
-            border-radius: 8px;
+        .close {
+            color: #aaa;
+            font-size: 28px;
+            font-weight: bold;
             cursor: pointer;
-            font-size: 13px;
-            font-weight: 600;
-            transition: all 0.3s ease;
-            text-align: center;
         }
 
-        .like-btn {
-            background: #ffebee;
-            color: #e91e63;
+        .close:hover {
+            color: #000;
         }
 
-        .like-btn:hover {
-            background: #ffcdd2;
+        /* Alerts */
+        .alert {
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 4px;
+            border: 1px solid transparent;
         }
 
-        .like-btn.active {
-            background: linear-gradient(45deg, #e91e63, #f06292);
-            color: white;
+        .alert-success {
+            color: #155724;
+            background-color: #d4edda;
+            border-color: #c3e6cb;
         }
 
-        .watchlist-btn {
-            background: #e8f5e8;
-            color: #4caf50;
+        .alert-error {
+            color: #721c24;
+            background-color: #f8d7da;
+            border-color: #f5c6cb;
         }
 
-        .watchlist-btn:hover {
-            background: #c8e6c9;
+        .alert-info {
+            color: #0c5460;
+            background-color: #d1ecf1;
+            border-color: #bee5eb;
         }
 
-        .watchlist-btn.active {
-            background: linear-gradient(45deg, #4caf50, #66bb6a);
-            color: white;
-        }
-
-        .favorite-btn {
-            background: #fff3e0;
-            color: #ff9800;
-        }
-
-        .favorite-btn:hover {
-            background: #ffe0b2;
-        }
-
-        .favorite-btn.active {
-            background: linear-gradient(45deg, #ff9800, #ffa726);
-            color: white;
-        }
-
-        .rating-section {
-            margin-top: 15px;
-            text-align: center;
-        }
-
-        .star-rating {
-            display: inline-flex;
-            gap: 4px;
-            padding: 10px;
-            background: #f5f5f5;
-            border-radius: 25px;
-        }
-
-        .star {
-            cursor: pointer;
-            font-size: 20px;
-            color: #ddd;
-            transition: all 0.2s;
-        }
-
-        .star:hover {
-            color: #ffd700;
-            transform: scale(1.1);
-        }
-
-        .star.active {
-            color: #ffd700;
-        }
-
-        .ml-info {
+        /* Metrics Cards */
+        .metric-card {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
-            padding: 12px 16px;
-            border-radius: 10px;
-            margin-top: 12px;
-            font-size: 13px;
-            line-height: 1.5;
+            text-align: center;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 15px;
         }
 
-        .ml-score {
-            background: rgba(255, 255, 255, 0.2);
-            padding: 2px 8px;
-            border-radius: 12px;
+        .metric-number {
+            font-size: 32px;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .metric-label {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+
+        /* Notifications Panel */
+        .notifications-panel {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            width: 350px;
+            max-height: 400px;
+            overflow-y: auto;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            z-index: 1000;
+            display: none;
+        }
+
+        .notification-item {
+            padding: 15px;
+            border-bottom: 1px solid #eee;
+            cursor: pointer;
+        }
+
+        .notification-item:hover {
+            background: #f8f9fa;
+        }
+
+        .notification-item.unread {
+            background: #e3f2fd;
+        }
+
+        .notification-title {
             font-weight: 600;
-            font-size: 12px;
-            margin-left: 5px;
+            margin-bottom: 5px;
         }
 
+        .notification-message {
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 5px;
+        }
+
+        .notification-time {
+            font-size: 12px;
+            color: #999;
+        }
+
+        /* Search and Filters */
+        .search-filters {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+
+        .search-filters .row {
+            align-items: flex-end;
+        }
+
+        /* Loading Spinner */
         .loading {
             text-align: center;
-            padding: 60px;
-            color: #666;
+            padding: 20px;
         }
 
         .spinner {
-            border: 4px solid rgba(42, 82, 152, 0.1);
-            border-top: 4px solid #2a5298;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #1a73e8;
             border-radius: 50%;
-            width: 50px;
-            height: 50px;
+            width: 30px;
+            height: 30px;
             animation: spin 1s linear infinite;
-            margin: 0 auto 25px;
+            margin: 0 auto;
         }
 
         @keyframes spin {
@@ -414,217 +474,90 @@
             }
         }
 
-        .error {
-            background: linear-gradient(135deg, #ff6b6b, #ee5a6f);
-            color: white;
-            padding: 20px;
-            border-radius: 12px;
-            margin: 15px 0;
-            box-shadow: 0 5px 20px rgba(238, 90, 111, 0.3);
-            animation: slideIn 0.3s ease;
-        }
-
-        .success {
-            background: linear-gradient(135deg, #51cf66, #94d82d);
-            color: white;
-            padding: 20px;
-            border-radius: 12px;
-            margin: 15px 0;
-            box-shadow: 0 5px 20px rgba(81, 207, 102, 0.3);
-            animation: slideIn 0.3s ease;
-        }
-
-        @keyframes slideIn {
-            from {
-                transform: translateY(-20px);
-                opacity: 0;
-            }
-
-            to {
-                transform: translateY(0);
-                opacity: 1;
-            }
-        }
-
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 20px;
-            margin-bottom: 25px;
-        }
-
-        .stat-card {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 25px;
-            border-radius: 16px;
-            text-align: center;
-            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.3);
-            transition: all 0.3s ease;
-        }
-
-        .stat-card:hover {
-            transform: translateY(-3px);
-            box-shadow: 0 8px 25px rgba(102, 126, 234, 0.4);
-        }
-
-        .stat-number {
-            font-size: 32px;
-            font-weight: 700;
-            margin-bottom: 5px;
-        }
-
-        .stat-label {
-            font-size: 14px;
-            opacity: 0.9;
-        }
-
-        .health-status {
-            padding: 15px 20px;
-            border-radius: 12px;
-            margin-bottom: 20px;
-            font-weight: 600;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-
-        .health-healthy {
-            background: linear-gradient(135deg, #51cf66, #94d82d);
-            color: white;
-        }
-
-        .health-unhealthy {
-            background: linear-gradient(135deg, #ff6b6b, #ee5a6f);
-            color: white;
-        }
-
-        .status-indicator {
-            width: 12px;
-            height: 12px;
-            border-radius: 50%;
-            background: white;
-            animation: pulse 2s ease-in-out infinite;
-        }
-
-        @keyframes pulse {
-            0% {
-                box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.7);
-            }
-
-            70% {
-                box-shadow: 0 0 0 10px rgba(255, 255, 255, 0);
-            }
-
-            100% {
-                box-shadow: 0 0 0 0 rgba(255, 255, 255, 0);
-            }
-        }
-
-        .test-controls {
-            background: #f8f9fa;
-            padding: 20px;
-            border-radius: 12px;
-            margin-bottom: 20px;
-            border: 2px solid #e9ecef;
-        }
-
-        .test-controls h3 {
-            margin-bottom: 15px;
-            color: #495057;
-        }
-
-        .test-buttons {
-            display: flex;
-            gap: 10px;
-            flex-wrap: wrap;
-        }
-
-        .info-panel {
-            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
-            color: white;
-            padding: 20px;
-            border-radius: 12px;
-            margin-top: 20px;
-        }
-
-        .info-panel h4 {
-            margin-bottom: 10px;
-        }
-
-        .info-panel pre {
-            background: rgba(255, 255, 255, 0.2);
-            padding: 15px;
-            border-radius: 8px;
-            overflow-x: auto;
-            font-size: 13px;
-        }
-
-        .personalization-indicator {
-            display: inline-flex;
-            align-items: center;
-            gap: 5px;
-            background: rgba(255, 255, 255, 0.2);
-            padding: 4px 12px;
-            border-radius: 20px;
-            font-size: 12px;
-            font-weight: 600;
-            margin-top: 8px;
-        }
-
-        .confidence-meter {
-            width: 100%;
-            height: 6px;
-            background: rgba(0, 0, 0, 0.1);
-            border-radius: 3px;
-            margin-top: 8px;
-            overflow: hidden;
-        }
-
-        .confidence-fill {
-            height: 100%;
-            background: linear-gradient(90deg, #4caf50, #8bc34a);
-            border-radius: 3px;
-            transition: width 0.3s ease;
-        }
-
+        /* Responsive */
         @media (max-width: 768px) {
             .container {
                 padding: 10px;
             }
 
-            .auth-section {
-                flex-direction: column;
-                align-items: stretch;
-            }
-
-            .auth-form {
+            .nav-tabs {
                 flex-direction: column;
             }
 
-            .content-grid {
-                grid-template-columns: 1fr;
-                gap: 20px;
-            }
-
-            .tabs {
+            .row {
                 flex-direction: column;
-                padding: 5px;
             }
 
-            .tab {
-                text-align: center;
+            .col-1,
+            .col-2,
+            .col-3,
+            .col-4,
+            .col-6,
+            .col-8,
+            .col-12 {
+                flex: 0 0 100%;
+            }
+
+            .notifications-panel {
+                position: relative;
+                top: auto;
+                right: auto;
                 width: 100%;
+                margin-bottom: 20px;
+                display: block;
             }
+        }
 
-            .filters {
-                flex-direction: column;
-                align-items: stretch;
-            }
+        /* Status indicators */
+        .status-indicator {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 5px;
+        }
 
-            .filters select {
-                width: 100%;
-            }
+        .status-healthy {
+            background: #34a853;
+        }
+
+        .status-warning {
+            background: #fbbc04;
+        }
+
+        .status-error {
+            background: #ea4335;
+        }
+
+        .status-offline {
+            background: #9aa0a6;
+        }
+
+        /* Code blocks */
+        .code-block {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 4px;
+            padding: 15px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            overflow-x: auto;
+            margin: 10px 0;
+        }
+
+        /* Progress bars */
+        .progress {
+            width: 100%;
+            height: 20px;
+            background-color: #e9ecef;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+
+        .progress-bar {
+            height: 100%;
+            background-color: #1a73e8;
+            transition: width 0.3s;
         }
     </style>
 </head>
@@ -633,1590 +566,1444 @@
     <div class="container">
         <!-- Header -->
         <div class="header">
-            <div class="auth-section">
-                <h1>🎬 Advanced AI Recommendation System - Testing Suite</h1>
+            <h1>🎬 CineBrain Admin Dashboard - Testing Interface</h1>
+        </div>
 
-                <div id="loginSection" class="auth-form">
-                    <input type="text" id="loginUsername" placeholder="Username" value="testuser">
-                    <input type="password" id="loginPassword" placeholder="Password" value="test123">
-                    <button class="btn btn-primary" onclick="login()">Login</button>
-                    <button class="btn btn-secondary" onclick="showRegister()">Register</button>
-                </div>
+        <!-- Authentication Section -->
+        <div id="authSection" class="auth-section">
+            <h2 style="text-align: center; margin-bottom: 20px;">Admin Login</h2>
+            <div class="form-group">
+                <label for="loginEmail">Email</label>
+                <input type="email" id="loginEmail" class="form-control" value="srinathnani09@gmail.com"
+                    placeholder="Enter admin email">
+            </div>
+            <div class="form-group">
+                <label for="loginPassword">Password</label>
+                <input type="password" id="loginPassword" class="form-control" value="admin123"
+                    placeholder="Enter password">
+            </div>
+            <button onclick="adminLogin()" class="btn btn-primary" style="width: 100%;">Login</button>
 
-                <div id="registerSection" class="auth-form hidden">
-                    <input type="text" id="regUsername" placeholder="Username">
-                    <input type="email" id="regEmail" placeholder="Email">
-                    <input type="password" id="regPassword" placeholder="Password">
-                    <button class="btn btn-primary" onclick="register()">Register</button>
-                    <button class="btn btn-secondary" onclick="showLogin()">Back to Login</button>
-                </div>
+            <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 4px;">
+                <h4>Test Credentials:</h4>
+                <p><strong>Email:</strong> srinathnani09@gmail.com</p>
+                <p><strong>Password:</strong> admin123</p>
+                <p><small>These are the default admin credentials from your app.py</small></p>
+            </div>
 
-                <div id="userSection" class="user-info hidden">
-                    <span id="userWelcome"></span>
-                    <span id="userStats"></span>
-                    <button class="btn btn-secondary" onclick="logout()">Logout</button>
-                </div>
+            <div style="margin-top: 20px; padding: 15px; background: #e3f2fd; border-radius: 4px;">
+                <h4>API Base URL:</h4>
+                <input type="text" id="apiBaseUrl" class="form-control" value="http://localhost:5000"
+                    placeholder="Enter API base URL">
+                <small>Update this to match your backend server URL</small>
             </div>
         </div>
 
         <!-- Navigation Tabs -->
-        <div class="tabs">
-            <button class="tab active" onclick="showTab('testing')">🧪 Testing Dashboard</button>
-            <button class="tab" onclick="showTab('search')">🔍 Search & Browse</button>
-            <button class="tab" onclick="showTab('personalized')">🎯 AI Personalized</button>
-            <button class="tab" onclick="showTab('trending')">🔥 Trending</button>
-            <button class="tab" onclick="showTab('watchlist')">📚 My Watchlist</button>
-            <button class="tab" onclick="showTab('favorites')">❤️ My Favorites</button>
-            <button class="tab" onclick="showTab('profile')">👤 Profile Analysis</button>
-            <button class="tab" onclick="showTab('health')">⚡ System Health</button>
+        <div id="navTabs" class="nav-tabs" style="display: none;">
+            <div class="nav-tab active" onclick="showSection('dashboard')">📊 Dashboard</div>
+            <div class="nav-tab" onclick="showSection('support')">🎧 Support</div>
+            <div class="nav-tab" onclick="showSection('content')">🎬 Content</div>
+            <div class="nav-tab" onclick="showSection('users')">👥 Users</div>
+            <div class="nav-tab" onclick="showSection('analytics')">📈 Analytics</div>
+            <div class="nav-tab" onclick="showSection('system')">⚙️ System</div>
+            <div class="nav-tab" onclick="showSection('notifications')">🔔 Notifications</div>
+            <div class="nav-tab" onclick="logout()">🚪 Logout</div>
         </div>
 
-        <!-- Testing Dashboard Section -->
-        <div id="testingSection" class="content-section">
-            <h2>🧪 Advanced Testing Dashboard</h2>
+        <!-- Dashboard Section -->
+        <div id="dashboardSection" class="content-section active">
+            <div class="card">
+                <div class="card-header">📊 Admin Dashboard Overview</div>
+                <div class="card-body">
+                    <div class="row" id="dashboardMetrics">
+                        <div class="col-3">
+                            <div class="metric-card">
+                                <div class="metric-number" id="totalUsers">-</div>
+                                <div class="metric-label">Total Users</div>
+                            </div>
+                        </div>
+                        <div class="col-3">
+                            <div class="metric-card">
+                                <div class="metric-number" id="totalContent">-</div>
+                                <div class="metric-label">Total Content</div>
+                            </div>
+                        </div>
+                        <div class="col-3">
+                            <div class="metric-card">
+                                <div class="metric-number" id="totalInteractions">-</div>
+                                <div class="metric-label">Total Interactions</div>
+                            </div>
+                        </div>
+                        <div class="col-3">
+                            <div class="metric-card">
+                                <div class="metric-number" id="activeUsers">-</div>
+                                <div class="metric-label">Active Users</div>
+                            </div>
+                        </div>
+                    </div>
 
-            <div class="test-controls">
-                <h3>Quick Test Actions</h3>
-                <div class="test-buttons">
-                    <button class="btn btn-success" onclick="runFullTest()">Run Full Test Suite</button>
-                    <button class="btn btn-warning" onclick="simulateUserBehavior()">Simulate User Behavior</button>
-                    <button class="btn btn-primary" onclick="testMLEndpoints()">Test ML Endpoints</button>
-                    <button class="btn btn-secondary" onclick="checkCacheStatus()">Check Cache Status</button>
-                    <button class="btn btn-danger" onclick="clearAllCaches()">Clear All Caches</button>
+                    <div class="row">
+                        <div class="col-6">
+                            <h4>Support Metrics</h4>
+                            <div id="supportMetrics">
+                                <div class="loading">
+                                    <div class="spinner"></div>
+                                    <p>Loading support metrics...</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-6">
+                            <h4>System Health</h4>
+                            <div id="systemHealth">
+                                <div class="loading">
+                                    <div class="spinner"></div>
+                                    <p>Checking system health...</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <button onclick="loadDashboard()" class="btn btn-primary">🔄 Refresh Dashboard</button>
                 </div>
             </div>
+        </div>
 
-            <div class="stats-grid" id="testStats">
-                <div class="stat-card">
-                    <div class="stat-number">0</div>
-                    <div class="stat-label">Total API Calls</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-number">0ms</div>
-                    <div class="stat-label">Avg Response Time</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-number">0%</div>
-                    <div class="stat-label">Success Rate</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-number">0</div>
-                    <div class="stat-label">ML Predictions</div>
+        <!-- Support Section -->
+        <div id="supportSection" class="content-section">
+            <div class="card">
+                <div class="card-header">🎧 Support Management</div>
+                <div class="card-body">
+                    <!-- Support Dashboard -->
+                    <div class="row">
+                        <div class="col-12">
+                            <h4>Support Dashboard</h4>
+                            <button onclick="loadSupportDashboard()" class="btn btn-primary">📊 Load Support
+                                Dashboard</button>
+                            <div id="supportDashboardData"></div>
+                        </div>
+                    </div>
+
+                    <!-- Tickets Management -->
+                    <div class="row" style="margin-top: 30px;">
+                        <div class="col-12">
+                            <h4>Support Tickets</h4>
+
+                            <!-- Filters -->
+                            <div class="search-filters">
+                                <div class="row">
+                                    <div class="col-3">
+                                        <label>Status</label>
+                                        <select id="ticketStatus" class="form-control">
+                                            <option value="">All Statuses</option>
+                                            <option value="open">Open</option>
+                                            <option value="in_progress">In Progress</option>
+                                            <option value="resolved">Resolved</option>
+                                            <option value="closed">Closed</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-3">
+                                        <label>Priority</label>
+                                        <select id="ticketPriority" class="form-control">
+                                            <option value="">All Priorities</option>
+                                            <option value="low">Low</option>
+                                            <option value="normal">Normal</option>
+                                            <option value="high">High</option>
+                                            <option value="urgent">Urgent</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-3">
+                                        <label>Search</label>
+                                        <input type="text" id="ticketSearch" class="form-control"
+                                            placeholder="Search tickets...">
+                                    </div>
+                                    <div class="col-3">
+                                        <label>&nbsp;</label><br>
+                                        <button onclick="loadSupportTickets()" class="btn btn-primary">🔍 Search
+                                            Tickets</button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div id="supportTicketsData"></div>
+                        </div>
+                    </div>
+
+                    <!-- FAQ Management -->
+                    <div class="row" style="margin-top: 30px;">
+                        <div class="col-12">
+                            <h4>FAQ Management</h4>
+                            <button onclick="loadFAQs()" class="btn btn-primary">📋 Load FAQs</button>
+                            <button onclick="showCreateFAQModal()" class="btn btn-success">➕ Create FAQ</button>
+                            <div id="faqData"></div>
+                        </div>
+                    </div>
+
+                    <!-- Feedback Management -->
+                    <div class="row" style="margin-top: 30px;">
+                        <div class="col-12">
+                            <h4>Feedback Management</h4>
+                            <button onclick="loadFeedback()" class="btn btn-primary">💬 Load Feedback</button>
+                            <div id="feedbackData"></div>
+                        </div>
+                    </div>
                 </div>
             </div>
-
-            <div id="testResults"></div>
         </div>
 
-        <!-- Search & Browse Section -->
-        <div id="searchSection" class="content-section hidden">
-            <h2>Search & Browse Content</h2>
-            <div class="search-section">
-                <div class="search-form">
-                    <input type="text" id="searchQuery" placeholder="Search for movies, TV shows, anime..."
-                        onkeypress="handleSearchEnter(event)">
-                    <button class="btn btn-primary" onclick="searchContent()">Search</button>
+        <!-- Content Section -->
+        <div id="contentSection" class="content-section">
+            <div class="card">
+                <div class="card-header">🎬 Content Management</div>
+                <div class="card-body">
+                    <!-- External Content Search -->
+                    <div class="row">
+                        <div class="col-12">
+                            <h4>Search External Content</h4>
+                            <div class="row">
+                                <div class="col-4">
+                                    <input type="text" id="contentSearchQuery" class="form-control"
+                                        placeholder="Search movies, TV shows, anime...">
+                                </div>
+                                <div class="col-3">
+                                    <select id="contentSearchSource" class="form-control">
+                                        <option value="tmdb">TMDB (Movies/TV)</option>
+                                        <option value="anime">Anime</option>
+                                    </select>
+                                </div>
+                                <div class="col-3">
+                                    <button onclick="searchExternalContent()" class="btn btn-primary">🔍 Search</button>
+                                </div>
+                            </div>
+                            <div id="externalContentResults"></div>
+                        </div>
+                    </div>
+
+                    <!-- Admin Recommendations -->
+                    <div class="row" style="margin-top: 30px;">
+                        <div class="col-12">
+                            <h4>Create Admin Recommendation</h4>
+                            <div class="row">
+                                <div class="col-4">
+                                    <input type="number" id="recContentId" class="form-control"
+                                        placeholder="Content ID">
+                                </div>
+                                <div class="col-3">
+                                    <select id="recType" class="form-control">
+                                        <option value="admin_choice">Admin Choice</option>
+                                        <option value="editors_pick">Editor's Pick</option>
+                                        <option value="trending">Trending</option>
+                                        <option value="must_watch">Must Watch</option>
+                                    </select>
+                                </div>
+                                <div class="col-5">
+                                    <input type="text" id="recDescription" class="form-control"
+                                        placeholder="Recommendation description">
+                                </div>
+                            </div>
+                            <button onclick="createAdminRecommendation()" class="btn btn-success"
+                                style="margin-top: 10px;">✨ Create Recommendation</button>
+                        </div>
+                    </div>
+
+                    <!-- Content Management -->
+                    <div class="row" style="margin-top: 30px;">
+                        <div class="col-12">
+                            <h4>Manage Existing Content</h4>
+                            <button onclick="loadContentManagement()" class="btn btn-primary">📑 Load Content</button>
+                            <div id="contentManagementData"></div>
+                        </div>
+                    </div>
+
+                    <!-- Admin Recommendations List -->
+                    <div class="row" style="margin-top: 30px;">
+                        <div class="col-12">
+                            <h4>Admin Recommendations</h4>
+                            <button onclick="loadAdminRecommendations()" class="btn btn-primary">⭐ Load
+                                Recommendations</button>
+                            <div id="adminRecommendationsData"></div>
+                        </div>
+                    </div>
                 </div>
-                <div class="filters">
-                    <label>Type:</label>
-                    <select id="contentTypeFilter">
-                        <option value="multi">All Content</option>
-                        <option value="movie">Movies</option>
-                        <option value="tv">TV Shows</option>
-                        <option value="anime">Anime</option>
-                    </select>
-                    <label>Sort By:</label>
-                    <select id="sortFilter">
-                        <option value="popularity">Popularity</option>
-                        <option value="rating">Rating</option>
-                        <option value="release_date">Release Date</option>
-                    </select>
-                    <button class="btn btn-secondary" onclick="getNewReleases()">New Releases</button>
-                    <button class="btn btn-secondary" onclick="getCriticsChoice()">Critics Choice</button>
+            </div>
+        </div>
+
+        <!-- Users Section -->
+        <div id="usersSection" class="content-section">
+            <div class="card">
+                <div class="card-header">👥 User Management</div>
+                <div class="card-body">
+                    <div class="search-filters">
+                        <div class="row">
+                            <div class="col-4">
+                                <input type="text" id="userSearch" class="form-control" placeholder="Search users...">
+                            </div>
+                            <div class="col-2">
+                                <button onclick="loadUsers()" class="btn btn-primary">🔍 Search Users</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="usersData"></div>
                 </div>
             </div>
-            <div id="searchResults"></div>
         </div>
 
-        <!-- Personalized Recommendations Section -->
-        <div id="personalizedSection" class="content-section hidden">
-            <h2>🤖 Advanced AI Personalized Recommendations</h2>
-            <p>Neural network-powered recommendations based on your complete interaction history</p>
-            <div class="filters">
-                <label>Content Type:</label>
-                <select id="personalizedTypeFilter">
-                    <option value="">All Types</option>
-                    <option value="movie">Movies</option>
-                    <option value="tv">TV Shows</option>
-                    <option value="anime">Anime</option>
-                </select>
-                <label>Limit:</label>
-                <select id="personalizedLimitFilter">
-                    <option value="10">10</option>
-                    <option value="20" selected>20</option>
-                    <option value="30">30</option>
-                    <option value="50">50</option>
-                </select>
-                <button class="btn btn-primary" onclick="getPersonalizedRecommendations()">Get AI
-                    Recommendations</button>
-                <button class="btn btn-secondary" onclick="refreshMLModel()">Refresh ML Model</button>
+        <!-- Analytics Section -->
+        <div id="analyticsSection" class="content-section">
+            <div class="card">
+                <div class="card-header">📈 Analytics & Reports</div>
+                <div class="card-body">
+                    <button onclick="loadAnalytics()" class="btn btn-primary">📊 Load Analytics</button>
+                    <div id="analyticsData"></div>
+                </div>
             </div>
-            <div id="personalizedStats"></div>
-            <div id="personalizedResults"></div>
         </div>
 
-        <!-- Trending Section -->
-        <div id="trendingSection" class="content-section hidden">
-            <h2>🔥 Trending Now</h2>
-            <div class="filters">
-                <label>Region:</label>
-                <select id="regionFilter">
-                    <option value="IN">India</option>
-                    <option value="US">United States</option>
-                    <option value="JP">Japan</option>
-                    <option value="KR">South Korea</option>
-                    <option value="GB">United Kingdom</option>
-                </select>
-                <label>Category:</label>
-                <select id="trendingCategoryFilter">
-                    <option value="all">All Categories</option>
-                    <option value="movies">Movies</option>
-                    <option value="tv_shows">TV Shows</option>
-                    <option value="anime">Anime</option>
-                    <option value="nearby">Popular Nearby</option>
-                    <option value="critics">Critics Choice</option>
-                </select>
-                <button class="btn btn-primary" onclick="getTrendingContent()">Get Trending</button>
-                <button class="btn btn-success" onclick="getMLTrending()">ML Enhanced Trending</button>
+        <!-- System Section -->
+        <div id="systemSection" class="content-section">
+            <div class="card">
+                <div class="card-header">⚙️ System Management</div>
+                <div class="card-body">
+                    <!-- Cache Management -->
+                    <div class="row">
+                        <div class="col-6">
+                            <h4>Cache Management</h4>
+                            <button onclick="clearCache('all')" class="btn btn-warning">🗑️ Clear All Cache</button>
+                            <button onclick="clearCache('search')" class="btn btn-warning">🔍 Clear Search
+                                Cache</button>
+                            <button onclick="clearCache('recommendations')" class="btn btn-warning">⭐ Clear
+                                Recommendations Cache</button>
+                            <button onclick="clearCache('support')" class="btn btn-warning">🎧 Clear Support
+                                Cache</button>
+                            <button onclick="loadCacheStats()" class="btn btn-primary">📊 Cache Statistics</button>
+                        </div>
+                        <div class="col-6">
+                            <h4>System Health</h4>
+                            <button onclick="loadSystemHealth()" class="btn btn-primary">🏥 Check System Health</button>
+                        </div>
+                    </div>
+
+                    <div class="row" style="margin-top: 20px;">
+                        <div class="col-12">
+                            <div id="systemData"></div>
+                        </div>
+                    </div>
+                </div>
             </div>
-            <div id="trendingResults"></div>
         </div>
 
-        <!-- Watchlist Section -->
-        <div id="watchlistSection" class="content-section hidden">
-            <h2>📚 My Watchlist</h2>
-            <p>Content you've saved to watch later</p>
-            <button class="btn btn-primary" onclick="getWatchlist()">Refresh Watchlist</button>
-            <div id="watchlistResults"></div>
-        </div>
-
-        <!-- Favorites Section -->
-        <div id="favoritesSection" class="content-section hidden">
-            <h2>❤️ My Favorites</h2>
-            <p>Your favorite content collection</p>
-            <button class="btn btn-primary" onclick="getFavorites()">Refresh Favorites</button>
-            <div id="favoritesResults"></div>
-        </div>
-
-        <!-- Profile Analysis Section -->
-        <div id="profileSection" class="content-section hidden">
-            <h2>👤 Advanced Profile Analysis</h2>
-            <p>AI-powered analysis of your viewing behavior and preferences</p>
-            <button class="btn btn-primary" onclick="getUserAnalysis()">Analyze My Profile</button>
-            <button class="btn btn-secondary" onclick="exportProfileData()">Export Profile Data</button>
-            <div id="profileResults"></div>
-        </div>
-
-        <!-- System Health Section -->
-        <div id="healthSection" class="content-section hidden">
-            <h2>⚡ System Health & Performance</h2>
-            <button class="btn btn-primary" onclick="checkSystemHealth()">Check Backend Health</button>
-            <button class="btn btn-success" onclick="checkMLHealth()">Check ML Service</button>
-            <button class="btn btn-warning" onclick="runPerformanceTest()">Run Performance Test</button>
-            <div id="healthResults"></div>
+        <!-- Notifications Section -->
+        <div id="notificationsSection" class="content-section">
+            <div class="card">
+                <div class="card-header">🔔 Real-time Notifications</div>
+                <div class="card-body">
+                    <button onclick="loadNotifications()" class="btn btn-primary">🔔 Load Notifications</button>
+                    <button onclick="sendTestNotification()" class="btn btn-success">📤 Send Test Notification</button>
+                    <div id="notificationsData"></div>
+                </div>
+            </div>
         </div>
     </div>
 
+    <!-- Notifications Panel -->
+    <div id="notificationsPanel" class="notifications-panel">
+        <div class="card-header">
+            <strong>Live Notifications</strong>
+            <span onclick="toggleNotificationsPanel()" class="close">&times;</span>
+        </div>
+        <div id="liveNotifications"></div>
+    </div>
+
+    <!-- Modal for Ticket Details -->
+    <div id="ticketModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="ticketModalTitle">Ticket Details</h3>
+                <span class="close" onclick="closeModal('ticketModal')">&times;</span>
+            </div>
+            <div class="modal-body" id="ticketModalBody">
+                <!-- Ticket details will be loaded here -->
+            </div>
+            <div class="modal-footer">
+                <button onclick="closeModal('ticketModal')" class="btn btn-secondary">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal for FAQ Creation -->
+    <div id="faqModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="faqModalTitle">Create FAQ</h3>
+                <span class="close" onclick="closeModal('faqModal')">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Question</label>
+                    <input type="text" id="faqQuestion" class="form-control" placeholder="Enter FAQ question">
+                </div>
+                <div class="form-group">
+                    <label>Answer</label>
+                    <textarea id="faqAnswer" class="form-control" rows="5" placeholder="Enter FAQ answer"></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Category ID</label>
+                    <input type="number" id="faqCategoryId" class="form-control" placeholder="Enter category ID"
+                        value="1">
+                </div>
+                <div class="form-group">
+                    <label>Tags (comma-separated)</label>
+                    <input type="text" id="faqTags" class="form-control" placeholder="e.g., account, login, password">
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="faqFeatured"> Featured FAQ
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="faqPublished" checked> Published
+                    </label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button onclick="createFAQ()" class="btn btn-success">Create FAQ</button>
+                <button onclick="closeModal('faqModal')" class="btn btn-secondary">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Alert Container -->
+    <div id="alertContainer"
+        style="position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 1001; width: 400px;"></div>
+
     <script>
-        const API_BASE = 'https://backend-app-970m.onrender.com';
-        // const API_BASE = 'http://localhost:5000'; // For local testing
+        // Global variables
+        let authToken = '';
+        let apiBaseUrl = 'http://127.0.0.1:5000';
+        let currentUser = null;
 
-        let authToken = localStorage.getItem('authToken');
-        let currentUser = JSON.parse(localStorage.getItem('currentUser') || 'null');
+        // Utility functions
+        function showAlert(message, type = 'info') {
+            const alertContainer = document.getElementById('alertContainer');
+            const alertDiv = document.createElement('div');
+            alertDiv.className = `alert alert-${type}`;
+            alertDiv.innerHTML = `
+                ${message}
+                <button onclick="this.parentElement.remove()" style="float: right; background: none; border: none; font-size: 16px; cursor: pointer;">&times;</button>
+            `;
+            alertContainer.appendChild(alertDiv);
 
-        let apiCallCount = 0;
-        let totalResponseTime = 0;
-        let successfulCalls = 0;
-        let mlPredictionCount = 0;
-
-        // Initialize
-        document.addEventListener('DOMContentLoaded', function () {
-            if (authToken && currentUser) {
-                showUserSection();
-                updateUserStats();
-            }
-            updateTestStats();
-        });
-
-        // Authentication Functions
-        function showRegister() {
-            document.getElementById('loginSection').classList.add('hidden');
-            document.getElementById('registerSection').classList.remove('hidden');
-        }
-
-        function showLogin() {
-            document.getElementById('registerSection').classList.add('hidden');
-            document.getElementById('loginSection').classList.remove('hidden');
-        }
-
-        function showUserSection() {
-            document.getElementById('loginSection').classList.add('hidden');
-            document.getElementById('registerSection').classList.add('hidden');
-            document.getElementById('userSection').classList.remove('hidden');
-            document.getElementById('userWelcome').textContent = `Welcome, ${currentUser.username}!`;
-        }
-
-        async function updateUserStats() {
-            if (!authToken) return;
-
-            try {
-                const response = await apiCall(`${API_BASE}/api/user/profile/analysis`, {
-                    headers: {
-                        'Authorization': `Bearer ${authToken}`
-                    }
-                });
-
-                if (response.ok) {
-                    const data = await response.json();
-                    const analysis = data.profile_analysis;
-                    document.getElementById('userStats').textContent =
-                        ` | ${analysis.total_interactions} interactions | ${analysis.engagement_level} engagement`;
+            setTimeout(() => {
+                if (alertDiv.parentElement) {
+                    alertDiv.remove();
                 }
-            } catch (error) {
-                console.error('Failed to fetch user stats:', error);
-            }
+            }, 5000);
         }
 
-        async function register() {
-            const username = document.getElementById('regUsername').value;
-            const email = document.getElementById('regEmail').value;
-            const password = document.getElementById('regPassword').value;
+        function getApiHeaders() {
+            return {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${authToken}`
+            };
+        }
 
-            if (!username || !email || !password) {
-                showError('Please fill in all fields');
-                return;
-            }
-
+        async function apiCall(endpoint, method = 'GET', data = null) {
             try {
-                const response = await apiCall(`${API_BASE}/api/register`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        username,
-                        email,
-                        password,
-                        preferred_languages: ['english', 'telugu', 'hindi'],
-                        preferred_genres: ['Action', 'Drama', 'Comedy', 'Thriller']
-                    })
-                });
+                const url = `${apiBaseUrl}${endpoint}`;
+                const options = {
+                    method,
+                    headers: getApiHeaders()
+                };
 
-                const data = await response.json();
-
-                if (response.ok) {
-                    authToken = data.token;
-                    currentUser = data.user;
-                    localStorage.setItem('authToken', authToken);
-                    localStorage.setItem('currentUser', JSON.stringify(currentUser));
-                    showUserSection();
-                    showSuccess('Registration successful! Welcome to the AI Recommendation System!');
-                    updateUserStats();
-                } else {
-                    showError(data.error || 'Registration failed');
+                if (data) {
+                    options.body = JSON.stringify(data);
                 }
-            } catch (error) {
-                showError('Network error: ' + error.message);
-            }
-        }
 
-        async function login() {
-            const username = document.getElementById('loginUsername').value;
-            const password = document.getElementById('loginPassword').value;
-
-            if (!username || !password) {
-                showError('Please fill in all fields');
-                return;
-            }
-
-            try {
-                const response = await apiCall(`${API_BASE}/api/login`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ username, password })
-                });
-
-                const data = await response.json();
-
-                if (response.ok) {
-                    authToken = data.token;
-                    currentUser = data.user;
-                    localStorage.setItem('authToken', authToken);
-                    localStorage.setItem('currentUser', JSON.stringify(currentUser));
-                    showUserSection();
-                    showSuccess('Login successful!');
-                    updateUserStats();
-                } else {
-                    showError(data.error || 'Login failed');
-                }
-            } catch (error) {
-                showError('Network error: ' + error.message);
-            }
-        }
-
-        function logout() {
-            authToken = null;
-            currentUser = null;
-            localStorage.removeItem('authToken');
-            localStorage.removeItem('currentUser');
-            showLogin();
-            showSuccess('Logged out successfully');
-        }
-
-        // Tab Navigation
-        function showTab(tabName) {
-            // Hide all sections
-            document.querySelectorAll('.content-section').forEach(section => {
-                section.classList.add('hidden');
-            });
-
-            // Remove active class from all tabs
-            document.querySelectorAll('.tab').forEach(tab => {
-                tab.classList.remove('active');
-            });
-
-            // Show selected section and activate tab
-            document.getElementById(tabName + 'Section').classList.remove('hidden');
-            event.target.classList.add('active');
-
-            // Load data for specific tabs
-            switch (tabName) {
-                case 'personalized':
-                    if (authToken) getPersonalizedRecommendations();
-                    break;
-                case 'watchlist':
-                    if (authToken) getWatchlist();
-                    break;
-                case 'favorites':
-                    if (authToken) getFavorites();
-                    break;
-                case 'trending':
-                    getTrendingContent();
-                    break;
-            }
-        }
-
-        // API Call Wrapper with Performance Tracking
-        async function apiCall(url, options = {}) {
-            const startTime = performance.now();
-            apiCallCount++;
-
-            try {
                 const response = await fetch(url, options);
-                const endTime = performance.now();
-                const responseTime = endTime - startTime;
-                totalResponseTime += responseTime;
+                const result = await response.json();
 
-                if (response.ok) {
-                    successfulCalls++;
+                if (!response.ok) {
+                    throw new Error(result.error || `HTTP ${response.status}`);
                 }
 
-                updateTestStats();
-                return response;
+                return result;
             } catch (error) {
-                updateTestStats();
+                console.error('API call failed:', error);
+                showAlert(`API Error: ${error.message}`, 'error');
                 throw error;
             }
         }
 
-        // Update Test Statistics
-        function updateTestStats() {
-            const avgResponseTime = apiCallCount > 0 ? (totalResponseTime / apiCallCount).toFixed(0) : 0;
-            const successRate = apiCallCount > 0 ? ((successfulCalls / apiCallCount) * 100).toFixed(1) : 0;
+        // Authentication
+        async function adminLogin() {
+            const email = document.getElementById('loginEmail').value;
+            const password = document.getElementById('loginPassword').value;
+            apiBaseUrl = document.getElementById('apiBaseUrl').value;
 
-            document.querySelector('#testStats .stat-card:nth-child(1) .stat-number').textContent = apiCallCount;
-            document.querySelector('#testStats .stat-card:nth-child(2) .stat-number').textContent = `${avgResponseTime}ms`;
-            document.querySelector('#testStats .stat-card:nth-child(3) .stat-number').textContent = `${successRate}%`;
-            document.querySelector('#testStats .stat-card:nth-child(4) .stat-number').textContent = mlPredictionCount;
-        }
-
-        // Testing Functions
-        async function runFullTest() {
-            showLoading('testResults');
-            const results = [];
-
-            // Test 1: System Health
-            results.push(await testEndpoint('System Health', `${API_BASE}/api/health`));
-
-            // Test 2: ML Service Health
-            results.push(await testEndpoint('ML Service Health', `${API_BASE}/api/ml/health`));
-
-            // Test 3: Search Functionality
-            results.push(await testEndpoint('Search API', `${API_BASE}/api/search?query=avengers&type=movie`));
-
-            // Test 4: Trending Content
-            results.push(await testEndpoint('Trending API', `${API_BASE}/api/recommendations/trending?region=IN&limit=10`));
-
-            // Test 5: New Releases
-            results.push(await testEndpoint('New Releases API', `${API_BASE}/api/recommendations/new-releases?type=movie&limit=10`));
-
-            // Test 6: Critics Choice
-            results.push(await testEndpoint('Critics Choice API', `${API_BASE}/api/recommendations/critics-choice?type=movie&limit=10`));
-
-            // Test 7: Similar Content
-            results.push(await testEndpoint('Similar Content API', `${API_BASE}/api/recommendations/similar/1?limit=5`));
-
-            if (authToken) {
-                // Test 8: Personalized Recommendations
-                results.push(await testEndpoint('Personalized Recommendations', `${API_BASE}/api/recommendations/personalized?limit=10`, {
-                    headers: { 'Authorization': `Bearer ${authToken}` }
-                }));
-
-                // Test 9: ML Similar
-                results.push(await testEndpoint('ML Similar Content', `${API_BASE}/api/recommendations/ml-similar/1?limit=5`, {
-                    headers: { 'Authorization': `Bearer ${authToken}` }
-                }));
-
-                // Test 10: ML Trending
-                results.push(await testEndpoint('ML Trending', `${API_BASE}/api/recommendations/ml-trending?region=IN&limit=10`, {
-                    headers: { 'Authorization': `Bearer ${authToken}` }
-                }));
+            if (!email || !password) {
+                showAlert('Please enter email and password', 'error');
+                return;
             }
-
-            displayTestResults(results);
-        }
-
-        async function testEndpoint(name, url, options = {}) {
-            const startTime = performance.now();
 
             try {
-                const response = await apiCall(url, options);
-                const endTime = performance.now();
-                const responseTime = endTime - startTime;
+                const response = await fetch(`${apiBaseUrl}/api/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password })
+                });
 
-                const data = await response.json();
+                const result = await response.json();
 
-                return {
-                    name,
-                    status: response.ok ? 'success' : 'failed',
-                    statusCode: response.status,
-                    responseTime: responseTime.toFixed(2),
-                    dataReceived: true,
-                    resultCount: data.recommendations?.length || data.results?.length || 0
-                };
+                if (response.ok && result.token) {
+                    authToken = result.token;
+                    currentUser = result.user;
+
+                    if (!currentUser.is_admin) {
+                        showAlert('Admin access required', 'error');
+                        return;
+                    }
+
+                    document.getElementById('authSection').style.display = 'none';
+                    document.getElementById('navTabs').style.display = 'flex';
+                    showAlert(`Welcome, ${currentUser.username}!`, 'success');
+                    loadDashboard();
+                } else {
+                    showAlert(result.error || 'Login failed', 'error');
+                }
             } catch (error) {
-                return {
-                    name,
-                    status: 'error',
-                    error: error.message,
-                    responseTime: 0,
-                    dataReceived: false
-                };
+                showAlert(`Login error: ${error.message}`, 'error');
             }
         }
 
-        function displayTestResults(results) {
-            const container = document.getElementById('testResults');
-            let html = '<h3>Test Results</h3><div class="test-results-grid">';
+        function logout() {
+            authToken = '';
+            currentUser = null;
+            document.getElementById('authSection').style.display = 'block';
+            document.getElementById('navTabs').style.display = 'none';
 
-            results.forEach(result => {
-                const statusClass = result.status === 'success' ? 'success' : 'error';
-                html += `
-                    <div class="${statusClass}" style="margin: 10px 0; padding: 15px; border-radius: 8px;">
-                        <strong>${result.name}</strong><br>
-                        Status: ${result.status} ${result.statusCode ? `(${result.statusCode})` : ''}<br>
-                        Response Time: ${result.responseTime}ms<br>
-                        ${result.resultCount ? `Results: ${result.resultCount}<br>` : ''}
-                        ${result.error ? `Error: ${result.error}<br>` : ''}
-                    </div>
-                `;
+            // Hide all sections
+            document.querySelectorAll('.content-section').forEach(section => {
+                section.style.display = 'none';
             });
 
-            html += '</div>';
-            container.innerHTML = html;
+            showAlert('Logged out successfully', 'info');
         }
 
-        async function simulateUserBehavior() {
-            if (!authToken) {
-                showError('Please login to simulate user behavior');
-                return;
-            }
+        // Navigation
+        function showSection(sectionName) {
+            // Update nav tabs
+            document.querySelectorAll('.nav-tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            event.target.classList.add('active');
 
-            showLoading('testResults');
-            const container = document.getElementById('testResults');
-            container.innerHTML = '<h3>Simulating User Behavior...</h3>';
+            // Show selected section
+            document.querySelectorAll('.content-section').forEach(section => {
+                section.classList.remove('active');
+            });
+            document.getElementById(`${sectionName}Section`).classList.add('active');
+        }
 
+        // Dashboard functions
+        async function loadDashboard() {
             try {
-                // Simulate search
-                await recordInteraction(1, 'search', { search_query: 'action movies' });
-                container.innerHTML += '<div class="success">✓ Simulated search interaction</div>';
+                const analytics = await apiCall('/api/admin/analytics');
 
-                // Simulate views
-                const contentIds = [1, 2, 3, 4, 5];
-                for (const id of contentIds) {
-                    await recordInteraction(id, 'view');
-                    container.innerHTML += `<div class="success">✓ Simulated view for content ${id}</div>`;
-                    await sleep(500);
+                document.getElementById('totalUsers').textContent = analytics.total_users || 0;
+                document.getElementById('totalContent').textContent = analytics.total_content || 0;
+                document.getElementById('totalInteractions').textContent = analytics.total_interactions || 0;
+                document.getElementById('activeUsers').textContent = analytics.active_users_last_week || 0;
+
+                // Load support metrics
+                if (analytics.support_metrics) {
+                    const supportHtml = `
+                        <div class="row">
+                            <div class="col-6">
+                                <div class="metric-card">
+                                    <div class="metric-number">${analytics.support_metrics.tickets?.total || 0}</div>
+                                    <div class="metric-label">Total Tickets</div>
+                                </div>
+                            </div>
+                            <div class="col-6">
+                                <div class="metric-card">
+                                    <div class="metric-number">${analytics.support_metrics.tickets?.open || 0}</div>
+                                    <div class="metric-label">Open Tickets</div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                    document.getElementById('supportMetrics').innerHTML = supportHtml;
                 }
 
-                // Simulate likes
-                await recordInteraction(1, 'like');
-                await recordInteraction(3, 'like');
-                container.innerHTML += '<div class="success">✓ Simulated like interactions</div>';
-
-                // Simulate favorites
-                await recordInteraction(2, 'favorite');
-                container.innerHTML += '<div class="success">✓ Simulated favorite interaction</div>';
-
-                // Simulate watchlist
-                await recordInteraction(4, 'watchlist');
-                await recordInteraction(5, 'watchlist');
-                container.innerHTML += '<div class="success">✓ Simulated watchlist interactions</div>';
-
-                // Simulate ratings
-                await recordInteraction(1, 'rating', { rating: 5 });
-                await recordInteraction(2, 'rating', { rating: 4 });
-                await recordInteraction(3, 'rating', { rating: 4.5 });
-                container.innerHTML += '<div class="success">✓ Simulated rating interactions</div>';
-
-                container.innerHTML += '<div class="info-panel" style="margin-top: 20px;"><h4>Simulation Complete!</h4><p>User behavior has been simulated. The ML model should now have enough data to provide personalized recommendations.</p></div>';
-
-                // Update user stats
-                updateUserStats();
-
-            } catch (error) {
-                container.innerHTML += `<div class="error">✗ Error: ${error.message}</div>`;
-            }
-        }
-
-        async function testMLEndpoints() {
-            if (!authToken) {
-                showError('Please login to test ML endpoints');
-                return;
-            }
-
-            showLoading('testResults');
-            const results = [];
-
-            // Test ML endpoints
-            results.push(await testEndpoint('ML Health Check', `${API_BASE}/api/ml/health`));
-            results.push(await testEndpoint('User Profile Analysis', `${API_BASE}/api/user/profile/analysis`, {
-                headers: { 'Authorization': `Bearer ${authToken}` }
-            }));
-            results.push(await testEndpoint('ML Personalized', `${API_BASE}/api/recommendations/personalized?limit=5`, {
-                headers: { 'Authorization': `Bearer ${authToken}` }
-            }));
-            results.push(await testEndpoint('ML Similar', `${API_BASE}/api/recommendations/ml-similar/1?limit=5`, {
-                headers: { 'Authorization': `Bearer ${authToken}` }
-            }));
-            results.push(await testEndpoint('ML Trending', `${API_BASE}/api/recommendations/ml-trending?limit=5&region=IN`));
-
-            displayTestResults(results);
-        }
-
-        async function checkCacheStatus() {
-            showLoading('testResults');
-            const container = document.getElementById('testResults');
-
-            try {
-                // Make the same API call twice to test caching
-                const url = `${API_BASE}/api/recommendations/trending?region=IN&limit=5`;
-
-                const start1 = performance.now();
-                const response1 = await apiCall(url);
-                const time1 = performance.now() - start1;
-
-                const start2 = performance.now();
-                const response2 = await apiCall(url);
-                const time2 = performance.now() - start2;
-
-                const improvement = ((time1 - time2) / time1 * 100).toFixed(1);
-
-                container.innerHTML = `
-                    <h3>Cache Performance Test</h3>
-                    <div class="info-panel">
-                        <h4>Results:</h4>
-                        <p>First call: ${time1.toFixed(2)}ms</p>
-                        <p>Second call (cached): ${time2.toFixed(2)}ms</p>
-                        <p>Performance improvement: ${improvement}%</p>
-                        <p>Cache status: ${time2 < time1 ? 'Working ✓' : 'Not working ✗'}</p>
+                // Load system health
+                const health = await apiCall('/api/admin/system-health');
+                const healthHtml = `
+                    <div class="status-item">
+                        <span class="status-indicator status-${health.status === 'healthy' ? 'healthy' : 'error'}"></span>
+                        Overall Status: ${health.status}
+                    </div>
+                    <div class="status-item">
+                        <span class="status-indicator status-${health.components?.database?.status === 'healthy' ? 'healthy' : 'error'}"></span>
+                        Database: ${health.components?.database?.status || 'unknown'}
+                    </div>
+                    <div class="status-item">
+                        <span class="status-indicator status-${health.components?.cache?.status === 'healthy' ? 'healthy' : 'warning'}"></span>
+                        Cache: ${health.components?.cache?.status || 'unknown'}
                     </div>
                 `;
+                document.getElementById('systemHealth').innerHTML = healthHtml;
+
             } catch (error) {
-                container.innerHTML = `<div class="error">Cache test failed: ${error.message}</div>`;
+                showAlert('Failed to load dashboard', 'error');
             }
         }
 
-        async function clearAllCaches() {
-            if (!confirm('Are you sure you want to clear all caches? This may temporarily slow down the system.')) {
+        // Support functions
+        async function loadSupportDashboard() {
+            try {
+                const dashboard = await apiCall('/api/admin/support/dashboard');
+
+                const html = `
+                    <div class="row">
+                        <div class="col-3">
+                            <div class="metric-card">
+                                <div class="metric-number">${dashboard.metrics?.tickets?.total || 0}</div>
+                                <div class="metric-label">Total Tickets</div>
+                            </div>
+                        </div>
+                        <div class="col-3">
+                            <div class="metric-card">
+                                <div class="metric-number">${dashboard.metrics?.tickets?.open || 0}</div>
+                                <div class="metric-label">Open Tickets</div>
+                            </div>
+                        </div>
+                        <div class="col-3">
+                            <div class="metric-card">
+                                <div class="metric-number">${dashboard.metrics?.tickets?.overdue || 0}</div>
+                                <div class="metric-label">Overdue Tickets</div>
+                            </div>
+                        </div>
+                        <div class="col-3">
+                            <div class="metric-card">
+                                <div class="metric-number">${dashboard.unassigned_tickets || 0}</div>
+                                <div class="metric-label">Unassigned</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    ${dashboard.urgent_tickets?.length > 0 ? `
+                        <h4 style="margin-top: 20px;">Urgent Tickets</h4>
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th>Ticket #</th>
+                                    <th>Subject</th>
+                                    <th>Priority</th>
+                                    <th>Status</th>
+                                    <th>User</th>
+                                    <th>Created</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${dashboard.urgent_tickets.map(ticket => `
+                                    <tr>
+                                        <td>${ticket.ticket_number}</td>
+                                        <td>${ticket.subject}</td>
+                                        <td><span class="badge badge-danger">${ticket.priority}</span></td>
+                                        <td><span class="badge badge-warning">${ticket.status}</span></td>
+                                        <td>${ticket.user_name}</td>
+                                        <td>${new Date(ticket.created_at).toLocaleString()}</td>
+                                        <td>
+                                            <button onclick="viewTicketDetails(${ticket.id})" class="btn btn-primary">View</button>
+                                        </td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    ` : '<p>No urgent tickets</p>'}
+                `;
+
+                document.getElementById('supportDashboardData').innerHTML = html;
+            } catch (error) {
+                showAlert('Failed to load support dashboard', 'error');
+            }
+        }
+
+        async function loadSupportTickets(page = 1) {
+            try {
+                const status = document.getElementById('ticketStatus').value;
+                const priority = document.getElementById('ticketPriority').value;
+                const search = document.getElementById('ticketSearch').value;
+
+                let url = `/api/admin/support/tickets?page=${page}&per_page=20`;
+                if (status) url += `&status=${status}`;
+                if (priority) url += `&priority=${priority}`;
+                if (search) url += `&search=${encodeURIComponent(search)}`;
+
+                const response = await apiCall(url);
+
+                const html = `
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>Ticket #</th>
+                                <th>Subject</th>
+                                <th>User</th>
+                                <th>Priority</th>
+                                <th>Status</th>
+                                <th>Created</th>
+                                <th>Assigned To</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${response.tickets.map(ticket => `
+                                <tr>
+                                    <td>${ticket.ticket_number}</td>
+                                    <td>${ticket.subject}</td>
+                                    <td>${ticket.user_name}<br><small>${ticket.user_email}</small></td>
+                                    <td><span class="badge badge-${ticket.priority === 'urgent' ? 'danger' : ticket.priority === 'high' ? 'warning' : 'info'}">${ticket.priority}</span></td>
+                                    <td><span class="badge badge-${ticket.status === 'resolved' ? 'success' : ticket.status === 'open' ? 'danger' : 'warning'}">${ticket.status}</span></td>
+                                    <td>${new Date(ticket.created_at).toLocaleString()}</td>
+                                    <td>${ticket.assigned_to ? ticket.assigned_to.username : 'Unassigned'}</td>
+                                    <td>
+                                        <button onclick="viewTicketDetails(${ticket.id})" class="btn btn-primary">View</button>
+                                        <button onclick="assignTicket(${ticket.id})" class="btn btn-secondary">Assign</button>
+                                    </td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                    
+                    <div style="margin-top: 20px;">
+                        <p>Page ${response.current_page} of ${response.pages} (${response.total} total tickets)</p>
+                        ${response.current_page > 1 ? `<button onclick="loadSupportTickets(${response.current_page - 1})" class="btn btn-secondary">Previous</button>` : ''}
+                        ${response.current_page < response.pages ? `<button onclick="loadSupportTickets(${response.current_page + 1})" class="btn btn-secondary">Next</button>` : ''}
+                    </div>
+                `;
+
+                document.getElementById('supportTicketsData').innerHTML = html;
+            } catch (error) {
+                showAlert('Failed to load support tickets', 'error');
+            }
+        }
+
+        async function viewTicketDetails(ticketId) {
+            try {
+                const ticket = await apiCall(`/api/admin/support/tickets/${ticketId}`);
+
+                const html = `
+                    <div class="ticket-details">
+                        <h4>Ticket #${ticket.ticket.ticket_number}</h4>
+                        <div class="row">
+                            <div class="col-6">
+                                <p><strong>Subject:</strong> ${ticket.ticket.subject}</p>
+                                <p><strong>User:</strong> ${ticket.ticket.user_name} (${ticket.ticket.user_email})</p>
+                                <p><strong>Priority:</strong> <span class="badge badge-${ticket.ticket.priority === 'urgent' ? 'danger' : 'warning'}">${ticket.ticket.priority}</span></p>
+                                <p><strong>Status:</strong> <span class="badge badge-info">${ticket.ticket.status}</span></p>
+                            </div>
+                            <div class="col-6">
+                                <p><strong>Created:</strong> ${new Date(ticket.ticket.created_at).toLocaleString()}</p>
+                                <p><strong>Assigned:</strong> ${ticket.ticket.assigned_to ? ticket.ticket.assigned_to.username : 'Unassigned'}</p>
+                                <p><strong>SLA Deadline:</strong> ${ticket.ticket.sla_deadline ? new Date(ticket.ticket.sla_deadline).toLocaleString() : 'N/A'}</p>
+                            </div>
+                        </div>
+                        
+                        <div style="margin-top: 20px;">
+                            <h5>Description</h5>
+                            <div class="code-block">${ticket.ticket.description}</div>
+                        </div>
+                        
+                        <div style="margin-top: 20px;">
+                            <h5>Conversation (${ticket.responses.length} responses)</h5>
+                            <div style="max-height: 300px; overflow-y: auto; border: 1px solid #ddd; padding: 15px;">
+                                ${ticket.responses.map(response => `
+                                    <div style="margin-bottom: 15px; padding: 10px; background: ${response.is_from_staff ? '#e3f2fd' : '#f8f9fa'}; border-radius: 4px;">
+                                        <strong>${response.is_from_staff ? response.staff_name : ticket.ticket.user_name}:</strong>
+                                        <small style="float: right;">${new Date(response.created_at).toLocaleString()}</small>
+                                        <p style="margin-top: 5px;">${response.message}</p>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                        
+                        <div style="margin-top: 20px;">
+                            <h5>Add Response</h5>
+                            <textarea id="ticketResponse" class="form-control" rows="3" placeholder="Enter your response..."></textarea>
+                            <div style="margin-top: 10px;">
+                                <select id="ticketResponseStatus" class="form-control" style="width: 200px; display: inline-block;">
+                                    <option value="">Keep current status</option>
+                                    <option value="in_progress">In Progress</option>
+                                    <option value="resolved">Resolved</option>
+                                    <option value="closed">Closed</option>
+                                </select>
+                                <button onclick="respondToTicket(${ticketId})" class="btn btn-success" style="margin-left: 10px;">Send Response</button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+
+                document.getElementById('ticketModalBody').innerHTML = html;
+                document.getElementById('ticketModal').style.display = 'block';
+            } catch (error) {
+                showAlert('Failed to load ticket details', 'error');
+            }
+        }
+
+        async function respondToTicket(ticketId) {
+            const message = document.getElementById('ticketResponse').value;
+            const status = document.getElementById('ticketResponseStatus').value;
+
+            if (!message.trim()) {
+                showAlert('Please enter a response message', 'error');
                 return;
             }
 
-            // In a real implementation, you would call a backend endpoint to clear caches
-            showSuccess('Cache clear request sent. Note: Actual cache clearing requires backend implementation.');
-        }
+            try {
+                const data = { message };
+                if (status) data.status = status;
 
-        function sleep(ms) {
-            return new Promise(resolve => setTimeout(resolve, ms));
-        }
-
-        // Search Functions
-        function handleSearchEnter(event) {
-            if (event.key === 'Enter') {
-                searchContent();
+                await apiCall(`/api/admin/support/tickets/${ticketId}/respond`, 'POST', data);
+                showAlert('Response added successfully', 'success');
+                closeModal('ticketModal');
+                loadSupportTickets(); // Refresh tickets list
+            } catch (error) {
+                showAlert('Failed to add response', 'error');
             }
         }
 
-        async function searchContent() {
-            const query = document.getElementById('searchQuery').value;
-            const type = document.getElementById('contentTypeFilter').value;
+        async function assignTicket(ticketId) {
+            const adminId = prompt('Enter admin ID to assign (or leave empty to unassign):');
+
+            try {
+                await apiCall(`/api/admin/support/tickets/${ticketId}/assign`, 'POST', {
+                    admin_id: adminId ? parseInt(adminId) : null
+                });
+                showAlert('Ticket assigned successfully', 'success');
+                loadSupportTickets(); // Refresh tickets list
+            } catch (error) {
+                showAlert('Failed to assign ticket', 'error');
+            }
+        }
+
+        // FAQ functions
+        async function loadFAQs() {
+            try {
+                const response = await apiCall('/api/admin/support/faq');
+
+                const html = `
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>Question</th>
+                                <th>Category</th>
+                                <th>Published</th>
+                                <th>Featured</th>
+                                <th>Views</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${response.faqs.map(faq => `
+                                <tr>
+                                    <td>${faq.question}</td>
+                                    <td>${faq.category ? faq.category.name : 'No category'}</td>
+                                    <td><span class="badge badge-${faq.is_published ? 'success' : 'secondary'}">${faq.is_published ? 'Yes' : 'No'}</span></td>
+                                    <td><span class="badge badge-${faq.is_featured ? 'warning' : 'secondary'}">${faq.is_featured ? 'Yes' : 'No'}</span></td>
+                                    <td>${faq.view_count}</td>
+                                    <td>
+                                        <button onclick="editFAQ(${faq.id})" class="btn btn-primary">Edit</button>
+                                        <button onclick="deleteFAQ(${faq.id})" class="btn btn-danger">Delete</button>
+                                    </td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                `;
+
+                document.getElementById('faqData').innerHTML = html;
+            } catch (error) {
+                showAlert('Failed to load FAQs', 'error');
+            }
+        }
+
+        function showCreateFAQModal() {
+            document.getElementById('faqModal').style.display = 'block';
+        }
+
+        async function createFAQ() {
+            const question = document.getElementById('faqQuestion').value;
+            const answer = document.getElementById('faqAnswer').value;
+            const categoryId = document.getElementById('faqCategoryId').value;
+            const tags = document.getElementById('faqTags').value.split(',').map(tag => tag.trim()).filter(tag => tag);
+            const isFeatured = document.getElementById('faqFeatured').checked;
+            const isPublished = document.getElementById('faqPublished').checked;
+
+            if (!question || !answer || !categoryId) {
+                showAlert('Please fill in all required fields', 'error');
+                return;
+            }
+
+            try {
+                await apiCall('/api/admin/support/faq', 'POST', {
+                    question,
+                    answer,
+                    category_id: parseInt(categoryId),
+                    tags,
+                    is_featured: isFeatured,
+                    is_published: isPublished
+                });
+
+                showAlert('FAQ created successfully', 'success');
+                closeModal('faqModal');
+                loadFAQs(); // Refresh FAQ list
+            } catch (error) {
+                showAlert('Failed to create FAQ', 'error');
+            }
+        }
+
+        async function deleteFAQ(faqId) {
+            if (!confirm('Are you sure you want to delete this FAQ?')) return;
+
+            try {
+                await apiCall(`/api/admin/support/faq/${faqId}`, 'DELETE');
+                showAlert('FAQ deleted successfully', 'success');
+                loadFAQs(); // Refresh FAQ list
+            } catch (error) {
+                showAlert('Failed to delete FAQ', 'error');
+            }
+        }
+
+        // Feedback functions
+        async function loadFeedback() {
+            try {
+                const response = await apiCall('/api/admin/support/feedback');
+
+                const html = `
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>Subject</th>
+                                <th>User</th>
+                                <th>Type</th>
+                                <th>Rating</th>
+                                <th>Read</th>
+                                <th>Created</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${response.feedback.map(feedback => `
+                                <tr class="${!feedback.is_read ? 'table-warning' : ''}">
+                                    <td>${feedback.subject}</td>
+                                    <td>${feedback.user_name}<br><small>${feedback.user_email}</small></td>
+                                    <td><span class="badge badge-info">${feedback.feedback_type}</span></td>
+                                    <td>${feedback.rating ? `${feedback.rating}/5 ⭐` : 'N/A'}</td>
+                                    <td><span class="badge badge-${feedback.is_read ? 'success' : 'warning'}">${feedback.is_read ? 'Read' : 'Unread'}</span></td>
+                                    <td>${new Date(feedback.created_at).toLocaleString()}</td>
+                                    <td>
+                                        ${!feedback.is_read ? `<button onclick="markFeedbackRead(${feedback.id})" class="btn btn-primary">Mark Read</button>` : ''}
+                                        <button onclick="viewFeedbackDetails(${feedback.id})" class="btn btn-secondary">View</button>
+                                    </td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                `;
+
+                document.getElementById('feedbackData').innerHTML = html;
+            } catch (error) {
+                showAlert('Failed to load feedback', 'error');
+            }
+        }
+
+        async function markFeedbackRead(feedbackId) {
+            const notes = prompt('Add admin notes (optional):');
+
+            try {
+                await apiCall(`/api/admin/support/feedback/${feedbackId}/mark-read`, 'POST', {
+                    admin_notes: notes || ''
+                });
+                showAlert('Feedback marked as read', 'success');
+                loadFeedback(); // Refresh feedback list
+            } catch (error) {
+                showAlert('Failed to mark feedback as read', 'error');
+            }
+        }
+
+        // Content management functions
+        async function searchExternalContent() {
+            const query = document.getElementById('contentSearchQuery').value;
+            const source = document.getElementById('contentSearchSource').value;
 
             if (!query.trim()) {
-                showError('Please enter a search query');
-                return;
-            }
-
-            showLoading('searchResults');
-
-            try {
-                const response = await apiCall(`${API_BASE}/api/search?query=${encodeURIComponent(query)}&type=${type}`);
-                const data = await response.json();
-
-                if (response.ok) {
-                    displayContent(data.results, 'searchResults', `Search Results for "${query}"`);
-
-                    // Record search interaction if logged in
-                    if (authToken && data.results.length > 0) {
-                        recordInteraction(data.results[0].id, 'search', { search_query: query });
-                    }
-                } else {
-                    showError(data.error || 'Search failed');
-                }
-            } catch (error) {
-                showError('Network error: ' + error.message);
-            }
-        }
-
-        async function getNewReleases() {
-            showLoading('searchResults');
-
-            try {
-                const response = await apiCall(`${API_BASE}/api/recommendations/new-releases?type=movie&limit=20`);
-                const data = await response.json();
-
-                if (response.ok) {
-                    displayContent(data.recommendations, 'searchResults', 'New Releases');
-                    if (data.metadata) {
-                        displayMetadata(data.metadata, 'searchResults');
-                    }
-                } else {
-                    showError(data.error || 'Failed to get new releases');
-                }
-            } catch (error) {
-                showError('Network error: ' + error.message);
-            }
-        }
-
-        async function getCriticsChoice() {
-            showLoading('searchResults');
-
-            try {
-                const response = await apiCall(`${API_BASE}/api/recommendations/critics-choice?type=movie&limit=20`);
-                const data = await response.json();
-
-                if (response.ok) {
-                    displayContent(data.recommendations, 'searchResults', 'Critics Choice');
-                } else {
-                    showError(data.error || 'Failed to get critics choice');
-                }
-            } catch (error) {
-                showError('Network error: ' + error.message);
-            }
-        }
-
-        // Personalized Recommendations
-        async function getPersonalizedRecommendations() {
-            if (!authToken) {
-                showError('Please login to get personalized recommendations');
-                return;
-            }
-
-            showLoading('personalizedResults');
-
-            try {
-                const contentType = document.getElementById('personalizedTypeFilter').value;
-                const limit = document.getElementById('personalizedLimitFilter').value;
-
-                let url = `${API_BASE}/api/recommendations/personalized?limit=${limit}`;
-                if (contentType) {
-                    url += `&content_type=${contentType}`;
-                }
-
-                const response = await apiCall(url, {
-                    headers: {
-                        'Authorization': `Bearer ${authToken}`
-                    }
-                });
-
-                const data = await response.json();
-
-                if (response.ok) {
-                    mlPredictionCount += data.recommendations.length;
-                    updateTestStats();
-
-                    displayPersonalizedContent(data.recommendations, 'personalizedResults', 'AI Personalized Recommendations');
-
-                    // Show ML insights if available
-                    if (data.user_stats || data.advanced_features) {
-                        displayPersonalizationStats(data, 'personalizedStats');
-                    }
-                } else {
-                    showError(data.error || 'Failed to get personalized recommendations');
-                }
-            } catch (error) {
-                showError('Network error: ' + error.message);
-            }
-        }
-
-        async function refreshMLModel() {
-            showSuccess('ML model refresh requested. The model will be updated with latest interaction data.');
-        }
-
-        // Trending Content
-        async function getTrendingContent() {
-            showLoading('trendingResults');
-
-            try {
-                const region = document.getElementById('regionFilter')?.value || 'IN';
-                const category = document.getElementById('trendingCategoryFilter')?.value || 'all';
-
-                const response = await apiCall(`${API_BASE}/api/recommendations/trending?region=${region}&category=${category}&limit=20`);
-                const data = await response.json();
-
-                if (response.ok) {
-                    if (data.categories) {
-                        displayTrendingCategories(data.categories, 'trendingResults');
-                    } else {
-                        displayContent(data.recommendations, 'trendingResults', 'Trending Content');
-                    }
-
-                    if (data.metadata) {
-                        displayMetadata(data.metadata, 'trendingResults');
-                    }
-                } else {
-                    showError(data.error || 'Failed to get trending content');
-                }
-            } catch (error) {
-                showError('Network error: ' + error.message);
-            }
-        }
-
-        async function getMLTrending() {
-            if (!authToken) {
-                showError('Please login to use ML enhanced features');
-                return;
-            }
-
-            showLoading('trendingResults');
-
-            try {
-                const region = document.getElementById('regionFilter').value;
-                const response = await apiCall(`${API_BASE}/api/recommendations/ml-trending?region=${region}&limit=20`);
-
-                const data = await response.json();
-
-                if (response.ok) {
-                    mlPredictionCount += data.recommendations.length;
-                    updateTestStats();
-                    displayPersonalizedContent(data.recommendations, 'trendingResults', 'ML Enhanced Trending');
-                } else {
-                    showError(data.error || 'Failed to get ML trending');
-                }
-            } catch (error) {
-                showError('Network error: ' + error.message);
-            }
-        }
-
-        // Watchlist Functions
-        async function getWatchlist() {
-            if (!authToken) {
-                showError('Please login to view your watchlist');
-                return;
-            }
-
-            showLoading('watchlistResults');
-
-            try {
-                const response = await apiCall(`${API_BASE}/api/user/watchlist`, {
-                    headers: {
-                        'Authorization': `Bearer ${authToken}`
-                    }
-                });
-
-                const data = await response.json();
-
-                if (response.ok) {
-                    displayContent(data.watchlist, 'watchlistResults', `My Watchlist (${data.total_items} items)`);
-                } else {
-                    showError(data.error || 'Failed to get watchlist');
-                }
-            } catch (error) {
-                showError('Network error: ' + error.message);
-            }
-        }
-
-        async function getFavorites() {
-            if (!authToken) {
-                showError('Please login to view your favorites');
-                return;
-            }
-
-            showLoading('favoritesResults');
-
-            try {
-                const response = await apiCall(`${API_BASE}/api/user/favorites`, {
-                    headers: {
-                        'Authorization': `Bearer ${authToken}`
-                    }
-                });
-
-                const data = await response.json();
-
-                if (response.ok) {
-                    displayContent(data.favorites, 'favoritesResults', `My Favorites (${data.total_items} items)`);
-                } else {
-                    showError(data.error || 'Failed to get favorites');
-                }
-            } catch (error) {
-                showError('Network error: ' + error.message);
-            }
-        }
-
-        // User Profile Analysis
-        async function getUserAnalysis() {
-            if (!authToken) {
-                showError('Please login to view profile analysis');
-                return;
-            }
-
-            showLoading('profileResults');
-
-            try {
-                const response = await apiCall(`${API_BASE}/api/user/profile/analysis`, {
-                    headers: {
-                        'Authorization': `Bearer ${authToken}`
-                    }
-                });
-
-                const data = await response.json();
-
-                if (response.ok) {
-                    displayProfileAnalysis(data.profile_analysis, 'profileResults');
-                } else {
-                    showError(data.error || 'Failed to get profile analysis');
-                }
-            } catch (error) {
-                showError('Network error: ' + error.message);
-            }
-        }
-
-        async function exportProfileData() {
-            if (!authToken) {
-                showError('Please login to export profile data');
-                return;
-            }
-
-            showSuccess('Profile export feature will be available soon!');
-        }
-
-        // System Health
-        async function checkSystemHealth() {
-            showLoading('healthResults');
-
-            try {
-                const response = await apiCall(`${API_BASE}/api/health`);
-                const data = await response.json();
-
-                if (response.ok) {
-                    displaySystemHealth(data, 'healthResults');
-                } else {
-                    showError('Failed to get system health');
-                }
-            } catch (error) {
-                showError('Network error: ' + error.message);
-            }
-        }
-
-        async function checkMLHealth() {
-            showLoading('healthResults');
-
-            try {
-                const response = await apiCall(`${API_BASE}/api/ml/health`);
-                const data = await response.json();
-
-                displayMLHealth(data, 'healthResults');
-            } catch (error) {
-                showError('Network error: ' + error.message);
-            }
-        }
-
-        async function runPerformanceTest() {
-            showLoading('healthResults');
-            const container = document.getElementById('healthResults');
-
-            try {
-                const endpoints = [
-                    { name: 'Search', url: `${API_BASE}/api/search?query=test&type=movie` },
-                    { name: 'Trending', url: `${API_BASE}/api/recommendations/trending?limit=10` },
-                    { name: 'Similar', url: `${API_BASE}/api/recommendations/similar/1?limit=5` }
-                ];
-
-                let html = '<h3>Performance Test Results</h3>';
-
-                for (const endpoint of endpoints) {
-                    const times = [];
-
-                    // Run each endpoint 3 times
-                    for (let i = 0; i < 3; i++) {
-                        const start = performance.now();
-                        await apiCall(endpoint.url);
-                        const time = performance.now() - start;
-                        times.push(time);
-                    }
-
-                    const avgTime = times.reduce((a, b) => a + b, 0) / times.length;
-                    const minTime = Math.min(...times);
-                    const maxTime = Math.max(...times);
-
-                    html += `
-                        <div class="stat-card" style="margin: 10px 0;">
-                            <h4>${endpoint.name}</h4>
-                            <p>Average: ${avgTime.toFixed(2)}ms</p>
-                            <p>Min: ${minTime.toFixed(2)}ms | Max: ${maxTime.toFixed(2)}ms</p>
-                        </div>
-                    `;
-                }
-
-                container.innerHTML = html;
-            } catch (error) {
-                container.innerHTML = `<div class="error">Performance test failed: ${error.message}</div>`;
-            }
-        }
-
-        // Interaction Functions
-        async function recordInteraction(contentId, type, metadata = {}) {
-            if (!authToken) return;
-
-            try {
-                await apiCall(`${API_BASE}/api/interactions`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${authToken}`
-                    },
-                    body: JSON.stringify({
-                        content_id: contentId,
-                        interaction_type: type,
-                        ...metadata
-                    })
-                });
-            } catch (error) {
-                console.error('Failed to record interaction:', error);
-            }
-        }
-
-        async function toggleWatchlist(contentId, button) {
-            if (!authToken) {
-                showError('Please login to use watchlist');
-                return;
-            }
-
-            const isInWatchlist = button.classList.contains('active');
-            const type = isInWatchlist ? 'remove_watchlist' : 'watchlist';
-
-            try {
-                await recordInteraction(contentId, type);
-                button.classList.toggle('active');
-                button.textContent = isInWatchlist ? '📚 Add' : '✓ Listed';
-                showSuccess(isInWatchlist ? 'Removed from watchlist' : 'Added to watchlist');
-            } catch (error) {
-                showError('Failed to update watchlist');
-            }
-        }
-
-        async function toggleFavorite(contentId, button) {
-            if (!authToken) {
-                showError('Please login to use favorites');
-                return;
-            }
-
-            if (!button.classList.contains('active')) {
-                await recordInteraction(contentId, 'favorite');
-                button.classList.add('active');
-                button.textContent = '❤️ Favorited';
-                showSuccess('Added to favorites');
-            }
-        }
-
-        async function toggleLike(contentId, button) {
-            if (!authToken) {
-                showError('Please login to like content');
-                return;
-            }
-
-            if (!button.classList.contains('active')) {
-                await recordInteraction(contentId, 'like');
-                button.classList.add('active');
-                button.textContent = '👍 Liked';
-                showSuccess('Content liked');
-            }
-        }
-
-        async function rateContent(contentId, rating) {
-            if (!authToken) {
-                showError('Please login to rate content');
+                showAlert('Please enter a search query', 'error');
                 return;
             }
 
             try {
-                await recordInteraction(contentId, 'rating', { rating });
-                showSuccess(`Rated ${rating} stars`);
-            } catch (error) {
-                showError('Failed to rate content');
-            }
-        }
+                const response = await apiCall(`/api/admin/search?query=${encodeURIComponent(query)}&source=${source}`);
 
-        async function getSimilarContent(contentId) {
-            showLoading('searchResults');
-            showTab('search');
-
-            try {
-                const useML = authToken ? '&use_ml=true' : '';
-                const response = await apiCall(`${API_BASE}/api/recommendations/similar/${contentId}?limit=10${useML}`);
-                const data = await response.json();
-
-                if (response.ok) {
-                    displayContent(data.similar_content, 'searchResults', 'Similar Content');
-
-                    // Record interaction
-                    if (authToken) {
-                        recordInteraction(contentId, 'similar_view');
-                    }
-                } else {
-                    showError(data.error || 'Failed to get similar content');
-                }
-            } catch (error) {
-                showError('Network error: ' + error.message);
-            }
-        }
-
-        // Display Functions
-        function displayContent(items, containerId, title) {
-            const container = document.getElementById(containerId);
-
-            if (!items || items.length === 0) {
-                container.innerHTML = `
-                    <div class="loading">
-                        <h3>${title}</h3>
-                        <p>No content found</p>
-                    </div>
-                `;
-                return;
-            }
-
-            let html = `<h3>${title}</h3><div class="content-grid">`;
-
-            items.forEach(item => {
-                const poster = item.poster_path || 'https://via.placeholder.com/300x400?text=No+Image';
-                const genres = Array.isArray(item.genres) ? item.genres.slice(0, 3).join(', ') : '';
-                const rating = item.rating ? parseFloat(item.rating).toFixed(1) : 'N/A';
-
-                html += `
-                    <div class="content-card" onclick="recordInteraction(${item.id}, 'view')">
-                        <img src="${poster}" alt="${item.title}" class="content-poster" onerror="this.src='https://via.placeholder.com/300x400?text=No+Image'">
-                        <div class="content-info">
-                            <div class="content-title">${item.title}</div>
-                            <div class="content-meta">
-                                <span class="content-type">${item.content_type || 'movie'}</span>
-                                <span class="rating">⭐ ${rating}</span>
-                            </div>
-                            <div style="font-size: 12px; color: #666; margin-bottom: 10px;">${genres}</div>
-                            
-                            <div class="content-actions">
-                                <button class="action-btn like-btn" onclick="event.stopPropagation(); toggleLike(${item.id}, this)">👍 Like</button>
-                                <button class="action-btn watchlist-btn" onclick="event.stopPropagation(); toggleWatchlist(${item.id}, this)">📚 Add</button>
-                                <button class="action-btn favorite-btn" onclick="event.stopPropagation(); toggleFavorite(${item.id}, this)">⭐ Fav</button>
-                            </div>
-
-                            <div class="rating-section">
-                                <div class="star-rating">
-                                    ${[1, 2, 3, 4, 5].map(star => `
-                                        <span class="star" onclick="event.stopPropagation(); rateContent(${item.id}, ${star}); setStarRating(this, ${star})">★</span>
-                                    `).join('')}
-                                </div>
-                            </div>
-
-                            <button class="btn btn-secondary" style="width: 100%; margin-top: 10px; font-size: 12px;" onclick="event.stopPropagation(); getSimilarContent(${item.id})">
-                                Find Similar
-                            </button>
-
-                            ${item.youtube_trailer ? `
-                                <button class="btn btn-primary" style="width: 100%; margin-top: 5px; font-size: 12px;" onclick="event.stopPropagation(); window.open('${item.youtube_trailer}', '_blank')">
-                                    🎬 Watch Trailer
-                                </button>
-                            ` : ''}
-                        </div>
-                    </div>
-                `;
-            });
-
-            html += '</div>';
-            container.innerHTML = html;
-        }
-
-        function displayPersonalizedContent(items, containerId, title) {
-            const container = document.getElementById(containerId);
-
-            if (!items || items.length === 0) {
-                container.innerHTML = `
-                    <div class="loading">
-                        <h3>${title}</h3>
-                        <p>No personalized recommendations available. Interact with more content to improve recommendations.</p>
-                    </div>
-                `;
-                return;
-            }
-
-            let html = `<h3>${title}</h3><div class="content-grid">`;
-
-            items.forEach(item => {
-                const poster = item.poster_path || 'https://via.placeholder.com/300x400?text=No+Image';
-                const genres = Array.isArray(item.genres) ? item.genres.slice(0, 3).join(', ') : '';
-                const rating = item.rating ? parseFloat(item.rating).toFixed(1) : 'N/A';
-
-                html += `
-                    <div class="content-card" onclick="recordInteraction(${item.id}, 'view', {recommendation_source: 'personalized'})">
-                        <img src="${poster}" alt="${item.title}" class="content-poster" onerror="this.src='https://via.placeholder.com/300x400?text=No+Image'">
-                        <div class="content-info">
-                            <div class="content-title">${item.title}</div>
-                            <div class="content-meta">
-                                <span class="content-type">${item.content_type || 'movie'}</span>
-                                <span class="rating">⭐ ${rating}</span>
-                            </div>
-                            <div style="font-size: 12px; color: #666; margin-bottom: 10px;">${genres}</div>
-                            
-                            ${item.ml_reason ? `
-                                <div class="ml-info">
-                                    🤖 ${item.ml_reason}
-                                    ${item.confidence ? `<span class="ml-score">${Math.round(item.confidence * 100)}% match</span>` : ''}
-                                </div>
-                            ` : ''}
-                            
-                            ${item.personalization_factors ? `
-                                <div class="personalization-indicator">
-                                    ${item.personalization_factors.genre_match ? '🎭' : ''}
-                                    ${item.personalization_factors.language_match ? '🌐' : ''}
-                                    ${item.personalization_factors.quality_match ? '⭐' : ''}
-                                    ${item.personalization_factors.trending ? '🔥' : ''}
-                                    ${item.personalization_factors.new_release ? '🆕' : ''}
-                                </div>
-                            ` : ''}
-                            
-                            ${item.confidence ? `
-                                <div class="confidence-meter">
-                                    <div class="confidence-fill" style="width: ${item.confidence * 100}%"></div>
-                                </div>
-                            ` : ''}
-                            
-                            <div class="content-actions">
-                                <button class="action-btn like-btn" onclick="event.stopPropagation(); toggleLike(${item.id}, this)">👍 Like</button>
-                                <button class="action-btn watchlist-btn" onclick="event.stopPropagation(); toggleWatchlist(${item.id}, this)">📚 Add</button>
-                                <button class="action-btn favorite-btn" onclick="event.stopPropagation(); toggleFavorite(${item.id}, this)">⭐ Fav</button>
-                            </div>
-
-                            <div class="rating-section">
-                                <div class="star-rating">
-                                    ${[1, 2, 3, 4, 5].map(star => `
-                                        <span class="star" onclick="event.stopPropagation(); rateContent(${item.id}, ${star}); setStarRating(this, ${star})">★</span>
-                                    `).join('')}
-                                </div>
-                            </div>
-
-                            <button class="btn btn-secondary" style="width: 100%; margin-top: 10px; font-size: 12px;" onclick="event.stopPropagation(); getSimilarContent(${item.id})">
-                                Find Similar
-                            </button>
-
-                            ${item.youtube_trailer ? `
-                                <button class="btn btn-primary" style="width: 100%; margin-top: 5px; font-size: 12px;" onclick="event.stopPropagation(); window.open('${item.youtube_trailer}', '_blank')">
-                                    🎬 Watch Trailer
-                                </button>
-                            ` : ''}
-                        </div>
-                    </div>
-                `;
-            });
-
-            html += '</div>';
-            container.innerHTML = html;
-        }
-
-        function displayTrendingCategories(categories, containerId) {
-            const container = document.getElementById(containerId);
-            let html = '<h3>Trending Categories</h3>';
-
-            Object.keys(categories).forEach(categoryName => {
-                const items = categories[categoryName];
-                if (items && items.length > 0) {
-                    const formattedName = categoryName.replace(/_/g, ' ').toUpperCase();
-                    html += `
-                        <div style="margin-bottom: 40px;">
-                            <h4 style="margin-bottom: 20px; color: #2a5298;">${formattedName}</h4>
-                            <div class="content-grid">
-                    `;
-
-                    items.slice(0, 6).forEach(item => {
-                        const poster = item.poster_path || 'https://via.placeholder.com/300x400?text=No+Image';
-                        const rating = item.rating ? parseFloat(item.rating).toFixed(1) : 'N/A';
-
-                        html += `
-                            <div class="content-card" onclick="recordInteraction(${item.id}, 'view', {recommendation_source: 'trending'})">
-                                <img src="${poster}" alt="${item.title}" class="content-poster" onerror="this.src='https://via.placeholder.com/300x400?text=No+Image'">
-                                <div class="content-info">
-                                    <div class="content-title">${item.title}</div>
-                                    <div class="content-meta">
-                                        <span class="content-type">${item.content_type || 'movie'}</span>
-                                        <span class="rating">⭐ ${rating}</span>
-                                    </div>
-                                    <div class="content-actions">
-                                        <button class="action-btn like-btn" onclick="event.stopPropagation(); toggleLike(${item.id}, this)">👍</button>
-                                        <button class="action-btn watchlist-btn" onclick="event.stopPropagation(); toggleWatchlist(${item.id}, this)">📚</button>
-                                        <button class="action-btn favorite-btn" onclick="event.stopPropagation(); toggleFavorite(${item.id}, this)">❤️</button>
+                const html = `
+                    <h5>Search Results (${response.results.length} found)</h5>
+                    <div class="row">
+                        ${response.results.map(item => `
+                            <div class="col-4" style="margin-bottom: 20px;">
+                                <div class="card">
+                                    <div class="card-body">
+                                        <h6>${item.title}</h6>
+                                        <p><strong>Type:</strong> ${item.content_type}</p>
+                                        <p><strong>Rating:</strong> ${item.rating || 'N/A'}</p>
+                                        <p><strong>Release:</strong> ${item.release_date || 'N/A'}</p>
+                                        ${item.poster_path ? `<img src="${item.poster_path}" style="width: 100px; height: 150px; object-fit: cover;">` : ''}
+                                        <div style="margin-top: 10px;">
+                                            <button onclick="saveExternalContent(${JSON.stringify(item).replace(/"/g, '&quot;')})" class="btn btn-success">Save to Database</button>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
-                        `;
-                    });
+                        `).join('')}
+                    </div>
+                `;
 
-                    html += '</div></div>';
-                }
-            });
-
-            container.innerHTML = html;
+                document.getElementById('externalContentResults').innerHTML = html;
+            } catch (error) {
+                showAlert('Failed to search external content', 'error');
+            }
         }
 
-        function displayPersonalizationStats(data, containerId) {
-            const container = document.getElementById(containerId);
+        async function saveExternalContent(item) {
+            try {
+                await apiCall('/api/admin/content', 'POST', item);
+                showAlert(`Content "${item.title}" saved successfully`, 'success');
+            } catch (error) {
+                showAlert('Failed to save content', 'error');
+            }
+        }
 
-            let html = '<div class="stats-grid" style="margin-bottom: 20px;">';
+        async function createAdminRecommendation() {
+            const contentId = document.getElementById('recContentId').value;
+            const recType = document.getElementById('recType').value;
+            const description = document.getElementById('recDescription').value;
 
-            if (data.user_stats) {
-                html += `
-                    <div class="stat-card">
-                        <div class="stat-number">${data.user_stats.total_interactions}</div>
-                        <div class="stat-label">Total Interactions</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-number">${data.user_stats.recent_activity}</div>
-                        <div class="stat-label">Recent Activity</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-number">${data.user_stats.rating_average}</div>
-                        <div class="stat-label">Avg Rating Given</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-number">${Math.round((data.user_stats.engagement_score || 0) * 100)}%</div>
-                        <div class="stat-label">Engagement Score</div>
-                    </div>
-                `;
+            if (!contentId || !description.trim()) {
+                showAlert('Please fill in all fields', 'error');
+                return;
             }
 
-            if (data.personalization_score) {
-                html += `
-                    <div class="stat-card">
-                        <div class="stat-number">${Math.round(data.personalization_score * 100)}%</div>
-                        <div class="stat-label">Personalization Level</div>
-                    </div>
-                `;
-            }
-
-            html += '</div>';
-
-            if (data.advanced_features) {
-                html += '<div class="info-panel"><h4>Advanced ML Features Active:</h4><ul>';
-                Object.entries(data.advanced_features).forEach(([feature, active]) => {
-                    if (active) {
-                        html += `<li>${feature.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}</li>`;
-                    }
+            try {
+                await apiCall('/api/admin/recommendations', 'POST', {
+                    content_id: parseInt(contentId),
+                    recommendation_type: recType,
+                    description: description
                 });
-                html += '</ul></div>';
-            }
 
-            container.innerHTML = html;
+                showAlert('Admin recommendation created successfully', 'success');
+
+                // Clear form
+                document.getElementById('recContentId').value = '';
+                document.getElementById('recDescription').value = '';
+            } catch (error) {
+                showAlert('Failed to create recommendation', 'error');
+            }
         }
 
-        function displayMetadata(metadata, containerId) {
-            const container = document.getElementById(containerId);
-            const existing = container.querySelector('.info-panel');
+        async function loadContentManagement() {
+            try {
+                const response = await apiCall('/api/admin/content/manage');
 
-            if (existing) {
-                existing.remove();
+                const html = `
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Title</th>
+                                <th>Type</th>
+                                <th>Rating</th>
+                                <th>Release Date</th>
+                                <th>Interactions</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${response.content.map(item => `
+                                <tr>
+                                    <td>${item.id}</td>
+                                    <td>${item.title}</td>
+                                    <td><span class="badge badge-info">${item.content_type}</span></td>
+                                    <td>${item.rating || 'N/A'}</td>
+                                    <td>${item.release_date ? new Date(item.release_date).toLocaleDateString() : 'N/A'}</td>
+                                    <td>${item.interaction_count}</td>
+                                    <td>
+                                        <button onclick="window.open('/api/details/${item.slug}', '_blank')" class="btn btn-primary">View</button>
+                                    </td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                `;
+
+                document.getElementById('contentManagementData').innerHTML = html;
+            } catch (error) {
+                showAlert('Failed to load content management', 'error');
             }
-
-            let html = '<div class="info-panel"><h4>Algorithm Metadata:</h4><pre>';
-            html += JSON.stringify(metadata, null, 2);
-            html += '</pre></div>';
-
-            container.innerHTML += html;
         }
 
-        function displayProfileAnalysis(analysis, containerId) {
-            const container = document.getElementById(containerId);
+        async function loadAdminRecommendations() {
+            try {
+                const response = await apiCall('/api/admin/recommendations');
 
-            let html = `
-                <div class="stats-grid">
-                    <div class="stat-card">
-                        <div class="stat-number">${analysis.total_interactions}</div>
-                        <div class="stat-label">Total Interactions</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-number">${analysis.account_age_days}</div>
-                        <div class="stat-label">Account Age (Days)</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-number">${analysis.recent_activity_week}</div>
-                        <div class="stat-label">Weekly Activity</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-number">${analysis.engagement_level}</div>
-                        <div class="stat-label">Engagement Level</div>
-                    </div>
-                </div>
+                const html = `
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>Content</th>
+                                <th>Type</th>
+                                <th>Description</th>
+                                <th>Admin</th>
+                                <th>Created</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${response.recommendations.map(rec => `
+                                <tr>
+                                    <td>
+                                        <div style="display: flex; align-items: center;">
+                                            ${rec.content.poster_path ? `<img src="${rec.content.poster_path}" style="width: 40px; height: 60px; margin-right: 10px; object-fit: cover;">` : ''}
+                                            <div>
+                                                <strong>${rec.content.title}</strong><br>
+                                                <small>${rec.content.content_type} • ${rec.content.rating || 'N/A'}/10</small>
+                                            </div>
+                                        </div>
+                                    </td>
+                                    <td><span class="badge badge-warning">${rec.recommendation_type}</span></td>
+                                    <td>${rec.description}</td>
+                                    <td>${rec.admin_name}</td>
+                                    <td>${new Date(rec.created_at).toLocaleString()}</td>
+                                    <td>
+                                        <button onclick="window.open('/api/details/${rec.content.slug}', '_blank')" class="btn btn-primary">View Content</button>
+                                    </td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                `;
 
-                <h4>Interaction Breakdown</h4>
-                <div style="background: white; padding: 20px; border-radius: 12px; margin: 15px 0;">
-                    ${Object.entries(analysis.interaction_breakdown).map(([type, count]) =>
-                `<div style="margin: 8px 0; padding: 8px; background: #f8f9fa; border-radius: 6px;">
-                            <strong>${type}:</strong> ${count}
-                        </div>`
-            ).join('')}
-                </div>
+                document.getElementById('adminRecommendationsData').innerHTML = html;
+            } catch (error) {
+                showAlert('Failed to load admin recommendations', 'error');
+            }
+        }
 
-                <h4>Preferences</h4>
-                <div style="background: white; padding: 20px; border-radius: 12px; margin: 15px 0;">
-                    <div style="margin-bottom: 15px;">
-                        <strong>Languages:</strong> 
-                        <div style="margin-top: 8px;">
-                            ${analysis.preferred_languages.map(lang =>
-                `<span style="background: linear-gradient(45deg, #667eea, #764ba2); color: white; padding: 5px 15px; border-radius: 20px; margin: 5px; display: inline-block;">${lang}</span>`
-            ).join('') || 'None set'}
-                        </div>
-                    </div>
-                    <div>
-                        <strong>Genres:</strong>
-                        <div style="margin-top: 8px;">
-                            ${analysis.preferred_genres.map(genre =>
-                `<span style="background: linear-gradient(45deg, #f093fb, #f5576c); color: white; padding: 5px 15px; border-radius: 20px; margin: 5px; display: inline-block;">${genre}</span>`
-            ).join('') || 'None set'}
-                        </div>
-                    </div>
-                </div>
+        // User management functions
+        async function loadUsers() {
+            try {
+                const search = document.getElementById('userSearch').value;
+                let url = '/api/admin/users';
+                if (search) url += `?search=${encodeURIComponent(search)}`;
 
-                <h4>Rating Behavior</h4>
-                <div style="background: white; padding: 20px; border-radius: 12px; margin: 15px 0;">
-                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
-                        <div>
-                            <strong>Average Rating:</strong> ${analysis.rating_behavior.average.toFixed(2)}
+                const response = await apiCall(url);
+
+                const html = `
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>Username</th>
+                                <th>Email</th>
+                                <th>Admin</th>
+                                <th>Joined</th>
+                                <th>Last Active</th>
+                                <th>Interactions</th>
+                                <th>Support Tickets</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${response.users.map(user => `
+                                <tr>
+                                    <td>${user.username}</td>
+                                    <td>${user.email}</td>
+                                    <td><span class="badge badge-${user.is_admin ? 'success' : 'secondary'}">${user.is_admin ? 'Yes' : 'No'}</span></td>
+                                    <td>${new Date(user.created_at).toLocaleDateString()}</td>
+                                    <td>${user.last_active ? new Date(user.last_active).toLocaleDateString() : 'Never'}</td>
+                                    <td>${user.total_interactions}</td>
+                                    <td>${user.total_support_tickets}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                `;
+
+                document.getElementById('usersData').innerHTML = html;
+            } catch (error) {
+                showAlert('Failed to load users', 'error');
+            }
+        }
+
+        // Analytics functions
+        async function loadAnalytics() {
+            try {
+                const analytics = await apiCall('/api/admin/analytics');
+
+                const html = `
+                    <div class="row">
+                        <div class="col-6">
+                            <h4>Popular Content</h4>
+                            <table class="table">
+                                <thead>
+                                    <tr><th>Title</th><th>Interactions</th></tr>
+                                </thead>
+                                <tbody>
+                                    ${analytics.popular_content.map(item => `
+                                        <tr>
+                                            <td>${item.title}</td>
+                                            <td>${item.interactions}</td>
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>
                         </div>
-                        <div>
-                            <strong>Total Ratings:</strong> ${analysis.rating_behavior.count}
-                        </div>
-                        <div>
-                            <strong>High Ratings (4+):</strong> ${analysis.rating_behavior.high_ratings || 0}
+                        <div class="col-6">
+                            <h4>Popular Genres</h4>
+                            <table class="table">
+                                <thead>
+                                    <tr><th>Genre</th><th>Count</th></tr>
+                                </thead>
+                                <tbody>
+                                    ${analytics.popular_genres.map(item => `
+                                        <tr>
+                                            <td>${item.genre}</td>
+                                            <td>${item.count}</td>
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>
                         </div>
                     </div>
-                    ${analysis.rating_behavior.distribution ? `
-                        <div style="margin-top: 15px;">
-                            <strong>Rating Distribution:</strong>
-                            <div style="display: flex; gap: 10px; margin-top: 10px;">
-                                ${Object.entries(analysis.rating_behavior.distribution).map(([rating, count]) =>
-                `<div style="text-align: center;">
-                                        <div style="background: #ffd700; padding: 10px; border-radius: 8px; font-weight: bold;">${rating}★</div>
-                                        <div style="margin-top: 5px;">${count}</div>
-                                    </div>`
-            ).join('')}
+                    
+                    <div class="row">
+                        <div class="col-6">
+                            <h4>Interactions by Type</h4>
+                            <table class="table">
+                                <thead>
+                                    <tr><th>Type</th><th>Count</th></tr>
+                                </thead>
+                                <tbody>
+                                    ${analytics.interactions_by_type.map(item => `
+                                        <tr>
+                                            <td>${item.type}</td>
+                                            <td>${item.count}</td>
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="col-6">
+                            <h4>Content by Type</h4>
+                            <table class="table">
+                                <thead>
+                                    <tr><th>Type</th><th>Count</th></tr>
+                                </thead>
+                                <tbody>
+                                    ${analytics.content_by_type.map(item => `
+                                        <tr>
+                                            <td>${item.type}</td>
+                                            <td>${item.count}</td>
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                `;
+
+                document.getElementById('analyticsData').innerHTML = html;
+            } catch (error) {
+                showAlert('Failed to load analytics', 'error');
+            }
+        }
+
+        // System management functions
+        async function clearCache(type) {
+            if (!confirm(`Are you sure you want to clear ${type} cache?`)) return;
+
+            try {
+                await apiCall(`/api/admin/cache/clear?type=${type}`, 'POST');
+                showAlert(`${type} cache cleared successfully`, 'success');
+            } catch (error) {
+                showAlert('Failed to clear cache', 'error');
+            }
+        }
+
+        async function loadCacheStats() {
+            try {
+                const stats = await apiCall('/api/admin/cache/stats');
+
+                const html = `
+                    <h4>Cache Statistics</h4>
+                    <div class="code-block">
+                        <strong>Type:</strong> ${stats.type}<br>
+                        <strong>Default Timeout:</strong> ${stats.default_timeout} seconds<br>
+                        ${stats.redis ? `
+                            <strong>Redis Stats:</strong><br>
+                            - Used Memory: ${stats.redis.used_memory}<br>
+                            - Connected Clients: ${stats.redis.connected_clients}<br>
+                            - Commands Processed: ${stats.redis.total_commands_processed}<br>
+                            - Uptime: ${Math.floor(stats.redis.uptime_in_seconds / 3600)} hours
+                        ` : ''}
+                        ${stats.support_queues ? `
+                            <br><strong>Support Queues:</strong><br>
+                            - Admin Notifications: ${stats.support_queues.admin_notifications}<br>
+                            - Admin Emails: ${stats.support_queues.admin_emails}<br>
+                            - Dashboard Notifications: ${stats.support_queues.dashboard_notifications}
+                        ` : ''}
+                    </div>
+                `;
+
+                document.getElementById('systemData').innerHTML = html;
+            } catch (error) {
+                showAlert('Failed to load cache stats', 'error');
+            }
+        }
+
+        async function loadSystemHealth() {
+            try {
+                const health = await apiCall('/api/admin/system-health');
+
+                const html = `
+                    <h4>System Health Check</h4>
+                    <div class="row">
+                        <div class="col-12">
+                            <div style="padding: 15px; background: ${health.status === 'healthy' ? '#d4edda' : '#f8d7da'}; border-radius: 4px; margin-bottom: 15px;">
+                                <h5>Overall Status: <span class="badge badge-${health.status === 'healthy' ? 'success' : 'danger'}">${health.status.toUpperCase()}</span></h5>
+                                <small>Last checked: ${new Date(health.timestamp).toLocaleString()}</small>
                             </div>
                         </div>
-                    ` : ''}
-                </div>
-            `;
-
-            if (analysis.ml_insights) {
-                html += `
-                    <h4>🤖 Advanced AI Insights</h4>
-                    <div class="info-panel">
-                        <pre>${JSON.stringify(analysis.ml_insights, null, 2)}</pre>
+                    </div>
+                    
+                    <div class="row">
+                        ${Object.entries(health.components).map(([component, data]) => `
+                            <div class="col-4" style="margin-bottom: 15px;">
+                                <div class="card">
+                                    <div class="card-header">
+                                        <span class="status-indicator status-${data.status === 'healthy' ? 'healthy' : data.status === 'degraded' ? 'warning' : 'error'}"></span>
+                                        ${component.replace('_', ' ').toUpperCase()}
+                                    </div>
+                                    <div class="card-body">
+                                        <p><strong>Status:</strong> ${data.status}</p>
+                                        ${data.total_users ? `<p><strong>Users:</strong> ${data.total_users}</p>` : ''}
+                                        ${data.total_content ? `<p><strong>Content:</strong> ${data.total_content}</p>` : ''}
+                                        ${data.total_tickets ? `<p><strong>Tickets:</strong> ${data.total_tickets}</p>` : ''}
+                                        ${data.error ? `<p style="color: red;"><strong>Error:</strong> ${data.error}</p>` : ''}
+                                    </div>
+                                </div>
+                            </div>
+                        `).join('')}
                     </div>
                 `;
-            }
 
-            container.innerHTML = html;
+                document.getElementById('systemData').innerHTML = html;
+            } catch (error) {
+                showAlert('Failed to load system health', 'error');
+            }
         }
 
-        function displaySystemHealth(health, containerId) {
-            const container = document.getElementById(containerId);
+        // Notification functions
+        async function loadNotifications() {
+            try {
+                const response = await apiCall('/api/admin/notifications');
 
-            const statusClass = health.status === 'healthy' ? 'health-healthy' : 'health-unhealthy';
+                const html = `
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>Title</th>
+                                <th>Message</th>
+                                <th>Type</th>
+                                <th>Priority</th>
+                                <th>Time</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${response.notifications.map(notification => `
+                                <tr class="${!notification.read ? 'table-warning' : ''}">
+                                    <td>${notification.title}</td>
+                                    <td>${notification.message.substring(0, 100)}${notification.message.length > 100 ? '...' : ''}</td>
+                                    <td><span class="badge badge-info">${notification.type}</span></td>
+                                    <td><span class="badge badge-${notification.priority === 'urgent' ? 'danger' : notification.priority === 'high' ? 'warning' : 'info'}">${notification.priority}</span></td>
+                                    <td>${new Date(notification.timestamp).toLocaleString()}</td>
+                                    <td><span class="badge badge-${notification.read ? 'success' : 'warning'}">${notification.read ? 'Read' : 'Unread'}</span></td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                `;
 
-            let html = `
-                <div class="health-status ${statusClass}">
-                    <div class="status-indicator"></div>
-                    System Status: ${health.status.toUpperCase()}
-                </div>
-
-                <div class="stats-grid">
-                    <div class="stat-card">
-                        <div class="stat-number">${health.version}</div>
-                        <div class="stat-label">Version</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-number">${health.database === 'connected' ? '✅' : '❌'}</div>
-                        <div class="stat-label">Database</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-number">${health.cache === 'connected' ? '✅' : '❌'}</div>
-                        <div class="stat-label">Cache</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-number">${health.slug_status?.total_content || 0}</div>
-                        <div class="stat-label">Total Content</div>
-                    </div>
-                </div>
-
-                <h4>Services Status</h4>
-                <div style="background: white; padding: 20px; border-radius: 12px; margin: 15px 0;">
-                    ${Object.entries(health.services || {}).map(([service, status]) =>
-                `<div style="margin: 8px 0; padding: 10px; background: ${status === true || status === 'enabled' ? '#e8f5e8' : '#ffebee'}; border-radius: 6px;">
-                            <strong>${service}:</strong> ${status}
-                        </div>`
-            ).join('')}
-                </div>
-
-                <h4>Performance Metrics</h4>
-                <div class="info-panel">
-                    <pre>${JSON.stringify(health.performance || {}, null, 2)}</pre>
-                </div>
-            `;
-
-            container.innerHTML = html;
+                document.getElementById('notificationsData').innerHTML = html;
+            } catch (error) {
+                showAlert('Failed to load notifications', 'error');
+            }
         }
 
-        function displayMLHealth(health, containerId) {
-            const container = document.getElementById(containerId);
-
-            const statusClass = health.ml_service_status === 'healthy' ? 'health-healthy' : 'health-unhealthy';
-
-            let html = `
-                <div class="health-status ${statusClass}">
-                    <div class="status-indicator"></div>
-                    ML Service Status: ${health.ml_service_status?.toUpperCase() || 'UNKNOWN'}
-                </div>
-
-                <div style="background: white; padding: 20px; border-radius: 12px; margin: 15px 0;">
-                    <div><strong>ML Service URL:</strong> ${health.ml_service_url}</div>
-                    <div><strong>Last Checked:</strong> ${health.last_checked}</div>
-                    <div><strong>Fallback Available:</strong> ${health.fallback_available ? 'Yes' : 'No'}</div>
-                </div>
-            `;
-
-            if (health.response) {
-                html += `
-                    <h4>ML Service Details</h4>
-                    <div style="background: white; padding: 20px; border-radius: 12px; margin: 15px 0;">
-                        <div><strong>Version:</strong> ${health.response.version}</div>
-                        <div><strong>Device:</strong> ${health.response.device}</div>
-                        <div><strong>Content Count:</strong> ${health.response.content_count}</div>
-                        <div><strong>Database Status:</strong> ${health.response.database_status}</div>
-                    </div>
-                `;
-
-                if (health.response.features) {
-                    html += `
-                        <h4>ML Features Available</h4>
-                        <div style="background: white; padding: 20px; border-radius: 12px; margin: 15px 0;">
-                            ${Object.entries(health.response.features).map(([feature, available]) =>
-                        `<div style="margin: 8px 0; padding: 10px; background: ${available ? '#e8f5e8' : '#ffebee'}; border-radius: 6px;">
-                                    <strong>${feature.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}:</strong> ${available ? '✅ Active' : '❌ Inactive'}
-                                </div>`
-                    ).join('')}
-                        </div>
-                    `;
-                }
+        async function sendTestNotification() {
+            try {
+                // This would typically be done automatically by the system
+                // For testing, we can create a dummy notification
+                showAlert('Test notification feature would be triggered by system events', 'info');
+            } catch (error) {
+                showAlert('Failed to send test notification', 'error');
             }
-
-            if (health.advanced_capabilities) {
-                html += `
-                    <h4>Advanced ML Capabilities</h4>
-                    <div class="info-panel">
-                        <pre>${JSON.stringify(health.advanced_capabilities, null, 2)}</pre>
-                    </div>
-                `;
-            }
-
-            if (health.error) {
-                html += `
-                    <div class="error">
-                        <strong>Error:</strong> ${health.error}
-                    </div>
-                `;
-            }
-
-            container.innerHTML = html;
         }
 
-        function setStarRating(clickedStar, rating) {
-            const stars = clickedStar.parentElement.querySelectorAll('.star');
-            stars.forEach((star, index) => {
-                if (index < rating) {
-                    star.classList.add('active');
-                } else {
-                    star.classList.remove('active');
+        // Modal functions
+        function closeModal(modalId) {
+            document.getElementById(modalId).style.display = 'none';
+        }
+
+        function toggleNotificationsPanel() {
+            const panel = document.getElementById('notificationsPanel');
+            panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+        }
+
+        // Event listeners
+        document.addEventListener('DOMContentLoaded', function () {
+            // Auto-load dashboard if already authenticated
+            if (authToken) {
+                loadDashboard();
+            }
+
+            // Enter key for login
+            document.getElementById('loginPassword').addEventListener('keypress', function (e) {
+                if (e.key === 'Enter') {
+                    adminLogin();
                 }
             });
-        }
 
-        function showLoading(containerId) {
-            const container = document.getElementById(containerId);
-            container.innerHTML = `
-                <div class="loading">
-                    <div class="spinner"></div>
-                    <p>Loading advanced recommendations...</p>
-                </div>
-            `;
-        }
+            // Close modals when clicking outside
+            window.onclick = function (event) {
+                const modals = document.querySelectorAll('.modal');
+                modals.forEach(modal => {
+                    if (event.target === modal) {
+                        modal.style.display = 'none';
+                    }
+                });
+            };
+        });
 
-        function showError(message) {
-            const errorDiv = document.createElement('div');
-            errorDiv.className = 'error';
-            errorDiv.innerHTML = `<strong>Error:</strong> ${message}`;
-            document.body.appendChild(errorDiv);
+        // Auto-refresh dashboard every 30 seconds
+        setInterval(() => {
+            if (authToken && document.querySelector('.nav-tab.active')?.textContent?.includes('Dashboard')) {
+                loadDashboard();
+            }
+        }, 30000);
 
-            setTimeout(() => {
-                errorDiv.remove();
-            }, 5000);
-        }
-
-        function showSuccess(message) {
-            const successDiv = document.createElement('div');
-            successDiv.className = 'success';
-            successDiv.innerHTML = `<strong>Success:</strong> ${message}`;
-            document.body.appendChild(successDiv);
-
-            setTimeout(() => {
-                successDiv.remove();
-            }, 3000);
-        }
+        // Show notifications panel on page load
+        setTimeout(() => {
+            document.getElementById('notificationsPanel').style.display = 'block';
+        }, 2000);
     </script>
 </body>
 
