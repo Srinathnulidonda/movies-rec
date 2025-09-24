@@ -78,7 +78,8 @@ def require_auth(f):
             current_user.last_active = datetime.utcnow()
             db.session.commit()
             
-        except:
+        except Exception as e:
+            logger.error(f"Auth error: {e}")
             return jsonify({'error': 'Invalid token'}), 401
         
         return f(current_user, *args, **kwargs)
@@ -587,6 +588,46 @@ class SecurityService:
     def generate_session_token() -> str:
         return secrets.token_urlsafe(32)
 
+def _calculate_profile_completion(user):
+    completion = 0
+    
+    if user.username:
+        completion += 15
+    if user.email:
+        completion += 15
+    if getattr(user, 'bio', ''):
+        completion += 10
+    if user.avatar_url:
+        completion += 10
+    if user.preferred_languages and json.loads(user.preferred_languages or '[]'):
+        completion += 15
+    if user.preferred_genres and json.loads(user.preferred_genres or '[]'):
+        completion += 15
+    if user.location:
+        completion += 10
+    if getattr(user, 'theme_preference', ''):
+        completion += 5
+    if getattr(user, 'region', ''):
+        completion += 5
+    
+    return completion
+
+def _get_missing_profile_fields(user):
+    missing = []
+    
+    if not getattr(user, 'bio', ''):
+        missing.append('bio')
+    if not user.avatar_url:
+        missing.append('avatar')
+    if not user.preferred_languages or not json.loads(user.preferred_languages or '[]'):
+        missing.append('preferred_languages')
+    if not user.preferred_genres or not json.loads(user.preferred_genres or '[]'):
+        missing.append('preferred_genres')
+    if not user.location:
+        missing.append('location')
+    
+    return missing
+
 @users_bp.route('/api/user/profile', methods=['GET'])
 @require_auth
 def get_user_profile(current_user):
@@ -635,8 +676,8 @@ def get_user_profile(current_user):
             'new_achievements': achievements['new_achievements'],
             'recent_activity': recent_activity,
             'profile_completion': {
-                'percentage': self._calculate_profile_completion(current_user),
-                'missing_fields': self._get_missing_profile_fields(current_user)
+                'percentage': _calculate_profile_completion(current_user),
+                'missing_fields': _get_missing_profile_fields(current_user)
             }
         }
         
@@ -645,46 +686,6 @@ def get_user_profile(current_user):
     except Exception as e:
         logger.error(f"Error getting user profile: {e}")
         return jsonify({'error': 'Failed to get user profile'}), 500
-
-def _calculate_profile_completion(user):
-    completion = 0
-    
-    if user.username:
-        completion += 15
-    if user.email:
-        completion += 15
-    if getattr(user, 'bio', ''):
-        completion += 10
-    if user.avatar_url:
-        completion += 10
-    if user.preferred_languages and json.loads(user.preferred_languages or '[]'):
-        completion += 15
-    if user.preferred_genres and json.loads(user.preferred_genres or '[]'):
-        completion += 15
-    if user.location:
-        completion += 10
-    if getattr(user, 'theme_preference', ''):
-        completion += 5
-    if getattr(user, 'region', ''):
-        completion += 5
-    
-    return completion
-
-def _get_missing_profile_fields(user):
-    missing = []
-    
-    if not getattr(user, 'bio', ''):
-        missing.append('bio')
-    if not user.avatar_url:
-        missing.append('avatar')
-    if not user.preferred_languages or not json.loads(user.preferred_languages or '[]'):
-        missing.append('preferred_languages')
-    if not user.preferred_genres or not json.loads(user.preferred_genres or '[]'):
-        missing.append('preferred_genres')
-    if not user.location:
-        missing.append('location')
-    
-    return missing
 
 @users_bp.route('/api/user/profile', methods=['PUT'])
 @require_auth
@@ -1547,6 +1548,44 @@ def delete_account(current_user):
         db.session.rollback()
         return jsonify({'error': 'Failed to delete account'}), 500
 
+def _get_profile_improvement_suggestions(user, stats):
+    suggestions = []
+    
+    completion = _calculate_profile_completion(user)
+    if completion < 80:
+        suggestions.append("Complete your profile for better recommendations")
+    
+    if stats['ratings_given'] < 10:
+        suggestions.append("Rate more content to improve recommendation accuracy")
+    
+    if stats['discovery_score'] < 0.3:
+        suggestions.append("Try exploring different genres and languages")
+    
+    if stats['viewing_streak'] < 7:
+        suggestions.append("Build a viewing streak by watching content regularly")
+    
+    return suggestions[:3]
+
+def _get_content_exploration_suggestions(stats):
+    suggestions = []
+    
+    content_types = stats.get('content_type_distribution', {})
+    
+    if 'anime' not in content_types or content_types.get('anime', 0) < 5:
+        suggestions.append("Explore anime for unique storytelling experiences")
+    
+    if 'tv' not in content_types or content_types.get('tv', 0) < 10:
+        suggestions.append("Try TV series for deeper character development")
+    
+    languages = stats.get('language_distribution', {})
+    if 'hindi' not in languages:
+        suggestions.append("Discover Bollywood movies for great Indian cinema")
+    
+    if 'telugu' not in languages:
+        suggestions.append("Check out Telugu films for regional masterpieces")
+    
+    return suggestions[:3]
+
 @users_bp.route('/api/user/analytics', methods=['GET'])
 @require_auth
 def get_user_analytics(current_user):
@@ -1597,41 +1636,3 @@ def get_user_analytics(current_user):
     except Exception as e:
         logger.error(f"Error getting user analytics: {e}")
         return jsonify({'error': 'Failed to get analytics'}), 500
-
-def _get_profile_improvement_suggestions(user, stats):
-    suggestions = []
-    
-    completion = _calculate_profile_completion(user)
-    if completion < 80:
-        suggestions.append("Complete your profile for better recommendations")
-    
-    if stats['ratings_given'] < 10:
-        suggestions.append("Rate more content to improve recommendation accuracy")
-    
-    if stats['discovery_score'] < 0.3:
-        suggestions.append("Try exploring different genres and languages")
-    
-    if stats['viewing_streak'] < 7:
-        suggestions.append("Build a viewing streak by watching content regularly")
-    
-    return suggestions[:3]
-
-def _get_content_exploration_suggestions(stats):
-    suggestions = []
-    
-    content_types = stats.get('content_type_distribution', {})
-    
-    if 'anime' not in content_types or content_types.get('anime', 0) < 5:
-        suggestions.append("Explore anime for unique storytelling experiences")
-    
-    if 'tv' not in content_types or content_types.get('tv', 0) < 10:
-        suggestions.append("Try TV series for deeper character development")
-    
-    languages = stats.get('language_distribution', {})
-    if 'hindi' not in languages:
-        suggestions.append("Discover Bollywood movies for great Indian cinema")
-    
-    if 'telugu' not in languages:
-        suggestions.append("Check out Telugu films for regional masterpieces")
-    
-    return suggestions[:3]
