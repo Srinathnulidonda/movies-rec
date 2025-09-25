@@ -2520,14 +2520,39 @@ def create_tables():
     except Exception as e:
         logger.error(f"Database initialization error: {e}")
 
-create_tables()
 
 if __name__ == '__main__':
+    create_tables()
     print("=== Running Flask in development mode with Full Support Management ===")
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('FLASK_ENV') == 'development'
     app.run(host='0.0.0.0', port=port, debug=debug)
 else:
+    # For production with Gunicorn
+    with app.app_context():
+        try:
+            db.create_all()
+            
+            # Create admin user if doesn't exist
+            admin = User.query.filter_by(username='admin').first()
+            if not admin:
+                admin = User(
+                    username='admin',
+                    email='srinathnulidonda.dev@gmail.com',
+                    password_hash=generate_password_hash('admin123'),
+                    is_admin=True
+                )
+                db.session.add(admin)
+                db.session.commit()
+                logger.info("Admin user created")
+            
+            # Setup monitoring in a separate thread to avoid blocking
+            setup_support_monitoring()
+            
+        except Exception as e:
+            logger.error(f"Database initialization error: {e}")
+    
+    print("=== Flask app imported by Gunicorn - COMPREHENSIVE ADMIN & SUPPORT VERSION ===")
     print("=== Flask app imported by Gunicorn - COMPREHENSIVE ADMIN & SUPPORT VERSION ===")
     print(f"App name: {app.name}")
     print(f"Python version: 3.13.4")
