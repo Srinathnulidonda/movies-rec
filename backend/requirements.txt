@@ -35,4 +35,3 @@ joblib==1.3.2
 cloudinary
 textblob
 spacy
-python-levenshtein==0.27.0
