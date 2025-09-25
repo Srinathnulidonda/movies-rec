@@ -1,13 +1,12 @@
+#backend/app.py
 from typing import Optional
-from flask import Flask, request, jsonify, session, render_template, g
+from flask import Flask, request, jsonify, session, render_template
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
 from flask_caching import Cache
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta
-from sqlalchemy import func, and_, or_, desc, text, create_engine, event
-from sqlalchemy.pool import QueuePool
-from sqlalchemy.exc import OperationalError, DisconnectionError
+from sqlalchemy import func, and_, or_, desc, text
 import requests
 import os
 import json
@@ -48,35 +47,18 @@ from services.algorithms import (
 from services.personalized import init_personalized
 from services.details import init_details_service, SlugManager, ContentService
 import re
-import psycopg2
-import traceback
-from contextlib import contextmanager
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'your-secret-key-change-in-production')
 
-if os.environ.get('DATABASE_URL'):
-    DATABASE_URL = os.environ.get('DATABASE_URL').replace('postgres://', 'postgresql://')
-else:
-    DATABASE_URL = 'postgresql://movies_rec_panf_user:BO5X3d2QihK7GG9hxgtBiCtni8NTbbIi@dpg-d2q7gamr433s73e0hcm0-a/movies_rec_panf'
+DATABASE_URL = 'postgresql://movies_rec_panf_user:BO5X3d2QihK7GG9hxgtBiCtni8NTbbIi@dpg-d2q7gamr433s73e0hcm0-a/movies_rec_panf'
 
-app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
+if os.environ.get('DATABASE_URL'):
+    app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL').replace('postgres://', 'postgresql://')
+else:
+    app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
+
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
-    'poolclass': QueuePool,
-    'pool_size': 10,
-    'pool_recycle': 1800,
-    'pool_pre_ping': True,
-    'pool_reset_on_return': 'commit',
-    'pool_timeout': 20,
-    'max_overflow': 20,
-    'connect_args': {
-        'sslmode': 'require',
-        'connect_timeout': 10,
-        'application_name': 'cinbrain-app',
-        'options': '-c statement_timeout=30000'
-    }
-}
 
 REDIS_URL = os.environ.get('REDIS_URL', 'redis://red-d2qlbuje5dus73c71qog:xp7inVzgblGCbo9I4taSGLdKUg0xY91I@red-d2qlbuje5dus73c71qog:6379')
 
@@ -88,25 +70,19 @@ else:
     app.config['CACHE_TYPE'] = 'simple'
     app.config['CACHE_DEFAULT_TIMEOUT'] = 1800
 
+
+if DATABASE_URL and DATABASE_URL.startswith('postgresql://'):
+    app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL + '?sslmode=require'
+    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+        'pool_pre_ping': True,
+        'pool_recycle': 300,
+        'connect_args': {
+            'sslmode': 'require',
+            'connect_timeout': 10
+        }
+    }
+
 db = SQLAlchemy(app)
-
-@event.listens_for(db.engine, "engine_connect")
-def receive_engine_connect(conn, branch):
-    if branch:
-        return
-    try:
-        conn.execute(text("SELECT 1"))
-        logging.info("Database connection established successfully")
-    except Exception as e:
-        logging.error(f"Database connection test failed: {e}")
-        raise
-
-@event.listens_for(db.engine, "handle_error")
-def receive_handle_error(exception_context):
-    logging.error(f"Database error occurred: {exception_context.original_exception}")
-    if isinstance(exception_context.original_exception, (psycopg2.OperationalError, psycopg2.InterfaceError)):
-        logging.warning("Connection error detected, will attempt reconnection")
-
 CORS(app)
 cache = Cache(app)
 
@@ -120,31 +96,6 @@ app.config['YOUTUBE_API_KEY'] = YOUTUBE_API_KEY
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-details_service = None
-content_service = None
-recommendation_engine = None
-
-@contextmanager
-def safe_db_operation():
-    try:
-        yield
-    except (OperationalError, DisconnectionError, psycopg2.OperationalError, psycopg2.InterfaceError) as e:
-        logger.error(f"Database connection error: {e}")
-        try:
-            db.session.rollback()
-            db.session.close()
-        except:
-            pass
-        raise
-    except Exception as e:
-        logger.error(f"Database operation error: {e}")
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        try:
-            db.session.rollback()
-        except:
-            pass
-        raise
 
 def create_http_session():
     session = requests.Session()
@@ -751,12 +702,48 @@ models = {
     'AnonymousInteraction': AnonymousInteraction
 }
 
+details_service = None
+content_service = None
+try:
+    with app.app_context():
+        details_service = init_details_service(app, db, models, cache)
+        content_service = ContentService(db, models)
+        logger.info("Details and Content services initialized successfully")
+except Exception as e:
+    logger.error(f"Failed to initialize details/content services: {e}")
+
 services = {
     'TMDBService': TMDBService,
     'JikanService': JikanService,
+    'ContentService': content_service,
     'http_session': http_session,
     'cache': cache
 }
+
+try:
+    init_support(app, db, models, services)
+    app.register_blueprint(support_bp)
+    logger.info("Support service initialized successfully")
+except Exception as e:
+    logger.error(f"Failed to initialize support service: {e}")
+
+try:
+    personalized_engine = init_personalized(app, db, models, services, cache)
+    if personalized_engine:
+        logger.info("Netflix-level personalized recommendation system initialized successfully")
+    else:
+        logger.warning("Personalized recommendation system failed to initialize")
+except Exception as e:
+    logger.error(f"Failed to initialize personalized recommendation system: {e}")
+
+app.register_blueprint(auth_bp)
+app.register_blueprint(admin_bp)
+app.register_blueprint(users_bp)
+init_auth(app, db, User)
+
+init_admin(app, db, models, services)
+init_users(app, db, models, services)
+init_users(app, db, models, {**services, 'cache': cache})
 
 def setup_support_monitoring():
     def support_monitor():
@@ -830,141 +817,6 @@ def on_new_feedback(feedback):
     except Exception as e:
         logger.error(f"Error handling new feedback notification: {e}")
 
-def initialize_app():
-    global details_service, content_service, recommendation_engine
-    
-    try:
-        with app.app_context():
-            db.create_all()
-            
-            admin = User.query.filter_by(username='admin').first()
-            if not admin:
-                admin = User(
-                    username='admin',
-                    email='srinathnulidonda.dev@gmail.com',
-                    password_hash=generate_password_hash('admin123'),
-                    is_admin=True
-                )
-                db.session.add(admin)
-                db.session.commit()
-                logger.info("Admin user created with username: admin, password: admin123")
-            
-            details_service = init_details_service(app, db, models, cache)
-            content_service = ContentService(db, models)
-            logger.info("Details and Content services initialized successfully")
-            
-            services['ContentService'] = content_service
-            
-            init_support(app, db, models, services)
-            app.register_blueprint(support_bp)
-            logger.info("Support service initialized successfully")
-            
-            recommendation_engine = init_personalized(app, db, models, services, cache)
-            if recommendation_engine:
-                logger.info("Netflix-level personalized recommendation system initialized successfully")
-            else:
-                logger.warning("Personalized recommendation system failed to initialize")
-            
-            app.register_blueprint(auth_bp)
-            app.register_blueprint(admin_bp)
-            app.register_blueprint(users_bp)
-            init_auth(app, db, User)
-            
-            init_admin(app, db, models, services)
-            init_users(app, db, models, services)
-            init_users(app, db, models, {**services, 'cache': cache})
-            
-            setup_support_monitoring()
-            
-            logger.info("Database tables created successfully including support tables with monitoring")
-            
-    except Exception as e:
-        logger.error(f"Application initialization error: {e}")
-        raise
-
-@app.before_request
-def before_request():
-    g.start_time = time.time()
-    if hasattr(g, 'db_ping_needed'):
-        try:
-            db.session.execute(text('SELECT 1'))
-        except Exception as e:
-            logger.warning(f"Database ping failed: {e}")
-            try:
-                db.session.rollback()
-                db.session.close()
-            except:
-                pass
-
-@app.after_request
-def after_request(response):
-    if hasattr(g, 'start_time'):
-        total_time = time.time() - g.start_time
-        if total_time > 2:
-            logger.warning(f'Slow request: {request.endpoint} took {total_time:.2f}s')
-    
-    try:
-        db.session.remove()
-    except:
-        pass
-    
-    return response
-
-@app.route('/api/health/database', methods=['GET'])
-def database_health():
-    try:
-        start_time = time.time()
-        
-        result = db.session.execute(text('SELECT 1 as status, NOW() as timestamp'))
-        db_result = result.fetchone()
-        
-        db.session.begin()
-        db.session.execute(text('SELECT COUNT(*) FROM content LIMIT 1'))
-        db.session.commit()
-        
-        end_time = time.time()
-        response_time = round((end_time - start_time) * 1000, 2)
-        
-        pool = db.engine.pool
-        pool_status = {
-            'size': pool.size(),
-            'checked_in': pool.checkedin(),
-            'checked_out': pool.checkedout(),
-            'overflow': pool.overflow(),
-            'invalid': pool.invalid()
-        }
-        
-        return jsonify({
-            'status': 'healthy',
-            'database': 'connected',
-            'response_time_ms': response_time,
-            'server_time': db_result.timestamp.isoformat() if db_result else None,
-            'pool_status': pool_status,
-            'ssl_mode': 'required',
-            'timestamp': datetime.utcnow().isoformat()
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"Database health check failed: {e}")
-        
-        try:
-            db.session.rollback()
-        except:
-            pass
-        
-        try:
-            db.session.close()
-        except:
-            pass
-        
-        return jsonify({
-            'status': 'unhealthy',
-            'database': 'disconnected',
-            'error': str(e),
-            'error_type': type(e).__name__,
-            'timestamp': datetime.utcnow().isoformat()
-        }), 503
-
 @app.route('/api/webhooks/support/ticket-created', methods=['POST'])
 def webhook_ticket_created():
     try:
@@ -1010,24 +862,16 @@ def get_content_details_by_slug(slug):
             except:
                 pass
         
-        with safe_db_operation():
-            if details_service:
-                details = details_service.get_details_by_slug(slug, user_id)
-            else:
-                logger.error("Details service not available")
-                return jsonify({'error': 'Service unavailable'}), 503
+        if details_service:
+            details = details_service.get_details_by_slug(slug, user_id)
+        else:
+            logger.error("Details service not available")
+            return jsonify({'error': 'Service unavailable'}), 503
         
         if not details:
             return jsonify({'error': 'Content not found'}), 404
         
         return jsonify(details), 200
-        
-    except (psycopg2.OperationalError, psycopg2.InterfaceError) as e:
-        logger.error(f"Database connection error for slug {slug}: {e}")
-        return jsonify({
-            'error': 'Database connection issue, please try again',
-            'retry_after': 5
-        }), 503
         
     except Exception as e:
         logger.error(f"Error getting details for slug {slug}: {e}")
@@ -1046,92 +890,91 @@ def search_content():
         
         session_id = get_session_id()
         
-        with safe_db_operation():
-            futures = []
-            with ThreadPoolExecutor(max_workers=2) as executor:
-                futures.append(executor.submit(TMDBService.search_content, query, content_type, page=page))
-                
-                if content_type in ['anime', 'multi']:
-                    futures.append(executor.submit(JikanService.search_anime, query, page=page))
+        futures = []
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures.append(executor.submit(TMDBService.search_content, query, content_type, page=page))
             
-            tmdb_results = None
-            anime_results = None
-            
+            if content_type in ['anime', 'multi']:
+                futures.append(executor.submit(JikanService.search_anime, query, page=page))
+        
+        tmdb_results = None
+        anime_results = None
+        
+        try:
+            tmdb_results = futures[0].result(timeout=5)
+        except Exception as e:
+            logger.warning(f"TMDB search timeout/error: {e}")
+        
+        if len(futures) > 1:
             try:
-                tmdb_results = futures[0].result(timeout=5)
+                anime_results = futures[1].result(timeout=5)
             except Exception as e:
-                logger.warning(f"TMDB search timeout/error: {e}")
-            
-            if len(futures) > 1:
-                try:
-                    anime_results = futures[1].result(timeout=5)
-                except Exception as e:
-                    logger.warning(f"Anime search timeout/error: {e}")
-            
-            results = []
-            
-            if tmdb_results:
-                for item in tmdb_results.get('results', []):
-                    content_type_detected = 'movie' if 'title' in item else 'tv'
-                    content = content_service.save_content_from_tmdb(item, content_type_detected)
-                    if content:
-                        try:
-                            interaction = AnonymousInteraction(
-                                session_id=session_id,
-                                content_id=content.id,
-                                interaction_type='search',
-                                ip_address=request.remote_addr
-                            )
-                            db.session.add(interaction)
-                        except Exception as e:
-                            logger.warning(f"Failed to record interaction: {e}")
-                        
-                        youtube_url = None
-                        if content.youtube_trailer_id:
-                            youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
-                        
-                        results.append({
-                            'id': content.id,
-                            'slug': content.slug,
-                            'tmdb_id': content.tmdb_id,
-                            'title': content.title,
-                            'content_type': content.content_type,
-                            'genres': json.loads(content.genres or '[]'),
-                            'rating': content.rating,
-                            'release_date': content.release_date.isoformat() if content.release_date else None,
-                            'poster_path': f"https://image.tmdb.org/t/p/w500{content.poster_path}" if content.poster_path else None,
-                            'overview': content.overview,
-                            'youtube_trailer': youtube_url
-                        })
-            
-            if anime_results:
-                for anime in anime_results.get('data', []):
-                    content = content_service.save_anime_content(anime)
-                    if content:
-                        youtube_url = None
-                        if content.youtube_trailer_id:
-                            youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
-                        
-                        results.append({
-                            'id': content.id,
-                            'slug': content.slug,
-                            'mal_id': content.mal_id,
-                            'title': content.title,
-                            'content_type': 'anime',
-                            'genres': json.loads(content.genres or '[]'),
-                            'anime_genres': json.loads(content.anime_genres or '[]'),
-                            'rating': content.rating,
-                            'release_date': content.release_date.isoformat() if content.release_date else None,
-                            'poster_path': content.poster_path,
-                            'overview': content.overview,
-                            'youtube_trailer': youtube_url
-                        })
-            
-            try:
-                db.session.commit()
-            except Exception as e:
-                logger.warning(f"Failed to commit search interactions: {e}")
-                db.session.rollback()
+                logger.warning(f"Anime search timeout/error: {e}")
+        
+        results = []
+        
+        if tmdb_results:
+            for item in tmdb_results.get('results', []):
+                content_type_detected = 'movie' if 'title' in item else 'tv'
+                content = content_service.save_content_from_tmdb(item, content_type_detected)
+                if content:
+                    try:
+                        interaction = AnonymousInteraction(
+                            session_id=session_id,
+                            content_id=content.id,
+                            interaction_type='search',
+                            ip_address=request.remote_addr
+                        )
+                        db.session.add(interaction)
+                    except Exception as e:
+                        logger.warning(f"Failed to record interaction: {e}")
+                    
+                    youtube_url = None
+                    if content.youtube_trailer_id:
+                        youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
+                    
+                    results.append({
+                        'id': content.id,
+                        'slug': content.slug,
+                        'tmdb_id': content.tmdb_id,
+                        'title': content.title,
+                        'content_type': content.content_type,
+                        'genres': json.loads(content.genres or '[]'),
+                        'rating': content.rating,
+                        'release_date': content.release_date.isoformat() if content.release_date else None,
+                        'poster_path': f"https://image.tmdb.org/t/p/w500{content.poster_path}" if content.poster_path else None,
+                        'overview': content.overview,
+                        'youtube_trailer': youtube_url
+                    })
+        
+        if anime_results:
+            for anime in anime_results.get('data', []):
+                content = content_service.save_anime_content(anime)
+                if content:
+                    youtube_url = None
+                    if content.youtube_trailer_id:
+                        youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
+                    
+                    results.append({
+                        'id': content.id,
+                        'slug': content.slug,
+                        'mal_id': content.mal_id,
+                        'title': content.title,
+                        'content_type': 'anime',
+                        'genres': json.loads(content.genres or '[]'),
+                        'anime_genres': json.loads(content.anime_genres or '[]'),
+                        'rating': content.rating,
+                        'release_date': content.release_date.isoformat() if content.release_date else None,
+                        'poster_path': content.poster_path,
+                        'overview': content.overview,
+                        'youtube_trailer': youtube_url
+                    })
+        
+        try:
+            db.session.commit()
+        except Exception as e:
+            logger.warning(f"Failed to commit search interactions: {e}")
+            db.session.rollback()
         
         return jsonify({
             'results': results,
@@ -1147,101 +990,100 @@ def search_content():
 @app.route('/api/content/<int:content_id>', methods=['GET'])
 def get_content_details(content_id):
     try:
-        with safe_db_operation():
-            cache_key = content_cache_key(content_id)
-            cached_content = cache.get(cache_key)
-            
-            if cached_content:
-                content = cached_content
-            else:
-                content = Content.query.get_or_404(content_id)
-                cache.set(cache_key, content, timeout=3600)
-            
-            if not content.slug:
-                try:
-                    content.ensure_slug()
-                    db.session.commit()
-                except Exception as e:
-                    logger.warning(f"Failed to ensure slug: {e}")
-            
+        cache_key = content_cache_key(content_id)
+        cached_content = cache.get(cache_key)
+        
+        if cached_content:
+            content = cached_content
+        else:
+            content = Content.query.get_or_404(content_id)
+            cache.set(cache_key, content, timeout=3600)
+        
+        if not content.slug:
             try:
-                session_id = get_session_id()
-                interaction = AnonymousInteraction(
-                    session_id=session_id,
-                    content_id=content.id,
-                    interaction_type='view',
-                    ip_address=request.remote_addr
-                )
-                db.session.add(interaction)
-            except Exception as e:
-                logger.warning(f"Failed to record view interaction: {e}")
-            
-            additional_details = None
-            cast = []
-            crew = []
-            
-            try:
-                if content.content_type == 'anime' and content.mal_id:
-                    additional_details = JikanService.get_anime_details(content.mal_id)
-                    if additional_details:
-                        anime_data = additional_details.get('data', {})
-                        if 'voices' in anime_data:
-                            cast = anime_data['voices'][:10]
-                        if 'staff' in anime_data:
-                            crew = anime_data['staff'][:5]
-                elif content.tmdb_id:
-                    additional_details = TMDBService.get_content_details(content.tmdb_id, content.content_type)
-                    if additional_details:
-                        cast = additional_details.get('credits', {}).get('cast', [])[:10]
-                        crew = additional_details.get('credits', {}).get('crew', [])[:5]
-            except Exception as e:
-                logger.warning(f"Failed to get additional details: {e}")
-            
-            similar_content = []
-            try:
-                try:
-                    genres = json.loads(content.genres) if content.genres else []
-                except (json.JSONDecodeError, TypeError):
-                    genres = []
-                
-                if genres:
-                    primary_genre = genres[0]
-                    similar_items = Content.query.filter(
-                        Content.id != content_id,
-                        Content.content_type == content.content_type,
-                        Content.genres.contains(primary_genre)
-                    ).order_by(Content.rating.desc()).limit(8).all()
-                    
-                    for similar in similar_items:
-                        if not similar.slug:
-                            try:
-                                similar.ensure_slug()
-                            except Exception:
-                                similar.slug = f"content-{similar.id}"
-                        
-                        youtube_url = None
-                        if similar.youtube_trailer_id:
-                            youtube_url = f"https://www.youtube.com/watch?v={similar.youtube_trailer_id}"
-                        
-                        similar_content.append({
-                            'id': similar.id,
-                            'slug': similar.slug,
-                            'title': similar.title,
-                            'poster_path': f"https://image.tmdb.org/t/p/w300{similar.poster_path}" if similar.poster_path and not similar.poster_path.startswith('http') else similar.poster_path,
-                            'rating': similar.rating,
-                            'content_type': similar.content_type,
-                            'youtube_trailer': youtube_url,
-                            'similarity_score': 0.8,
-                            'match_type': 'genre_based'
-                        })
-            except Exception as e:
-                logger.warning(f"Failed to get similar content: {e}")
-            
-            try:
+                content.ensure_slug()
                 db.session.commit()
             except Exception as e:
-                logger.warning(f"Failed to commit view interaction: {e}")
-                db.session.rollback()
+                logger.warning(f"Failed to ensure slug: {e}")
+        
+        try:
+            session_id = get_session_id()
+            interaction = AnonymousInteraction(
+                session_id=session_id,
+                content_id=content.id,
+                interaction_type='view',
+                ip_address=request.remote_addr
+            )
+            db.session.add(interaction)
+        except Exception as e:
+            logger.warning(f"Failed to record view interaction: {e}")
+        
+        additional_details = None
+        cast = []
+        crew = []
+        
+        try:
+            if content.content_type == 'anime' and content.mal_id:
+                additional_details = JikanService.get_anime_details(content.mal_id)
+                if additional_details:
+                    anime_data = additional_details.get('data', {})
+                    if 'voices' in anime_data:
+                        cast = anime_data['voices'][:10]
+                    if 'staff' in anime_data:
+                        crew = anime_data['staff'][:5]
+            elif content.tmdb_id:
+                additional_details = TMDBService.get_content_details(content.tmdb_id, content.content_type)
+                if additional_details:
+                    cast = additional_details.get('credits', {}).get('cast', [])[:10]
+                    crew = additional_details.get('credits', {}).get('crew', [])[:5]
+        except Exception as e:
+            logger.warning(f"Failed to get additional details: {e}")
+        
+        similar_content = []
+        try:
+            try:
+                genres = json.loads(content.genres) if content.genres else []
+            except (json.JSONDecodeError, TypeError):
+                genres = []
+            
+            if genres:
+                primary_genre = genres[0]
+                similar_items = Content.query.filter(
+                    Content.id != content_id,
+                    Content.content_type == content.content_type,
+                    Content.genres.contains(primary_genre)
+                ).order_by(Content.rating.desc()).limit(8).all()
+                
+                for similar in similar_items:
+                    if not similar.slug:
+                        try:
+                            similar.ensure_slug()
+                        except Exception:
+                            similar.slug = f"content-{similar.id}"
+                    
+                    youtube_url = None
+                    if similar.youtube_trailer_id:
+                        youtube_url = f"https://www.youtube.com/watch?v={similar.youtube_trailer_id}"
+                    
+                    similar_content.append({
+                        'id': similar.id,
+                        'slug': similar.slug,
+                        'title': similar.title,
+                        'poster_path': f"https://image.tmdb.org/t/p/w300{similar.poster_path}" if similar.poster_path and not similar.poster_path.startswith('http') else similar.poster_path,
+                        'rating': similar.rating,
+                        'content_type': similar.content_type,
+                        'youtube_trailer': youtube_url,
+                        'similarity_score': 0.8,
+                        'match_type': 'genre_based'
+                    })
+        except Exception as e:
+            logger.warning(f"Failed to get similar content: {e}")
+        
+        try:
+            db.session.commit()
+        except Exception as e:
+            logger.warning(f"Failed to commit view interaction: {e}")
+            db.session.rollback()
         
         youtube_trailer_url = None
         if content.youtube_trailer_id:
@@ -1291,120 +1133,119 @@ def get_trending():
         region = request.args.get('region', 'IN')
         apply_language_priority = request.args.get('language_priority', 'true').lower() == 'true'
         
-        with safe_db_operation():
-            all_content = []
+        all_content = []
+        
+        try:
+            tmdb_movies = TMDBService.get_trending('movie', 'day')
+            if tmdb_movies:
+                for item in tmdb_movies.get('results', []):
+                    content = content_service.save_content_from_tmdb(item, 'movie')
+                    if content:
+                        all_content.append(content)
             
+            tmdb_tv = TMDBService.get_trending('tv', 'day')
+            if tmdb_tv:
+                for item in tmdb_tv.get('results', []):
+                    content = content_service.save_content_from_tmdb(item, 'tv')
+                    if content:
+                        all_content.append(content)
+        except Exception as e:
+            logger.error(f"TMDB fetch error: {e}")
+        
+        try:
+            top_anime = JikanService.get_top_anime()
+            if top_anime:
+                for anime in top_anime.get('data', [])[:20]:
+                    content = content_service.save_anime_content(anime)
+                    if content:
+                        all_content.append(content)
+        except Exception as e:
+            logger.error(f"Jikan fetch error: {e}")
+        
+        db_trending = Content.query.filter_by(is_trending=True).limit(50).all()
+        all_content.extend(db_trending)
+        
+        seen_ids = set()
+        unique_content = []
+        for content in all_content:
+            if content.id not in seen_ids:
+                seen_ids.add(content.id)
+                if not content.slug:
+                    try:
+                        content.ensure_slug()
+                    except Exception as e:
+                        logger.warning(f"Failed to ensure slug for content {content.id}: {e}")
+                        content.slug = f"content-{content.id}"
+                unique_content.append(content)
+        
+        categories = recommendation_orchestrator.get_trending_with_algorithms(
+            unique_content,
+            limit=limit,
+            region=region,
+            apply_language_priority=apply_language_priority
+        )
+        
+        if category == 'all':
+            response = {
+                'categories': categories,
+                'metadata': {
+                    'total_content_analyzed': len(unique_content),
+                    'region': region,
+                    'language_priority_applied': apply_language_priority,
+                    'algorithm': 'multi_level_ranking',
+                    'timestamp': datetime.utcnow().isoformat()
+                }
+            }
+        else:
+            category_map = {
+                'movies': 'trending_movies',
+                'tv_shows': 'trending_tv_shows',
+                'anime': 'trending_anime',
+                'nearby': 'popular_nearby',
+                'top10': 'top_10_today',
+                'critics': 'critics_choice'
+            }
+            
+            selected_category = category_map.get(category, 'trending_movies')
+            response = {
+                'category': category,
+                'recommendations': categories.get(selected_category, []),
+                'metadata': {
+                    'total_content_analyzed': len(unique_content),
+                    'region': region,
+                    'language_priority_applied': apply_language_priority,
+                    'algorithm': 'multi_level_ranking',
+                    'timestamp': datetime.utcnow().isoformat()
+                }
+            }
+        
+        if category != 'all' and selected_category in categories and categories[selected_category]:
             try:
-                tmdb_movies = TMDBService.get_trending('movie', 'day')
-                if tmdb_movies:
-                    for item in tmdb_movies.get('results', []):
-                        content = content_service.save_content_from_tmdb(item, 'movie')
-                        if content:
-                            all_content.append(content)
-                
-                tmdb_tv = TMDBService.get_trending('tv', 'day')
-                if tmdb_tv:
-                    for item in tmdb_tv.get('results', []):
-                        content = content_service.save_content_from_tmdb(item, 'tv')
-                        if content:
-                            all_content.append(content)
-            except Exception as e:
-                logger.error(f"TMDB fetch error: {e}")
-            
-            try:
-                top_anime = JikanService.get_top_anime()
-                if top_anime:
-                    for anime in top_anime.get('data', [])[:20]:
-                        content = content_service.save_anime_content(anime)
-                        if content:
-                            all_content.append(content)
-            except Exception as e:
-                logger.error(f"Jikan fetch error: {e}")
-            
-            db_trending = Content.query.filter_by(is_trending=True).limit(50).all()
-            all_content.extend(db_trending)
-            
-            seen_ids = set()
-            unique_content = []
-            for content in all_content:
-                if content.id not in seen_ids:
-                    seen_ids.add(content.id)
-                    if not content.slug:
-                        try:
-                            content.ensure_slug()
-                        except Exception as e:
-                            logger.warning(f"Failed to ensure slug for content {content.id}: {e}")
-                            content.slug = f"content-{content.id}"
-                    unique_content.append(content)
-            
-            categories = recommendation_orchestrator.get_trending_with_algorithms(
-                unique_content,
-                limit=limit,
-                region=region,
-                apply_language_priority=apply_language_priority
-            )
-            
-            if category == 'all':
-                response = {
-                    'categories': categories,
-                    'metadata': {
-                        'total_content_analyzed': len(unique_content),
-                        'region': region,
-                        'language_priority_applied': apply_language_priority,
-                        'algorithm': 'multi_level_ranking',
-                        'timestamp': datetime.utcnow().isoformat()
-                    }
-                }
-            else:
-                category_map = {
-                    'movies': 'trending_movies',
-                    'tv_shows': 'trending_tv_shows',
-                    'anime': 'trending_anime',
-                    'nearby': 'popular_nearby',
-                    'top10': 'top_10_today',
-                    'critics': 'critics_choice'
-                }
-                
-                selected_category = category_map.get(category, 'trending_movies')
-                response = {
-                    'category': category,
-                    'recommendations': categories.get(selected_category, []),
-                    'metadata': {
-                        'total_content_analyzed': len(unique_content),
-                        'region': region,
-                        'language_priority_applied': apply_language_priority,
-                        'algorithm': 'multi_level_ranking',
-                        'timestamp': datetime.utcnow().isoformat()
-                    }
-                }
-            
-            if category != 'all' and selected_category in categories and categories[selected_category]:
-                try:
-                    content_items = categories[selected_category]
-                    if content_items and len(content_items) > 0:
-                        content_ids = []
-                        for item in content_items:
-                            if isinstance(item, dict) and 'id' in item:
-                                content_ids.append(item['id'])
+                content_items = categories[selected_category]
+                if content_items and len(content_items) > 0:
+                    content_ids = []
+                    for item in content_items:
+                        if isinstance(item, dict) and 'id' in item:
+                            content_ids.append(item['id'])
+                    
+                    if content_ids:
+                        contents = Content.query.filter(Content.id.in_(content_ids)).all()
                         
-                        if content_ids:
-                            contents = Content.query.filter(Content.id.in_(content_ids)).all()
-                            
-                            response['metadata']['metrics'] = {
-                                'diversity_score': round(EvaluationMetrics.diversity_score(contents), 3) if contents else 0,
-                                'coverage_score': round(EvaluationMetrics.coverage_score(
-                                    content_ids,
-                                    Content.query.count()
-                                ), 5) if Content.query.count() > 0 else 0
-                            }
-                except Exception as metric_error:
-                    logger.warning(f"Metrics calculation error: {metric_error}")
-            
-            try:
-                db.session.commit()
-            except Exception as e:
-                logger.warning(f"Failed to commit trending updates: {e}")
-                db.session.rollback()
+                        response['metadata']['metrics'] = {
+                            'diversity_score': round(EvaluationMetrics.diversity_score(contents), 3) if contents else 0,
+                            'coverage_score': round(EvaluationMetrics.coverage_score(
+                                content_ids,
+                                Content.query.count()
+                            ), 5) if Content.query.count() > 0 else 0
+                        }
+            except Exception as metric_error:
+                logger.warning(f"Metrics calculation error: {metric_error}")
+        
+        try:
+            db.session.commit()
+        except Exception as e:
+            logger.warning(f"Failed to commit trending updates: {e}")
+            db.session.rollback()
         
         return jsonify(response), 200
         
@@ -1420,142 +1261,141 @@ def get_new_releases():
         content_type = request.args.get('type', 'movie')
         limit = int(request.args.get('limit', 20))
         
-        with safe_db_operation():
-            all_new_releases = []
-            priority_languages = ['telugu', 'english', 'hindi', 'malayalam', 'kannada', 'tamil']
-            
-            for language in priority_languages:
-                lang_code = LANGUAGE_PRIORITY['codes'].get(language)
-                
-                try:
-                    if language == 'english':
-                        releases = TMDBService.get_new_releases(content_type)
-                    else:
-                        releases = TMDBService.get_language_specific(lang_code, content_type)
-                    
-                    if releases:
-                        for item in releases.get('results', [])[:10]:
-                            content = content_service.save_content_from_tmdb(item, content_type)
-                            if content and content.release_date:
-                                days_old = (datetime.now().date() - content.release_date).days
-                                if days_old <= 60:
-                                    all_new_releases.append(content)
-                except Exception as e:
-                    logger.error(f"Error fetching {language} releases: {e}")
-            
-            db_new_releases = Content.query.filter(
-                Content.is_new_release == True,
-                Content.content_type == content_type
-            ).limit(50).all()
-            all_new_releases.extend(db_new_releases)
-            
-            seen_ids = set()
-            unique_releases = []
-            for content in all_new_releases:
-                if content.id not in seen_ids:
-                    seen_ids.add(content.id)
-                    if not content.slug:
-                        try:
-                            content.ensure_slug()
-                        except Exception as e:
-                            logger.warning(f"Failed to ensure slug for content {content.id}: {e}")
-                            content.slug = f"content-{content.id}"
-                    unique_releases.append(content)
-            
-            recommendations = recommendation_orchestrator.get_new_releases_with_algorithms(
-                unique_releases,
-                limit=limit
-            )
-            
-            language_groups = {
-                'telugu': [],
-                'english': [],
-                'hindi': [],
-                'malayalam': [],
-                'kannada': [],
-                'tamil': [],
-                'others': []
-            }
-            
-            for rec in recommendations:
-                languages = rec.get('languages', [])
-                grouped = False
-                
-                for lang in languages:
-                    lang_lower = lang.lower() if isinstance(lang, str) else ''
-                    if 'telugu' in lang_lower or lang_lower == 'te':
-                        language_groups['telugu'].append(rec)
-                        grouped = True
-                        break
-                    elif 'english' in lang_lower or lang_lower == 'en':
-                        language_groups['english'].append(rec)
-                        grouped = True
-                        break
-                    elif 'hindi' in lang_lower or lang_lower == 'hi':
-                        language_groups['hindi'].append(rec)
-                        grouped = True
-                        break
-                    elif 'malayalam' in lang_lower or lang_lower == 'ml':
-                        language_groups['malayalam'].append(rec)
-                        grouped = True
-                        break
-                    elif 'kannada' in lang_lower or lang_lower == 'kn':
-                        language_groups['kannada'].append(rec)
-                        grouped = True
-                        break
-                    elif 'tamil' in lang_lower or lang_lower == 'ta':
-                        language_groups['tamil'].append(rec)
-                        grouped = True
-                        break
-                
-                if not grouped:
-                    language_groups['others'].append(rec)
-            
-            response = {
-                'recommendations': recommendations,
-                'grouped_by_language': language_groups,
-                'metadata': {
-                    'total_analyzed': len(unique_releases),
-                    'language_priority': {
-                        'main': 'telugu',
-                        'secondary': ['english', 'hindi'],
-                        'tertiary': ['malayalam', 'kannada', 'tamil']
-                    },
-                    'algorithm': 'multi_level_ranking_with_telugu_priority',
-                    'scoring_weights': {
-                        'telugu_content': {
-                            'freshness': 0.2,
-                            'popularity': 0.2,
-                            'language': 0.4,
-                            'quality': 0.2
-                        },
-                        'other_content': {
-                            'freshness': 0.3,
-                            'popularity': 0.3,
-                            'language': 0.2,
-                            'quality': 0.2
-                        }
-                    },
-                    'timestamp': datetime.utcnow().isoformat()
-                }
-            }
-            
-            if recommendations:
-                content_ids = [r['id'] for r in recommendations]
-                contents = Content.query.filter(Content.id.in_(content_ids)).all()
-                
-                response['metadata']['metrics'] = {
-                    'diversity_score': round(EvaluationMetrics.diversity_score(contents), 3),
-                    'telugu_content_percentage': round(
-                        len(language_groups['telugu']) / len(recommendations) * 100, 1
-                    ) if recommendations else 0
-                }
+        all_new_releases = []
+        priority_languages = ['telugu', 'english', 'hindi', 'malayalam', 'kannada', 'tamil']
+        
+        for language in priority_languages:
+            lang_code = LANGUAGE_PRIORITY['codes'].get(language)
             
             try:
-                db.session.commit()
+                if language == 'english':
+                    releases = TMDBService.get_new_releases(content_type)
+                else:
+                    releases = TMDBService.get_language_specific(lang_code, content_type)
+                
+                if releases:
+                    for item in releases.get('results', [])[:10]:
+                        content = content_service.save_content_from_tmdb(item, content_type)
+                        if content and content.release_date:
+                            days_old = (datetime.now().date() - content.release_date).days
+                            if days_old <= 60:
+                                all_new_releases.append(content)
             except Exception as e:
-                logger.warning(f"Failed to commit new releases updates: {e}")
-                db.session.rollback()
+                logger.error(f"Error fetching {language} releases: {e}")
+        
+        db_new_releases = Content.query.filter(
+            Content.is_new_release == True,
+            Content.content_type == content_type
+        ).limit(50).all()
+        all_new_releases.extend(db_new_releases)
+        
+        seen_ids = set()
+        unique_releases = []
+        for content in all_new_releases:
+            if content.id not in seen_ids:
+                seen_ids.add(content.id)
+                if not content.slug:
+                    try:
+                        content.ensure_slug()
+                    except Exception as e:
+                        logger.warning(f"Failed to ensure slug for content {content.id}: {e}")
+                        content.slug = f"content-{content.id}"
+                unique_releases.append(content)
+        
+        recommendations = recommendation_orchestrator.get_new_releases_with_algorithms(
+            unique_releases,
+            limit=limit
+        )
+        
+        language_groups = {
+            'telugu': [],
+            'english': [],
+            'hindi': [],
+            'malayalam': [],
+            'kannada': [],
+            'tamil': [],
+            'others': []
+        }
+        
+        for rec in recommendations:
+            languages = rec.get('languages', [])
+            grouped = False
+            
+            for lang in languages:
+                lang_lower = lang.lower() if isinstance(lang, str) else ''
+                if 'telugu' in lang_lower or lang_lower == 'te':
+                    language_groups['telugu'].append(rec)
+                    grouped = True
+                    break
+                elif 'english' in lang_lower or lang_lower == 'en':
+                    language_groups['english'].append(rec)
+                    grouped = True
+                    break
+                elif 'hindi' in lang_lower or lang_lower == 'hi':
+                    language_groups['hindi'].append(rec)
+                    grouped = True
+                    break
+                elif 'malayalam' in lang_lower or lang_lower == 'ml':
+                    language_groups['malayalam'].append(rec)
+                    grouped = True
+                    break
+                elif 'kannada' in lang_lower or lang_lower == 'kn':
+                    language_groups['kannada'].append(rec)
+                    grouped = True
+                    break
+                elif 'tamil' in lang_lower or lang_lower == 'ta':
+                    language_groups['tamil'].append(rec)
+                    grouped = True
+                    break
+            
+            if not grouped:
+                language_groups['others'].append(rec)
+        
+        response = {
+            'recommendations': recommendations,
+            'grouped_by_language': language_groups,
+            'metadata': {
+                'total_analyzed': len(unique_releases),
+                'language_priority': {
+                    'main': 'telugu',
+                    'secondary': ['english', 'hindi'],
+                    'tertiary': ['malayalam', 'kannada', 'tamil']
+                },
+                'algorithm': 'multi_level_ranking_with_telugu_priority',
+                'scoring_weights': {
+                    'telugu_content': {
+                        'freshness': 0.2,
+                        'popularity': 0.2,
+                        'language': 0.4,
+                        'quality': 0.2
+                    },
+                    'other_content': {
+                        'freshness': 0.3,
+                        'popularity': 0.3,
+                        'language': 0.2,
+                        'quality': 0.2
+                    }
+                },
+                'timestamp': datetime.utcnow().isoformat()
+            }
+        }
+        
+        if recommendations:
+            content_ids = [r['id'] for r in recommendations]
+            contents = Content.query.filter(Content.id.in_(content_ids)).all()
+            
+            response['metadata']['metrics'] = {
+                'diversity_score': round(EvaluationMetrics.diversity_score(contents), 3),
+                'telugu_content_percentage': round(
+                    len(language_groups['telugu']) / len(recommendations) * 100, 1
+                ) if recommendations else 0
+            }
+        
+        try:
+            db.session.commit()
+        except Exception as e:
+            logger.warning(f"Failed to commit new releases updates: {e}")
+            db.session.rollback()
         
         return jsonify(response), 200
         
@@ -1667,31 +1507,30 @@ def get_critics_choice():
         content_type = request.args.get('type', 'movie')
         limit = int(request.args.get('limit', 20))
         
-        with safe_db_operation():
-            critics_choice = TMDBService.get_critics_choice(content_type)
-            
-            recommendations = []
-            if critics_choice:
-                for item in critics_choice.get('results', [])[:limit]:
-                    content = content_service.save_content_from_tmdb(item, content_type)
-                    if content:
-                        youtube_url = None
-                        if content.youtube_trailer_id:
-                            youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
-                        
-                        recommendations.append({
-                            'id': content.id,
-                            'slug': content.slug,
-                            'title': content.title,
-                            'content_type': content.content_type,
-                            'genres': json.loads(content.genres or '[]'),
-                            'rating': content.rating,
-                            'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
-                            'overview': content.overview[:150] + '...' if content.overview else '',
-                            'youtube_trailer': youtube_url,
-                            'is_critics_choice': content.is_critics_choice,
-                            'critics_score': content.critics_score
-                        })
+        critics_choice = TMDBService.get_critics_choice(content_type)
+        
+        recommendations = []
+        if critics_choice:
+            for item in critics_choice.get('results', [])[:limit]:
+                content = content_service.save_content_from_tmdb(item, content_type)
+                if content:
+                    youtube_url = None
+                    if content.youtube_trailer_id:
+                        youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
+                    
+                    recommendations.append({
+                        'id': content.id,
+                        'slug': content.slug,
+                        'title': content.title,
+                        'content_type': content.content_type,
+                        'genres': json.loads(content.genres or '[]'),
+                        'rating': content.rating,
+                        'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
+                        'overview': content.overview[:150] + '...' if content.overview else '',
+                        'youtube_trailer': youtube_url,
+                        'is_critics_choice': content.is_critics_choice,
+                        'critics_score': content.critics_score
+                    })
         
         return jsonify({'recommendations': recommendations}), 200
         
@@ -1707,39 +1546,38 @@ def get_genre_recommendations(genre):
         limit = int(request.args.get('limit', 20))
         region = request.args.get('region')
         
-        with safe_db_operation():
-            genre_ids = {
-                'action': 28, 'adventure': 12, 'animation': 16, 'biography': -1,
-                'comedy': 35, 'crime': 80, 'documentary': 99, 'drama': 18,
-                'fantasy': 14, 'horror': 27, 'musical': 10402, 'mystery': 9648,
-                'romance': 10749, 'sci-fi': 878, 'science fiction': 878, 'thriller': 53, 'western': 37
-            }
+        genre_ids = {
+            'action': 28, 'adventure': 12, 'animation': 16, 'biography': -1,
+            'comedy': 35, 'crime': 80, 'documentary': 99, 'drama': 18,
+            'fantasy': 14, 'horror': 27, 'musical': 10402, 'mystery': 9648,
+            'romance': 10749, 'sci-fi': 878, 'science fiction': 878, 'thriller': 53, 'western': 37
+        }
+        
+        genre_id = genre_ids.get(genre.lower())
+        recommendations = []
+        
+        if genre_id and genre_id != -1:
+            genre_content = TMDBService.get_by_genre(genre_id, content_type, region=region)
             
-            genre_id = genre_ids.get(genre.lower())
-            recommendations = []
-            
-            if genre_id and genre_id != -1:
-                genre_content = TMDBService.get_by_genre(genre_id, content_type, region=region)
-                
-                if genre_content:
-                    for item in genre_content.get('results', [])[:limit]:
-                        content = content_service.save_content_from_tmdb(item, content_type)
-                        if content:
-                            youtube_url = None
-                            if content.youtube_trailer_id:
-                                youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
-                            
-                            recommendations.append({
-                                'id': content.id,
-                                'slug': content.slug,
-                                'title': content.title,
-                                'content_type': content.content_type,
-                                'genres': json.loads(content.genres or '[]'),
-                                'rating': content.rating,
-                                'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
-                                'overview': content.overview[:150] + '...' if content.overview else '',
-                                'youtube_trailer': youtube_url
-                            })
+            if genre_content:
+                for item in genre_content.get('results', [])[:limit]:
+                    content = content_service.save_content_from_tmdb(item, content_type)
+                    if content:
+                        youtube_url = None
+                        if content.youtube_trailer_id:
+                            youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
+                        
+                        recommendations.append({
+                            'id': content.id,
+                            'slug': content.slug,
+                            'title': content.title,
+                            'content_type': content.content_type,
+                            'genres': json.loads(content.genres or '[]'),
+                            'rating': content.rating,
+                            'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
+                            'overview': content.overview[:150] + '...' if content.overview else '',
+                            'youtube_trailer': youtube_url
+                        })
         
         return jsonify({'recommendations': recommendations}), 200
         
@@ -1754,31 +1592,30 @@ def get_regional(language):
         content_type = request.args.get('type', 'movie')
         limit = int(request.args.get('limit', 20))
         
-        with safe_db_operation():
-            lang_code = LANGUAGE_PRIORITY['codes'].get(language.lower())
-            recommendations = []
-            
-            if lang_code:
-                lang_content = TMDBService.get_language_specific(lang_code, content_type)
-                if lang_content:
-                    for item in lang_content.get('results', [])[:limit]:
-                        content = content_service.save_content_from_tmdb(item, content_type)
-                        if content:
-                            youtube_url = None
-                            if content.youtube_trailer_id:
-                                youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
-                            
-                            recommendations.append({
-                                'id': content.id,
-                                'slug': content.slug,
-                                'title': content.title,
-                                'content_type': content.content_type,
-                                'genres': json.loads(content.genres or '[]'),
-                                'rating': content.rating,
-                                'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
-                                'overview': content.overview[:150] + '...' if content.overview else '',
-                                'youtube_trailer': youtube_url
-                            })
+        lang_code = LANGUAGE_PRIORITY['codes'].get(language.lower())
+        recommendations = []
+        
+        if lang_code:
+            lang_content = TMDBService.get_language_specific(lang_code, content_type)
+            if lang_content:
+                for item in lang_content.get('results', [])[:limit]:
+                    content = content_service.save_content_from_tmdb(item, content_type)
+                    if content:
+                        youtube_url = None
+                        if content.youtube_trailer_id:
+                            youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
+                        
+                        recommendations.append({
+                            'id': content.id,
+                            'slug': content.slug,
+                            'title': content.title,
+                            'content_type': content.content_type,
+                            'genres': json.loads(content.genres or '[]'),
+                            'rating': content.rating,
+                            'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
+                            'overview': content.overview[:150] + '...' if content.overview else '',
+                            'youtube_trailer': youtube_url
+                        })
         
         return jsonify({'recommendations': recommendations}), 200
         
@@ -1793,43 +1630,16 @@ def get_anime():
         genre = request.args.get('genre')
         limit = int(request.args.get('limit', 20))
         
-        with safe_db_operation():
-            recommendations = []
-            
-            if genre and genre.lower() in ANIME_GENRES:
-                genre_keywords = ANIME_GENRES[genre.lower()]
-                for keyword in genre_keywords[:2]:
-                    anime_results = JikanService.get_anime_by_genre(keyword)
-                    if anime_results:
-                        for anime in anime_results.get('data', []):
-                            if len(recommendations) >= limit:
-                                break
-                            content = content_service.save_anime_content(anime)
-                            if content:
-                                youtube_url = None
-                                if content.youtube_trailer_id:
-                                    youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
-                                
-                                recommendations.append({
-                                    'id': content.id,
-                                    'slug': content.slug,
-                                    'mal_id': content.mal_id,
-                                    'title': content.title,
-                                    'original_title': content.original_title,
-                                    'content_type': content.content_type,
-                                    'genres': json.loads(content.genres or '[]'),
-                                    'anime_genres': json.loads(content.anime_genres or '[]'),
-                                    'rating': content.rating,
-                                    'poster_path': content.poster_path,
-                                    'overview': content.overview[:150] + '...' if content.overview else '',
-                                    'youtube_trailer': youtube_url
-                                })
+        recommendations = []
+        
+        if genre and genre.lower() in ANIME_GENRES:
+            genre_keywords = ANIME_GENRES[genre.lower()]
+            for keyword in genre_keywords[:2]:
+                anime_results = JikanService.get_anime_by_genre(keyword)
+                if anime_results:
+                    for anime in anime_results.get('data', []):
                         if len(recommendations) >= limit:
                             break
-            else:
-                top_anime = JikanService.get_top_anime()
-                if top_anime:
-                    for anime in top_anime.get('data', [])[:limit]:
                         content = content_service.save_anime_content(anime)
                         if content:
                             youtube_url = None
@@ -1850,6 +1660,32 @@ def get_anime():
                                 'overview': content.overview[:150] + '...' if content.overview else '',
                                 'youtube_trailer': youtube_url
                             })
+                    if len(recommendations) >= limit:
+                        break
+        else:
+            top_anime = JikanService.get_top_anime()
+            if top_anime:
+                for anime in top_anime.get('data', [])[:limit]:
+                    content = content_service.save_anime_content(anime)
+                    if content:
+                        youtube_url = None
+                        if content.youtube_trailer_id:
+                            youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
+                        
+                        recommendations.append({
+                            'id': content.id,
+                            'slug': content.slug,
+                            'mal_id': content.mal_id,
+                            'title': content.title,
+                            'original_title': content.original_title,
+                            'content_type': content.content_type,
+                            'genres': json.loads(content.genres or '[]'),
+                            'anime_genres': json.loads(content.anime_genres or '[]'),
+                            'rating': content.rating,
+                            'poster_path': content.poster_path,
+                            'overview': content.overview[:150] + '...' if content.overview else '',
+                            'youtube_trailer': youtube_url
+                        })
         
         return jsonify({'recommendations': recommendations[:limit]}), 200
         
@@ -1873,78 +1709,46 @@ def get_similar_recommendations(content_id):
             except Exception as e:
                 logger.warning(f"Cache get error: {e}")
         
-        with safe_db_operation():
-            base_content = Content.query.get(content_id)
-            if not base_content:
-                return jsonify({'error': 'Content not found'}), 404
-            
-            if not base_content.slug:
-                try:
-                    base_content.ensure_slug()
-                    db.session.commit()
-                except Exception as e:
-                    logger.warning(f"Slug generation failed for base content: {e}")
-                    base_content.slug = f"content-{base_content.id}"
-            
-            similar_content = []
-            
+        base_content = Content.query.get(content_id)
+        if not base_content:
+            return jsonify({'error': 'Content not found'}), 404
+        
+        if not base_content.slug:
             try:
-                try:
-                    base_genres = json.loads(base_content.genres or '[]')
-                except (json.JSONDecodeError, TypeError):
-                    base_genres = []
+                base_content.ensure_slug()
+                db.session.commit()
+            except Exception as e:
+                logger.warning(f"Slug generation failed for base content: {e}")
+                base_content.slug = f"content-{base_content.id}"
+        
+        similar_content = []
+        
+        try:
+            try:
+                base_genres = json.loads(base_content.genres or '[]')
+            except (json.JSONDecodeError, TypeError):
+                base_genres = []
+            
+            if base_genres:
+                primary_genre = base_genres[0]
                 
-                if base_genres:
-                    primary_genre = base_genres[0]
-                    
-                    similar_items = Content.query.filter(
-                        Content.id != content_id,
-                        Content.content_type == base_content.content_type,
-                        Content.genres.contains(primary_genre)
-                    ).order_by(
-                        Content.rating.desc()
-                    ).limit(limit * 2).all()
-                    
-                    for item in similar_items[:limit]:
-                        try:
-                            if not item.slug:
-                                item.slug = f"content-{item.id}"
-                            
-                            try:
-                                item_genres = json.loads(item.genres or '[]')
-                            except (json.JSONDecodeError, TypeError):
-                                item_genres = []
-                            
-                            similar_content.append({
-                                'id': item.id,
-                                'slug': item.slug,
-                                'title': item.title,
-                                'poster_path': f"https://image.tmdb.org/t/p/w300{item.poster_path}" if item.poster_path and not item.poster_path.startswith('http') else item.poster_path,
-                                'rating': item.rating,
-                                'content_type': item.content_type,
-                                'genres': item_genres,
-                                'similarity_score': 0.8,
-                                'match_type': 'genre_based'
-                            })
-                            
-                            if len(similar_content) >= limit:
-                                break
-                                
-                        except Exception as e:
-                            logger.warning(f"Error processing similar item {item.id}: {e}")
-                            continue
+                similar_items = Content.query.filter(
+                    Content.id != content_id,
+                    Content.content_type == base_content.content_type,
+                    Content.genres.contains(primary_genre)
+                ).order_by(
+                    Content.rating.desc()
+                ).limit(limit * 2).all()
                 
-                if not similar_content:
-                    fallback_items = Content.query.filter(
-                        Content.id != content_id,
-                        Content.content_type == base_content.content_type
-                    ).order_by(
-                        Content.popularity.desc()
-                    ).limit(limit).all()
-                    
-                    for item in fallback_items:
+                for item in similar_items[:limit]:
+                    try:
                         if not item.slug:
                             item.slug = f"content-{item.id}"
+                        
+                        try:
+                            item_genres = json.loads(item.genres or '[]')
+                        except (json.JSONDecodeError, TypeError):
+                            item_genres = []
                         
                         similar_content.append({
                             'id': item.id,
@@ -1953,26 +1757,57 @@ def get_similar_recommendations(content_id):
                             'poster_path': f"https://image.tmdb.org/t/p/w300{item.poster_path}" if item.poster_path and not item.poster_path.startswith('http') else item.poster_path,
                             'rating': item.rating,
                             'content_type': item.content_type,
-                            'similarity_score': 0.5,
-                            'match_type': 'popularity_fallback'
+                            'genres': item_genres,
+                            'similarity_score': 0.8,
+                            'match_type': 'genre_based'
                         })
+                        
+                        if len(similar_content) >= limit:
+                            break
+                            
+                    except Exception as e:
+                        logger.warning(f"Error processing similar item {item.id}: {e}")
+                        continue
             
-            except Exception as e:
-                logger.error(f"Error in similarity calculation: {e}")
-                similar_content = []
-            
-            try:
-                session_id = get_session_id()
-                interaction = AnonymousInteraction(
-                    session_id=session_id,
-                    content_id=content_id,
-                    interaction_type='similar_view',
-                    ip_address=request.remote_addr
-                )
-                db.session.add(interaction)
-                db.session.commit()
-            except Exception as e:
-                logger.warning(f"Interaction tracking failed: {e}")
+            if not similar_content:
+                fallback_items = Content.query.filter(
+                    Content.id != content_id,
+                    Content.content_type == base_content.content_type
+                ).order_by(
+                    Content.popularity.desc()
+                ).limit(limit).all()
+                
+                for item in fallback_items:
+                    if not item.slug:
+                        item.slug = f"content-{item.id}"
+                    
+                    similar_content.append({
+                        'id': item.id,
+                        'slug': item.slug,
+                        'title': item.title,
+                        'poster_path': f"https://image.tmdb.org/t/p/w300{item.poster_path}" if item.poster_path and not item.poster_path.startswith('http') else item.poster_path,
+                        'rating': item.rating,
+                        'content_type': item.content_type,
+                        'similarity_score': 0.5,
+                        'match_type': 'popularity_fallback'
+                    })
+        
+        except Exception as e:
+            logger.error(f"Error in similarity calculation: {e}")
+            similar_content = []
+        
+        try:
+            session_id = get_session_id()
+            interaction = AnonymousInteraction(
+                session_id=session_id,
+                content_id=content_id,
+                interaction_type='similar_view',
+                ip_address=request.remote_addr
+            )
+            db.session.add(interaction)
+            db.session.commit()
+        except Exception as e:
+            logger.warning(f"Interaction tracking failed: {e}")
         
         response = {
             'base_content': {
@@ -2013,28 +1848,27 @@ def get_anonymous_recommendations():
         session_id = get_session_id()
         limit = int(request.args.get('limit', 20))
         
-        with safe_db_operation():
-            recommendations = AnonymousRecommendationEngine.get_recommendations_for_anonymous(
-                session_id, request.remote_addr, limit
-            )
+        recommendations = AnonymousRecommendationEngine.get_recommendations_for_anonymous(
+            session_id, request.remote_addr, limit
+        )
+        
+        result = []
+        for content in recommendations:
+            youtube_url = None
+            if content.youtube_trailer_id:
+                youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
             
-            result = []
-            for content in recommendations:
-                youtube_url = None
-                if content.youtube_trailer_id:
-                    youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
-                
-                result.append({
-                    'id': content.id,
-                    'slug': content.slug,
-                    'title': content.title,
-                    'content_type': content.content_type,
-                    'genres': json.loads(content.genres or '[]'),
-                    'rating': content.rating,
-                    'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
-                    'overview': content.overview[:150] + '...' if content.overview else '',
-                    'youtube_trailer': youtube_url
-                })
+            result.append({
+                'id': content.id,
+                'slug': content.slug,
+                'title': content.title,
+                'content_type': content.content_type,
+                'genres': json.loads(content.genres or '[]'),
+                'rating': content.rating,
+                'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
+                'overview': content.overview[:150] + '...' if content.overview else '',
+                'youtube_trailer': youtube_url
+            })
         
         return jsonify({'recommendations': result}), 200
         
@@ -2049,43 +1883,42 @@ def get_public_admin_recommendations():
         limit = int(request.args.get('limit', 20))
         rec_type = request.args.get('type', 'admin_choice')
         
-        with safe_db_operation():
-            admin_recs = AdminRecommendation.query.filter_by(
-                is_active=True,
-                recommendation_type=rec_type
-            ).order_by(AdminRecommendation.created_at.desc()).limit(limit).all()
+        admin_recs = AdminRecommendation.query.filter_by(
+            is_active=True,
+            recommendation_type=rec_type
+        ).order_by(AdminRecommendation.created_at.desc()).limit(limit).all()
+        
+        result = []
+        for rec in admin_recs:
+            content = Content.query.get(rec.content_id)
+            admin = User.query.get(rec.admin_id)
             
-            result = []
-            for rec in admin_recs:
-                content = Content.query.get(rec.content_id)
-                admin = User.query.get(rec.admin_id)
+            if content:
+                if not content.slug:
+                    try:
+                        content.ensure_slug()
+                    except Exception as e:
+                        logger.warning(f"Failed to ensure slug for admin rec content: {e}")
+                        content.slug = f"content-{content.id}"
                 
-                if content:
-                    if not content.slug:
-                        try:
-                            content.ensure_slug()
-                        except Exception as e:
-                            logger.warning(f"Failed to ensure slug for admin rec content: {e}")
-                            content.slug = f"content-{content.id}"
-                    
-                    youtube_url = None
-                    if content.youtube_trailer_id:
-                        youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
-                    
-                    result.append({
-                        'id': content.id,
-                        'slug': content.slug,
-                        'title': content.title,
-                        'content_type': content.content_type,
-                        'genres': json.loads(content.genres or '[]'),
-                        'rating': content.rating,
-                        'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
-                        'overview': content.overview[:150] + '...' if content.overview else '',
-                        'youtube_trailer': youtube_url,
-                        'admin_description': rec.description,
-                        'admin_name': admin.username if admin else 'Admin',
-                        'recommended_at': rec.created_at.isoformat()
-                    })
+                youtube_url = None
+                if content.youtube_trailer_id:
+                    youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
+                
+                result.append({
+                    'id': content.id,
+                    'slug': content.slug,
+                    'title': content.title,
+                    'content_type': content.content_type,
+                    'genres': json.loads(content.genres or '[]'),
+                    'rating': content.rating,
+                    'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
+                    'overview': content.overview[:150] + '...' if content.overview else '',
+                    'youtube_trailer': youtube_url,
+                    'admin_description': rec.description,
+                    'admin_name': admin.username if admin else 'Admin',
+                    'recommended_at': rec.created_at.isoformat()
+                })
         
         return jsonify({'recommendations': result}), 200
         
@@ -2106,12 +1939,11 @@ def get_person_details(slug):
             except:
                 pass
         
-        with safe_db_operation():
-            if details_service:
-                person_details = details_service.get_person_details(slug)
-            else:
-                logger.error("Details service not available")
-                return jsonify({'error': 'Service unavailable'}), 503
+        if details_service:
+            person_details = details_service.get_person_details(slug)
+        else:
+            logger.error("Details service not available")
+            return jsonify({'error': 'Service unavailable'}), 503
         
         if not person_details:
             return jsonify({'error': 'Person not found'}), 404
@@ -2126,18 +1958,17 @@ def get_person_details(slug):
 @auth_required
 def add_review(slug):
     try:
-        with safe_db_operation():
-            content = Content.query.filter_by(slug=slug).first()
-            if not content:
-                return jsonify({'error': 'Content not found'}), 404
-            
-            user_id = request.user_id
-            review_data = request.json
-            
-            if details_service:
-                result = details_service.add_review(content.id, user_id, review_data)
-            else:
-                return jsonify({'error': 'Service unavailable'}), 503
+        content = Content.query.filter_by(slug=slug).first()
+        if not content:
+            return jsonify({'error': 'Content not found'}), 404
+        
+        user_id = request.user_id
+        review_data = request.json
+        
+        if details_service:
+            result = details_service.add_review(content.id, user_id, review_data)
+        else:
+            return jsonify({'error': 'Service unavailable'}), 503
         
         if result['success']:
             return jsonify(result), 201
@@ -2155,11 +1986,10 @@ def vote_review_helpful(review_id):
         user_id = request.user_id
         is_helpful = request.json.get('is_helpful', True)
         
-        with safe_db_operation():
-            if details_service:
-                success = details_service.vote_review_helpful(review_id, user_id, is_helpful)
-            else:
-                return jsonify({'error': 'Service unavailable'}), 503
+        if details_service:
+            success = details_service.vote_review_helpful(review_id, user_id, is_helpful)
+        else:
+            return jsonify({'error': 'Service unavailable'}), 503
         
         if success:
             return jsonify({'success': True}), 200
@@ -2178,16 +2008,15 @@ def migrate_all_slugs():
         if not user or not user.is_admin:
             return jsonify({'error': 'Admin access required'}), 403
         
-        with safe_db_operation():
-            if details_service:
-                batch_size = int(request.json.get('batch_size', 50))
-                stats = details_service.migrate_all_slugs(batch_size)
-                return jsonify({
-                    'success': True,
-                    'migration_stats': stats
-                }), 200
-            else:
-                return jsonify({'error': 'Service unavailable'}), 503
+        if details_service:
+            batch_size = int(request.json.get('batch_size', 50))
+            stats = details_service.migrate_all_slugs(batch_size)
+            return jsonify({
+                'success': True,
+                'migration_stats': stats
+            }), 200
+        else:
+            return jsonify({'error': 'Service unavailable'}), 503
             
     except Exception as e:
         logger.error(f"Error migrating slugs: {e}")
@@ -2201,20 +2030,19 @@ def update_content_slug(content_id):
         if not user or not user.is_admin:
             return jsonify({'error': 'Admin access required'}), 403
         
-        with safe_db_operation():
-            if details_service:
-                force_update = request.json.get('force_update', False)
-                new_slug = details_service.update_content_slug(content_id, force_update)
-                
-                if new_slug:
-                    return jsonify({
-                        'success': True,
-                        'new_slug': new_slug
-                    }), 200
-                else:
-                    return jsonify({'error': 'Content not found or update failed'}), 404
+        if details_service:
+            force_update = request.json.get('force_update', False)
+            new_slug = details_service.update_content_slug(content_id, force_update)
+            
+            if new_slug:
+                return jsonify({
+                    'success': True,
+                    'new_slug': new_slug
+                }), 200
             else:
-                return jsonify({'error': 'Service unavailable'}), 503
+                return jsonify({'error': 'Content not found or update failed'}), 404
+        else:
+            return jsonify({'error': 'Service unavailable'}), 503
             
     except Exception as e:
         logger.error(f"Error updating content slug: {e}")
@@ -2223,21 +2051,20 @@ def update_content_slug(content_id):
 @app.route('/api/content/<int:content_id>/refresh-cast-crew', methods=['POST'])
 def refresh_cast_crew(content_id):
     try:
-        with safe_db_operation():
-            content = Content.query.get_or_404(content_id)
-            
-            if not content.tmdb_id:
-                return jsonify({'error': 'No TMDB ID available'}), 400
-            
-            if details_service:
-                cast_crew = details_service._fetch_and_save_all_cast_crew(content)
-                return jsonify({
-                    'success': True,
-                    'cast_count': len(cast_crew['cast']),
-                    'crew_count': sum(len(crew_list) for crew_list in cast_crew['crew'].values())
-                })
-            else:
-                return jsonify({'error': 'Details service not available'}), 503
+        content = Content.query.get_or_404(content_id)
+        
+        if not content.tmdb_id:
+            return jsonify({'error': 'No TMDB ID available'}), 400
+        
+        if details_service:
+            cast_crew = details_service._fetch_and_save_all_cast_crew(content)
+            return jsonify({
+                'success': True,
+                'cast_count': len(cast_crew['cast']),
+                'crew_count': sum(len(crew_list) for crew_list in cast_crew['crew'].values())
+            })
+        else:
+            return jsonify({'error': 'Details service not available'}), 503
             
     except Exception as e:
         logger.error(f"Error refreshing cast/crew: {e}")
@@ -2253,26 +2080,25 @@ def populate_all_cast_crew():
         
         batch_size = int(request.json.get('batch_size', 10))
         
-        with safe_db_operation():
-            content_items = Content.query.filter(
-                Content.tmdb_id.isnot(None),
-                ~Content.id.in_(
-                    db.session.query(ContentPerson.content_id).distinct()
-                )
-            ).limit(batch_size).all()
-            
-            processed = 0
-            errors = 0
-            
-            for content in content_items:
-                try:
-                    if details_service:
-                        cast_crew = details_service._fetch_and_save_all_cast_crew(content)
-                        processed += 1
-                        logger.info(f"Populated cast/crew for {content.title}")
-                except Exception as e:
-                    logger.error(f"Error processing {content.title}: {e}")
-                    errors += 1
+        content_items = Content.query.filter(
+            Content.tmdb_id.isnot(None),
+            ~Content.id.in_(
+                db.session.query(ContentPerson.content_id).distinct()
+            )
+        ).limit(batch_size).all()
+        
+        processed = 0
+        errors = 0
+        
+        for content in content_items:
+            try:
+                if details_service:
+                    cast_crew = details_service._fetch_and_save_all_cast_crew(content)
+                    processed += 1
+                    logger.info(f"Populated cast/crew for {content.title}")
+            except Exception as e:
+                logger.error(f"Error processing {content.title}: {e}")
+                errors += 1
         
         return jsonify({
             'success': True,
@@ -2289,11 +2115,10 @@ def populate_all_cast_crew():
 @app.route('/api/performance', methods=['GET'])
 def performance_check():
     try:
-        with safe_db_operation():
-            total_content = Content.query.count()
-            content_with_slugs = Content.query.filter(
-                and_(Content.slug != None, Content.slug != '')
-            ).count()
+        total_content = Content.query.count()
+        content_with_slugs = Content.query.filter(
+            and_(Content.slug != None, Content.slug != '')
+        ).count()
         
         stats = {
             'status': 'healthy',
@@ -2418,15 +2243,11 @@ def health_check():
                 'cast_crew_optimization',
                 'support_service_integration',
                 'admin_notification_system',
-                'real_time_monitoring',
-                'database_connection_pooling',
-                'safe_db_operations',
-                'improved_error_recovery'
+                'real_time_monitoring'
             ],
             'memory_optimizations': 'enabled',
             'unicode_fixes': 'applied',
-            'monitoring': 'background_threads_active',
-            'database_health': 'monitored'
+            'monitoring': 'background_threads_active'
         }
         
         return jsonify(health_info), 200
@@ -2516,23 +2337,37 @@ def populate_cast_crew_cli():
         print(f"Failed to populate cast/crew: {e}")
         logger.error(f"CLI cast/crew population error: {e}")
 
+def create_tables():
+    try:
+        with app.app_context():
+            db.create_all()
+            
+            admin = User.query.filter_by(username='admin').first()
+            if not admin:
+                admin = User(
+                    username='admin',
+                    email='srinathnulidonda.dev@gmail.com',
+                    password_hash=generate_password_hash('admin123'),
+                    is_admin=True
+                )
+                db.session.add(admin)
+                db.session.commit()
+                logger.info("Admin user created with username: admin, password: admin123")
+            
+            setup_support_monitoring()
+            
+            logger.info("Database tables created successfully including support tables with monitoring")
+    except Exception as e:
+        logger.error(f"Database initialization error: {e}")
+create_tables()
+
 if __name__ == '__main__':
     print("=== Running Flask in development mode with Full Support Management ===")
-    initialize_app()
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('FLASK_ENV') == 'development'
     app.run(host='0.0.0.0', port=port, debug=debug)
 else:
-    print("=== Flask app imported by Gunicorn ===")
-    if not hasattr(app, '_cinbrain_initialized'):
-        try:
-            initialize_app()
-            app._cinbrain_initialized = True
-            print("=== CinBrain initialization completed successfully ===")
-        except Exception as e:
-            print(f"=== CinBrain initialization failed: {e} ===")
-            raise
-    
+    print("=== Flask app imported by Gunicorn - COMPREHENSIVE ADMIN & SUPPORT VERSION ===")
     print(f"App name: {app.name}")
     print(f"Python version: 3.13.4")
     print(f"Database URI configured: {'Yes' if app.config.get('SQLALCHEMY_DATABASE_URI') else 'No'}")
@@ -2546,8 +2381,6 @@ else:
     print(f"Telegram integration: Enabled")
     print(f"Background monitoring: Active")
     print(f"Performance optimizations: Applied")
-    print(f"Database connection pooling: Enhanced")
-    print(f"Error handling: Comprehensive")
     
     print("\n=== Support Management Features ===")
     print("✅ Complete support ticket management")
@@ -2560,15 +2393,8 @@ else:
     print("✅ Comprehensive analytics dashboard")
     print("✅ Automated background monitoring")
     print("✅ Webhook support for integrations")
-    print("✅ Enhanced database reliability")
-    print("✅ Safe database operations")
-    print("✅ Connection pool monitoring")
     
-    print("\n=== Database Enhancements ===")
-    print("✅ PostgreSQL connection pooling")
-    print("✅ SSL connection management")
-    print("✅ Automatic error recovery")
-    print("✅ Transaction safety")
-    print("✅ Connection health monitoring")
-    print("✅ Pool status tracking")
-    print("✅ Graceful error handling")
+    print("\n=== Registered Routes ===")
+    for rule in app.url_map.iter_rules():
+        print(f"{rule.endpoint}: {rule.rule} [{', '.join(rule.methods)}]")
+    print("=== End of Routes ===\n")
