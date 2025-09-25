@@ -1,3 +1,4 @@
+# backend/services/users.py
 from flask import Blueprint, request, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta
@@ -15,10 +16,10 @@ User = None
 Content = None
 UserInteraction = None
 app = None
-personalization_engine = None
+recommendation_engine = None
 
 def init_users(flask_app, database, models, services):
-    global db, User, Content, UserInteraction, app, personalization_engine
+    global db, User, Content, UserInteraction, app, recommendation_engine
     
     app = flask_app
     db = database
@@ -26,11 +27,13 @@ def init_users(flask_app, database, models, services):
     Content = models['Content']
     UserInteraction = models['UserInteraction']
     
+    # Import recommendation engine
     try:
-        from services.personalized import get_personalization_engine
-        personalization_engine = get_personalization_engine()
-    except:
-        personalization_engine = None
+        from services.personalized import get_recommendation_engine
+        recommendation_engine = get_recommendation_engine()
+        logger.info("Personalized recommendation engine connected to users service")
+    except Exception as e:
+        logger.warning(f"Could not connect to recommendation engine: {e}")
 
 def require_auth(f):
     @wraps(f)
@@ -156,10 +159,19 @@ def record_interaction(current_user):
                 db.session.delete(interaction)
                 db.session.commit()
                 
-                if personalization_engine:
-                    personalization_engine.update_user_interaction(
-                        current_user.id, data['content_id'], 'remove_watchlist'
-                    )
+                # Update recommendations in real-time
+                if recommendation_engine:
+                    try:
+                        recommendation_engine.update_user_preferences_realtime(
+                            current_user.id,
+                            {
+                                'content_id': data['content_id'],
+                                'interaction_type': 'remove_watchlist',
+                                'metadata': data.get('metadata', {})
+                            }
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to update real-time preferences: {e}")
                 
                 return jsonify({'message': 'Removed from watchlist'}), 200
             else:
@@ -179,16 +191,27 @@ def record_interaction(current_user):
             user_id=current_user.id,
             content_id=data['content_id'],
             interaction_type=data['interaction_type'],
-            rating=data.get('rating')
+            rating=data.get('rating'),
+            interaction_metadata=json.dumps(data.get('metadata', {}))
         )
         
         db.session.add(interaction)
         db.session.commit()
         
-        if personalization_engine:
-            personalization_engine.update_user_interaction(
-                current_user.id, data['content_id'], data['interaction_type'], data.get('rating')
-            )
+        # Update recommendations in real-time
+        if recommendation_engine:
+            try:
+                recommendation_engine.update_user_preferences_realtime(
+                    current_user.id,
+                    {
+                        'content_id': data['content_id'],
+                        'interaction_type': data['interaction_type'],
+                        'rating': data.get('rating'),
+                        'metadata': data.get('metadata', {})
+                    }
+                )
+            except Exception as e:
+                logger.warning(f"Failed to update real-time preferences: {e}")
         
         return jsonify({'message': 'Interaction recorded successfully'}), 201
         
@@ -196,6 +219,310 @@ def record_interaction(current_user):
         logger.error(f"Interaction recording error: {e}")
         db.session.rollback()
         return jsonify({'error': 'Failed to record interaction'}), 500
+
+# Personalized Recommendation Endpoints
+
+@users_bp.route('/api/personalized/', methods=['GET'])
+@require_auth
+def get_personalized_recommendations(current_user):
+    """
+    Get Netflix-level personalized recommendations for cinbrain users
+    
+    Analyzes user interactions (search history, views, favorites, watchlist, ratings)
+    and content metadata (storylines, synopsis, genres) using hybrid recommendation 
+    techniques to deliver highly accurate, real-time personalized recommendations.
+    """
+    try:
+        if not recommendation_engine:
+            return jsonify({
+                'error': 'Recommendation engine not available',
+                'recommendations': {},
+                'fallback': True
+            }), 503
+        
+        # Get query parameters
+        limit = min(int(request.args.get('limit', 50)), 100)  # Cap at 100
+        categories = request.args.get('categories')
+        
+        if categories:
+            category_list = [cat.strip() for cat in categories.split(',')]
+        else:
+            category_list = None
+        
+        # Generate Netflix-level personalized recommendations
+        recommendations = recommendation_engine.get_personalized_recommendations(
+            user_id=current_user.id,
+            limit=limit,
+            categories=category_list
+        )
+        
+        # Add cinbrain branding
+        recommendations['platform'] = 'cinbrain'
+        recommendations['user_tier'] = 'premium'  # All registered users get premium experience
+        
+        return jsonify({
+            'success': True,
+            'data': recommendations,
+            'message': 'Personalized recommendations generated successfully',
+            'user': {
+                'id': current_user.id,
+                'username': current_user.username
+            }
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Personalized recommendations error for user {current_user.id}: {e}")
+        return jsonify({
+            'error': 'Failed to generate personalized recommendations',
+            'success': False,
+            'data': {}
+        }), 500
+
+@users_bp.route('/api/personalized/for-you', methods=['GET'])
+@require_auth
+def get_for_you_recommendations(current_user):
+    """Get main 'For You' personalized feed"""
+    try:
+        if not recommendation_engine:
+            return jsonify({'error': 'Recommendation engine not available'}), 503
+        
+        limit = min(int(request.args.get('limit', 30)), 50)
+        
+        recommendations = recommendation_engine.get_personalized_recommendations(
+            user_id=current_user.id,
+            limit=limit,
+            categories=['for_you']
+        )
+        
+        for_you_recs = recommendations.get('recommendations', {}).get('for_you', [])
+        
+        return jsonify({
+            'success': True,
+            'recommendations': for_you_recs,
+            'total_count': len(for_you_recs),
+            'user_insights': recommendations.get('profile_insights', {}),
+            'metadata': recommendations.get('recommendation_metadata', {})
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"For You recommendations error: {e}")
+        return jsonify({'error': 'Failed to get For You recommendations'}), 500
+
+@users_bp.route('/api/personalized/because-you-watched', methods=['GET'])
+@require_auth
+def get_because_you_watched(current_user):
+    """Get 'Because you watched X' recommendations"""
+    try:
+        if not recommendation_engine:
+            return jsonify({'error': 'Recommendation engine not available'}), 503
+        
+        limit = min(int(request.args.get('limit', 20)), 30)
+        
+        recommendations = recommendation_engine.get_personalized_recommendations(
+            user_id=current_user.id,
+            limit=limit,
+            categories=['because_you_watched']
+        )
+        
+        because_recs = recommendations.get('recommendations', {}).get('because_you_watched', [])
+        
+        return jsonify({
+            'success': True,
+            'recommendations': because_recs,
+            'total_count': len(because_recs),
+            'explanation': 'Based on your recently watched content'
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Because you watched recommendations error: {e}")
+        return jsonify({'error': 'Failed to get because you watched recommendations'}), 500
+
+@users_bp.route('/api/personalized/trending-for-you', methods=['GET'])
+@require_auth
+def get_trending_for_you(current_user):
+    """Get personalized trending recommendations"""
+    try:
+        if not recommendation_engine:
+            return jsonify({'error': 'Recommendation engine not available'}), 503
+        
+        limit = min(int(request.args.get('limit', 25)), 40)
+        
+        recommendations = recommendation_engine.get_personalized_recommendations(
+            user_id=current_user.id,
+            limit=limit,
+            categories=['trending_for_you']
+        )
+        
+        trending_recs = recommendations.get('recommendations', {}).get('trending_for_you', [])
+        
+        return jsonify({
+            'success': True,
+            'recommendations': trending_recs,
+            'total_count': len(trending_recs),
+            'explanation': 'Trending content personalized for your taste'
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Trending for you recommendations error: {e}")
+        return jsonify({'error': 'Failed to get trending recommendations'}), 500
+
+@users_bp.route('/api/personalized/your-language', methods=['GET'])
+@require_auth
+def get_your_language_recommendations(current_user):
+    """Get language-specific personalized recommendations"""
+    try:
+        if not recommendation_engine:
+            return jsonify({'error': 'Recommendation engine not available'}), 503
+        
+        limit = min(int(request.args.get('limit', 25)), 40)
+        
+        recommendations = recommendation_engine.get_personalized_recommendations(
+            user_id=current_user.id,
+            limit=limit,
+            categories=['your_language']
+        )
+        
+        language_recs = recommendations.get('recommendations', {}).get('your_language', [])
+        
+        return jsonify({
+            'success': True,
+            'recommendations': language_recs,
+            'total_count': len(language_recs),
+            'explanation': 'Content in your preferred languages'
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Language recommendations error: {e}")
+        return jsonify({'error': 'Failed to get language recommendations'}), 500
+
+@users_bp.route('/api/personalized/hidden-gems', methods=['GET'])
+@require_auth
+def get_hidden_gems(current_user):
+    """Get hidden gem recommendations"""
+    try:
+        if not recommendation_engine:
+            return jsonify({'error': 'Recommendation engine not available'}), 503
+        
+        limit = min(int(request.args.get('limit', 15)), 25)
+        
+        recommendations = recommendation_engine.get_personalized_recommendations(
+            user_id=current_user.id,
+            limit=limit,
+            categories=['hidden_gems']
+        )
+        
+        gems_recs = recommendations.get('recommendations', {}).get('hidden_gems', [])
+        
+        return jsonify({
+            'success': True,
+            'recommendations': gems_recs,
+            'total_count': len(gems_recs),
+            'explanation': 'High-quality content you might have missed'
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Hidden gems recommendations error: {e}")
+        return jsonify({'error': 'Failed to get hidden gems recommendations'}), 500
+
+@users_bp.route('/api/personalized/profile-insights', methods=['GET'])
+@require_auth
+def get_profile_insights(current_user):
+    """Get user profile insights and recommendation analytics"""
+    try:
+        if not recommendation_engine:
+            return jsonify({'error': 'Recommendation engine not available'}), 503
+        
+        # Get user profile
+        user_profile = recommendation_engine.user_profiler.build_comprehensive_user_profile(current_user.id)
+        
+        if not user_profile:
+            return jsonify({
+                'success': False,
+                'message': 'Could not build user profile'
+            }), 404
+        
+        # Extract key insights
+        insights = {
+            'profile_strength': {
+                'completeness': user_profile.get('profile_completeness', 0),
+                'confidence': user_profile.get('confidence_score', 0),
+                'status': 'strong' if user_profile.get('confidence_score', 0) > 0.7 else 'building'
+            },
+            'preferences': {
+                'top_genres': user_profile.get('genre_preferences', {}).get('top_genres', [])[:5],
+                'preferred_languages': user_profile.get('language_preferences', {}).get('preferred_languages', [])[:3],
+                'content_types': user_profile.get('content_type_preferences', {}).get('content_type_scores', {})
+            },
+            'behavior': {
+                'engagement_score': user_profile.get('engagement_score', 0),
+                'viewing_style': user_profile.get('implicit_preferences', {}).get('most_common_interaction'),
+                'exploration_tendency': user_profile.get('exploration_tendency', 0),
+                'total_interactions': user_profile.get('implicit_preferences', {}).get('total_interactions', 0)
+            },
+            'recent_activity': user_profile.get('recent_activity', {}),
+            'recommendations_quality': {
+                'accuracy_estimate': min(user_profile.get('confidence_score', 0) * 100, 95),
+                'next_improvement': 'Rate more content to improve accuracy' if user_profile.get('profile_completeness', 0) < 0.8 else 'Your recommendations are highly accurate!'
+            }
+        }
+        
+        return jsonify({
+            'success': True,
+            'insights': insights,
+            'last_updated': user_profile.get('last_updated', datetime.utcnow()).isoformat()
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Profile insights error: {e}")
+        return jsonify({'error': 'Failed to get profile insights'}), 500
+
+@users_bp.route('/api/personalized/update-preferences', methods=['POST'])
+@require_auth
+def update_user_preferences(current_user):
+    """Update user preferences and trigger recommendation refresh"""
+    try:
+        data = request.get_json()
+        
+        # Update user preferences
+        if 'preferred_languages' in data:
+            current_user.preferred_languages = json.dumps(data['preferred_languages'])
+        
+        if 'preferred_genres' in data:
+            current_user.preferred_genres = json.dumps(data['preferred_genres'])
+        
+        db.session.commit()
+        
+        # Trigger recommendation engine update
+        if recommendation_engine:
+            try:
+                recommendation_engine.update_user_preferences_realtime(
+                    current_user.id,
+                    {
+                        'interaction_type': 'preference_update',
+                        'metadata': {
+                            'updated_languages': data.get('preferred_languages'),
+                            'updated_genres': data.get('preferred_genres')
+                        }
+                    }
+                )
+            except Exception as e:
+                logger.warning(f"Failed to update recommendation engine: {e}")
+        
+        return jsonify({
+            'success': True,
+            'message': 'Preferences updated successfully',
+            'user': {
+                'preferred_languages': json.loads(current_user.preferred_languages or '[]'),
+                'preferred_genres': json.loads(current_user.preferred_genres or '[]')
+            }
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Update preferences error: {e}")
+        db.session.rollback()
+        return jsonify({'error': 'Failed to update preferences'}), 500
+
+# Existing endpoints (watchlist, favorites, etc.)
 
 @users_bp.route('/api/user/watchlist', methods=['GET'])
 @require_auth
@@ -246,10 +573,18 @@ def remove_from_watchlist(current_user, content_id):
             db.session.delete(interaction)
             db.session.commit()
             
-            if personalization_engine:
-                personalization_engine.update_user_interaction(
-                    current_user.id, content_id, 'remove_watchlist'
-                )
+            # Update recommendations
+            if recommendation_engine:
+                try:
+                    recommendation_engine.update_user_preferences_realtime(
+                        current_user.id,
+                        {
+                            'content_id': content_id,
+                            'interaction_type': 'remove_watchlist'
+                        }
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to update recommendations: {e}")
             
             return jsonify({'message': 'Removed from watchlist'}), 200
         else:
@@ -310,365 +645,3 @@ def get_favorites(current_user):
     except Exception as e:
         logger.error(f"Favorites error: {e}")
         return jsonify({'error': 'Failed to get favorites'}), 500
-
-@users_bp.route('/api/recommendations/personalized', methods=['GET'])
-@require_auth
-def get_personalized_recommendations(current_user):
-    try:
-        limit = int(request.args.get('limit', 20))
-        context = {
-            'time': datetime.now().hour,
-            'day': datetime.now().weekday(),
-            'device': request.headers.get('User-Agent', '')[:50],
-            'ip': request.remote_addr
-        }
-        
-        if not personalization_engine:
-            return jsonify({
-                'error': 'Ultra personalization engine not available',
-                'recommendations': []
-            }), 503
-        
-        recommendations = personalization_engine.get_ultra_personalized_recommendations(
-            current_user.id, limit, context
-        )
-        
-        result = []
-        for rec in recommendations:
-            try:
-                content = Content.query.get(rec.content_id)
-                if not content:
-                    continue
-                
-                if not content.slug:
-                    content.slug = f"content-{content.id}"
-                
-                youtube_url = None
-                if content.youtube_trailer_id:
-                    youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
-                
-                result.append({
-                    'id': content.id,
-                    'slug': content.slug,
-                    'title': content.title,
-                    'content_type': content.content_type,
-                    'genres': json.loads(content.genres or '[]'),
-                    'rating': content.rating,
-                    'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
-                    'overview': content.overview[:200] + '...' if content.overview and len(content.overview) > 200 else content.overview,
-                    'youtube_trailer': youtube_url,
-                    'recommendation_score': round(rec.score, 3),
-                    'recommendation_reason': rec.reason,
-                    'recommendation_category': rec.category,
-                    'confidence': round(rec.confidence, 3),
-                    'source_algorithms': rec.source_algorithms,
-                    'diversity_score': round(rec.diversity_score, 3),
-                    'novelty_score': round(rec.novelty_score, 3)
-                })
-            except Exception as content_error:
-                logger.warning(f"Error processing content {rec.content_id}: {content_error}")
-                continue
-        
-        user_profile = personalization_engine._get_comprehensive_user_profile(current_user.id)
-        
-        response = {
-            'recommendations': result,
-            'total_found': len(result),
-            'algorithm': 'ultra_advanced_hybrid_ensemble',
-            'personalization_strength': min(1.0, user_profile['total_interactions'] / 50.0),
-            'user_profile_summary': {
-                'activity_level': user_profile['activity_level'],
-                'diversity_score': round(user_profile['diversity_score'], 3),
-                'exploration_tendency': round(user_profile['exploration_tendency'], 3),
-                'popular_affinity': round(user_profile['popular_affinity'], 3),
-                'top_genres': dict(list(user_profile['genre_preferences'].items())[:3]),
-                'preferred_languages': dict(list(user_profile['language_preferences'].items())[:3])
-            },
-            'context': context,
-            'metadata': {
-                'model_components': [
-                    'matrix_factorization_svd', 'matrix_factorization_nmf', 'neural_collaborative_filtering',
-                    'content_based_filtering', 'graph_based_recommendations', 'sequence_aware_models',
-                    'contextual_bandits', 'ensemble_meta_learning', 'deep_learning_hybrid'
-                ],
-                'features_used': [
-                    'user_interactions', 'content_analysis', 'temporal_patterns', 'diversity_optimization',
-                    'novelty_detection', 'storyline_analysis', 'knowledge_graph', 'user_segmentation'
-                ],
-                'accuracy_level': '99.9%',
-                'timestamp': datetime.utcnow().isoformat()
-            }
-        }
-        
-        return jsonify(response), 200
-        
-    except Exception as e:
-        logger.error(f"Ultra personalized recommendations error: {e}")
-        return jsonify({
-            'error': 'Failed to get ultra personalized recommendations',
-            'recommendations': [],
-            'fallback': True
-        }), 500
-
-@users_bp.route('/api/recommendations/update-interaction', methods=['POST'])
-@require_auth
-def update_interaction_feedback(current_user):
-    try:
-        data = request.get_json()
-        
-        required_fields = ['content_id', 'interaction_type']
-        if not all(field in data for field in required_fields):
-            return jsonify({'error': 'Missing required fields'}), 400
-        
-        content_id = data['content_id']
-        interaction_type = data['interaction_type']
-        rating = data.get('rating')
-        
-        if personalization_engine:
-            personalization_engine.update_user_interaction(
-                current_user.id, content_id, interaction_type, rating
-            )
-        
-        return jsonify({
-            'message': 'Ultra interaction feedback recorded',
-            'will_improve_recommendations': True,
-            'real_time_learning': True
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"Interaction feedback error: {e}")
-        return jsonify({'error': 'Failed to record feedback'}), 500
-
-@users_bp.route('/api/user/profile/advanced', methods=['GET'])
-@require_auth
-def get_advanced_user_profile(current_user):
-    try:
-        if not personalization_engine:
-            return jsonify({'error': 'Ultra personalization engine not available'}), 503
-        
-        profile = personalization_engine._get_comprehensive_user_profile(current_user.id)
-        
-        total_interactions = UserInteraction.query.filter_by(user_id=current_user.id).count()
-        recent_interactions = UserInteraction.query.filter_by(
-            user_id=current_user.id
-        ).filter(
-            UserInteraction.timestamp >= datetime.utcnow() - timedelta(days=30)
-        ).count()
-        
-        return jsonify({
-            'user_profile': profile,
-            'statistics': {
-                'total_interactions': total_interactions,
-                'recent_interactions_30d': recent_interactions,
-                'profile_strength': min(100, (total_interactions / 50) * 100),
-                'personalization_quality': 'ultra_high' if total_interactions > 50 else 'high' if total_interactions > 20 else 'medium' if total_interactions > 5 else 'developing'
-            },
-            'ultra_recommendations_info': {
-                'algorithms_available': [
-                    'svd_matrix_factorization', 'nmf_matrix_factorization', 'neural_collaborative_filtering',
-                    'advanced_content_based', 'knowledge_graph_based', 'sequence_aware_models',
-                    'contextual_bandits', 'ensemble_meta_learning', 'continuous_learning'
-                ],
-                'features_tracking': [
-                    'genres', 'languages', 'content_types', 'ratings', 'viewing_patterns',
-                    'storyline_analysis', 'temporal_preferences', 'exploration_patterns',
-                    'novelty_seeking', 'popularity_affinity'
-                ],
-                'updates_frequency': 'real_time_with_continuous_background_learning',
-                'accuracy_target': '99.9%'
-            }
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"Advanced profile error: {e}")
-        return jsonify({'error': 'Failed to get advanced profile'}), 500
-
-@users_bp.route('/api/recommendations/explain/<int:content_id>', methods=['GET'])
-@require_auth
-def explain_recommendation(current_user, content_id):
-    try:
-        if not personalization_engine:
-            return jsonify({'error': 'Ultra personalization engine not available'}), 503
-        
-        user_profile = personalization_engine._get_comprehensive_user_profile(current_user.id)
-        
-        content = Content.query.get(content_id)
-        if not content:
-            return jsonify({'error': 'Content not found'}), 404
-        
-        algorithm_scores = {}
-        algorithm_scores['svd'] = personalization_engine._predict_svd(current_user.id, content_id)
-        algorithm_scores['nmf'] = personalization_engine._predict_nmf(current_user.id, content_id)
-        algorithm_scores['content_based'] = personalization_engine._predict_content_based(current_user.id, content_id)
-        algorithm_scores['graph_based'] = personalization_engine._predict_graph_based(current_user.id, content_id)
-        algorithm_scores['neural_cf'] = personalization_engine._predict_neural_cf(current_user.id, content_id)
-        algorithm_scores['sequence_aware'] = personalization_engine._predict_sequence_aware(current_user.id, content_id)
-        algorithm_scores['contextual'] = personalization_engine._predict_contextual_bandit(current_user.id, content_id)
-        algorithm_scores['ensemble'] = personalization_engine._predict_ensemble_meta(current_user.id, content_id)
-        
-        novelty_score = personalization_engine._calculate_novelty_score(current_user.id, content_id)
-        diversity_score = personalization_engine._calculate_diversity_score(current_user.id, content_id)
-        
-        explanation = {
-            'content': {
-                'id': content.id,
-                'title': content.title,
-                'content_type': content.content_type,
-                'genres': json.loads(content.genres or '[]'),
-                'rating': content.rating
-            },
-            'algorithm_predictions': algorithm_scores,
-            'novelty_score': round(novelty_score, 3),
-            'diversity_score': round(diversity_score, 3),
-            'match_factors': [],
-            'user_preferences': user_profile,
-            'ultra_recommendation_strength': 0.0
-        }
-        
-        strength = sum(algorithm_scores.values()) / len(algorithm_scores)
-        
-        try:
-            content_genres = json.loads(content.genres or '[]')
-            genre_matches = []
-            for genre in content_genres:
-                if genre in user_profile['genre_preferences']:
-                    preference_strength = user_profile['genre_preferences'][genre]
-                    genre_matches.append({
-                        'genre': genre,
-                        'preference_strength': preference_strength
-                    })
-            
-            if genre_matches:
-                explanation['match_factors'].append({
-                    'factor': 'genre_preferences',
-                    'matches': genre_matches,
-                    'contribution': 'high'
-                })
-        except:
-            pass
-        
-        try:
-            content_languages = json.loads(content.languages or '[]')
-            language_matches = []
-            for lang in content_languages:
-                if lang in user_profile['language_preferences']:
-                    preference_strength = user_profile['language_preferences'][lang]
-                    language_matches.append({
-                        'language': lang,
-                        'preference_strength': preference_strength
-                    })
-            
-            if language_matches:
-                explanation['match_factors'].append({
-                    'factor': 'language_preferences',
-                    'matches': language_matches,
-                    'contribution': 'medium'
-                })
-        except:
-            pass
-        
-        if content.content_type in user_profile['content_type_preferences']:
-            type_preference = user_profile['content_type_preferences'][content.content_type]
-            explanation['match_factors'].append({
-                'factor': 'content_type_preference',
-                'preference_strength': type_preference,
-                'contribution': 'medium'
-            })
-        
-        if content.rating and content.rating >= user_profile['avg_rating']:
-            explanation['match_factors'].append({
-                'factor': 'quality_match',
-                'content_rating': content.rating,
-                'user_avg_rating': user_profile['avg_rating'],
-                'contribution': 'medium'
-            })
-        
-        explanation['ultra_recommendation_strength'] = min(1.0, strength / 5.0)
-        explanation['recommendation_quality'] = (
-            'perfect_match' if strength > 4.5 else
-            'excellent' if strength > 4.0 else
-            'very_good' if strength > 3.5 else
-            'good' if strength > 3.0 else
-            'exploratory'
-        )
-        
-        explanation['ensemble_reasoning'] = {
-            'strongest_algorithm': max(algorithm_scores, key=algorithm_scores.get),
-            'consensus_strength': 1.0 - (max(algorithm_scores.values()) - min(algorithm_scores.values())) / 5.0,
-            'recommendation_confidence': explanation['ultra_recommendation_strength']
-        }
-        
-        return jsonify(explanation), 200
-        
-    except Exception as e:
-        logger.error(f"Ultra recommendation explanation error: {e}")
-        return jsonify({'error': 'Failed to explain ultra recommendation'}), 500
-
-@users_bp.route('/api/recommendations/categories', methods=['GET'])
-@require_auth
-def get_categorized_recommendations(current_user):
-    try:
-        if not personalization_engine:
-            return jsonify({'error': 'Ultra personalization engine not available'}), 503
-        
-        context = {
-            'time': datetime.now().hour,
-            'day': datetime.now().weekday(),
-            'device': request.headers.get('User-Agent', '')[:50],
-            'ip': request.remote_addr
-        }
-        
-        categories = {
-            'for_you': personalization_engine.get_ultra_personalized_recommendations(current_user.id, 15, context),
-            'trending_for_you': personalization_engine.get_ultra_personalized_recommendations(current_user.id, 10, context),
-            'because_you_watched': personalization_engine.get_ultra_personalized_recommendations(current_user.id, 12, context),
-            'new_releases_for_you': personalization_engine.get_ultra_personalized_recommendations(current_user.id, 8, context),
-            'explore_new_genres': personalization_engine.get_ultra_personalized_recommendations(current_user.id, 10, context)
-        }
-        
-        result = {}
-        for category_name, recommendations in categories.items():
-            category_result = []
-            for rec in recommendations:
-                try:
-                    content = Content.query.get(rec.content_id)
-                    if not content:
-                        continue
-                    
-                    if not content.slug:
-                        content.slug = f"content-{content.id}"
-                    
-                    youtube_url = None
-                    if content.youtube_trailer_id:
-                        youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
-                    
-                    category_result.append({
-                        'id': content.id,
-                        'slug': content.slug,
-                        'title': content.title,
-                        'content_type': content.content_type,
-                        'genres': json.loads(content.genres or '[]'),
-                        'rating': content.rating,
-                        'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
-                        'youtube_trailer': youtube_url,
-                        'recommendation_score': round(rec.score, 3),
-                        'confidence': round(rec.confidence, 3)
-                    })
-                except Exception as content_error:
-                    continue
-            
-            result[category_name] = category_result
-        
-        user_profile = personalization_engine._get_comprehensive_user_profile(current_user.id)
-        
-        return jsonify({
-            'categories': result,
-            'personalization_level': 'ultra_advanced',
-            'user_activity_level': user_profile['activity_level'],
-            'total_algorithms_used': 8,
-            'recommendation_accuracy': '99.9%'
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"Categorized recommendations error: {e}")
-        return jsonify({'error': 'Failed to get categorized recommendations'}), 500

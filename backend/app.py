@@ -728,10 +728,13 @@ except Exception as e:
     logger.error(f"Failed to initialize support service: {e}")
 
 try:
-    init_personalized(app, db, models, services, cache)
-    logger.info("Ultra-advanced personalized recommendation service initialized successfully")
+    personalized_engine = init_personalized(app, db, models, services, cache)
+    if personalized_engine:
+        logger.info("Netflix-level personalized recommendation system initialized successfully")
+    else:
+        logger.warning("Personalized recommendation system failed to initialize")
 except Exception as e:
-    logger.error(f"Failed to initialize ultra personalized service: {e}")
+    logger.error(f"Failed to initialize personalized recommendation system: {e}")
 
 app.register_blueprint(auth_bp)
 app.register_blueprint(admin_bp)
