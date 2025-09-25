@@ -1,4 +1,3 @@
-#backend/app.py
 from typing import Optional
 from flask import Flask, request, jsonify, session, render_template, g
 from flask_sqlalchemy import SQLAlchemy
@@ -121,6 +120,10 @@ app.config['YOUTUBE_API_KEY'] = YOUTUBE_API_KEY
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+details_service = None
+content_service = None
+recommendation_engine = None
 
 @contextmanager
 def safe_db_operation():
@@ -748,48 +751,136 @@ models = {
     'AnonymousInteraction': AnonymousInteraction
 }
 
-details_service = None
-content_service = None
-try:
-    with app.app_context():
-        details_service = init_details_service(app, db, models, cache)
-        content_service = ContentService(db, models)
-        logger.info("Details and Content services initialized successfully")
-except Exception as e:
-    logger.error(f"Failed to initialize details/content services: {e}")
-
 services = {
     'TMDBService': TMDBService,
     'JikanService': JikanService,
-    'ContentService': content_service,
     'http_session': http_session,
     'cache': cache
 }
 
-try:
-    init_support(app, db, models, services)
-    app.register_blueprint(support_bp)
-    logger.info("Support service initialized successfully")
-except Exception as e:
-    logger.error(f"Failed to initialize support service: {e}")
+def setup_support_monitoring():
+    def support_monitor():
+        while True:
+            try:
+                if not app or not db:
+                    time.sleep(60)
+                    continue
+                
+                with app.app_context():
+                    try:
+                        from services.admin import AdminNotificationService
+                        from services.support import TicketStatus, TicketPriority
+                        
+                        if 'SupportTicket' in models and models['SupportTicket']:
+                            SupportTicket = models['SupportTicket']
+                            overdue_tickets = db.session.query(SupportTicket).filter(
+                                SupportTicket.sla_deadline < datetime.utcnow(),
+                                SupportTicket.sla_breached == False,
+                                SupportTicket.status.in_([TicketStatus.OPEN, TicketStatus.IN_PROGRESS])
+                            ).all()
+                            
+                            for ticket in overdue_tickets:
+                                ticket.sla_breached = True
+                                AdminNotificationService.notify_sla_breach(ticket)
+                            
+                            if overdue_tickets:
+                                db.session.commit()
+                        
+                        if 'SupportTicket' in models and models['SupportTicket']:
+                            SupportTicket = models['SupportTicket']
+                            urgent_tickets = db.session.query(SupportTicket).filter(
+                                SupportTicket.priority == TicketPriority.URGENT,
+                                SupportTicket.first_response_at.is_(None),
+                                SupportTicket.created_at < datetime.utcnow() - timedelta(hours=1)
+                            ).all()
+                            
+                            for ticket in urgent_tickets:
+                                AdminNotificationService.create_notification(
+                                    'urgent_ticket',
+                                    f"Urgent Ticket Needs Attention",
+                                    f"Ticket #{ticket.ticket_number} has been open for over 1 hour without response",
+                                    related_ticket_id=ticket.id,
+                                    is_urgent=True,
+                                    action_required=True
+                                )
+                    except Exception as e:
+                        logger.error(f"Support monitoring inner error: {e}")
+                
+                time.sleep(300)
+                
+            except Exception as e:
+                logger.error(f"Support monitoring error: {e}")
+                time.sleep(300)
+    
+    monitor_thread = threading.Thread(target=support_monitor, daemon=True)
+    monitor_thread.start()
+    logger.info("Support monitoring thread started")
 
-try:
-    personalized_engine = init_personalized(app, db, models, services, cache)
-    if personalized_engine:
-        logger.info("Netflix-level personalized recommendation system initialized successfully")
-    else:
-        logger.warning("Personalized recommendation system failed to initialize")
-except Exception as e:
-    logger.error(f"Failed to initialize personalized recommendation system: {e}")
+def on_new_support_ticket(ticket):
+    try:
+        from services.admin import AdminNotificationService
+        AdminNotificationService.notify_new_ticket(ticket)
+    except Exception as e:
+        logger.error(f"Error handling new ticket notification: {e}")
 
-app.register_blueprint(auth_bp)
-app.register_blueprint(admin_bp)
-app.register_blueprint(users_bp)
-init_auth(app, db, User)
+def on_new_feedback(feedback):
+    try:
+        from services.admin import AdminNotificationService
+        AdminNotificationService.notify_feedback_received(feedback)
+    except Exception as e:
+        logger.error(f"Error handling new feedback notification: {e}")
 
-init_admin(app, db, models, services)
-init_users(app, db, models, services)
-init_users(app, db, models, {**services, 'cache': cache})
+def initialize_app():
+    global details_service, content_service, recommendation_engine
+    
+    try:
+        with app.app_context():
+            db.create_all()
+            
+            admin = User.query.filter_by(username='admin').first()
+            if not admin:
+                admin = User(
+                    username='admin',
+                    email='srinathnulidonda.dev@gmail.com',
+                    password_hash=generate_password_hash('admin123'),
+                    is_admin=True
+                )
+                db.session.add(admin)
+                db.session.commit()
+                logger.info("Admin user created with username: admin, password: admin123")
+            
+            details_service = init_details_service(app, db, models, cache)
+            content_service = ContentService(db, models)
+            logger.info("Details and Content services initialized successfully")
+            
+            services['ContentService'] = content_service
+            
+            init_support(app, db, models, services)
+            app.register_blueprint(support_bp)
+            logger.info("Support service initialized successfully")
+            
+            recommendation_engine = init_personalized(app, db, models, services, cache)
+            if recommendation_engine:
+                logger.info("Netflix-level personalized recommendation system initialized successfully")
+            else:
+                logger.warning("Personalized recommendation system failed to initialize")
+            
+            app.register_blueprint(auth_bp)
+            app.register_blueprint(admin_bp)
+            app.register_blueprint(users_bp)
+            init_auth(app, db, User)
+            
+            init_admin(app, db, models, services)
+            init_users(app, db, models, services)
+            init_users(app, db, models, {**services, 'cache': cache})
+            
+            setup_support_monitoring()
+            
+            logger.info("Database tables created successfully including support tables with monitoring")
+            
+    except Exception as e:
+        logger.error(f"Application initialization error: {e}")
+        raise
 
 @app.before_request
 def before_request():
@@ -873,78 +964,6 @@ def database_health():
             'error_type': type(e).__name__,
             'timestamp': datetime.utcnow().isoformat()
         }), 503
-
-def setup_support_monitoring():
-    def support_monitor():
-        while True:
-            try:
-                if not app or not db:
-                    time.sleep(60)
-                    continue
-                
-                with app.app_context():
-                    try:
-                        from services.admin import AdminNotificationService
-                        from services.support import TicketStatus, TicketPriority
-                        
-                        if 'SupportTicket' in models and models['SupportTicket']:
-                            SupportTicket = models['SupportTicket']
-                            overdue_tickets = db.session.query(SupportTicket).filter(
-                                SupportTicket.sla_deadline < datetime.utcnow(),
-                                SupportTicket.sla_breached == False,
-                                SupportTicket.status.in_([TicketStatus.OPEN, TicketStatus.IN_PROGRESS])
-                            ).all()
-                            
-                            for ticket in overdue_tickets:
-                                ticket.sla_breached = True
-                                AdminNotificationService.notify_sla_breach(ticket)
-                            
-                            if overdue_tickets:
-                                db.session.commit()
-                        
-                        if 'SupportTicket' in models and models['SupportTicket']:
-                            SupportTicket = models['SupportTicket']
-                            urgent_tickets = db.session.query(SupportTicket).filter(
-                                SupportTicket.priority == TicketPriority.URGENT,
-                                SupportTicket.first_response_at.is_(None),
-                                SupportTicket.created_at < datetime.utcnow() - timedelta(hours=1)
-                            ).all()
-                            
-                            for ticket in urgent_tickets:
-                                AdminNotificationService.create_notification(
-                                    'urgent_ticket',
-                                    f"Urgent Ticket Needs Attention",
-                                    f"Ticket #{ticket.ticket_number} has been open for over 1 hour without response",
-                                    related_ticket_id=ticket.id,
-                                    is_urgent=True,
-                                    action_required=True
-                                )
-                    except Exception as e:
-                        logger.error(f"Support monitoring inner error: {e}")
-                
-                time.sleep(300)
-                
-            except Exception as e:
-                logger.error(f"Support monitoring error: {e}")
-                time.sleep(300)
-    
-    monitor_thread = threading.Thread(target=support_monitor, daemon=True)
-    monitor_thread.start()
-    logger.info("Support monitoring thread started")
-
-def on_new_support_ticket(ticket):
-    try:
-        from services.admin import AdminNotificationService
-        AdminNotificationService.notify_new_ticket(ticket)
-    except Exception as e:
-        logger.error(f"Error handling new ticket notification: {e}")
-
-def on_new_feedback(feedback):
-    try:
-        from services.admin import AdminNotificationService
-        AdminNotificationService.notify_feedback_received(feedback)
-    except Exception as e:
-        logger.error(f"Error handling new feedback notification: {e}")
 
 @app.route('/api/webhooks/support/ticket-created', methods=['POST'])
 def webhook_ticket_created():
@@ -2497,63 +2516,23 @@ def populate_cast_crew_cli():
         print(f"Failed to populate cast/crew: {e}")
         logger.error(f"CLI cast/crew population error: {e}")
 
-def create_tables():
-    try:
-        with app.app_context():
-            db.create_all()
-            
-            admin = User.query.filter_by(username='admin').first()
-            if not admin:
-                admin = User(
-                    username='admin',
-                    email='srinathnulidonda.dev@gmail.com',
-                    password_hash=generate_password_hash('admin123'),
-                    is_admin=True
-                )
-                db.session.add(admin)
-                db.session.commit()
-                logger.info("Admin user created with username: admin, password: admin123")
-            
-            setup_support_monitoring()
-            
-            logger.info("Database tables created successfully including support tables with monitoring")
-    except Exception as e:
-        logger.error(f"Database initialization error: {e}")
-
-
 if __name__ == '__main__':
-    create_tables()
     print("=== Running Flask in development mode with Full Support Management ===")
+    initialize_app()
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('FLASK_ENV') == 'development'
     app.run(host='0.0.0.0', port=port, debug=debug)
 else:
-    # For production with Gunicorn
-    with app.app_context():
+    print("=== Flask app imported by Gunicorn ===")
+    if not hasattr(app, '_cinbrain_initialized'):
         try:
-            db.create_all()
-            
-            # Create admin user if doesn't exist
-            admin = User.query.filter_by(username='admin').first()
-            if not admin:
-                admin = User(
-                    username='admin',
-                    email='srinathnulidonda.dev@gmail.com',
-                    password_hash=generate_password_hash('admin123'),
-                    is_admin=True
-                )
-                db.session.add(admin)
-                db.session.commit()
-                logger.info("Admin user created")
-            
-            # Setup monitoring in a separate thread to avoid blocking
-            setup_support_monitoring()
-            
+            initialize_app()
+            app._cinbrain_initialized = True
+            print("=== CinBrain initialization completed successfully ===")
         except Exception as e:
-            logger.error(f"Database initialization error: {e}")
+            print(f"=== CinBrain initialization failed: {e} ===")
+            raise
     
-    print("=== Flask app imported by Gunicorn - COMPREHENSIVE ADMIN & SUPPORT VERSION ===")
-    print("=== Flask app imported by Gunicorn - COMPREHENSIVE ADMIN & SUPPORT VERSION ===")
     print(f"App name: {app.name}")
     print(f"Python version: 3.13.4")
     print(f"Database URI configured: {'Yes' if app.config.get('SQLALCHEMY_DATABASE_URI') else 'No'}")
@@ -2593,8 +2572,3 @@ else:
     print("✅ Connection health monitoring")
     print("✅ Pool status tracking")
     print("✅ Graceful error handling")
-    
-    print("\n=== Registered Routes ===")
-    for rule in app.url_map.iter_rules():
-        print(f"{rule.endpoint}: {rule.rule} [{', '.join(rule.methods)}]")
-    print("=== End of Routes ===\n")
