@@ -15,6 +15,10 @@ import re
 from typing import List, Dict, Any, Tuple, Optional
 import hashlib
 from sqlalchemy import func, desc, and_, or_
+from sqlalchemy.exc import OperationalError, DisconnectionError
+from contextlib import contextmanager
+import traceback
+import psycopg2
 from services.algorithms import (
     ContentBasedFiltering, 
     CollaborativeFiltering, 
@@ -29,71 +33,49 @@ from services.algorithms import (
 logger = logging.getLogger(__name__)
 
 class UserProfileAnalyzer:
-    """Advanced user profile analyzer for Netflix-level personalization"""
-    
     def __init__(self, db, models):
         self.db = db
         self.User = models['User']
         self.Content = models['Content']
         self.UserInteraction = models['UserInteraction']
         self.Review = models['Review']
-        
+    
     def build_comprehensive_user_profile(self, user_id: int) -> Dict[str, Any]:
-        """Build comprehensive user profile with deep analysis"""
         try:
             user = self.User.query.get(user_id)
             if not user:
                 return {}
             
-            # Get all user interactions
             interactions = self.UserInteraction.query.filter_by(user_id=user_id).all()
             
-            # Build profile components
             profile = {
                 'user_id': user_id,
                 'username': user.username,
                 'registration_date': user.created_at,
                 'last_active': user.last_active,
-                
-                # Preference analysis
                 'explicit_preferences': self._analyze_explicit_preferences(user),
                 'implicit_preferences': self._analyze_implicit_preferences(interactions),
-                
-                # Behavioral patterns
                 'viewing_patterns': self._analyze_viewing_patterns(interactions),
                 'rating_patterns': self._analyze_rating_patterns(interactions),
                 'search_patterns': self._analyze_search_patterns(interactions),
-                
-                # Content preferences
                 'genre_preferences': self._analyze_genre_preferences(interactions),
                 'language_preferences': self._analyze_language_preferences(interactions),
                 'content_type_preferences': self._analyze_content_type_preferences(interactions),
-                
-                # Advanced analytics
                 'mood_preferences': self._analyze_mood_preferences(interactions),
                 'temporal_preferences': self._analyze_temporal_preferences(interactions),
                 'quality_threshold': self._calculate_quality_threshold(interactions),
-                
-                # Engagement metrics
                 'engagement_score': self._calculate_engagement_score(interactions),
                 'exploration_tendency': self._calculate_exploration_tendency(interactions),
                 'loyalty_score': self._calculate_loyalty_score(interactions),
-                
-                # Recommendation context
                 'recommendation_history': self._get_recommendation_history(user_id),
                 'feedback_patterns': self._analyze_feedback_patterns(user_id),
-                
-                # Real-time context
                 'recent_activity': self._get_recent_activity(interactions),
                 'current_interests': self._infer_current_interests(interactions),
-                
-                # Profile metadata
                 'profile_completeness': 0.0,
                 'confidence_score': 0.0,
                 'last_updated': datetime.utcnow()
             }
             
-            # Calculate profile quality metrics
             profile['profile_completeness'] = self._calculate_profile_completeness(profile)
             profile['confidence_score'] = self._calculate_confidence_score(profile, interactions)
             
@@ -104,7 +86,6 @@ class UserProfileAnalyzer:
             return {}
     
     def _analyze_explicit_preferences(self, user: Any) -> Dict[str, Any]:
-        """Analyze explicitly stated user preferences"""
         return {
             'preferred_languages': json.loads(user.preferred_languages or '[]'),
             'preferred_genres': json.loads(user.preferred_genres or '[]'),
@@ -113,14 +94,10 @@ class UserProfileAnalyzer:
         }
     
     def _analyze_implicit_preferences(self, interactions: List[Any]) -> Dict[str, Any]:
-        """Analyze implicit preferences from user behavior"""
         if not interactions:
             return {}
         
-        # Interaction type analysis
         interaction_counts = Counter([i.interaction_type for i in interactions])
-        
-        # Time-based analysis
         recent_interactions = [i for i in interactions 
                              if i.timestamp > datetime.utcnow() - timedelta(days=30)]
         
@@ -135,17 +112,14 @@ class UserProfileAnalyzer:
         }
     
     def _analyze_viewing_patterns(self, interactions: List[Any]) -> Dict[str, Any]:
-        """Analyze user viewing patterns and habits"""
         view_interactions = [i for i in interactions if i.interaction_type in ['view', 'watch', 'play']]
         
         if not view_interactions:
             return {}
         
-        # Time-based patterns
         hour_distribution = Counter([i.timestamp.hour for i in view_interactions])
         day_distribution = Counter([i.timestamp.weekday() for i in view_interactions])
         
-        # Content analysis
         content_ids = [i.content_id for i in view_interactions]
         contents = self.Content.query.filter(self.Content.id.in_(content_ids)).all()
         
@@ -165,7 +139,6 @@ class UserProfileAnalyzer:
         }
     
     def _analyze_rating_patterns(self, interactions: List[Any]) -> Dict[str, Any]:
-        """Analyze user rating patterns and preferences"""
         rating_interactions = [i for i in interactions if i.rating is not None]
         
         if not rating_interactions:
@@ -179,19 +152,17 @@ class UserProfileAnalyzer:
             'rating_std': np.std(ratings),
             'rating_distribution': dict(Counter([round(r) for r in ratings])),
             'rating_tendency': 'harsh' if np.mean(ratings) < 6 else 'generous' if np.mean(ratings) > 8 else 'balanced',
-            'rating_consistency': 1 - (np.std(ratings) / 10),  # Normalized consistency score
+            'rating_consistency': 1 - (np.std(ratings) / 10),
             'high_rating_threshold': np.percentile(ratings, 75),
             'low_rating_threshold': np.percentile(ratings, 25)
         }
     
     def _analyze_search_patterns(self, interactions: List[Any]) -> Dict[str, Any]:
-        """Analyze user search patterns and interests"""
         search_interactions = [i for i in interactions if i.interaction_type == 'search']
         
         if not search_interactions:
             return {}
         
-        # Extract search metadata if available
         search_terms = []
         for interaction in search_interactions:
             if interaction.interaction_metadata:
@@ -210,11 +181,9 @@ class UserProfileAnalyzer:
         }
     
     def _analyze_genre_preferences(self, interactions: List[Any]) -> Dict[str, Any]:
-        """Analyze genre preferences from user interactions"""
         content_ids = [i.content_id for i in interactions]
         contents = self.Content.query.filter(self.Content.id.in_(content_ids)).all()
         
-        # Weight interactions by type and recency
         genre_scores = defaultdict(float)
         interaction_weights = {
             'favorite': 3.0,
@@ -231,14 +200,12 @@ class UserProfileAnalyzer:
             
             weight = interaction_weights.get(interaction.interaction_type, 1.0)
             
-            # Recency boost
             days_ago = (datetime.utcnow() - interaction.timestamp).days
-            recency_weight = math.exp(-days_ago / 30)  # Decay over 30 days
+            recency_weight = math.exp(-days_ago / 30)
             
-            # Rating boost
             rating_weight = 1.0
             if interaction.rating:
-                rating_weight = (interaction.rating / 10) * 2  # Scale rating influence
+                rating_weight = (interaction.rating / 10) * 2
             
             final_weight = weight * recency_weight * rating_weight
             
@@ -249,7 +216,6 @@ class UserProfileAnalyzer:
             except:
                 continue
         
-        # Normalize scores
         if genre_scores:
             max_score = max(genre_scores.values())
             normalized_scores = {genre: score/max_score for genre, score in genre_scores.items()}
@@ -264,7 +230,6 @@ class UserProfileAnalyzer:
         }
     
     def _analyze_language_preferences(self, interactions: List[Any]) -> Dict[str, Any]:
-        """Analyze language preferences with priority weighting"""
         content_ids = [i.content_id for i in interactions]
         contents = self.Content.query.filter(self.Content.id.in_(content_ids)).all()
         
@@ -286,14 +251,12 @@ class UserProfileAnalyzer:
             try:
                 languages = json.loads(content.languages)
                 for language in languages:
-                    # Apply language priority weights
                     lang_lower = language.lower()
                     priority_weight = LANGUAGE_WEIGHTS.get(lang_lower, 0.5)
                     language_scores[language] += weight * priority_weight
             except:
                 continue
         
-        # Normalize and sort
         if language_scores:
             max_score = max(language_scores.values())
             normalized_scores = {lang: score/max_score for lang, score in language_scores.items()}
@@ -311,7 +274,6 @@ class UserProfileAnalyzer:
         }
     
     def _analyze_content_type_preferences(self, interactions: List[Any]) -> Dict[str, Any]:
-        """Analyze content type preferences (movie, tv, anime)"""
         content_ids = [i.content_id for i in interactions]
         contents = self.Content.query.filter(self.Content.id.in_(content_ids)).all()
         
@@ -331,7 +293,6 @@ class UserProfileAnalyzer:
             weight = interaction_weights.get(interaction.interaction_type, 1.0)
             type_scores[content.content_type] += weight
         
-        # Normalize
         if type_scores:
             total_score = sum(type_scores.values())
             normalized_scores = {ctype: score/total_score for ctype, score in type_scores.items()}
@@ -348,7 +309,6 @@ class UserProfileAnalyzer:
         }
     
     def _analyze_mood_preferences(self, interactions: List[Any]) -> Dict[str, Any]:
-        """Analyze mood and tone preferences from content"""
         content_ids = [i.content_id for i in interactions]
         contents = self.Content.query.filter(self.Content.id.in_(content_ids)).all()
         
@@ -386,19 +346,15 @@ class UserProfileAnalyzer:
         }
     
     def _analyze_temporal_preferences(self, interactions: List[Any]) -> Dict[str, Any]:
-        """Analyze temporal viewing preferences"""
         if not interactions:
             return {}
         
-        # Hour analysis
         hours = [i.timestamp.hour for i in interactions]
         hour_dist = Counter(hours)
         
-        # Day of week analysis
         weekdays = [i.timestamp.weekday() for i in interactions]
         weekday_dist = Counter(weekdays)
         
-        # Session analysis
         sessions = self._identify_viewing_sessions(interactions)
         
         return {
@@ -413,45 +369,37 @@ class UserProfileAnalyzer:
         }
     
     def _calculate_quality_threshold(self, interactions: List[Any]) -> float:
-        """Calculate user's quality threshold based on rating patterns"""
         rated_interactions = [i for i in interactions if i.rating is not None]
         
         if not rated_interactions:
-            return 7.0  # Default threshold
+            return 7.0
         
         ratings = [i.rating for i in rated_interactions]
-        
-        # Calculate threshold as 25th percentile of ratings
         threshold = np.percentile(ratings, 25)
         
-        # Adjust based on user's rating tendency
         avg_rating = np.mean(ratings)
-        if avg_rating < 6:  # Harsh rater
+        if avg_rating < 6:
             threshold = max(threshold - 0.5, 1.0)
-        elif avg_rating > 8:  # Generous rater
+        elif avg_rating > 8:
             threshold = min(threshold + 0.5, 10.0)
         
         return float(threshold)
     
     def _calculate_engagement_score(self, interactions: List[Any]) -> float:
-        """Calculate user engagement score"""
         if not interactions:
             return 0.0
         
-        # Factors contributing to engagement
         total_interactions = len(interactions)
         unique_content = len(set(i.content_id for i in interactions))
         rating_count = len([i for i in interactions if i.rating is not None])
         recent_activity = len([i for i in interactions 
                               if i.timestamp > datetime.utcnow() - timedelta(days=7)])
         
-        # Calculate normalized scores
-        interaction_score = min(total_interactions / 100, 1.0)  # Cap at 100 interactions
+        interaction_score = min(total_interactions / 100, 1.0)
         diversity_score = unique_content / max(total_interactions, 1)
         rating_score = rating_count / max(total_interactions, 1)
-        recency_score = recent_activity / 10  # Recent activity weight
+        recency_score = recent_activity / 10
         
-        # Weighted engagement score
         engagement = (
             interaction_score * 0.3 +
             diversity_score * 0.2 +
@@ -462,14 +410,12 @@ class UserProfileAnalyzer:
         return min(engagement, 1.0)
     
     def _calculate_exploration_tendency(self, interactions: List[Any]) -> float:
-        """Calculate how much user explores vs sticks to preferences"""
         if len(interactions) < 10:
-            return 0.5  # Neutral for new users
+            return 0.5
         
         content_ids = [i.content_id for i in interactions]
         contents = self.Content.query.filter(self.Content.id.in_(content_ids)).all()
         
-        # Analyze genre diversity
         all_genres = []
         for content in contents:
             if content.genres:
@@ -483,41 +429,33 @@ class UserProfileAnalyzer:
         
         exploration_score = unique_genres / max(total_genre_interactions, 1)
         
-        return min(exploration_score * 2, 1.0)  # Scale to 0-1
+        return min(exploration_score * 2, 1.0)
     
     def _calculate_loyalty_score(self, interactions: List[Any]) -> float:
-        """Calculate user loyalty and retention score"""
         if not interactions:
             return 0.0
         
-        # Time span analysis
         timestamps = [i.timestamp for i in interactions]
         first_interaction = min(timestamps)
         last_interaction = max(timestamps)
         total_span = (last_interaction - first_interaction).days
         
         if total_span == 0:
-            return 0.5  # Single day user
+            return 0.5
         
-        # Activity consistency
         active_days = len(set(t.date() for t in timestamps))
         consistency = active_days / max(total_span, 1)
         
-        # Return rate (gaps in activity)
         daily_activity = [0] * (total_span + 1)
         for ts in timestamps:
             day_index = (ts - first_interaction).days
             daily_activity[day_index] = 1
         
-        # Calculate loyalty as combination of consistency and return behavior
         loyalty = min(consistency * 2, 1.0)
         
         return loyalty
     
     def _get_recommendation_history(self, user_id: int) -> Dict[str, Any]:
-        """Get user's recommendation history and feedback"""
-        # This would track recommendation performance
-        # For now, return placeholder structure
         return {
             'total_recommendations_served': 0,
             'recommendations_clicked': 0,
@@ -528,8 +466,6 @@ class UserProfileAnalyzer:
         }
     
     def _analyze_feedback_patterns(self, user_id: int) -> Dict[str, Any]:
-        """Analyze user feedback patterns on recommendations"""
-        # This would analyze user feedback on recommendations
         return {
             'feedback_frequency': 0.0,
             'positive_feedback_rate': 0.0,
@@ -538,7 +474,6 @@ class UserProfileAnalyzer:
         }
     
     def _get_recent_activity(self, interactions: List[Any]) -> Dict[str, Any]:
-        """Get recent user activity for real-time context"""
         recent_cutoff = datetime.utcnow() - timedelta(days=7)
         recent_interactions = [i for i in interactions if i.timestamp > recent_cutoff]
         
@@ -557,21 +492,17 @@ class UserProfileAnalyzer:
         }
     
     def _infer_current_interests(self, interactions: List[Any]) -> Dict[str, Any]:
-        """Infer current user interests based on recent behavior"""
         recent_cutoff = datetime.utcnow() - timedelta(days=14)
         recent_interactions = [i for i in interactions if i.timestamp > recent_cutoff]
         
         if not recent_interactions:
             return {}
         
-        # Analyze recent interaction patterns
         interaction_types = Counter([i.interaction_type for i in recent_interactions])
         
-        # Get recent content
         content_ids = [i.content_id for i in recent_interactions]
         contents = self.Content.query.filter(self.Content.id.in_(content_ids)).all()
         
-        # Extract current interests
         current_genres = []
         current_languages = []
         for content in contents:
@@ -590,44 +521,36 @@ class UserProfileAnalyzer:
             'current_genre_interest': [g for g, _ in Counter(current_genres).most_common(3)],
             'current_language_interest': [l for l, _ in Counter(current_languages).most_common(2)],
             'current_activity_pattern': dict(interaction_types),
-            'interest_intensity': len(recent_interactions) / 14,  # Interactions per day
+            'interest_intensity': len(recent_interactions) / 14,
             'interest_focus': 'broad' if len(set(current_genres)) > 5 else 'focused'
         }
     
     def _calculate_profile_completeness(self, profile: Dict[str, Any]) -> float:
-        """Calculate how complete the user profile is"""
         completeness_factors = []
         
-        # Explicit preferences
         if profile['explicit_preferences']['profile_set']:
             completeness_factors.append(0.2)
         
-        # Interaction history
         if profile['implicit_preferences']['total_interactions'] > 10:
             completeness_factors.append(0.3)
         
-        # Rating history
         if profile.get('rating_patterns', {}).get('total_ratings', 0) > 5:
             completeness_factors.append(0.2)
         
-        # Genre preferences
         if len(profile.get('genre_preferences', {}).get('genre_scores', {})) > 3:
             completeness_factors.append(0.15)
         
-        # Language preferences
         if profile.get('language_preferences', {}).get('primary_language'):
             completeness_factors.append(0.15)
         
         return sum(completeness_factors)
     
     def _calculate_confidence_score(self, profile: Dict[str, Any], interactions: List[Any]) -> float:
-        """Calculate confidence in profile accuracy"""
         if not interactions:
             return 0.0
         
         confidence_factors = []
         
-        # Data volume
         interaction_count = len(interactions)
         if interaction_count > 50:
             confidence_factors.append(0.4)
@@ -638,46 +561,38 @@ class UserProfileAnalyzer:
         else:
             confidence_factors.append(0.1)
         
-        # Data recency
         recent_interactions = [i for i in interactions 
                               if i.timestamp > datetime.utcnow() - timedelta(days=30)]
         if len(recent_interactions) > 5:
             confidence_factors.append(0.3)
         
-        # Rating consistency
         rating_patterns = profile.get('rating_patterns', {})
         if rating_patterns.get('rating_consistency', 0) > 0.7:
             confidence_factors.append(0.2)
         
-        # Profile completeness
         if profile['profile_completeness'] > 0.7:
             confidence_factors.append(0.1)
         
         return sum(confidence_factors)
     
     def _calculate_binge_tendency(self, view_interactions: List[Any]) -> float:
-        """Calculate user's tendency to binge watch"""
         if len(view_interactions) < 5:
             return 0.0
         
-        # Group interactions by date
         daily_views = defaultdict(int)
         for interaction in view_interactions:
             date_key = interaction.timestamp.date()
             daily_views[date_key] += 1
         
-        # Calculate binge sessions (3+ views in a day)
         binge_days = sum(1 for count in daily_views.values() if count >= 3)
         total_active_days = len(daily_views)
         
         return binge_days / total_active_days if total_active_days > 0 else 0.0
     
     def _calculate_viewing_consistency(self, view_interactions: List[Any]) -> float:
-        """Calculate viewing consistency"""
         if len(view_interactions) < 7:
             return 0.0
         
-        # Calculate standard deviation of daily viewing counts
         daily_views = defaultdict(int)
         for interaction in view_interactions:
             date_key = interaction.timestamp.date()
@@ -691,11 +606,9 @@ class UserProfileAnalyzer:
         return max(consistency, 0.0)
     
     def _identify_viewing_sessions(self, interactions: List[Any]) -> List[Dict[str, Any]]:
-        """Identify viewing sessions from interactions"""
         if not interactions:
             return []
         
-        # Sort interactions by timestamp
         sorted_interactions = sorted(interactions, key=lambda x: x.timestamp)
         
         sessions = []
@@ -705,10 +618,8 @@ class UserProfileAnalyzer:
             if i == 0:
                 current_session = [interaction]
             else:
-                # If gap is more than 2 hours, start new session
                 time_gap = (interaction.timestamp - sorted_interactions[i-1].timestamp).total_seconds() / 3600
                 if time_gap > 2:
-                    # End current session
                     if current_session:
                         sessions.append({
                             'start_time': current_session[0].timestamp,
@@ -720,7 +631,6 @@ class UserProfileAnalyzer:
                 else:
                     current_session.append(interaction)
         
-        # Don't forget the last session
         if current_session:
             sessions.append({
                 'start_time': current_session[0].timestamp,
@@ -732,7 +642,6 @@ class UserProfileAnalyzer:
         return sessions
     
     def _extract_recent_genres(self, contents: List[Any]) -> List[str]:
-        """Extract genres from recent content"""
         genres = []
         for content in contents:
             if content.genres:
@@ -743,7 +652,6 @@ class UserProfileAnalyzer:
         return [g for g, _ in Counter(genres).most_common(5)]
     
     def _extract_recent_languages(self, contents: List[Any]) -> List[str]:
-        """Extract languages from recent content"""
         languages = []
         for content in contents:
             if content.languages:
@@ -754,11 +662,9 @@ class UserProfileAnalyzer:
         return [l for l, _ in Counter(languages).most_common(3)]
     
     def _identify_trending_interest(self, interactions: List[Any], contents: List[Any]) -> str:
-        """Identify trending interest from recent activity"""
         if not interactions:
             return "none"
         
-        # Analyze interaction intensity
         interaction_types = Counter([i.interaction_type for i in interactions])
         
         if interaction_types.get('search', 0) > 3:
@@ -774,21 +680,17 @@ class UserProfileAnalyzer:
 
 
 class NetflixLevelRecommendationEngine:
-    """Netflix-level recommendation engine with multiple algorithms"""
-    
     def __init__(self, db, models, cache=None):
         self.db = db
         self.models = models
         self.cache = cache
         
-        # Initialize core components
         self.user_profiler = UserProfileAnalyzer(db, models)
         self.content_based = ContentBasedFiltering()
         self.collaborative = CollaborativeFiltering()
         self.hybrid = HybridRecommendationEngine()
         self.similarity_engine = UltraPowerfulSimilarityEngine()
         
-        # Recommendation engines
         self.engines = {
             'collaborative_filtering': self._collaborative_filtering_recommendations,
             'content_based': self._content_based_recommendations,
@@ -799,35 +701,62 @@ class NetflixLevelRecommendationEngine:
             'mood_based': self._mood_based_recommendations,
             'similarity_based': self._similarity_based_recommendations
         }
-    
+
+    @contextmanager
+    def safe_db_operation(self):
+        try:
+            yield
+        except (OperationalError, DisconnectionError, psycopg2.OperationalError, psycopg2.InterfaceError) as e:
+            logger.error(f"Database connection error: {e}")
+            try:
+                self.db.session.rollback()
+            except:
+                pass
+            try:
+                self.db.session.close()
+            except:
+                pass
+            raise
+        except Exception as e:
+            logger.error(f"Database operation error: {e}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            try:
+                self.db.session.rollback()
+            except:
+                pass
+            raise
+
     def get_personalized_recommendations(self, user_id: int, limit: int = 50, 
                                         categories: List[str] = None) -> Dict[str, Any]:
-        """Main entry point for Netflix-level personalized recommendations"""
         try:
-            # Build comprehensive user profile
-            user_profile = self.user_profiler.build_comprehensive_user_profile(user_id)
-            
-            if not user_profile or user_profile.get('confidence_score', 0) < 0.1:
+            try:
+                with self.safe_db_operation():
+                    user_profile = self.user_profiler.build_comprehensive_user_profile(user_id)
+            except Exception as e:
+                logger.error(f"Error building user profile for user {user_id}: {e}")
                 return self._get_cold_start_recommendations(user_id, limit)
             
-            # Get recommendations from multiple engines
+            if not user_profile or user_profile.get('confidence_score', 0) < 0.1:
+                logger.info(f"Low confidence profile for user {user_id}, using cold start")
+                return self._get_cold_start_recommendations(user_id, limit)
+            
             all_recommendations = {}
             
-            # Define categories to generate
             if not categories:
                 categories = [
-                    'for_you',           # Main personalized feed
-                    'because_you_watched',  # Similar to watched content
-                    'trending_for_you',   # Trending + personalization
-                    'new_releases_for_you',  # New releases + personalization
-                    'your_language',      # Language-based recommendations
-                    'your_genres',        # Genre-based recommendations
-                    'hidden_gems',        # Lesser-known quality content
-                    'continue_watching',  # Content to continue/similar series
-                    'quick_picks',        # Short content for current mood
-                    'critically_acclaimed' # High-quality recommendations
+                    'for_you',
+                    'because_you_watched',
+                    'trending_for_you',
+                    'new_releases_for_you',
+                    'your_language',
+                    'your_genres',
+                    'hidden_gems',
+                    'continue_watching',
+                    'quick_picks',
+                    'critically_acclaimed'
                 ]
             
+            successful_categories = 0
             for category in categories:
                 try:
                     recommendations = self._generate_category_recommendations(
@@ -835,11 +764,18 @@ class NetflixLevelRecommendationEngine:
                     )
                     if recommendations:
                         all_recommendations[category] = recommendations
+                        successful_categories += 1
+                        logger.info(f"Successfully generated {len(recommendations)} recommendations for {category}")
+                    else:
+                        logger.warning(f"No recommendations generated for category: {category}")
                 except Exception as e:
                     logger.error(f"Error generating {category} recommendations: {e}")
                     continue
             
-            # Add personalization metadata
+            if successful_categories == 0:
+                logger.warning(f"No successful recommendation categories for user {user_id}")
+                return self._get_fallback_recommendations(user_id, limit)
+            
             response = {
                 'user_id': user_id,
                 'recommendations': all_recommendations,
@@ -849,26 +785,29 @@ class NetflixLevelRecommendationEngine:
                     'confidence_score': user_profile.get('confidence_score', 0),
                     'algorithms_used': list(self.engines.keys()),
                     'total_categories': len(all_recommendations),
+                    'successful_categories': successful_categories,
                     'generated_at': datetime.utcnow().isoformat(),
-                    'cache_duration': 3600,  # 1 hour cache
+                    'cache_duration': 3600,
                     'next_update': (datetime.utcnow() + timedelta(hours=1)).isoformat()
                 }
             }
             
-            # Cache the results
             if self.cache:
-                cache_key = f"personalized_recs:{user_id}:{hash(str(categories))}"
-                self.cache.set(cache_key, response, timeout=3600)
+                try:
+                    cache_key = f"personalized_recs:{user_id}:{hash(str(categories))}"
+                    self.cache.set(cache_key, response, timeout=3600)
+                except Exception as e:
+                    logger.warning(f"Failed to cache recommendations: {e}")
             
             return response
             
         except Exception as e:
-            logger.error(f"Error generating personalized recommendations for user {user_id}: {e}")
+            logger.error(f"Critical error generating personalized recommendations for user {user_id}: {e}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return self._get_fallback_recommendations(user_id, limit)
     
     def _generate_category_recommendations(self, user_profile: Dict[str, Any], 
                                          category: str, limit: int) -> List[Dict[str, Any]]:
-        """Generate recommendations for a specific category"""
         
         category_generators = {
             'for_you': self._generate_for_you_recommendations,
@@ -887,131 +826,139 @@ class NetflixLevelRecommendationEngine:
         if not generator:
             return []
         
-        return generator(user_profile, limit)
+        try:
+            with self.safe_db_operation():
+                return generator(user_profile, limit)
+        except Exception as e:
+            logger.error(f"Error generating {category} recommendations: {e}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return []
     
     def _generate_for_you_recommendations(self, user_profile: Dict[str, Any], 
                                         limit: int) -> List[Dict[str, Any]]:
-        """Generate main 'For You' recommendations using hybrid approach"""
         user_id = user_profile['user_id']
         
-        # Get content pool (exclude already interacted)
         interacted_content_ids = self._get_user_interacted_content(user_id)
         content_pool = self._get_filtered_content_pool(
             exclude_ids=interacted_content_ids,
             user_profile=user_profile
         )
         
-        # Use multiple engines and combine results
         recommendations = []
         
-        # 1. Hybrid collaborative + content-based (40% weight)
         hybrid_recs = self._hybrid_matrix_factorization(user_profile, content_pool, limit)
         for rec in hybrid_recs[:int(limit * 0.4)]:
             rec['source'] = 'hybrid_collaborative'
             rec['weight'] = 0.4
             recommendations.append(rec)
         
-        # 2. Advanced similarity-based (30% weight)
         similarity_recs = self._similarity_based_recommendations(user_profile, content_pool, limit)
         for rec in similarity_recs[:int(limit * 0.3)]:
             rec['source'] = 'similarity_based'
             rec['weight'] = 0.3
             recommendations.append(rec)
         
-        # 3. Language and cultural preferences (20% weight)
         language_recs = self._language_priority_recommendations(user_profile, content_pool, limit)
         for rec in language_recs[:int(limit * 0.2)]:
             rec['source'] = 'language_priority'
             rec['weight'] = 0.2
             recommendations.append(rec)
         
-        # 4. Serendipity and exploration (10% weight)
         serendipity_recs = self._generate_serendipity_recommendations(user_profile, content_pool, limit)
         for rec in serendipity_recs[:int(limit * 0.1)]:
             rec['source'] = 'serendipity'
             rec['weight'] = 0.1
             recommendations.append(rec)
         
-        # Remove duplicates and re-rank
         unique_recommendations = self._remove_duplicates_and_rerank(recommendations)
         
         return unique_recommendations[:limit]
     
     def _generate_because_you_watched(self, user_profile: Dict[str, Any], 
                                      limit: int) -> List[Dict[str, Any]]:
-        """Generate 'Because you watched X' recommendations"""
         user_id = user_profile['user_id']
         
-        # Get recently watched/favorited content
-        recent_interactions = self.models['UserInteraction'].query.filter(
-            and_(
-                self.models['UserInteraction'].user_id == user_id,
-                self.models['UserInteraction'].interaction_type.in_(['view', 'favorite', 'watchlist']),
-                self.models['UserInteraction'].timestamp > datetime.utcnow() - timedelta(days=30)
-            )
-        ).order_by(desc(self.models['UserInteraction'].timestamp)).limit(10).all()
-        
-        if not recent_interactions:
+        try:
+            recent_interactions = self.models['UserInteraction'].query.filter(
+                and_(
+                    self.models['UserInteraction'].user_id == user_id,
+                    self.models['UserInteraction'].interaction_type.in_(['view', 'favorite', 'watchlist']),
+                    self.models['UserInteraction'].timestamp > datetime.utcnow() - timedelta(days=30)
+                )
+            ).order_by(desc(self.models['UserInteraction'].timestamp)).limit(10).all()
+            
+            if not recent_interactions:
+                logger.info(f"No recent interactions found for user {user_id}")
+                return []
+            
+            recommendations = []
+            
+            try:
+                content_pool = self._get_base_content_pool()
+            except Exception as e:
+                logger.error(f"Error getting content pool: {e}")
+                return []
+            
+            for interaction in recent_interactions[:3]:
+                try:
+                    base_content = self.models['Content'].query.get(interaction.content_id)
+                    if not base_content:
+                        logger.warning(f"Content not found for ID: {interaction.content_id}")
+                        continue
+                    
+                    similar_content = self.similarity_engine.find_ultra_similar_content(
+                        base_content,
+                        content_pool,
+                        limit=10,
+                        min_similarity=0.6,
+                        strict_mode=True
+                    )
+                    
+                    for similar in similar_content:
+                        content = similar['content']
+                        recommendations.append({
+                            'id': content.id,
+                            'title': content.title,
+                            'content_type': content.content_type,
+                            'genres': json.loads(content.genres or '[]'),
+                            'languages': json.loads(content.languages or '[]'),
+                            'rating': content.rating,
+                            'poster_path': self._format_poster_path(content.poster_path),
+                            'overview': content.overview[:150] + '...' if content.overview else '',
+                            'similarity_score': similar['similarity_score'],
+                            'match_explanation': similar.get('match_explanation', {}),
+                            'because_of': {
+                                'title': base_content.title,
+                                'content_id': base_content.id,
+                                'interaction_type': interaction.interaction_type
+                            },
+                            'source': 'similarity_engine',
+                            'confidence': similar.get('confidence', 'medium')
+                        })
+                
+                except Exception as e:
+                    logger.error(f"Error processing interaction {interaction.id}: {e}")
+                    continue
+            
+            unique_recs = self._remove_duplicates_and_rerank(recommendations)
+            return unique_recs[:limit]
+            
+        except Exception as e:
+            logger.error(f"Error in _generate_because_you_watched: {e}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return []
-        
-        recommendations = []
-        content_pool = self._get_base_content_pool()
-        
-        # For each recent interaction, find similar content
-        for interaction in recent_interactions[:3]:  # Top 3 recent items
-            base_content = self.models['Content'].query.get(interaction.content_id)
-            if not base_content:
-                continue
-            
-            # Use ultra-powerful similarity engine
-            similar_content = self.similarity_engine.find_ultra_similar_content(
-                base_content,
-                content_pool,
-                limit=10,
-                min_similarity=0.6,
-                strict_mode=True
-            )
-            
-            for similar in similar_content:
-                content = similar['content']
-                recommendations.append({
-                    'id': content.id,
-                    'title': content.title,
-                    'content_type': content.content_type,
-                    'genres': json.loads(content.genres or '[]'),
-                    'languages': json.loads(content.languages or '[]'),
-                    'rating': content.rating,
-                    'poster_path': self._format_poster_path(content.poster_path),
-                    'overview': content.overview[:150] + '...' if content.overview else '',
-                    'similarity_score': similar['similarity_score'],
-                    'match_explanation': similar.get('match_explanation', {}),
-                    'because_of': {
-                        'title': base_content.title,
-                        'content_id': base_content.id,
-                        'interaction_type': interaction.interaction_type
-                    },
-                    'source': 'similarity_engine',
-                    'confidence': similar.get('confidence', 'medium')
-                })
-        
-        # Remove duplicates and sort by similarity
-        unique_recs = self._remove_duplicates_and_rerank(recommendations)
-        return unique_recs[:limit]
     
     def _generate_trending_for_you(self, user_profile: Dict[str, Any], 
                                   limit: int) -> List[Dict[str, Any]]:
-        """Generate personalized trending recommendations"""
-        # Get trending content
         trending_content = self.models['Content'].query.filter(
             self.models['Content'].is_trending == True
         ).order_by(desc(self.models['Content'].popularity)).limit(100).all()
         
-        # Apply personalization filters
         personalized_trending = []
         
         for content in trending_content:
             score = self._calculate_personalization_score(content, user_profile)
-            if score > 0.3:  # Threshold for relevance
+            if score > 0.3:
                 personalized_trending.append({
                     'id': content.id,
                     'title': content.title,
@@ -1027,20 +974,16 @@ class NetflixLevelRecommendationEngine:
                     'is_trending': True
                 })
         
-        # Sort by personalization score
         personalized_trending.sort(key=lambda x: x['personalization_score'], reverse=True)
         return personalized_trending[:limit]
     
     def _generate_new_releases_for_you(self, user_profile: Dict[str, Any], 
                                       limit: int) -> List[Dict[str, Any]]:
-        """Generate personalized new releases"""
-        # Get new releases (last 60 days)
         cutoff_date = datetime.utcnow().date() - timedelta(days=60)
         new_releases = self.models['Content'].query.filter(
             self.models['Content'].release_date >= cutoff_date
         ).order_by(desc(self.models['Content'].release_date)).limit(100).all()
         
-        # Apply personalization
         personalized_releases = []
         
         for content in new_releases:
@@ -1069,17 +1012,15 @@ class NetflixLevelRecommendationEngine:
     
     def _generate_your_language_recommendations(self, user_profile: Dict[str, Any], 
                                               limit: int) -> List[Dict[str, Any]]:
-        """Generate language-specific recommendations"""
         language_prefs = user_profile.get('language_preferences', {})
         preferred_languages = language_prefs.get('preferred_languages', [])
         
         if not preferred_languages:
-            # Fall back to Telugu and English
             preferred_languages = ['Telugu', 'English']
         
         recommendations = []
         
-        for language in preferred_languages[:2]:  # Top 2 languages
+        for language in preferred_languages[:2]:
             lang_content = self.models['Content'].query.filter(
                 self.models['Content'].languages.contains(f'"{language}"')
             ).order_by(desc(self.models['Content'].rating)).limit(25).all()
@@ -1107,7 +1048,6 @@ class NetflixLevelRecommendationEngine:
     
     def _generate_your_genre_recommendations(self, user_profile: Dict[str, Any], 
                                            limit: int) -> List[Dict[str, Any]]:
-        """Generate genre-specific recommendations"""
         genre_prefs = user_profile.get('genre_preferences', {})
         top_genres = genre_prefs.get('top_genres', [])
         
@@ -1116,14 +1056,14 @@ class NetflixLevelRecommendationEngine:
         
         recommendations = []
         
-        for genre in top_genres[:3]:  # Top 3 genres
+        for genre in top_genres[:3]:
             genre_content = self.models['Content'].query.filter(
                 self.models['Content'].genres.contains(f'"{genre}"')
             ).order_by(desc(self.models['Content'].rating)).limit(20).all()
             
             for content in genre_content:
                 score = self._calculate_personalization_score(content, user_profile)
-                genre_bonus = 0.2  # Genre match bonus
+                genre_bonus = 0.2
                 
                 recommendations.append({
                     'id': content.id,
@@ -1144,13 +1084,11 @@ class NetflixLevelRecommendationEngine:
     
     def _generate_hidden_gems(self, user_profile: Dict[str, Any], 
                              limit: int) -> List[Dict[str, Any]]:
-        """Generate hidden gem recommendations (high quality, low popularity)"""
-        # Find high-rated content with lower popularity
         hidden_gems = self.models['Content'].query.filter(
             and_(
                 self.models['Content'].rating >= 7.5,
                 self.models['Content'].vote_count >= 100,
-                self.models['Content'].popularity < 50  # Lower popularity threshold
+                self.models['Content'].popularity < 50
             )
         ).order_by(desc(self.models['Content'].rating)).limit(50).all()
         
@@ -1158,9 +1096,9 @@ class NetflixLevelRecommendationEngine:
         
         for content in hidden_gems:
             score = self._calculate_personalization_score(content, user_profile)
-            hidden_gem_bonus = 0.15  # Bonus for discovering hidden gems
+            hidden_gem_bonus = 0.15
             
-            if score > 0.2:  # Lower threshold for hidden gems
+            if score > 0.2:
                 recommendations.append({
                     'id': content.id,
                     'title': content.title,
@@ -1181,10 +1119,8 @@ class NetflixLevelRecommendationEngine:
     
     def _generate_continue_watching(self, user_profile: Dict[str, Any], 
                                    limit: int) -> List[Dict[str, Any]]:
-        """Generate continue watching recommendations"""
         user_id = user_profile['user_id']
         
-        # Get TV shows/anime user has watched
         tv_interactions = self.models['UserInteraction'].query.join(
             self.models['Content']
         ).filter(
@@ -1195,16 +1131,14 @@ class NetflixLevelRecommendationEngine:
             )
         ).all()
         
-        # Find similar series or next seasons
         recommendations = []
         content_pool = self._get_base_content_pool()
         
-        for interaction in tv_interactions[-10:]:  # Last 10 TV interactions
+        for interaction in tv_interactions[-10:]:
             base_content = self.models['Content'].query.get(interaction.content_id)
             if not base_content:
                 continue
             
-            # Find similar TV shows/anime
             similar_series = self.similarity_engine.find_ultra_similar_content(
                 base_content,
                 [c for c in content_pool if c.content_type == base_content.content_type],
@@ -1233,8 +1167,6 @@ class NetflixLevelRecommendationEngine:
     
     def _generate_quick_picks(self, user_profile: Dict[str, Any], 
                              limit: int) -> List[Dict[str, Any]]:
-        """Generate quick picks (shorter content for current mood)"""
-        # Get shorter content (movies < 90 min, episodes)
         quick_content = self.models['Content'].query.filter(
             or_(
                 and_(
@@ -1249,7 +1181,7 @@ class NetflixLevelRecommendationEngine:
         
         for content in quick_content:
             score = self._calculate_personalization_score(content, user_profile)
-            quick_bonus = 0.1  # Bonus for quick content
+            quick_bonus = 0.1
             
             if score > 0.3:
                 recommendations.append({
@@ -1272,8 +1204,6 @@ class NetflixLevelRecommendationEngine:
     
     def _generate_critically_acclaimed(self, user_profile: Dict[str, Any], 
                                       limit: int) -> List[Dict[str, Any]]:
-        """Generate critically acclaimed recommendations"""
-        # Get highly rated content
         acclaimed_content = self.models['Content'].query.filter(
             and_(
                 self.models['Content'].rating >= 8.0,
@@ -1285,9 +1215,9 @@ class NetflixLevelRecommendationEngine:
         
         for content in acclaimed_content:
             score = self._calculate_personalization_score(content, user_profile)
-            acclaim_bonus = (content.rating - 8.0) * 0.05  # Bonus based on rating
+            acclaim_bonus = (content.rating - 8.0) * 0.05
             
-            if score > 0.2:  # Lower threshold for acclaimed content
+            if score > 0.2:
                 recommendations.append({
                     'id': content.id,
                     'title': content.title,
@@ -1307,10 +1237,8 @@ class NetflixLevelRecommendationEngine:
         return recommendations[:limit]
     
     def _calculate_personalization_score(self, content: Any, user_profile: Dict[str, Any]) -> float:
-        """Calculate how well content matches user profile"""
         score = 0.0
         
-        # Genre matching
         genre_prefs = user_profile.get('genre_preferences', {})
         if genre_prefs.get('genre_scores') and content.genres:
             try:
@@ -1320,7 +1248,6 @@ class NetflixLevelRecommendationEngine:
             except:
                 pass
         
-        # Language matching
         lang_prefs = user_profile.get('language_preferences', {})
         if lang_prefs.get('preferred_languages') and content.languages:
             try:
@@ -1331,29 +1258,24 @@ class NetflixLevelRecommendationEngine:
             except:
                 pass
         
-        # Content type matching
         content_type_prefs = user_profile.get('content_type_preferences', {})
         if content_type_prefs.get('content_type_scores'):
             type_score = content_type_prefs['content_type_scores'].get(content.content_type, 0)
             score += type_score * 0.2
         
-        # Quality threshold
         quality_threshold = user_profile.get('quality_threshold', 7.0)
         if content.rating and content.rating >= quality_threshold:
             score += 0.15
         
-        # Rating pattern matching
         rating_patterns = user_profile.get('rating_patterns', {})
         if rating_patterns.get('average_rating') and content.rating:
             rating_diff = abs(rating_patterns['average_rating'] - content.rating)
-            if rating_diff < 1.5:  # Similar rating preference
+            if rating_diff < 1.5:
                 score += 0.1
         
         return min(score, 1.0)
     
     def _get_cold_start_recommendations(self, user_id: int, limit: int) -> Dict[str, Any]:
-        """Get recommendations for new users (cold start problem)"""
-        # Get popular content across categories
         popular_movies = self.models['Content'].query.filter(
             self.models['Content'].content_type == 'movie'
         ).order_by(desc(self.models['Content'].popularity)).limit(15).all()
@@ -1366,7 +1288,6 @@ class NetflixLevelRecommendationEngine:
             self.models['Content'].content_type == 'anime'
         ).order_by(desc(self.models['Content'].popularity)).limit(10).all()
         
-        # Telugu priority content
         telugu_content = self.models['Content'].query.filter(
             self.models['Content'].languages.contains('"Telugu"')
         ).order_by(desc(self.models['Content'].rating)).limit(10).all()
@@ -1394,9 +1315,7 @@ class NetflixLevelRecommendationEngine:
         }
     
     def _get_fallback_recommendations(self, user_id: int, limit: int) -> Dict[str, Any]:
-        """Get fallback recommendations when main algorithm fails"""
         try:
-            # Get trending content
             trending = self.models['Content'].query.filter(
                 self.models['Content'].is_trending == True
             ).order_by(desc(self.models['Content'].popularity)).limit(limit).all()
@@ -1423,7 +1342,6 @@ class NetflixLevelRecommendationEngine:
             }
     
     def _format_content_list(self, content_list: List[Any]) -> List[Dict[str, Any]]:
-        """Format content list for API response"""
         formatted = []
         for content in content_list:
             formatted.append({
@@ -1439,7 +1357,6 @@ class NetflixLevelRecommendationEngine:
         return formatted
     
     def _format_poster_path(self, poster_path: str) -> str:
-        """Format poster path for display"""
         if not poster_path:
             return None
         
@@ -1449,7 +1366,6 @@ class NetflixLevelRecommendationEngine:
             return f"https://image.tmdb.org/t/p/w300{poster_path}"
     
     def _generate_profile_insights(self, user_profile: Dict[str, Any]) -> Dict[str, Any]:
-        """Generate insights about user profile for frontend display"""
         insights = {
             'profile_strength': 'strong' if user_profile.get('confidence_score', 0) > 0.7 else 'building',
             'primary_interests': [],
@@ -1457,12 +1373,10 @@ class NetflixLevelRecommendationEngine:
             'recommendation_tip': ''
         }
         
-        # Extract primary interests
         genre_prefs = user_profile.get('genre_preferences', {})
         if genre_prefs.get('top_genres'):
             insights['primary_interests'] = genre_prefs['top_genres'][:3]
         
-        # Determine viewing style
         engagement = user_profile.get('engagement_score', 0)
         if engagement > 0.8:
             insights['viewing_style'] = 'enthusiast'
@@ -1471,7 +1385,6 @@ class NetflixLevelRecommendationEngine:
         else:
             insights['viewing_style'] = 'casual'
         
-        # Generate tip
         completeness = user_profile.get('profile_completeness', 0)
         if completeness < 0.5:
             insights['recommendation_tip'] = 'Rate more content to improve recommendations'
@@ -1483,9 +1396,7 @@ class NetflixLevelRecommendationEngine:
         return insights
     
     def update_user_preferences_realtime(self, user_id: int, interaction_data: Dict[str, Any]):
-        """Update user preferences in real-time based on new interactions"""
         try:
-            # Clear cache for this user
             if self.cache:
                 cache_keys = [
                     f"personalized_recs:{user_id}:*",
@@ -1497,85 +1408,73 @@ class NetflixLevelRecommendationEngine:
                     except:
                         pass
             
-            # Record interaction
-            interaction = self.models['UserInteraction'](
-                user_id=user_id,
-                content_id=interaction_data.get('content_id'),
-                interaction_type=interaction_data.get('interaction_type'),
-                rating=interaction_data.get('rating'),
-                interaction_metadata=json.dumps(interaction_data.get('metadata', {}))
-            )
-            
-            self.db.session.add(interaction)
-            self.db.session.commit()
-            
-            logger.info(f"Updated preferences for user {user_id} with interaction {interaction_data.get('interaction_type')}")
-            
-            return True
-            
+            try:
+                with self.safe_db_operation():
+                    interaction = self.models['UserInteraction'](
+                        user_id=user_id,
+                        content_id=interaction_data.get('content_id'),
+                        interaction_type=interaction_data.get('interaction_type'),
+                        rating=interaction_data.get('rating'),
+                        interaction_metadata=json.dumps(interaction_data.get('metadata', {}))
+                    )
+                    
+                    self.db.session.add(interaction)
+                    self.db.session.commit()
+                    
+                    logger.info(f"Updated preferences for user {user_id} with interaction {interaction_data.get('interaction_type')}")
+                    return True
+                    
+            except Exception as e:
+                logger.error(f"Error recording interaction: {e}")
+                self.db.session.rollback()
+                return False
+                
         except Exception as e:
             logger.error(f"Error updating user preferences: {e}")
-            self.db.session.rollback()
             return False
     
-    # Implement the required algorithm methods
     def _collaborative_filtering_recommendations(self, user_profile: Dict[str, Any], 
                                                content_pool: List[Any], limit: int) -> List[Dict[str, Any]]:
-        """Collaborative filtering recommendations"""
-        # Implementation would use user-item matrix and collaborative filtering
-        # For now, return formatted empty list
         return []
     
     def _content_based_recommendations(self, user_profile: Dict[str, Any], 
                                      content_pool: List[Any], limit: int) -> List[Dict[str, Any]]:
-        """Content-based filtering recommendations"""
-        # Implementation would use content features and user preferences
         return []
     
     def _hybrid_matrix_factorization(self, user_profile: Dict[str, Any], 
                                    content_pool: List[Any], limit: int) -> List[Dict[str, Any]]:
-        """Hybrid matrix factorization recommendations"""
-        # Implementation would combine collaborative and content-based approaches
         return []
     
     def _sequence_aware_recommendations(self, user_profile: Dict[str, Any], 
                                       content_pool: List[Any], limit: int) -> List[Dict[str, Any]]:
-        """Sequence-aware recommendations based on viewing patterns"""
         return []
     
     def _context_aware_recommendations(self, user_profile: Dict[str, Any], 
                                      content_pool: List[Any], limit: int) -> List[Dict[str, Any]]:
-        """Context-aware recommendations"""
         return []
     
     def _language_priority_recommendations(self, user_profile: Dict[str, Any], 
                                          content_pool: List[Any], limit: int) -> List[Dict[str, Any]]:
-        """Language priority recommendations"""
         return []
     
     def _mood_based_recommendations(self, user_profile: Dict[str, Any], 
                                   content_pool: List[Any], limit: int) -> List[Dict[str, Any]]:
-        """Mood-based recommendations"""
         return []
     
     def _similarity_based_recommendations(self, user_profile: Dict[str, Any], 
                                         content_pool: List[Any], limit: int) -> List[Dict[str, Any]]:
-        """Similarity-based recommendations"""
         return []
     
     def _generate_serendipity_recommendations(self, user_profile: Dict[str, Any], 
                                             content_pool: List[Any], limit: int) -> List[Dict[str, Any]]:
-        """Generate serendipitous recommendations"""
         return []
     
     def _get_user_interacted_content(self, user_id: int) -> List[int]:
-        """Get content IDs user has already interacted with"""
         interactions = self.models['UserInteraction'].query.filter_by(user_id=user_id).all()
         return [i.content_id for i in interactions]
     
     def _get_filtered_content_pool(self, exclude_ids: List[int] = None, 
                                   user_profile: Dict[str, Any] = None) -> List[Any]:
-        """Get filtered content pool for recommendations"""
         query = self.models['Content'].query
         
         if exclude_ids:
@@ -1584,11 +1483,19 @@ class NetflixLevelRecommendationEngine:
         return query.order_by(desc(self.models['Content'].rating)).limit(1000).all()
     
     def _get_base_content_pool(self) -> List[Any]:
-        """Get base content pool"""
-        return self.models['Content'].query.order_by(desc(self.models['Content'].rating)).limit(1000).all()
+        try:
+            return self.models['Content'].query.filter(
+                self.models['Content'].rating.isnot(None)
+            ).order_by(desc(self.models['Content'].rating)).limit(1000).all()
+        except Exception as e:
+            logger.error(f"Error getting base content pool: {e}")
+            try:
+                return self.models['Content'].query.limit(500).all()
+            except Exception as e2:
+                logger.error(f"Error with fallback content pool query: {e2}")
+                return []
     
     def _remove_duplicates_and_rerank(self, recommendations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Remove duplicates and rerank recommendations"""
         seen_ids = set()
         unique_recs = []
         
@@ -1597,17 +1504,14 @@ class NetflixLevelRecommendationEngine:
                 seen_ids.add(rec['id'])
                 unique_recs.append(rec)
         
-        # Sort by personalization_score if available, otherwise by similarity_score
         unique_recs.sort(key=lambda x: x.get('personalization_score', x.get('similarity_score', 0)), reverse=True)
         
         return unique_recs
 
 
-# Global variables
 recommendation_engine = None
 
 def init_personalized(app, db, models, services, cache=None):
-    """Initialize the personalized recommendation system"""
     global recommendation_engine
     
     try:
@@ -1619,5 +1523,4 @@ def init_personalized(app, db, models, services, cache=None):
         return None
 
 def get_recommendation_engine():
-    """Get the global recommendation engine instance"""
     return recommendation_engine
