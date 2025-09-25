@@ -44,7 +44,7 @@ from services.algorithms import (
     HybridRecommendationEngine,
     UltraPowerfulSimilarityEngine
 )
-from services.personalized import personalized_bp, init_personalized
+from services.personalized import init_personalized
 from services.details import init_details_service, SlugManager, ContentService
 import re
 
@@ -729,10 +729,9 @@ except Exception as e:
 
 try:
     init_personalized(app, db, models, services, cache)
-    app.register_blueprint(personalized_bp)
-    logger.info("Personalized recommendation service initialized successfully")
+    logger.info("Ultra-advanced personalized recommendation service initialized successfully")
 except Exception as e:
-    logger.error(f"Failed to initialize personalized service: {e}")
+    logger.error(f"Failed to initialize ultra personalized service: {e}")
 
 app.register_blueprint(auth_bp)
 app.register_blueprint(admin_bp)
