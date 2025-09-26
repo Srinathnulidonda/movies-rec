@@ -68,7 +68,7 @@ def init_redis():
 class FreeEmailService:
     def __init__(self, username=None, password=None):
         self.username = username or os.environ.get('GMAIL_USERNAME', 'projects.srinath@gmail.com')
-        self.password = password or os.environ.get('GMAIL_APP_PASSWORD', 'wuus nsow nbee xewv')
+        self.password = password or os.environ.get('GMAIL_APP_PASSWORD', 'nddg lphy ajjy rnuq')
         self.from_email = "noreply@cinebrain.com"
         self.from_name = "CineBrain"
         self.reply_to = "support@cinebrain.com"
