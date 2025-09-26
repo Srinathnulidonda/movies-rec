@@ -28,24 +28,17 @@ import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import socket
 
-# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Create blueprint
 auth_bp = Blueprint('auth', __name__)
 
-# Frontend URL configuration
 FRONTEND_URL = os.environ.get('FRONTEND_URL', 'https://cinebrain.vercel.app')
 BACKEND_URL = os.environ.get('BACKEND_URL', 'https://backend-app-970m.onrender.com')
-
-# Redis configuration
 REDIS_URL = os.environ.get('REDIS_URL', 'redis://red-d2qlbuje5dus73c71qog:xp7inVzgblGCbo9I4taSGLdKUg0xY91I@red-d2qlbuje5dus73c71qog:6379')
 
-# Email validation regex
 EMAIL_REGEX = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
 
-# These will be initialized by init_auth function
 app = None
 db = None
 User = None
@@ -56,16 +49,12 @@ mail = None
 serializer = None
 redis_client = None
 
-# Password reset token salt
 PASSWORD_RESET_SALT = 'password-reset-salt-cinebrain-2025'
 
 def init_redis():
-    """Initialize Redis connection with better error handling"""
     global redis_client
     try:
-        # Parse Redis URL
         url = urlparse(REDIS_URL)
-        
         redis_client = redis.StrictRedis(
             host=url.hostname,
             port=url.port,
@@ -77,18 +66,14 @@ def init_redis():
             health_check_interval=30,
             max_connections=20
         )
-        
-        # Test connection
         redis_client.ping()
         logger.info("✅ Redis connected successfully")
         return redis_client
     except Exception as e:
         logger.error(f"❌ Redis connection failed: {e}")
-        # Create a mock Redis client for fallback
         return MockRedisClient()
 
 class MockRedisClient:
-    """Mock Redis client for when Redis is unavailable"""
     def __init__(self):
         self.data = {}
         self.expires = {}
@@ -147,15 +132,10 @@ class MockRedisClient:
         return len(self.data.get(key, []))
 
 class EnhancedUserAnalytics:
-    """Enhanced user analytics with more insights"""
-    
     @staticmethod
     def get_comprehensive_user_stats(user_id: int) -> dict:
-        """Get comprehensive user statistics with advanced metrics"""
         try:
             base_stats = EnhancedUserAnalytics.get_user_stats(user_id)
-            
-            # Add advanced metrics
             advanced_stats = {
                 'engagement_metrics': EnhancedUserAnalytics._get_engagement_metrics(user_id),
                 'content_diversity': EnhancedUserAnalytics._get_content_diversity_score(user_id),
@@ -163,16 +143,13 @@ class EnhancedUserAnalytics:
                 'quality_preferences': EnhancedUserAnalytics._get_quality_preferences(user_id),
                 'social_metrics': EnhancedUserAnalytics._get_social_metrics(user_id)
             }
-            
             return {**base_stats, **advanced_stats}
-            
         except Exception as e:
             logger.error(f"Error getting comprehensive user stats: {e}")
             return {}
     
     @staticmethod
     def get_user_stats(user_id: int) -> dict:
-        """Get basic user statistics"""
         try:
             if not UserInteraction:
                 return {
@@ -204,7 +181,6 @@ class EnhancedUserAnalytics:
                     'discovery_score': 0.0
                 }
             
-            # Basic stats
             stats = {
                 'total_interactions': len(interactions),
                 'content_watched': len([i for i in interactions if i.interaction_type == 'view']),
@@ -215,17 +191,14 @@ class EnhancedUserAnalytics:
                 'searches_made': len([i for i in interactions if i.interaction_type == 'search'])
             }
             
-            # Average rating
             ratings = [i.rating for i in interactions if i.rating is not None]
             stats['average_rating'] = round(sum(ratings) / len(ratings), 1) if ratings else 0
             
-            # Get content for analysis
             if Content:
                 content_ids = list(set([i.content_id for i in interactions]))
                 contents = Content.query.filter(Content.id.in_(content_ids)).all()
                 content_map = {c.id: c for c in contents}
                 
-                # Genre analysis
                 genre_counts = defaultdict(int)
                 content_type_counts = defaultdict(int)
                 language_counts = defaultdict(int)
@@ -233,10 +206,8 @@ class EnhancedUserAnalytics:
                 for interaction in interactions:
                     content = content_map.get(interaction.content_id)
                     if content:
-                        # Count content types
                         content_type_counts[content.content_type] += 1
                         
-                        # Count genres
                         try:
                             genres = json.loads(content.genres or '[]')
                             for genre in genres:
@@ -244,7 +215,6 @@ class EnhancedUserAnalytics:
                         except (json.JSONDecodeError, TypeError):
                             pass
                         
-                        # Count languages
                         try:
                             languages = json.loads(content.languages or '[]')
                             for language in languages:
@@ -256,10 +226,8 @@ class EnhancedUserAnalytics:
                 stats['preferred_content_type'] = max(content_type_counts, key=content_type_counts.get) if content_type_counts else None
                 stats['preferred_language'] = max(language_counts, key=language_counts.get) if language_counts else None
                 
-                # Discovery score
                 stats['discovery_score'] = EnhancedUserAnalytics._calculate_discovery_score(interactions, contents)
                 
-                # Content quality preference
                 quality_ratings = [content_map[i.content_id].rating for i in interactions 
                                  if i.content_id in content_map and content_map[i.content_id].rating]
                 stats['preferred_content_quality'] = round(sum(quality_ratings) / len(quality_ratings), 1) if quality_ratings else 0
@@ -270,18 +238,15 @@ class EnhancedUserAnalytics:
                 stats['discovery_score'] = 0.0
                 stats['preferred_content_quality'] = 0
             
-            # Viewing streak
             stats['viewing_streak'] = EnhancedUserAnalytics._calculate_viewing_streak(interactions)
             
             return stats
-            
         except Exception as e:
             logger.error(f"Error getting user stats: {e}")
             return {}
     
     @staticmethod
     def _get_engagement_metrics(user_id: int) -> dict:
-        """Calculate user engagement metrics"""
         try:
             if not UserInteraction:
                 return {}
@@ -290,7 +255,6 @@ class EnhancedUserAnalytics:
             if not interactions:
                 return {}
             
-            # Calculate engagement score
             interaction_weights = {
                 'view': 1,
                 'like': 2,
@@ -302,9 +266,8 @@ class EnhancedUserAnalytics:
             }
             
             total_score = sum(interaction_weights.get(i.interaction_type, 1) for i in interactions)
-            engagement_score = min(total_score / 100, 1.0)  # Normalize to 0-1
+            engagement_score = min(total_score / 100, 1.0)
             
-            # Recent activity (last 7 days)
             recent_cutoff = datetime.utcnow() - timedelta(days=7)
             recent_interactions = [i for i in interactions if i.timestamp >= recent_cutoff]
             
@@ -314,14 +277,12 @@ class EnhancedUserAnalytics:
                 'recent_activity_count': len(recent_interactions),
                 'activity_consistency': EnhancedUserAnalytics._calculate_activity_consistency(interactions)
             }
-            
         except Exception as e:
             logger.error(f"Error calculating engagement metrics: {e}")
             return {}
     
     @staticmethod
     def _get_content_diversity_score(user_id: int) -> dict:
-        """Calculate content diversity metrics"""
         try:
             if not UserInteraction or not Content:
                 return {}
@@ -336,7 +297,6 @@ class EnhancedUserAnalytics:
             if not contents:
                 return {}
             
-            # Genre diversity
             all_genres = set()
             for content in contents:
                 try:
@@ -345,7 +305,6 @@ class EnhancedUserAnalytics:
                 except:
                     pass
             
-            # Language diversity
             all_languages = set()
             for content in contents:
                 try:
@@ -354,7 +313,6 @@ class EnhancedUserAnalytics:
                 except:
                     pass
             
-            # Content type diversity
             content_types = set(content.content_type for content in contents)
             
             return {
@@ -363,14 +321,12 @@ class EnhancedUserAnalytics:
                 'content_type_diversity_count': len(content_types),
                 'diversity_score': min((len(all_genres) + len(all_languages) + len(content_types)) / 30, 1.0)
             }
-            
         except Exception as e:
             logger.error(f"Error calculating content diversity: {e}")
             return {}
     
     @staticmethod
     def _get_temporal_patterns(user_id: int) -> dict:
-        """Analyze user's temporal viewing patterns"""
         try:
             if not UserInteraction:
                 return {}
@@ -379,7 +335,6 @@ class EnhancedUserAnalytics:
             if not interactions:
                 return {}
             
-            # Hour of day analysis
             hour_counts = defaultdict(int)
             day_counts = defaultdict(int)
             
@@ -390,7 +345,6 @@ class EnhancedUserAnalytics:
             peak_hour = max(hour_counts, key=hour_counts.get) if hour_counts else None
             peak_day = max(day_counts, key=day_counts.get) if day_counts else None
             
-            # Convert peak day to name
             day_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
             peak_day_name = day_names[peak_day] if peak_day is not None else None
             
@@ -401,14 +355,12 @@ class EnhancedUserAnalytics:
                 'total_active_days': len(day_counts),
                 'viewing_pattern': 'night_owl' if peak_hour and peak_hour > 20 else 'early_bird' if peak_hour and peak_hour < 8 else 'regular'
             }
-            
         except Exception as e:
             logger.error(f"Error calculating temporal patterns: {e}")
             return {}
     
     @staticmethod
     def _get_quality_preferences(user_id: int) -> dict:
-        """Analyze user's quality preferences"""
         try:
             if not UserInteraction or not Content:
                 return {}
@@ -423,15 +375,12 @@ class EnhancedUserAnalytics:
             if not contents:
                 return {}
             
-            # Rating preferences
             ratings = [c.rating for c in contents if c.rating]
             avg_content_rating = sum(ratings) / len(ratings) if ratings else 0
             
-            # Popularity preferences
             popularities = [c.popularity for c in contents if c.popularity]
             avg_popularity = sum(popularities) / len(popularities) if popularities else 0
             
-            # Quality tier classification
             high_quality_count = len([c for c in contents if c.rating and c.rating >= 8.0])
             total_with_ratings = len([c for c in contents if c.rating])
             
@@ -443,14 +392,12 @@ class EnhancedUserAnalytics:
                 'quality_preference': quality_preference,
                 'high_quality_percentage': round((high_quality_count / total_with_ratings * 100), 1) if total_with_ratings > 0 else 0
             }
-            
         except Exception as e:
             logger.error(f"Error calculating quality preferences: {e}")
             return {}
     
     @staticmethod
     def _get_social_metrics(user_id: int) -> dict:
-        """Calculate social engagement metrics"""
         try:
             if not Review:
                 return {}
@@ -461,7 +408,6 @@ class EnhancedUserAnalytics:
             total_helpful_votes = sum(review.helpful_count for review in user_reviews)
             avg_helpful_votes = total_helpful_votes / total_reviews if total_reviews > 0 else 0
             
-            # Review quality score based on helpful votes
             review_quality_score = min(avg_helpful_votes / 10, 1.0) if avg_helpful_votes > 0 else 0
             
             return {
@@ -471,18 +417,15 @@ class EnhancedUserAnalytics:
                 'review_quality_score': round(review_quality_score, 3),
                 'social_contribution_level': 'high' if review_quality_score > 0.7 else 'medium' if review_quality_score > 0.3 else 'low'
             }
-            
         except Exception as e:
             logger.error(f"Error calculating social metrics: {e}")
             return {}
     
     @staticmethod
     def _calculate_viewing_streak(interactions):
-        """Calculate consecutive days with viewing activity"""
         if not interactions:
             return 0
         
-        # Group interactions by date
         dates = set()
         for interaction in interactions:
             dates.add(interaction.timestamp.date())
@@ -490,7 +433,6 @@ class EnhancedUserAnalytics:
         if not dates:
             return 0
         
-        # Sort dates and find streak
         sorted_dates = sorted(dates, reverse=True)
         streak = 1
         
@@ -504,11 +446,9 @@ class EnhancedUserAnalytics:
     
     @staticmethod
     def _calculate_discovery_score(interactions, contents):
-        """Calculate how much new/diverse content user explores"""
         if not interactions or not contents:
             return 0.0
         
-        # Calculate genre diversity
         all_genres = set()
         for content in contents:
             try:
@@ -517,23 +457,19 @@ class EnhancedUserAnalytics:
             except (json.JSONDecodeError, TypeError):
                 pass
         
-        # Calculate popularity distribution
         popularities = [c.popularity for c in contents if c.popularity]
         avg_popularity = sum(popularities) / len(popularities) if popularities else 100
         
-        # Discovery score based on genre diversity and exploring less popular content
-        genre_diversity = len(all_genres) / 20.0 if all_genres else 0  # Normalize by expected max genres
+        genre_diversity = len(all_genres) / 20.0 if all_genres else 0
         popularity_exploration = max(0, (200 - avg_popularity) / 200) if avg_popularity else 0.5
         
         return min((genre_diversity + popularity_exploration) / 2, 1.0)
     
     @staticmethod
     def _calculate_activity_consistency(interactions):
-        """Calculate how consistently user engages with platform"""
         if not interactions or len(interactions) < 2:
             return 0.0
         
-        # Group by day
         daily_counts = defaultdict(int)
         for interaction in interactions:
             daily_counts[interaction.timestamp.date()] += 1
@@ -541,66 +477,65 @@ class EnhancedUserAnalytics:
         if len(daily_counts) < 2:
             return 0.0
         
-        # Calculate consistency (lower variance = higher consistency)
         counts = list(daily_counts.values())
         mean_count = sum(counts) / len(counts)
         variance = sum((x - mean_count) ** 2 for x in counts) / len(counts)
         
-        # Normalize consistency score (0-1)
         consistency = max(0, 1 - (variance / (mean_count + 1)))
         return round(consistency, 3)
 
 class MultiProviderEmailService:
-    """Enhanced email service with multiple providers and better error handling"""
-    
     def __init__(self):
         self.providers = self._initialize_providers()
         self.current_provider = 0
         self.redis_client = redis_client
         self.max_retries = 3
         self.circuit_breaker = {}
-        
-        # Start email workers
         self.start_email_workers()
     
     def _initialize_providers(self) -> List[Dict]:
-        """Initialize multiple email providers for redundancy"""
         providers = []
         
-        # Gmail SMTP
         gmail_username = os.environ.get('GMAIL_USERNAME', 'projects.srinath@gmail.com')
         gmail_password = os.environ.get('GMAIL_APP_PASSWORD', 'wuus nsow nbee xewv')
         
         if gmail_username and gmail_password:
             providers.append({
-                'name': 'gmail',
+                'name': 'gmail_ssl',
+                'smtp_server': 'smtp.gmail.com',
+                'smtp_port': 465,
+                'username': gmail_username,
+                'password': gmail_password,
+                'from_email': gmail_username,
+                'from_name': 'CineBrain',
+                'use_ssl': True,
+                'use_tls': False
+            })
+            
+            providers.append({
+                'name': 'gmail_tls',
                 'smtp_server': 'smtp.gmail.com',
                 'smtp_port': 587,
                 'username': gmail_username,
                 'password': gmail_password,
                 'from_email': gmail_username,
                 'from_name': 'CineBrain',
+                'use_ssl': False,
                 'use_tls': True
             })
         
-        # Backup SMTP (you can add more providers here)
-        backup_smtp = os.environ.get('BACKUP_SMTP_SERVER')
-        if backup_smtp:
+        sendgrid_api_key = os.environ.get('SENDGRID_API_KEY')
+        if sendgrid_api_key:
             providers.append({
-                'name': 'backup',
-                'smtp_server': backup_smtp,
-                'smtp_port': int(os.environ.get('BACKUP_SMTP_PORT', 587)),
-                'username': os.environ.get('BACKUP_SMTP_USERNAME'),
-                'password': os.environ.get('BACKUP_SMTP_PASSWORD'),
-                'from_email': os.environ.get('BACKUP_FROM_EMAIL'),
-                'from_name': 'CineBrain',
-                'use_tls': True
+                'name': 'sendgrid',
+                'api_key': sendgrid_api_key,
+                'from_email': os.environ.get('SENDGRID_FROM_EMAIL', 'noreply@cinebrain.com'),
+                'from_name': 'CineBrain'
             })
         
         return providers
     
     def start_email_workers(self):
-        """Start background threads for sending emails"""
         def worker():
             while True:
                 try:
@@ -620,33 +555,28 @@ class MultiProviderEmailService:
                     logger.error(f"Email worker error: {e}")
                     time.sleep(5)
         
-        # Start 2 worker threads
         for i in range(2):
             thread = threading.Thread(target=worker, daemon=True, name=f"EmailWorker-{i}")
             thread.start()
             logger.info(f"Started email worker thread {i}")
     
     def _send_email_with_fallback(self, email_data: Dict):
-        """Try sending email with multiple providers"""
         for attempt in range(len(self.providers)):
             provider = self.providers[(self.current_provider + attempt) % len(self.providers)]
             
-            # Check circuit breaker
             if self._is_circuit_open(provider['name']):
                 logger.warning(f"Circuit breaker open for {provider['name']}, skipping")
                 continue
             
             try:
-                self._send_via_provider(email_data, provider)
+                if provider['name'] == 'sendgrid':
+                    self._send_via_sendgrid(email_data, provider)
+                else:
+                    self._send_via_smtp(email_data, provider)
+                
                 logger.info(f"✅ Email sent successfully via {provider['name']} to {email_data['to']}")
-                
-                # Reset circuit breaker on success
                 self._reset_circuit_breaker(provider['name'])
-                
-                # Update current provider for next email
                 self.current_provider = (self.current_provider + attempt) % len(self.providers)
-                
-                # Store success in Redis
                 self._store_email_status(email_data.get('id'), 'sent', provider['name'])
                 return
                 
@@ -654,72 +584,83 @@ class MultiProviderEmailService:
                 logger.error(f"❌ Failed to send via {provider['name']}: {e}")
                 self._record_provider_failure(provider['name'])
                 
-                # If it's a network error, try next provider immediately
-                if 'Network is unreachable' in str(e) or 'Connection refused' in str(e):
-                    continue
-                
-                # For other errors, might be worth retrying same provider
-                if attempt == len(self.providers) - 1:  # Last attempt
+                if attempt == len(self.providers) - 1:
                     self._handle_final_failure(email_data, str(e))
     
-    def _send_via_provider(self, email_data: Dict, provider: Dict):
-        """Send email via specific provider"""
-        # Check if we can reach the SMTP server first
-        try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(10)
-            result = sock.connect_ex((provider['smtp_server'], provider['smtp_port']))
-            sock.close()
-            
-            if result != 0:
-                raise ConnectionError(f"Cannot reach SMTP server {provider['smtp_server']}:{provider['smtp_port']}")
-        except Exception as e:
-            raise ConnectionError(f"Network connectivity check failed: {e}")
-        
-        # Create message
+    def _send_via_smtp(self, email_data: Dict, provider: Dict):
         msg = MIMEMultipart('alternative')
-        
-        # Professional headers
         msg['From'] = formataddr((provider['from_name'], provider['from_email']))
         msg['To'] = email_data['to']
         msg['Subject'] = email_data['subject']
         msg['Date'] = formatdate(localtime=True)
         msg['Message-ID'] = f"<{email_data.get('id', uuid.uuid4())}@cinebrain.com>"
         
-        # Add content
         text_part = MIMEText(email_data['text'], 'plain', 'utf-8')
         html_part = MIMEText(email_data['html'], 'html', 'utf-8')
         
         msg.attach(text_part)
         msg.attach(html_part)
         
-        # Send email
         context = ssl.create_default_context()
         
-        with smtplib.SMTP(provider['smtp_server'], provider['smtp_port'], timeout=30) as server:
-            server.ehlo()
-            if provider.get('use_tls', True):
-                server.starttls(context=context)
+        if provider.get('use_ssl', False):
+            with smtplib.SMTP_SSL(provider['smtp_server'], provider['smtp_port'], timeout=30, context=context) as server:
+                server.login(provider['username'], provider['password'])
+                server.send_message(msg)
+        else:
+            with smtplib.SMTP(provider['smtp_server'], provider['smtp_port'], timeout=30) as server:
                 server.ehlo()
-            server.login(provider['username'], provider['password'])
-            server.send_message(msg)
+                if provider.get('use_tls', True):
+                    server.starttls(context=context)
+                    server.ehlo()
+                server.login(provider['username'], provider['password'])
+                server.send_message(msg)
+    
+    def _send_via_sendgrid(self, email_data: Dict, provider: Dict):
+        import requests
+        
+        payload = {
+            "personalizations": [{
+                "to": [{"email": email_data['to']}],
+                "subject": email_data['subject']
+            }],
+            "from": {
+                "email": provider['from_email'],
+                "name": provider['from_name']
+            },
+            "content": [
+                {"type": "text/plain", "value": email_data['text']},
+                {"type": "text/html", "value": email_data['html']}
+            ]
+        }
+        
+        headers = {
+            "Authorization": f"Bearer {provider['api_key']}",
+            "Content-Type": "application/json"
+        }
+        
+        response = requests.post(
+            "https://api.sendgrid.com/v3/mail/send",
+            json=payload,
+            headers=headers,
+            timeout=30
+        )
+        
+        if response.status_code not in [200, 202]:
+            raise Exception(f"SendGrid API error: {response.status_code} - {response.text}")
     
     def _is_circuit_open(self, provider_name: str) -> bool:
-        """Check if circuit breaker is open for provider"""
         circuit = self.circuit_breaker.get(provider_name, {'failures': 0, 'last_failure': None})
         
         if circuit['failures'] >= 3:
-            # Circuit is open for 5 minutes after 3 failures
             if circuit['last_failure'] and (datetime.utcnow() - circuit['last_failure']).seconds < 300:
                 return True
             else:
-                # Reset after timeout
                 self.circuit_breaker[provider_name] = {'failures': 0, 'last_failure': None}
         
         return False
     
     def _record_provider_failure(self, provider_name: str):
-        """Record provider failure for circuit breaker"""
         if provider_name not in self.circuit_breaker:
             self.circuit_breaker[provider_name] = {'failures': 0, 'last_failure': None}
         
@@ -727,11 +668,9 @@ class MultiProviderEmailService:
         self.circuit_breaker[provider_name]['last_failure'] = datetime.utcnow()
     
     def _reset_circuit_breaker(self, provider_name: str):
-        """Reset circuit breaker on successful send"""
         self.circuit_breaker[provider_name] = {'failures': 0, 'last_failure': None}
     
     def _store_email_status(self, email_id: str, status: str, provider: str = None):
-        """Store email status in Redis"""
         if self.redis_client and email_id:
             try:
                 status_data = {
@@ -744,11 +683,9 @@ class MultiProviderEmailService:
                 logger.error(f"Failed to store email status: {e}")
     
     def _handle_final_failure(self, email_data: Dict, error: str):
-        """Handle final failure after all providers failed"""
         logger.error(f"❌ Failed to send email after trying all providers to {email_data['to']}")
         self._store_email_status(email_data.get('id'), 'failed')
         
-        # Store in dead letter queue for manual intervention
         if self.redis_client:
             try:
                 dead_letter_data = {
@@ -761,7 +698,6 @@ class MultiProviderEmailService:
                 logger.error(f"Failed to store in dead letter queue: {e}")
     
     def queue_email(self, to: str, subject: str, html: str, text: str, priority: str = 'normal'):
-        """Queue email for sending"""
         if not self.providers:
             logger.error("No email providers configured")
             return False
@@ -788,7 +724,6 @@ class MultiProviderEmailService:
                 self._store_email_status(email_id, 'queued')
                 logger.info(f"📧 Email queued for {to} - ID: {email_id}")
             else:
-                # Fallback: send directly
                 logger.warning("Redis not available, sending email directly")
                 threading.Thread(
                     target=self._send_email_with_fallback,
@@ -797,24 +732,28 @@ class MultiProviderEmailService:
                 ).start()
             
             return True
-            
         except Exception as e:
             logger.error(f"Failed to queue email: {e}")
             return False
     
     def get_professional_template(self, content_type: str, **kwargs) -> tuple:
-        """Get professional email templates"""
-        # Base CSS for all emails
         base_css = """
         <style type="text/css">
-            /* Reset and base styles */
+            @import url('https://fonts.googleapis.com/css2?family=Bangers&family=Inter:wght@400;500;600&display=swap');
+            
             body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
             table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
             img { -ms-interpolation-mode: bicubic; border: 0; outline: none; text-decoration: none; }
             
+            :root {
+                --cinebrain-primary: #113CCF;
+                --cinebrain-primary-light: #1E4FE5;
+                --cinebrain-accent: #1E4FE5;
+            }
+            
             body {
                 margin: 0 !important; padding: 0 !important; width: 100% !important; min-width: 100% !important;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
+                font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
                 -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
                 font-size: 14px; line-height: 1.6; color: #202124; background-color: #f8f9fa;
             }
@@ -824,8 +763,43 @@ class MultiProviderEmailService:
                 box-shadow: 0 1px 2px 0 rgba(60,64,67,0.3), 0 1px 3px 1px rgba(60,64,67,0.15); overflow: hidden; }
             
             .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 40px 48px; text-align: center; }
-            .header-logo { font-size: 32px; font-weight: 700; color: #ffffff; letter-spacing: -0.5px; margin: 0; text-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-            .header-tagline { font-size: 14px; color: rgba(255,255,255,0.95); margin: 8px 0 0 0; font-weight: 400; }
+            
+            .navbar-brand-wrapper {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                margin: 0;
+            }
+            
+            .navbar-brand-cinebrain {
+                font-family: 'Bangers', cursive;
+                letter-spacing: 1px;
+                background: linear-gradient(135deg, #ffffff 0%, #f0f0f0 50%, #e0e0e0 100%);
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+                background-clip: text;
+                text-shadow: 0 2px 10px rgba(255, 255, 255, 0.3);
+                font-size: 2.5rem;
+                line-height: 1;
+                white-space: nowrap;
+                display: block;
+                text-decoration: none;
+                margin: 0;
+                padding: 0;
+            }
+            
+            .tagline {
+                font-size: 0.75rem;
+                font-weight: 500;
+                letter-spacing: 0.5px;
+                color: rgba(255, 255, 255, 0.9);
+                white-space: nowrap;
+                line-height: 1;
+                margin-top: 5px;
+                display: block;
+                max-width: 100%;
+            }
             
             .content { padding: 48px; background-color: #ffffff; }
             h1 { font-size: 24px; font-weight: 400; color: #202124; margin: 0 0 24px; line-height: 1.3; }
@@ -833,8 +807,8 @@ class MultiProviderEmailService:
             
             .btn { display: inline-block; padding: 12px 32px; font-size: 14px; font-weight: 500; text-decoration: none !important;
                 text-align: center; border-radius: 24px; margin: 24px 0; cursor: pointer; }
-            .btn-primary { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #ffffff !important;
-                box-shadow: 0 4px 15px 0 rgba(102, 126, 234, 0.4); }
+            .btn-primary { background: linear-gradient(135deg, var(--cinebrain-primary) 0%, var(--cinebrain-primary-light) 100%); 
+                color: #ffffff !important; box-shadow: 0 4px 15px 0 rgba(17, 60, 207, 0.4); }
             
             .alert { padding: 16px; border-radius: 8px; margin: 24px 0; font-size: 14px; }
             .alert-warning { background-color: #fef7e0; border-left: 4px solid #fbbc04; color: #ea8600; }
@@ -855,7 +829,16 @@ class MultiProviderEmailService:
                 .email-container { width: 100% !important; border-radius: 0 !important; }
                 .content, .footer, .header { padding: 32px 24px !important; }
                 h1 { font-size: 20px !important; }
-                .btn { display: block !important; width: 100% !important; }
+                .btn { display: block !important; width: calc(100% - 64px) !important; margin: 24px auto !important; }
+                .navbar-brand-cinebrain { font-size: 2rem !important; }
+                .tagline { font-size: 0.65rem !important; }
+                .code-block { font-size: 12px !important; padding: 12px !important; }
+            }
+            
+            @media screen and (max-width: 480px) {
+                .navbar-brand-cinebrain { font-size: 1.75rem !important; }
+                .tagline { font-size: 0.6rem !important; }
+                .content, .footer, .header { padding: 24px 16px !important; }
             }
         </style>
         """
@@ -872,7 +855,6 @@ class MultiProviderEmailService:
             return self._get_generic_template(base_css, **kwargs)
     
     def _get_password_reset_template(self, base_css: str, **kwargs) -> tuple:
-        """Password reset email template"""
         reset_url = kwargs.get('reset_url', '')
         user_name = kwargs.get('user_name', 'there')
         
@@ -889,8 +871,10 @@ class MultiProviderEmailService:
             <div class="email-wrapper">
                 <div class="email-container">
                     <div class="header">
-                        <h1 class="header-logo">🎬 CineBrain</h1>
-                        <p class="header-tagline">Your AI-Powered Entertainment Companion</p>
+                        <div class="navbar-brand-wrapper">
+                            <div class="navbar-brand-cinebrain">CineBrain</div>
+                            <div class="tagline">The Mind Behind Your Next Favorite</div>
+                        </div>
                     </div>
                     
                     <div class="content">
@@ -958,7 +942,6 @@ The CineBrain Team
         return html, text
     
     def _get_password_changed_template(self, base_css: str, **kwargs) -> tuple:
-        """Password changed confirmation template"""
         user_name = kwargs.get('user_name', 'there')
         
         html = f"""
@@ -974,8 +957,10 @@ The CineBrain Team
             <div class="email-wrapper">
                 <div class="email-container">
                     <div class="header" style="background: linear-gradient(135deg, #34a853 0%, #0d8043 100%);">
-                        <h1 class="header-logo">✅ Password Changed</h1>
-                        <p class="header-tagline">Your account is now secured</p>
+                        <div class="navbar-brand-wrapper">
+                            <div class="navbar-brand-cinebrain">✅ Password Changed</div>
+                            <div class="tagline">Your account is now secured</div>
+                        </div>
                     </div>
                     
                     <div class="content">
@@ -1019,7 +1004,6 @@ If you didn't make this change, secure your account immediately:
         return html, text
     
     def _get_welcome_template(self, base_css: str, **kwargs) -> tuple:
-        """Welcome email template for new users"""
         user_name = kwargs.get('user_name', 'there')
         
         html = f"""
@@ -1035,8 +1019,10 @@ If you didn't make this change, secure your account immediately:
             <div class="email-wrapper">
                 <div class="email-container">
                     <div class="header">
-                        <h1 class="header-logo">🎬 Welcome to CineBrain!</h1>
-                        <p class="header-tagline">Your AI-Powered Entertainment Journey Begins</p>
+                        <div class="navbar-brand-wrapper">
+                            <div class="navbar-brand-cinebrain">🎬 Welcome to CineBrain!</div>
+                            <div class="tagline">Your AI-Powered Entertainment Journey Begins</div>
+                        </div>
                     </div>
                     
                     <div class="content">
@@ -1099,7 +1085,6 @@ The CineBrain Team
         return html, text
     
     def _get_email_verification_template(self, base_css: str, **kwargs) -> tuple:
-        """Email verification template"""
         verification_url = kwargs.get('verification_url', '')
         user_name = kwargs.get('user_name', 'there')
         
@@ -1116,8 +1101,10 @@ The CineBrain Team
             <div class="email-wrapper">
                 <div class="email-container">
                     <div class="header">
-                        <h1 class="header-logo">📧 Verify Your Email</h1>
-                        <p class="header-tagline">One more step to complete your registration</p>
+                        <div class="navbar-brand-wrapper">
+                            <div class="navbar-brand-cinebrain">📧 Verify Your Email</div>
+                            <div class="tagline">One more step to complete your registration</div>
+                        </div>
                     </div>
                     
                     <div class="content">
@@ -1170,7 +1157,6 @@ This link expires in 24 hours.
         return html, text
     
     def _get_generic_template(self, base_css: str, **kwargs) -> tuple:
-        """Generic email template"""
         subject = kwargs.get('subject', 'CineBrain')
         content = kwargs.get('content', '')
         
@@ -1179,6 +1165,7 @@ This link expires in 24 hours.
         <html lang="en">
         <head>
             <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <title>{subject}</title>
             {base_css}
         </head>
@@ -1186,7 +1173,10 @@ This link expires in 24 hours.
             <div class="email-wrapper">
                 <div class="email-container">
                     <div class="header">
-                        <h1 class="header-logo">🎬 CineBrain</h1>
+                        <div class="navbar-brand-wrapper">
+                            <div class="navbar-brand-cinebrain">CineBrain</div>
+                            <div class="tagline">The Mind Behind Your Next Favorite</div>
+                        </div>
                     </div>
                     <div class="content">{content}</div>
                     <div class="footer">
@@ -1202,18 +1192,15 @@ This link expires in 24 hours.
         
         return html, text
 
-# Initialize email service
 email_service = None
 
 def init_auth(flask_app, database, user_model):
-    """Initialize auth module with Flask app and models"""
     global app, db, User, UserInteraction, Content, Review, mail, serializer, email_service, redis_client
     
     app = flask_app
     db = database
     User = user_model
     
-    # Try to get additional models for analytics
     try:
         UserInteraction = db.Model.registry._class_registry.get('UserInteraction')
         Content = db.Model.registry._class_registry.get('Content')
@@ -1224,20 +1211,13 @@ def init_auth(flask_app, database, user_model):
         Review = None
         logger.warning("Additional models not available for analytics")
     
-    # Initialize Redis
     redis_client = init_redis()
-    
-    # Initialize multi-provider email service
     email_service = MultiProviderEmailService()
-    
-    # Initialize token serializer
     serializer = URLSafeTimedSerializer(app.secret_key)
     
     logger.info("✅ Enhanced auth module initialized with multi-provider email service")
 
-# Rate limiting with Redis
 def check_rate_limit(identifier: str, max_requests: int = 5, window: int = 300) -> bool:
-    """Check if rate limit is exceeded using Redis"""
     if not redis_client:
         return True
     
@@ -1253,17 +1233,13 @@ def check_rate_limit(identifier: str, max_requests: int = 5, window: int = 300) 
             return False
         
         return True
-        
     except Exception as e:
         logger.error(f"Rate limit check error: {e}")
         return True
 
-# Enhanced token management
 def generate_reset_token(email):
-    """Generate a secure password reset token and cache in Redis"""
     token = serializer.dumps(email, salt=PASSWORD_RESET_SALT)
     
-    # Cache token in Redis for quick validation
     if redis_client:
         try:
             redis_client.setex(f"reset_token:{token[:20]}", 3600, email)
@@ -1273,7 +1249,6 @@ def generate_reset_token(email):
     return token
 
 def verify_reset_token(token, expiration=3600):
-    """Verify password reset token with Redis cache"""
     if redis_client:
         try:
             cached_email = redis_client.get(f"reset_token:{token[:20]}")
@@ -1293,7 +1268,6 @@ def verify_reset_token(token, expiration=3600):
         return None
 
 def validate_password(password):
-    """Enhanced password validation"""
     if len(password) < 8:
         return False, "Password must be at least 8 characters long"
     if len(password) > 128:
@@ -1307,7 +1281,6 @@ def validate_password(password):
     if not re.search(r'[!@#$%^&*(),.?":{}|<>]', password):
         return False, "Password must contain at least one special character"
     
-    # Check for common patterns
     common_patterns = ['123456', 'password', 'qwerty', 'abc123', '111111']
     if any(pattern in password.lower() for pattern in common_patterns):
         return False, "Password contains common patterns that are not secure"
@@ -1315,8 +1288,6 @@ def validate_password(password):
     return True, "Valid password"
 
 def get_request_info(request):
-    """Enhanced request information extraction"""
-    # Get real IP address
     ip_address = request.headers.get('X-Forwarded-For', 
                     request.headers.get('X-Real-IP', request.remote_addr))
     if ip_address and ',' in ip_address:
@@ -1324,7 +1295,6 @@ def get_request_info(request):
     
     user_agent = request.headers.get('User-Agent', 'Unknown')
     
-    # Enhanced device detection
     device = "Unknown device"
     browser = ""
     
@@ -1346,7 +1316,6 @@ def get_request_info(request):
     elif 'Linux' in user_agent:
         device = "Linux PC"
     
-    # Enhanced browser detection
     if 'Edg' in user_agent:
         browser = "Microsoft Edge"
     elif 'Chrome' in user_agent and 'Chromium' not in user_agent:
@@ -1361,46 +1330,38 @@ def get_request_info(request):
     if browser:
         device = f"{browser} on {device}"
     
-    # Try to get location (you'd need a GeoIP service for real data)
     location = "Unknown location"
     
     return ip_address, location, device
 
-# Enhanced Authentication Routes
 @auth_bp.route('/api/register', methods=['POST'])
 def register():
     try:
         data = request.get_json()
         
-        # Enhanced validation
         required_fields = ['username', 'email', 'password']
         if not all(field in data and data[field].strip() for field in required_fields):
             return jsonify({'error': 'Missing required fields'}), 400
         
-        # Username validation
         if len(data['username']) < 3 or len(data['username']) > 50:
             return jsonify({'error': 'Username must be between 3 and 50 characters'}), 400
         
         if not re.match(r'^[a-zA-Z0-9_]+$', data['username']):
             return jsonify({'error': 'Username can only contain letters, numbers, and underscores'}), 400
         
-        # Email validation
         if not EMAIL_REGEX.match(data['email']):
             return jsonify({'error': 'Please provide a valid email address'}), 400
         
-        # Password validation
         is_valid, message = validate_password(data['password'])
         if not is_valid:
             return jsonify({'error': message}), 400
         
-        # Check if user exists
         if User.query.filter_by(username=data['username']).first():
             return jsonify({'error': 'Username already exists'}), 400
         
         if User.query.filter_by(email=data['email']).first():
             return jsonify({'error': 'Email already exists'}), 400
         
-        # Enhanced user creation
         user = User(
             username=data['username'].strip(),
             email=data['email'].strip().lower(),
@@ -1414,13 +1375,11 @@ def register():
         db.session.add(user)
         db.session.commit()
         
-        # Generate token
         token = jwt.encode({
             'user_id': user.id,
             'exp': datetime.utcnow() + timedelta(days=30)
         }, app.secret_key, algorithm='HS256')
         
-        # Send welcome email
         if email_service:
             html_content, text_content = email_service.get_professional_template(
                 'welcome',
@@ -1436,7 +1395,6 @@ def register():
                 priority='normal'
             )
         
-        # Get initial user stats
         stats = EnhancedUserAnalytics.get_comprehensive_user_stats(user.id)
         
         return jsonify({
@@ -1469,7 +1427,6 @@ def login():
         if not data.get('username') or not data.get('password'):
             return jsonify({'error': 'Missing username or password'}), 400
         
-        # Check rate limiting
         if not check_rate_limit(f"login:{data['username']}", max_requests=5, window=300):
             return jsonify({'error': 'Too many login attempts. Please try again in 5 minutes.'}), 429
         
@@ -1478,17 +1435,14 @@ def login():
         if not user or not check_password_hash(user.password_hash, data['password']):
             return jsonify({'error': 'Invalid credentials'}), 401
         
-        # Update last active
         user.last_active = datetime.utcnow()
         db.session.commit()
         
-        # Generate token
         token = jwt.encode({
             'user_id': user.id,
             'exp': datetime.utcnow() + timedelta(days=30)
         }, app.secret_key, algorithm='HS256')
         
-        # Get comprehensive user stats
         stats = EnhancedUserAnalytics.get_comprehensive_user_stats(user.id)
         
         return jsonify({
@@ -1512,10 +1466,8 @@ def login():
         logger.error(f"Login error: {e}")
         return jsonify({'error': 'Login failed'}), 500
 
-# Password reset routes (existing but enhanced)
 @auth_bp.route('/api/auth/forgot-password', methods=['POST', 'OPTIONS'])
 def forgot_password():
-    """Enhanced password reset with better error handling"""
     if request.method == 'OPTIONS':
         return '', 200
     
@@ -1523,26 +1475,20 @@ def forgot_password():
         data = request.get_json()
         email = data.get('email', '').strip().lower()
         
-        # Validate email format
         if not email or not EMAIL_REGEX.match(email):
             return jsonify({'error': 'Please provide a valid email address'}), 400
         
-        # Check rate limiting
         if not check_rate_limit(f"forgot_password:{email}", max_requests=3, window=600):
             return jsonify({
                 'error': 'Too many password reset requests. Please try again in 10 minutes.'
             }), 429
         
-        # Check if user exists
         user = User.query.filter_by(email=email).first()
         
-        # Always return success to prevent email enumeration
         if user:
-            # Generate reset token
             token = generate_reset_token(email)
             reset_url = f"{FRONTEND_URL}/auth/reset-password.html?token={token}"
             
-            # Get professional email template
             html_content, text_content = email_service.get_professional_template(
                 'password_reset',
                 reset_url=reset_url,
@@ -1550,7 +1496,6 @@ def forgot_password():
                 user_email=email
             )
             
-            # Queue email for sending
             success = email_service.queue_email(
                 to=email,
                 subject="Reset your password - CineBrain",
@@ -1575,7 +1520,6 @@ def forgot_password():
 
 @auth_bp.route('/api/auth/reset-password', methods=['POST', 'OPTIONS'])
 def reset_password():
-    """Enhanced password reset with token verification"""
     if request.method == 'OPTIONS':
         return '', 200
     
@@ -1585,7 +1529,6 @@ def reset_password():
         new_password = data.get('password', '')
         confirm_password = data.get('confirmPassword', '')
         
-        # Validate input
         if not token:
             return jsonify({'error': 'Reset token is required'}), 400
         
@@ -1595,37 +1538,30 @@ def reset_password():
         if new_password != confirm_password:
             return jsonify({'error': 'Passwords do not match'}), 400
         
-        # Validate password strength
         is_valid, message = validate_password(new_password)
         if not is_valid:
             return jsonify({'error': message}), 400
         
-        # Verify token
         email = verify_reset_token(token)
         if not email:
             return jsonify({'error': 'Invalid or expired reset token'}), 400
         
-        # Find user
         user = User.query.filter_by(email=email).first()
         if not user:
             return jsonify({'error': 'User not found'}), 404
         
-        # Update password
         user.password_hash = generate_password_hash(new_password)
         user.last_active = datetime.utcnow()
         db.session.commit()
         
-        # Clear token from Redis cache
         if redis_client:
             try:
                 redis_client.delete(f"reset_token:{token[:20]}")
             except:
                 pass
         
-        # Get request info for security email
         ip_address, location, device = get_request_info(request)
         
-        # Send confirmation email
         html_content, text_content = email_service.get_professional_template(
             'password_changed',
             user_name=user.username,
@@ -1643,14 +1579,12 @@ def reset_password():
             priority='high'
         )
         
-        # Generate a new auth token for immediate login
         auth_token = jwt.encode({
             'user_id': user.id,
             'exp': datetime.utcnow() + timedelta(days=30),
             'iat': datetime.utcnow()
         }, app.secret_key, algorithm='HS256')
         
-        # Get user stats for response
         stats = EnhancedUserAnalytics.get_comprehensive_user_stats(user.id)
         
         logger.info(f"Password reset successful for {email}")
@@ -1678,7 +1612,6 @@ def reset_password():
 
 @auth_bp.route('/api/auth/verify-reset-token', methods=['POST', 'OPTIONS'])
 def verify_token():
-    """Verify if a reset token is valid"""
     if request.method == 'OPTIONS':
         return '', 200
     
@@ -1709,7 +1642,6 @@ def verify_token():
 
 @auth_bp.route('/api/auth/health', methods=['GET'])
 def auth_health():
-    """Enhanced auth service health check"""
     try:
         health_info = {
             'status': 'healthy',
@@ -1718,7 +1650,6 @@ def auth_health():
             'version': '2.0.0'
         }
         
-        # Test database connection
         if User:
             try:
                 User.query.limit(1).first()
@@ -1727,14 +1658,12 @@ def auth_health():
                 health_info['database'] = f'error: {str(e)}'
                 health_info['status'] = 'degraded'
         
-        # Test Redis connection
         redis_status = 'not_configured'
         if redis_client:
             try:
                 redis_client.ping()
                 redis_status = 'connected'
                 
-                # Get Redis stats
                 queue_size = redis_client.llen('email_queue') if hasattr(redis_client, 'llen') else 0
                 dead_letter_size = redis_client.llen('email_dead_letter_queue') if hasattr(redis_client, 'llen') else 0
                 
@@ -1748,7 +1677,6 @@ def auth_health():
         
         health_info['redis_status'] = redis_status
         
-        # Check email service
         email_configured = email_service is not None
         if email_service:
             provider_count = len(email_service.providers)
@@ -1780,10 +1708,8 @@ def auth_health():
             'timestamp': datetime.utcnow().isoformat()
         }), 500
 
-# CORS headers for all responses
 @auth_bp.after_request
 def after_request(response):
-    """Add CORS headers to responses"""
     origin = request.headers.get('Origin')
     allowed_origins = [FRONTEND_URL, 'http://127.0.0.1:5500', 'http://127.0.0.1:5501', 'http://localhost:3000']
     
@@ -1795,7 +1721,6 @@ def after_request(response):
     
     return response
 
-# Enhanced authentication decorator
 def require_auth(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
@@ -1813,7 +1738,6 @@ def require_auth(f):
             if not current_user:
                 return jsonify({'error': 'Invalid token'}), 401
             
-            # Update last active
             current_user.last_active = datetime.utcnow()
             db.session.commit()
             
@@ -1826,7 +1750,6 @@ def require_auth(f):
         return f(current_user, *args, **kwargs)
     return decorated_function
 
-# Export everything needed
 __all__ = [
     'auth_bp',
     'init_auth', 
