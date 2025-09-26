@@ -1,3 +1,4 @@
+#backend/app.py
 from typing import Optional
 from flask import Flask, request, jsonify, session, render_template
 from flask_sqlalchemy import SQLAlchemy
@@ -27,8 +28,7 @@ from urllib3.util.retry import Retry
 from flask_mail import Mail
 from services.upcoming import UpcomingContentService, ContentType, LanguagePriority
 import asyncio
-import services.auth as auth
-from services.auth import init_auth, auth_bp
+from services.auth import init_auth, auth_bp, EnhancedUserAnalytics
 from services.admin import admin_bp, init_admin
 from services.users import users_bp, init_users
 from services.support import support_bp, init_support
@@ -739,8 +739,15 @@ app.register_blueprint(auth_bp)
 app.register_blueprint(admin_bp)
 app.register_blueprint(users_bp)
 
-init_auth(app, db, User)
 init_admin(app, db, models, services)
+
+try:
+    init_auth(app, db, User)
+    app.register_blueprint(auth_bp)
+    logger.info("Enhanced authentication service initialized successfully")
+except Exception as e:
+    logger.error(f"Failed to initialize authentication service: {e}")
+
 
 try:
     init_users(app, db, models, {**services, 'cache': cache})

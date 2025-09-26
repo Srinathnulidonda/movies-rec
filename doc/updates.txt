@@ -361,3 +361,7 @@ memorize my backend/app.py file
 memorize my backend/services/alogrithms.py file
 memorize my backend/services/personalized.py file
 memorize my backend/services/users.py file
+
+1.	Continuously tracks user interactions (search history, views, favorites, watchlist, ratings) and Analyze storylines, synopsis, genres.
+so for example if an user like an film like rrr, The Shawshank Redemption, The Godfather, The Prestige, bahubali like this if the users  have some contents in  Favorites, Watchlist  it should analaize that what is user whats and what user like to watch and what type and what kind of content is users Favorites, Watchlist and if user have some preferrences like genre and language we should
+first find the user preferred language content recommendation and followed by other and it should continously anlaze the users intersets and find and deliver the recommendations to the user 

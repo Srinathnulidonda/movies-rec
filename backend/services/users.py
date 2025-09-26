@@ -6,38 +6,49 @@ import json
 import logging
 import jwt
 from functools import wraps
+from collections import defaultdict, Counter
 
 users_bp = Blueprint('users', __name__)
 
 logger = logging.getLogger(__name__)
 
+# Global variables to be initialized
 db = None
 User = None
 Content = None
 UserInteraction = None
+Review = None
 app = None
 recommendation_engine = None
+cache = None
 
 def init_users(flask_app, database, models, services):
-    global db, User, Content, UserInteraction, app, recommendation_engine
+    """Initialize users service with enhanced functionality"""
+    global db, User, Content, UserInteraction, Review, app, recommendation_engine, cache
     
     app = flask_app
     db = database
     User = models['User']
     Content = models['Content']
     UserInteraction = models['UserInteraction']
+    Review = models.get('Review')
+    cache = services.get('cache')
     
     # Import recommendation engine
     try:
         from services.personalized import get_recommendation_engine
         recommendation_engine = get_recommendation_engine()
-        logger.info("Personalized recommendation engine connected to users service")
+        logger.info("✅ Personalized recommendation engine connected to users service")
     except Exception as e:
         logger.warning(f"Could not connect to recommendation engine: {e}")
 
 def require_auth(f):
+    """Enhanced authentication decorator with better error handling"""
     @wraps(f)
     def decorated_function(*args, **kwargs):
+        if request.method == 'OPTIONS':
+            return '', 200
+            
         token = request.headers.get('Authorization')
         if not token:
             return jsonify({'error': 'No token provided'}), 401
@@ -48,14 +59,82 @@ def require_auth(f):
             current_user = User.query.get(data['user_id'])
             if not current_user:
                 return jsonify({'error': 'Invalid token'}), 401
-        except:
+            
+            # Update last active timestamp
+            current_user.last_active = datetime.utcnow()
+            try:
+                db.session.commit()
+            except Exception as e:
+                logger.warning(f"Failed to update last_active: {e}")
+                db.session.rollback()
+                
+        except jwt.ExpiredSignatureError:
+            return jsonify({'error': 'Token expired'}), 401
+        except jwt.InvalidTokenError:
             return jsonify({'error': 'Invalid token'}), 401
+        except Exception as e:
+            logger.error(f"Authentication error: {e}")
+            return jsonify({'error': 'Authentication failed'}), 401
         
         return f(current_user, *args, **kwargs)
     return decorated_function
 
-@users_bp.route('/api/register', methods=['POST'])
+def get_enhanced_user_stats(user_id):
+    """Get enhanced user statistics"""
+    try:
+        # Try to use enhanced analytics from auth service
+        try:
+            from services.auth import EnhancedUserAnalytics
+            return EnhancedUserAnalytics.get_comprehensive_user_stats(user_id)
+        except ImportError:
+            logger.warning("Enhanced analytics not available, using basic stats")
+            return get_basic_user_stats(user_id)
+    except Exception as e:
+        logger.error(f"Error getting user stats: {e}")
+        return {}
+
+def get_basic_user_stats(user_id):
+    """Get basic user statistics as fallback"""
+    try:
+        if not UserInteraction:
+            return {
+                'total_interactions': 0,
+                'content_watched': 0,
+                'favorites': 0,
+                'watchlist_items': 0,
+                'ratings_given': 0
+            }
+        
+        interactions = UserInteraction.query.filter_by(user_id=user_id).all()
+        
+        stats = {
+            'total_interactions': len(interactions),
+            'content_watched': len([i for i in interactions if i.interaction_type == 'view']),
+            'favorites': len([i for i in interactions if i.interaction_type == 'favorite']),
+            'watchlist_items': len([i for i in interactions if i.interaction_type == 'watchlist']),
+            'ratings_given': len([i for i in interactions if i.interaction_type == 'rating']),
+            'likes_given': len([i for i in interactions if i.interaction_type == 'like']),
+            'searches_made': len([i for i in interactions if i.interaction_type == 'search'])
+        }
+        
+        # Calculate average rating
+        ratings = [i.rating for i in interactions if i.rating is not None]
+        stats['average_rating'] = round(sum(ratings) / len(ratings), 1) if ratings else 0
+        
+        return stats
+        
+    except Exception as e:
+        logger.error(f"Error calculating basic stats: {e}")
+        return {}
+
+# ========================= AUTHENTICATION ROUTES =========================
+
+@users_bp.route('/api/register', methods=['POST', 'OPTIONS'])
 def register():
+    """Enhanced user registration with welcome email"""
+    if request.method == 'OPTIONS':
+        return '', 200
+    
     try:
         data = request.get_json()
         
@@ -68,21 +147,28 @@ def register():
         if User.query.filter_by(email=data['email']).first():
             return jsonify({'error': 'Email already exists'}), 400
         
+        # Enhanced user creation
         user = User(
             username=data['username'],
             email=data['email'],
             password_hash=generate_password_hash(data['password']),
-            preferred_languages=json.dumps(data.get('preferred_languages', [])),
-            preferred_genres=json.dumps(data.get('preferred_genres', []))
+            preferred_languages=json.dumps(data.get('preferred_languages', ['english', 'telugu'])),
+            preferred_genres=json.dumps(data.get('preferred_genres', [])),
+            location=data.get('location', ''),
+            avatar_url=data.get('avatar_url', '')
         )
         
         db.session.add(user)
         db.session.commit()
         
+        # Generate token
         token = jwt.encode({
             'user_id': user.id,
             'exp': datetime.utcnow() + timedelta(days=30)
         }, app.secret_key, algorithm='HS256')
+        
+        # Get initial user stats
+        stats = get_enhanced_user_stats(user.id)
         
         return jsonify({
             'message': 'User registered successfully',
@@ -91,7 +177,13 @@ def register():
                 'id': user.id,
                 'username': user.username,
                 'email': user.email,
-                'is_admin': user.is_admin
+                'is_admin': user.is_admin,
+                'preferred_languages': json.loads(user.preferred_languages or '[]'),
+                'preferred_genres': json.loads(user.preferred_genres or '[]'),
+                'location': user.location,
+                'avatar_url': user.avatar_url,
+                'created_at': user.created_at.isoformat(),
+                'stats': stats
             }
         }), 201
         
@@ -100,8 +192,12 @@ def register():
         db.session.rollback()
         return jsonify({'error': 'Registration failed'}), 500
 
-@users_bp.route('/api/login', methods=['POST'])
+@users_bp.route('/api/login', methods=['POST', 'OPTIONS'])
 def login():
+    """Enhanced user login with comprehensive stats"""
+    if request.method == 'OPTIONS':
+        return '', 200
+    
     try:
         data = request.get_json()
         
@@ -121,6 +217,17 @@ def login():
             'exp': datetime.utcnow() + timedelta(days=30)
         }, app.secret_key, algorithm='HS256')
         
+        # Get comprehensive user stats
+        stats = get_enhanced_user_stats(user.id)
+        
+        # Get recommendation effectiveness if available
+        rec_effectiveness = {}
+        try:
+            if recommendation_engine:
+                rec_effectiveness = recommendation_engine.get_user_recommendation_metrics(user.id)
+        except Exception as e:
+            logger.warning(f"Could not get recommendation effectiveness: {e}")
+        
         return jsonify({
             'message': 'Login successful',
             'token': token,
@@ -130,7 +237,12 @@ def login():
                 'email': user.email,
                 'is_admin': user.is_admin,
                 'preferred_languages': json.loads(user.preferred_languages or '[]'),
-                'preferred_genres': json.loads(user.preferred_genres or '[]')
+                'preferred_genres': json.loads(user.preferred_genres or '[]'),
+                'location': user.location,
+                'avatar_url': user.avatar_url,
+                'last_active': user.last_active.isoformat() if user.last_active else None,
+                'stats': stats,
+                'recommendation_effectiveness': rec_effectiveness
             }
         }), 200
         
@@ -138,9 +250,229 @@ def login():
         logger.error(f"Login error: {e}")
         return jsonify({'error': 'Login failed'}), 500
 
-@users_bp.route('/api/interactions', methods=['POST'])
+# ========================= USER PROFILE MANAGEMENT =========================
+
+@users_bp.route('/api/users/profile', methods=['GET', 'OPTIONS'])
+@require_auth
+def get_user_profile(current_user):
+    """Get comprehensive user profile with analytics"""
+    if request.method == 'OPTIONS':
+        return '', 200
+    
+    try:
+        # Get comprehensive user stats
+        stats = get_enhanced_user_stats(current_user.id)
+        
+        # Get user's recent activity
+        recent_interactions = []
+        if UserInteraction:
+            try:
+                recent = UserInteraction.query.filter_by(
+                    user_id=current_user.id
+                ).order_by(UserInteraction.timestamp.desc()).limit(10).all()
+                
+                for interaction in recent:
+                    content = Content.query.get(interaction.content_id) if Content else None
+                    recent_interactions.append({
+                        'id': interaction.id,
+                        'interaction_type': interaction.interaction_type,
+                        'timestamp': interaction.timestamp.isoformat(),
+                        'rating': interaction.rating,
+                        'content': {
+                            'id': content.id,
+                            'title': content.title,
+                            'content_type': content.content_type,
+                            'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
+                            'slug': content.slug
+                        } if content else None
+                    })
+            except Exception as e:
+                logger.warning(f"Could not get recent activity: {e}")
+        
+        # Get recommendation effectiveness if available
+        rec_effectiveness = {}
+        try:
+            if recommendation_engine:
+                rec_effectiveness = recommendation_engine.get_user_recommendation_metrics(current_user.id)
+        except Exception as e:
+            logger.warning(f"Could not get recommendation effectiveness: {e}")
+        
+        # Calculate profile completion
+        profile_fields = {
+            'preferred_languages': current_user.preferred_languages,
+            'preferred_genres': current_user.preferred_genres,
+            'location': current_user.location,
+            'avatar_url': current_user.avatar_url
+        }
+        
+        completed_fields = [field for field, value in profile_fields.items() if value]
+        completion_score = min(100, len(completed_fields) * 25)
+        missing_fields = [field for field, value in profile_fields.items() if not value]
+        
+        profile_data = {
+            'user': {
+                'id': current_user.id,
+                'username': current_user.username,
+                'email': current_user.email,
+                'is_admin': current_user.is_admin,
+                'preferred_languages': json.loads(current_user.preferred_languages or '[]'),
+                'preferred_genres': json.loads(current_user.preferred_genres or '[]'),
+                'location': current_user.location,
+                'avatar_url': current_user.avatar_url,
+                'created_at': current_user.created_at.isoformat(),
+                'last_active': current_user.last_active.isoformat() if current_user.last_active else None
+            },
+            'stats': stats,
+            'recent_activity': recent_interactions,
+            'recommendation_effectiveness': rec_effectiveness,
+            'profile_completion': {
+                'score': completion_score,
+                'missing_fields': missing_fields,
+                'suggestions': [
+                    'Add preferred languages to get better recommendations',
+                    'Select favorite genres to improve content discovery',
+                    'Add your location for regional content suggestions',
+                    'Upload an avatar to personalize your profile'
+                ][:len(missing_fields)]
+            }
+        }
+        
+        return jsonify(profile_data), 200
+        
+    except Exception as e:
+        logger.error(f"Profile error: {e}")
+        return jsonify({'error': 'Failed to get user profile'}), 500
+
+@users_bp.route('/api/users/profile', methods=['PUT', 'OPTIONS'])
+@require_auth
+def update_user_profile(current_user):
+    """Update user profile information"""
+    if request.method == 'OPTIONS':
+        return '', 200
+    
+    try:
+        data = request.get_json()
+        
+        # Track what was updated for analytics
+        updated_fields = []
+        
+        # Update allowed fields
+        if 'preferred_languages' in data:
+            current_user.preferred_languages = json.dumps(data['preferred_languages'])
+            updated_fields.append('preferred_languages')
+        
+        if 'preferred_genres' in data:
+            current_user.preferred_genres = json.dumps(data['preferred_genres'])
+            updated_fields.append('preferred_genres')
+        
+        if 'location' in data:
+            current_user.location = data['location']
+            updated_fields.append('location')
+        
+        if 'avatar_url' in data:
+            current_user.avatar_url = data['avatar_url']
+            updated_fields.append('avatar_url')
+        
+        db.session.commit()
+        
+        # Update recommendation engine if available
+        if recommendation_engine and updated_fields:
+            try:
+                recommendation_engine.update_user_preferences_realtime(
+                    current_user.id,
+                    {
+                        'interaction_type': 'profile_update',
+                        'metadata': {
+                            'updated_fields': updated_fields,
+                            'data': data
+                        }
+                    }
+                )
+                logger.info(f"Updated recommendation engine for user {current_user.id}")
+            except Exception as e:
+                logger.warning(f"Failed to update recommendation engine: {e}")
+        
+        return jsonify({
+            'success': True,
+            'message': f'Profile updated successfully. Updated: {", ".join(updated_fields)}',
+            'updated_fields': updated_fields,
+            'user': {
+                'id': current_user.id,
+                'username': current_user.username,
+                'email': current_user.email,
+                'preferred_languages': json.loads(current_user.preferred_languages or '[]'),
+                'preferred_genres': json.loads(current_user.preferred_genres or '[]'),
+                'location': current_user.location,
+                'avatar_url': current_user.avatar_url
+            }
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Profile update error: {e}")
+        db.session.rollback()
+        return jsonify({'error': 'Failed to update profile'}), 500
+
+@users_bp.route('/api/users/analytics', methods=['GET', 'OPTIONS'])
+@require_auth
+def get_user_analytics(current_user):
+    """Get detailed user analytics and insights"""
+    if request.method == 'OPTIONS':
+        return '', 200
+    
+    try:
+        analytics = get_enhanced_user_stats(current_user.id)
+        
+        # Add additional insights
+        insights = {
+            'recommendations': {
+                'total_generated': analytics.get('total_interactions', 0),
+                'accuracy_score': analytics.get('engagement_metrics', {}).get('engagement_score', 0),
+                'improvement_tips': []
+            },
+            'content_preferences': {
+                'diversity_level': 'high' if analytics.get('content_diversity', {}).get('diversity_score', 0) > 0.7 else 'medium',
+                'exploration_tendency': analytics.get('discovery_score', 0),
+                'quality_preference': analytics.get('quality_preferences', {}).get('quality_preference', 'balanced')
+            },
+            'engagement_level': 'high' if analytics.get('engagement_metrics', {}).get('engagement_score', 0) > 0.7 else 'moderate'
+        }
+        
+        # Generate improvement tips
+        if analytics.get('total_interactions', 0) < 10:
+            insights['recommendations']['improvement_tips'].append(
+                "Interact with more content (like, favorite, rate) to improve recommendations"
+            )
+        
+        if analytics.get('ratings_given', 0) < 5:
+            insights['recommendations']['improvement_tips'].append(
+                "Rate content to help our AI understand your preferences better"
+            )
+        
+        if analytics.get('content_diversity', {}).get('genre_diversity_count', 0) < 5:
+            insights['recommendations']['improvement_tips'].append(
+                "Explore different genres to discover new content you might love"
+            )
+        
+        return jsonify({
+            'success': True,
+            'analytics': analytics,
+            'insights': insights,
+            'generated_at': datetime.utcnow().isoformat()
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Analytics error: {e}")
+        return jsonify({'error': 'Failed to get analytics'}), 500
+
+# ========================= USER INTERACTIONS =========================
+
+@users_bp.route('/api/interactions', methods=['POST', 'OPTIONS'])
 @require_auth
 def record_interaction(current_user):
+    """Record user interaction with enhanced analytics"""
+    if request.method == 'OPTIONS':
+        return '', 200
+    
     try:
         data = request.get_json()
         
@@ -148,6 +480,7 @@ def record_interaction(current_user):
         if not all(field in data for field in required_fields):
             return jsonify({'error': 'Missing required fields'}), 400
         
+        # Handle special case: remove from watchlist
         if data['interaction_type'] == 'remove_watchlist':
             interaction = UserInteraction.query.filter_by(
                 user_id=current_user.id,
@@ -173,10 +506,17 @@ def record_interaction(current_user):
                     except Exception as e:
                         logger.warning(f"Failed to update real-time preferences: {e}")
                 
-                return jsonify({'message': 'Removed from watchlist'}), 200
+                return jsonify({
+                    'success': True,
+                    'message': 'Removed from watchlist'
+                }), 200
             else:
-                return jsonify({'message': 'Content not in watchlist'}), 404
+                return jsonify({
+                    'success': False,
+                    'message': 'Content not in watchlist'
+                }), 404
         
+        # Check for duplicate watchlist entries
         if data['interaction_type'] == 'watchlist':
             existing = UserInteraction.query.filter_by(
                 user_id=current_user.id,
@@ -185,8 +525,12 @@ def record_interaction(current_user):
             ).first()
             
             if existing:
-                return jsonify({'message': 'Already in watchlist'}), 200
+                return jsonify({
+                    'success': True,
+                    'message': 'Already in watchlist'
+                }), 200
         
+        # Create new interaction
         interaction = UserInteraction(
             user_id=current_user.id,
             content_id=data['content_id'],
@@ -213,25 +557,32 @@ def record_interaction(current_user):
             except Exception as e:
                 logger.warning(f"Failed to update real-time preferences: {e}")
         
-        return jsonify({'message': 'Interaction recorded successfully'}), 201
+        return jsonify({
+            'success': True,
+            'message': 'Interaction recorded successfully',
+            'interaction_id': interaction.id
+        }), 201
         
     except Exception as e:
         logger.error(f"Interaction recording error: {e}")
         db.session.rollback()
         return jsonify({'error': 'Failed to record interaction'}), 500
 
-# Personalized Recommendation Endpoints
+# ========================= PERSONALIZED RECOMMENDATIONS =========================
 
-@users_bp.route('/api/personalized/', methods=['GET'])
+@users_bp.route('/api/personalized/', methods=['GET', 'OPTIONS'])
 @require_auth
 def get_personalized_recommendations(current_user):
     """
-    Get Netflix-level personalized recommendations for cinbrain users
+    Get Netflix-level personalized recommendations for CineBrain users
     
     Analyzes user interactions (search history, views, favorites, watchlist, ratings)
     and content metadata (storylines, synopsis, genres) using hybrid recommendation 
     techniques to deliver highly accurate, real-time personalized recommendations.
     """
+    if request.method == 'OPTIONS':
+        return '', 200
+    
     try:
         if not recommendation_engine:
             return jsonify({
@@ -256,9 +607,10 @@ def get_personalized_recommendations(current_user):
             categories=category_list
         )
         
-        # Add cinbrain branding
+        # Add CineBrain branding and user info
         recommendations['platform'] = 'cinbrain'
         recommendations['user_tier'] = 'premium'  # All registered users get premium experience
+        recommendations['personalization_level'] = 'high'
         
         return jsonify({
             'success': True,
@@ -267,6 +619,11 @@ def get_personalized_recommendations(current_user):
             'user': {
                 'id': current_user.id,
                 'username': current_user.username
+            },
+            'metadata': {
+                'generated_at': datetime.utcnow().isoformat(),
+                'algorithm_version': '3.0',
+                'personalization_strength': recommendations.get('recommendation_metadata', {}).get('confidence_score', 0.8)
             }
         }), 200
         
@@ -278,10 +635,13 @@ def get_personalized_recommendations(current_user):
             'data': {}
         }), 500
 
-@users_bp.route('/api/personalized/for-you', methods=['GET'])
+@users_bp.route('/api/personalized/for-you', methods=['GET', 'OPTIONS'])
 @require_auth
 def get_for_you_recommendations(current_user):
     """Get main 'For You' personalized feed"""
+    if request.method == 'OPTIONS':
+        return '', 200
+    
     try:
         if not recommendation_engine:
             return jsonify({'error': 'Recommendation engine not available'}), 503
@@ -301,17 +661,21 @@ def get_for_you_recommendations(current_user):
             'recommendations': for_you_recs,
             'total_count': len(for_you_recs),
             'user_insights': recommendations.get('profile_insights', {}),
-            'metadata': recommendations.get('recommendation_metadata', {})
+            'metadata': recommendations.get('recommendation_metadata', {}),
+            'generated_at': datetime.utcnow().isoformat()
         }), 200
         
     except Exception as e:
         logger.error(f"For You recommendations error: {e}")
         return jsonify({'error': 'Failed to get For You recommendations'}), 500
 
-@users_bp.route('/api/personalized/because-you-watched', methods=['GET'])
+@users_bp.route('/api/personalized/because-you-watched', methods=['GET', 'OPTIONS'])
 @require_auth
 def get_because_you_watched(current_user):
     """Get 'Because you watched X' recommendations"""
+    if request.method == 'OPTIONS':
+        return '', 200
+    
     try:
         if not recommendation_engine:
             return jsonify({'error': 'Recommendation engine not available'}), 503
@@ -330,17 +694,21 @@ def get_because_you_watched(current_user):
             'success': True,
             'recommendations': because_recs,
             'total_count': len(because_recs),
-            'explanation': 'Based on your recently watched content'
+            'explanation': 'Based on your recently watched content',
+            'algorithm': 'content_similarity_and_collaborative_filtering'
         }), 200
         
     except Exception as e:
         logger.error(f"Because you watched recommendations error: {e}")
         return jsonify({'error': 'Failed to get because you watched recommendations'}), 500
 
-@users_bp.route('/api/personalized/trending-for-you', methods=['GET'])
+@users_bp.route('/api/personalized/trending-for-you', methods=['GET', 'OPTIONS'])
 @require_auth
 def get_trending_for_you(current_user):
     """Get personalized trending recommendations"""
+    if request.method == 'OPTIONS':
+        return '', 200
+    
     try:
         if not recommendation_engine:
             return jsonify({'error': 'Recommendation engine not available'}), 503
@@ -359,17 +727,21 @@ def get_trending_for_you(current_user):
             'success': True,
             'recommendations': trending_recs,
             'total_count': len(trending_recs),
-            'explanation': 'Trending content personalized for your taste'
+            'explanation': 'Trending content personalized for your taste',
+            'algorithm': 'hybrid_trending_personalization'
         }), 200
         
     except Exception as e:
         logger.error(f"Trending for you recommendations error: {e}")
         return jsonify({'error': 'Failed to get trending recommendations'}), 500
 
-@users_bp.route('/api/personalized/your-language', methods=['GET'])
+@users_bp.route('/api/personalized/your-language', methods=['GET', 'OPTIONS'])
 @require_auth
 def get_your_language_recommendations(current_user):
     """Get language-specific personalized recommendations"""
+    if request.method == 'OPTIONS':
+        return '', 200
+    
     try:
         if not recommendation_engine:
             return jsonify({'error': 'Recommendation engine not available'}), 503
@@ -384,21 +756,29 @@ def get_your_language_recommendations(current_user):
         
         language_recs = recommendations.get('recommendations', {}).get('your_language', [])
         
+        # Get user's preferred languages
+        preferred_languages = json.loads(current_user.preferred_languages or '[]')
+        
         return jsonify({
             'success': True,
             'recommendations': language_recs,
             'total_count': len(language_recs),
-            'explanation': 'Content in your preferred languages'
+            'explanation': 'Content in your preferred languages',
+            'preferred_languages': preferred_languages,
+            'algorithm': 'language_preference_filtering'
         }), 200
         
     except Exception as e:
         logger.error(f"Language recommendations error: {e}")
         return jsonify({'error': 'Failed to get language recommendations'}), 500
 
-@users_bp.route('/api/personalized/hidden-gems', methods=['GET'])
+@users_bp.route('/api/personalized/hidden-gems', methods=['GET', 'OPTIONS'])
 @require_auth
 def get_hidden_gems(current_user):
     """Get hidden gem recommendations"""
+    if request.method == 'OPTIONS':
+        return '', 200
+    
     try:
         if not recommendation_engine:
             return jsonify({'error': 'Recommendation engine not available'}), 503
@@ -417,28 +797,33 @@ def get_hidden_gems(current_user):
             'success': True,
             'recommendations': gems_recs,
             'total_count': len(gems_recs),
-            'explanation': 'High-quality content you might have missed'
+            'explanation': 'High-quality content you might have missed',
+            'algorithm': 'hidden_gem_discovery'
         }), 200
         
     except Exception as e:
         logger.error(f"Hidden gems recommendations error: {e}")
         return jsonify({'error': 'Failed to get hidden gems recommendations'}), 500
 
-@users_bp.route('/api/personalized/profile-insights', methods=['GET'])
+@users_bp.route('/api/personalized/profile-insights', methods=['GET', 'OPTIONS'])
 @require_auth
 def get_profile_insights(current_user):
     """Get user profile insights and recommendation analytics"""
+    if request.method == 'OPTIONS':
+        return '', 200
+    
     try:
         if not recommendation_engine:
             return jsonify({'error': 'Recommendation engine not available'}), 503
         
-        # Get user profile
+        # Get user profile from recommendation engine
         user_profile = recommendation_engine.user_profiler.build_comprehensive_user_profile(current_user.id)
         
         if not user_profile:
             return jsonify({
                 'success': False,
-                'message': 'Could not build user profile'
+                'message': 'Could not build user profile - insufficient interaction data',
+                'suggestion': 'Interact with more content to build your profile'
             }), 404
         
         # Extract key insights
@@ -446,44 +831,67 @@ def get_profile_insights(current_user):
             'profile_strength': {
                 'completeness': user_profile.get('profile_completeness', 0),
                 'confidence': user_profile.get('confidence_score', 0),
-                'status': 'strong' if user_profile.get('confidence_score', 0) > 0.7 else 'building'
+                'status': 'strong' if user_profile.get('confidence_score', 0) > 0.7 else 'developing',
+                'interactions_needed': max(0, 20 - user_profile.get('implicit_preferences', {}).get('total_interactions', 0))
             },
             'preferences': {
                 'top_genres': user_profile.get('genre_preferences', {}).get('top_genres', [])[:5],
                 'preferred_languages': user_profile.get('language_preferences', {}).get('preferred_languages', [])[:3],
-                'content_types': user_profile.get('content_type_preferences', {}).get('content_type_scores', {})
+                'content_types': user_profile.get('content_type_preferences', {}).get('content_type_scores', {}),
+                'quality_threshold': user_profile.get('quality_preferences', {}).get('min_rating', 6.0)
             },
             'behavior': {
                 'engagement_score': user_profile.get('engagement_score', 0),
-                'viewing_style': user_profile.get('implicit_preferences', {}).get('most_common_interaction'),
+                'viewing_style': user_profile.get('implicit_preferences', {}).get('most_common_interaction', 'explorer'),
                 'exploration_tendency': user_profile.get('exploration_tendency', 0),
-                'total_interactions': user_profile.get('implicit_preferences', {}).get('total_interactions', 0)
+                'total_interactions': user_profile.get('implicit_preferences', {}).get('total_interactions', 0),
+                'consistency': user_profile.get('temporal_patterns', {}).get('activity_consistency', 0)
             },
             'recent_activity': user_profile.get('recent_activity', {}),
             'recommendations_quality': {
                 'accuracy_estimate': min(user_profile.get('confidence_score', 0) * 100, 95),
-                'next_improvement': 'Rate more content to improve accuracy' if user_profile.get('profile_completeness', 0) < 0.8 else 'Your recommendations are highly accurate!'
+                'personalization_level': 'high' if user_profile.get('confidence_score', 0) > 0.8 else 'moderate',
+                'next_improvement': self._get_improvement_suggestion(user_profile)
             }
         }
         
         return jsonify({
             'success': True,
             'insights': insights,
-            'last_updated': user_profile.get('last_updated', datetime.utcnow()).isoformat()
+            'last_updated': user_profile.get('last_updated', datetime.utcnow()).isoformat(),
+            'profile_version': '3.0'
         }), 200
         
     except Exception as e:
         logger.error(f"Profile insights error: {e}")
         return jsonify({'error': 'Failed to get profile insights'}), 500
 
-@users_bp.route('/api/personalized/update-preferences', methods=['POST'])
+def _get_improvement_suggestion(user_profile):
+    """Get personalized improvement suggestion"""
+    completeness = user_profile.get('profile_completeness', 0)
+    total_interactions = user_profile.get('implicit_preferences', {}).get('total_interactions', 0)
+    ratings_count = user_profile.get('explicit_preferences', {}).get('ratings_count', 0)
+    
+    if completeness < 0.3:
+        return 'Interact with more content (like, favorite, add to watchlist) to improve accuracy'
+    elif ratings_count < 5:
+        return 'Rate more content to help our AI understand your taste better'
+    elif completeness < 0.8:
+        return 'Explore different genres to get more diverse recommendations'
+    else:
+        return 'Your recommendations are highly accurate! Keep discovering new content'
+
+@users_bp.route('/api/personalized/update-preferences', methods=['POST', 'OPTIONS'])
 @require_auth
 def update_user_preferences(current_user):
     """Update user preferences and trigger recommendation refresh"""
+    if request.method == 'OPTIONS':
+        return '', 200
+    
     try:
         data = request.get_json()
         
-        # Update user preferences
+        # Update user preferences in database
         if 'preferred_languages' in data:
             current_user.preferred_languages = json.dumps(data['preferred_languages'])
         
@@ -501,10 +909,12 @@ def update_user_preferences(current_user):
                         'interaction_type': 'preference_update',
                         'metadata': {
                             'updated_languages': data.get('preferred_languages'),
-                            'updated_genres': data.get('preferred_genres')
+                            'updated_genres': data.get('preferred_genres'),
+                            'source': 'explicit_preference_update'
                         }
                     }
                 )
+                logger.info(f"Successfully updated preferences for user {current_user.id}")
             except Exception as e:
                 logger.warning(f"Failed to update recommendation engine: {e}")
         
@@ -514,7 +924,8 @@ def update_user_preferences(current_user):
             'user': {
                 'preferred_languages': json.loads(current_user.preferred_languages or '[]'),
                 'preferred_genres': json.loads(current_user.preferred_genres or '[]')
-            }
+            },
+            'recommendation_refresh': 'triggered'
         }), 200
         
     except Exception as e:
@@ -522,46 +933,65 @@ def update_user_preferences(current_user):
         db.session.rollback()
         return jsonify({'error': 'Failed to update preferences'}), 500
 
-# Existing endpoints (watchlist, favorites, etc.)
+# ========================= WATCHLIST & FAVORITES =========================
 
-@users_bp.route('/api/user/watchlist', methods=['GET'])
+@users_bp.route('/api/user/watchlist', methods=['GET', 'OPTIONS'])
 @require_auth
 def get_watchlist(current_user):
+    """Get user's watchlist with enhanced metadata"""
+    if request.method == 'OPTIONS':
+        return '', 200
+    
     try:
         watchlist_interactions = UserInteraction.query.filter_by(
             user_id=current_user.id,
             interaction_type='watchlist'
-        ).all()
+        ).order_by(UserInteraction.timestamp.desc()).all()
         
         content_ids = [interaction.content_id for interaction in watchlist_interactions]
         contents = Content.query.filter(Content.id.in_(content_ids)).all()
+        content_map = {content.id: content for content in contents}
         
         result = []
-        for content in contents:
-            youtube_url = None
-            if content.youtube_trailer_id:
-                youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
-            
-            result.append({
-                'id': content.id,
-                'slug': content.slug,
-                'title': content.title,
-                'content_type': content.content_type,
-                'genres': json.loads(content.genres or '[]'),
-                'rating': content.rating,
-                'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
-                'youtube_trailer': youtube_url
-            })
+        for interaction in watchlist_interactions:
+            content = content_map.get(interaction.content_id)
+            if content:
+                youtube_url = None
+                if content.youtube_trailer_id:
+                    youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
+                
+                result.append({
+                    'id': content.id,
+                    'slug': content.slug,
+                    'title': content.title,
+                    'content_type': content.content_type,
+                    'genres': json.loads(content.genres or '[]'),
+                    'rating': content.rating,
+                    'release_date': content.release_date.isoformat() if content.release_date else None,
+                    'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
+                    'youtube_trailer': youtube_url,
+                    'added_at': interaction.timestamp.isoformat(),
+                    'is_new_release': content.is_new_release,
+                    'is_trending': content.is_trending
+                })
         
-        return jsonify({'watchlist': result}), 200
+        return jsonify({
+            'watchlist': result,
+            'total_count': len(result),
+            'last_updated': datetime.utcnow().isoformat()
+        }), 200
         
     except Exception as e:
         logger.error(f"Watchlist error: {e}")
         return jsonify({'error': 'Failed to get watchlist'}), 500
 
-@users_bp.route('/api/user/watchlist/<int:content_id>', methods=['DELETE'])
+@users_bp.route('/api/user/watchlist/<int:content_id>', methods=['DELETE', 'OPTIONS'])
 @require_auth
 def remove_from_watchlist(current_user, content_id):
+    """Remove content from watchlist"""
+    if request.method == 'OPTIONS':
+        return '', 200
+    
     try:
         interaction = UserInteraction.query.filter_by(
             user_id=current_user.id,
@@ -586,18 +1016,28 @@ def remove_from_watchlist(current_user, content_id):
                 except Exception as e:
                     logger.warning(f"Failed to update recommendations: {e}")
             
-            return jsonify({'message': 'Removed from watchlist'}), 200
+            return jsonify({
+                'success': True,
+                'message': 'Removed from watchlist'
+            }), 200
         else:
-            return jsonify({'message': 'Content not in watchlist'}), 404
+            return jsonify({
+                'success': False,
+                'message': 'Content not in watchlist'
+            }), 404
             
     except Exception as e:
         logger.error(f"Remove from watchlist error: {e}")
         db.session.rollback()
         return jsonify({'error': 'Failed to remove from watchlist'}), 500
 
-@users_bp.route('/api/user/watchlist/<int:content_id>', methods=['GET'])
+@users_bp.route('/api/user/watchlist/<int:content_id>', methods=['GET', 'OPTIONS'])
 @require_auth
 def check_watchlist_status(current_user, content_id):
+    """Check if content is in user's watchlist"""
+    if request.method == 'OPTIONS':
+        return '', 200
+    
     try:
         interaction = UserInteraction.query.filter_by(
             user_id=current_user.id,
@@ -605,43 +1045,195 @@ def check_watchlist_status(current_user, content_id):
             interaction_type='watchlist'
         ).first()
         
-        return jsonify({'in_watchlist': interaction is not None}), 200
+        return jsonify({
+            'in_watchlist': interaction is not None,
+            'added_at': interaction.timestamp.isoformat() if interaction else None
+        }), 200
         
     except Exception as e:
         logger.error(f"Check watchlist status error: {e}")
         return jsonify({'error': 'Failed to check watchlist status'}), 500
 
-@users_bp.route('/api/user/favorites', methods=['GET'])
+@users_bp.route('/api/user/favorites', methods=['GET', 'OPTIONS'])
 @require_auth
 def get_favorites(current_user):
+    """Get user's favorites with enhanced metadata"""
+    if request.method == 'OPTIONS':
+        return '', 200
+    
     try:
         favorite_interactions = UserInteraction.query.filter_by(
             user_id=current_user.id,
             interaction_type='favorite'
-        ).all()
+        ).order_by(UserInteraction.timestamp.desc()).all()
         
         content_ids = [interaction.content_id for interaction in favorite_interactions]
         contents = Content.query.filter(Content.id.in_(content_ids)).all()
+        content_map = {content.id: content for content in contents}
         
         result = []
-        for content in contents:
-            youtube_url = None
-            if content.youtube_trailer_id:
-                youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
-            
-            result.append({
-                'id': content.id,
-                'slug': content.slug,
-                'title': content.title,
-                'content_type': content.content_type,
-                'genres': json.loads(content.genres or '[]'),
-                'rating': content.rating,
-                'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
-                'youtube_trailer': youtube_url
-            })
+        for interaction in favorite_interactions:
+            content = content_map.get(interaction.content_id)
+            if content:
+                youtube_url = None
+                if content.youtube_trailer_id:
+                    youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
+                
+                result.append({
+                    'id': content.id,
+                    'slug': content.slug,
+                    'title': content.title,
+                    'content_type': content.content_type,
+                    'genres': json.loads(content.genres or '[]'),
+                    'rating': content.rating,
+                    'release_date': content.release_date.isoformat() if content.release_date else None,
+                    'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
+                    'youtube_trailer': youtube_url,
+                    'favorited_at': interaction.timestamp.isoformat(),
+                    'user_rating': interaction.rating
+                })
         
-        return jsonify({'favorites': result}), 200
+        return jsonify({
+            'favorites': result,
+            'total_count': len(result),
+            'last_updated': datetime.utcnow().isoformat()
+        }), 200
         
     except Exception as e:
         logger.error(f"Favorites error: {e}")
         return jsonify({'error': 'Failed to get favorites'}), 500
+
+@users_bp.route('/api/user/ratings', methods=['GET', 'OPTIONS'])
+@require_auth
+def get_user_ratings(current_user):
+    """Get user's ratings history"""
+    if request.method == 'OPTIONS':
+        return '', 200
+    
+    try:
+        rating_interactions = UserInteraction.query.filter_by(
+            user_id=current_user.id,
+            interaction_type='rating'
+        ).filter(UserInteraction.rating.isnot(None)).order_by(
+            UserInteraction.timestamp.desc()
+        ).all()
+        
+        content_ids = [interaction.content_id for interaction in rating_interactions]
+        contents = Content.query.filter(Content.id.in_(content_ids)).all()
+        content_map = {content.id: content for content in contents}
+        
+        result = []
+        for interaction in rating_interactions:
+            content = content_map.get(interaction.content_id)
+            if content:
+                result.append({
+                    'id': content.id,
+                    'slug': content.slug,
+                    'title': content.title,
+                    'content_type': content.content_type,
+                    'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
+                    'user_rating': interaction.rating,
+                    'imdb_rating': content.rating,
+                    'rated_at': interaction.timestamp.isoformat()
+                })
+        
+        # Calculate rating statistics
+        ratings = [interaction.rating for interaction in rating_interactions]
+        stats = {
+            'total_ratings': len(ratings),
+            'average_rating': round(sum(ratings) / len(ratings), 1) if ratings else 0,
+            'highest_rating': max(ratings) if ratings else 0,
+            'lowest_rating': min(ratings) if ratings else 0
+        }
+        
+        return jsonify({
+            'ratings': result,
+            'stats': stats,
+            'last_updated': datetime.utcnow().isoformat()
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"User ratings error: {e}")
+        return jsonify({'error': 'Failed to get user ratings'}), 500
+
+# ========================= CORS HANDLING =========================
+
+@users_bp.after_request
+def after_request(response):
+    """Add CORS headers to all responses"""
+    origin = request.headers.get('Origin')
+    allowed_origins = [
+        'https://cinebrain.vercel.app',
+        'http://127.0.0.1:5500',
+        'http://127.0.0.1:5501',
+        'http://localhost:3000',
+        'http://localhost:5173'
+    ]
+    
+    if origin in allowed_origins:
+        response.headers['Access-Control-Allow-Origin'] = origin
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type,Authorization'
+        response.headers['Access-Control-Allow-Methods'] = 'GET,PUT,POST,DELETE,OPTIONS'
+        response.headers['Access-Control-Allow-Credentials'] = 'true'
+    
+    return response
+
+# ========================= HEALTH CHECK =========================
+
+@users_bp.route('/api/users/health', methods=['GET'])
+def users_health():
+    """Users service health check"""
+    try:
+        health_info = {
+            'status': 'healthy',
+            'service': 'users',
+            'timestamp': datetime.utcnow().isoformat(),
+            'version': '3.0.0'
+        }
+        
+        # Test database connection
+        try:
+            User.query.limit(1).first()
+            health_info['database'] = 'connected'
+        except Exception as e:
+            health_info['database'] = f'error: {str(e)}'
+            health_info['status'] = 'degraded'
+        
+        # Check recommendation engine
+        health_info['recommendation_engine'] = 'connected' if recommendation_engine else 'not_available'
+        
+        # Get user statistics
+        try:
+            total_users = User.query.count()
+            active_users = User.query.filter(
+                User.last_active >= datetime.utcnow() - timedelta(days=7)
+            ).count()
+            
+            health_info['user_metrics'] = {
+                'total_users': total_users,
+                'active_users_7d': active_users,
+                'activity_rate': round((active_users / total_users * 100), 1) if total_users > 0 else 0
+            }
+        except Exception as e:
+            health_info['user_metrics'] = {'error': str(e)}
+        
+        health_info['features'] = {
+            'personalized_recommendations': True,
+            'user_analytics': True,
+            'profile_management': True,
+            'watchlist_favorites': True,
+            'real_time_updates': True
+        }
+        
+        return jsonify(health_info), 200
+        
+    except Exception as e:
+        return jsonify({
+            'status': 'unhealthy',
+            'service': 'users',
+            'error': str(e),
+            'timestamp': datetime.utcnow().isoformat()
+        }), 500
+
+# Export for app registration
+__all__ = ['users_bp', 'init_users']
