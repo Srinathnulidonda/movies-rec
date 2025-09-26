@@ -1,4 +1,4 @@
-# backend/services/algorithms.py
+# backend/algorithms.py
 import numpy as np
 import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer

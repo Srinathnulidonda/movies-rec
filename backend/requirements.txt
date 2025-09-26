@@ -32,6 +32,3 @@ python-slugify==8.0.4
 fuzzywuzzy
 nltk==3.8.1
 joblib==1.3.2
-cloudinary
-textblob
-spacy
