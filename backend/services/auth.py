@@ -816,7 +816,7 @@ def init_auth(flask_app, database, user_model):
     
     # Initialize professional email service with Gmail SMTP
     gmail_username = os.environ.get('GMAIL_USERNAME', 'projects.srinath@gmail.com')
-    gmail_password = os.environ.get('GMAIL_APP_PASSWORD', 'wuus nsow nbee xewv')
+    gmail_password = os.environ.get('GMAIL_APP_PASSWORD', 'nddg lphy ajjy rnuq')
     
     email_service = ProfessionalEmailService(gmail_username, gmail_password)
     
