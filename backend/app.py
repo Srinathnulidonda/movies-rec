@@ -1,4 +1,3 @@
-#backend/app.py
 from typing import Optional
 from flask import Flask, request, jsonify, session, render_template
 from flask_sqlalchemy import SQLAlchemy
@@ -69,7 +68,6 @@ if REDIS_URL and REDIS_URL.startswith(('redis://', 'rediss://')):
 else:
     app.config['CACHE_TYPE'] = 'simple'
     app.config['CACHE_DEFAULT_TIMEOUT'] = 1800
-
 
 if DATABASE_URL and DATABASE_URL.startswith('postgresql://'):
     app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL + '?sslmode=require'
@@ -731,6 +729,7 @@ try:
     personalized_engine = init_personalized(app, db, models, services, cache)
     if personalized_engine:
         logger.info("Netflix-level personalized recommendation system initialized successfully")
+        services['personalized_engine'] = personalized_engine
     else:
         logger.warning("Personalized recommendation system failed to initialize")
 except Exception as e:
@@ -739,11 +738,15 @@ except Exception as e:
 app.register_blueprint(auth_bp)
 app.register_blueprint(admin_bp)
 app.register_blueprint(users_bp)
-init_auth(app, db, User)
 
+init_auth(app, db, User)
 init_admin(app, db, models, services)
-init_users(app, db, models, services)
-init_users(app, db, models, {**services, 'cache': cache})
+
+try:
+    init_users(app, db, models, {**services, 'cache': cache})
+    logger.info("Users service with personalized recommendations initialized successfully")
+except Exception as e:
+    logger.error(f"Failed to initialize users service: {e}")
 
 def setup_support_monitoring():
     def support_monitor():
@@ -2359,6 +2362,7 @@ def create_tables():
             logger.info("Database tables created successfully including support tables with monitoring")
     except Exception as e:
         logger.error(f"Database initialization error: {e}")
+
 create_tables()
 
 if __name__ == '__main__':

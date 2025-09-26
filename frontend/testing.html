@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CineBrain Admin Dashboard - Testing Interface</title>
+    <title>CinBrain - Netflix-Level Recommendations</title>
     <style>
         * {
             margin: 0;
@@ -13,1997 +13,1654 @@
         }
 
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: #f5f5f5;
-            color: #333;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #0f0f23 0%, #1a1a2e 50%, #16213e 100%);
+            color: #ffffff;
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        .header {
+            background: rgba(15, 15, 35, 0.95);
+            backdrop-filter: blur(10px);
+            padding: 1rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 1000;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .logo {
+            font-size: 2rem;
+            font-weight: bold;
+            background: linear-gradient(45deg, #ff6b6b, #4ecdc4, #45b7d1);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .nav-buttons {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+        }
+
+        .btn {
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: 8px;
+            background: linear-gradient(45deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-secondary {
+            background: linear-gradient(45deg, #f093fb 0%, #f5576c 100%);
+        }
+
+        .btn-success {
+            background: linear-gradient(45deg, #4facfe 0%, #00f2fe 100%);
+        }
+
+        .btn-danger {
+            background: linear-gradient(45deg, #fa709a 0%, #fee140 100%);
         }
 
         .container {
             max-width: 1400px;
             margin: 0 auto;
-            padding: 20px;
+            padding: 120px 2rem 2rem;
         }
 
-        /* Header */
-        .header {
-            background: #1a73e8;
-            color: white;
-            padding: 15px 0;
-            margin-bottom: 20px;
-            border-radius: 8px;
-        }
-
-        .header h1 {
+        .hero-section {
             text-align: center;
-            font-size: 24px;
+            padding: 4rem 0;
+            background: linear-gradient(135deg, rgba(255, 107, 107, 0.1), rgba(78, 205, 196, 0.1));
+            border-radius: 20px;
+            margin-bottom: 3rem;
         }
 
-        /* Navigation */
-        .nav-tabs {
-            display: flex;
-            background: white;
-            border-radius: 8px;
-            margin-bottom: 20px;
-            overflow-x: auto;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        .hero-title {
+            font-size: 3.5rem;
+            font-weight: bold;
+            margin-bottom: 1rem;
+            background: linear-gradient(45deg, #ff6b6b, #4ecdc4, #45b7d1, #96ceb4);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
         }
 
-        .nav-tab {
-            padding: 15px 20px;
-            cursor: pointer;
-            border-bottom: 3px solid transparent;
-            white-space: nowrap;
-            transition: all 0.3s;
+        .hero-subtitle {
+            font-size: 1.5rem;
+            color: rgba(255, 255, 255, 0.8);
+            margin-bottom: 2rem;
         }
 
-        .nav-tab:hover {
-            background: #f8f9fa;
-        }
-
-        .nav-tab.active {
-            border-bottom-color: #1a73e8;
-            color: #1a73e8;
-            font-weight: 600;
-        }
-
-        /* Auth Section */
-        .auth-section {
-            background: white;
-            padding: 30px;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-            max-width: 400px;
-            margin: 50px auto;
-        }
-
-        /* Content Sections */
-        .content-section {
-            display: none;
-            background: white;
-            padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-            margin-bottom: 20px;
-        }
-
-        .content-section.active {
-            display: block;
-        }
-
-        /* Form Styles */
-        .form-group {
-            margin-bottom: 15px;
-        }
-
-        .form-group label {
-            display: block;
-            margin-bottom: 5px;
-            font-weight: 500;
-        }
-
-        .form-control {
-            width: 100%;
-            padding: 10px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            font-size: 14px;
-        }
-
-        .form-control:focus {
-            outline: none;
-            border-color: #1a73e8;
-            box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.2);
-        }
-
-        .btn {
-            padding: 10px 20px;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 14px;
-            transition: all 0.3s;
-            margin-right: 10px;
-            margin-bottom: 10px;
-        }
-
-        .btn-primary {
-            background: #1a73e8;
-            color: white;
-        }
-
-        .btn-primary:hover {
-            background: #1557b0;
-        }
-
-        .btn-success {
-            background: #34a853;
-            color: white;
-        }
-
-        .btn-success:hover {
-            background: #2d8f47;
-        }
-
-        .btn-warning {
-            background: #fbbc04;
-            color: #333;
-        }
-
-        .btn-warning:hover {
-            background: #f9ab00;
-        }
-
-        .btn-danger {
-            background: #ea4335;
-            color: white;
-        }
-
-        .btn-danger:hover {
-            background: #d93025;
-        }
-
-        .btn-secondary {
-            background: #5f6368;
-            color: white;
-        }
-
-        .btn-secondary:hover {
-            background: #4a4d52;
-        }
-
-        /* Cards */
-        .card {
-            background: white;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-            margin-bottom: 20px;
-        }
-
-        .card-header {
-            padding: 15px 20px;
-            border-bottom: 1px solid #eee;
-            font-weight: 600;
-            background: #f8f9fa;
-            border-radius: 8px 8px 0 0;
-        }
-
-        .card-body {
-            padding: 20px;
-        }
-
-        /* Grid */
-        .row {
-            display: flex;
-            flex-wrap: wrap;
-            margin: -10px;
-        }
-
-        .col-1 {
-            flex: 0 0 8.333%;
-        }
-
-        .col-2 {
-            flex: 0 0 16.666%;
-        }
-
-        .col-3 {
-            flex: 0 0 25%;
-        }
-
-        .col-4 {
-            flex: 0 0 33.333%;
-        }
-
-        .col-6 {
-            flex: 0 0 50%;
-        }
-
-        .col-8 {
-            flex: 0 0 66.666%;
-        }
-
-        .col-12 {
-            flex: 0 0 100%;
-        }
-
-        .col-1,
-        .col-2,
-        .col-3,
-        .col-4,
-        .col-6,
-        .col-8,
-        .col-12 {
-            padding: 10px;
-        }
-
-        /* Tables */
-        .table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 15px;
-        }
-
-        .table th,
-        .table td {
-            padding: 12px;
-            text-align: left;
-            border-bottom: 1px solid #eee;
-        }
-
-        .table th {
-            background: #f8f9fa;
-            font-weight: 600;
-        }
-
-        .table tbody tr:hover {
-            background: #f8f9fa;
-        }
-
-        /* Status Badges */
-        .badge {
-            padding: 4px 8px;
-            border-radius: 12px;
-            font-size: 12px;
-            font-weight: 500;
-        }
-
-        .badge-success {
-            background: #e8f5e8;
-            color: #2d8f47;
-        }
-
-        .badge-warning {
-            background: #fff8e1;
-            color: #f57c00;
-        }
-
-        .badge-danger {
-            background: #fce8e6;
-            color: #d93025;
-        }
-
-        .badge-info {
-            background: #e3f2fd;
-            color: #1976d2;
-        }
-
-        .badge-secondary {
-            background: #f5f5f5;
-            color: #5f6368;
-        }
-
-        /* Modal */
-        .modal {
-            display: none;
-            position: fixed;
-            z-index: 1000;
-            left: 0;
-            top: 0;
-            width: 100%;
-            height: 100%;
-            background-color: rgba(0, 0, 0, 0.5);
-        }
-
-        .modal-content {
-            background-color: white;
-            margin: 5% auto;
-            padding: 0;
-            border-radius: 8px;
-            width: 90%;
+        .search-container {
             max-width: 600px;
-            max-height: 80vh;
-            overflow-y: auto;
+            margin: 0 auto 3rem;
+            position: relative;
         }
 
-        .modal-header {
-            padding: 20px;
-            border-bottom: 1px solid #eee;
+        .search-input {
+            width: 100%;
+            padding: 1rem 1.5rem;
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            border-radius: 50px;
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+            font-size: 1.1rem;
+            backdrop-filter: blur(10px);
+            transition: all 0.3s ease;
+        }
+
+        .search-input:focus {
+            outline: none;
+            border-color: #4ecdc4;
+            box-shadow: 0 0 20px rgba(78, 205, 196, 0.3);
+        }
+
+        .search-input::placeholder {
+            color: rgba(255, 255, 255, 0.6);
+        }
+
+        .section {
+            margin-bottom: 3rem;
+        }
+
+        .section-title {
+            font-size: 2rem;
+            font-weight: bold;
+            margin-bottom: 1.5rem;
+            color: #4ecdc4;
+            position: relative;
+            padding-left: 1rem;
+        }
+
+        .section-title::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 4px;
+            height: 2rem;
+            background: linear-gradient(45deg, #ff6b6b, #4ecdc4);
+            border-radius: 2px;
+        }
+
+        .content-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 2rem;
+            margin-bottom: 2rem;
+        }
+
+        .content-card {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 16px;
+            overflow: hidden;
+            transition: all 0.3s ease;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            cursor: pointer;
+        }
+
+        .content-card:hover {
+            transform: translateY(-8px);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+            border-color: #4ecdc4;
+        }
+
+        .card-image {
+            width: 100%;
+            height: 400px;
+            object-fit: cover;
+            background: linear-gradient(45deg, #667eea, #764ba2);
+        }
+
+        .card-content {
+            padding: 1.5rem;
+        }
+
+        .card-title {
+            font-size: 1.2rem;
+            font-weight: bold;
+            margin-bottom: 0.5rem;
+            color: #ffffff;
+        }
+
+        .card-meta {
             display: flex;
             justify-content: space-between;
             align-items: center;
+            margin-bottom: 1rem;
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 0.9rem;
         }
 
-        .modal-body {
-            padding: 20px;
+        .rating {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: #ffd700;
         }
 
-        .modal-footer {
-            padding: 20px;
-            border-top: 1px solid #eee;
-            text-align: right;
+        .genres {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
         }
 
-        .close {
-            color: #aaa;
-            font-size: 28px;
-            font-weight: bold;
-            cursor: pointer;
-        }
-
-        .close:hover {
-            color: #000;
-        }
-
-        /* Alerts */
-        .alert {
-            padding: 15px;
-            margin-bottom: 20px;
-            border-radius: 4px;
-            border: 1px solid transparent;
-        }
-
-        .alert-success {
-            color: #155724;
-            background-color: #d4edda;
-            border-color: #c3e6cb;
-        }
-
-        .alert-error {
-            color: #721c24;
-            background-color: #f8d7da;
-            border-color: #f5c6cb;
-        }
-
-        .alert-info {
-            color: #0c5460;
-            background-color: #d1ecf1;
-            border-color: #bee5eb;
-        }
-
-        /* Metrics Cards */
-        .metric-card {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        .genre-tag {
+            background: linear-gradient(45deg, #667eea, #764ba2);
             color: white;
-            text-align: center;
-            padding: 20px;
-            border-radius: 8px;
-            margin-bottom: 15px;
+            padding: 0.25rem 0.75rem;
+            border-radius: 12px;
+            font-size: 0.8rem;
+            font-weight: 500;
         }
 
-        .metric-number {
-            font-size: 32px;
-            font-weight: bold;
-            margin-bottom: 5px;
+        .card-actions {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
         }
 
-        .metric-label {
-            font-size: 14px;
-            opacity: 0.9;
-        }
-
-        /* Notifications Panel */
-        .notifications-panel {
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            width: 350px;
-            max-height: 400px;
-            overflow-y: auto;
-            background: white;
-            border-radius: 8px;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-            z-index: 1000;
-            display: none;
-        }
-
-        .notification-item {
-            padding: 15px;
-            border-bottom: 1px solid #eee;
+        .btn-small {
+            padding: 0.5rem 1rem;
+            font-size: 0.9rem;
+            border-radius: 6px;
+            border: none;
             cursor: pointer;
+            transition: all 0.3s ease;
+            flex: 1;
+            min-width: 100px;
         }
 
-        .notification-item:hover {
-            background: #f8f9fa;
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            backdrop-filter: blur(5px);
+            z-index: 2000;
+            align-items: center;
+            justify-content: center;
         }
 
-        .notification-item.unread {
-            background: #e3f2fd;
+        .modal-content {
+            background: linear-gradient(135deg, #1a1a2e, #16213e);
+            padding: 2rem;
+            border-radius: 16px;
+            max-width: 500px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+            border: 1px solid rgba(255, 255, 255, 0.2);
         }
 
-        .notification-title {
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+
+        .form-label {
+            display: block;
+            margin-bottom: 0.5rem;
+            color: #4ecdc4;
             font-weight: 600;
-            margin-bottom: 5px;
         }
 
-        .notification-message {
-            font-size: 14px;
-            color: #666;
-            margin-bottom: 5px;
+        .form-input {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+            font-size: 1rem;
         }
 
-        .notification-time {
-            font-size: 12px;
-            color: #999;
+        .form-input:focus {
+            outline: none;
+            border-color: #4ecdc4;
+            box-shadow: 0 0 10px rgba(78, 205, 196, 0.2);
         }
 
-        /* Search and Filters */
-        .search-filters {
-            background: #f8f9fa;
-            padding: 15px;
-            border-radius: 4px;
-            margin-bottom: 20px;
-        }
-
-        .search-filters .row {
-            align-items: flex-end;
-        }
-
-        /* Loading Spinner */
         .loading {
-            text-align: center;
-            padding: 20px;
-        }
-
-        .spinner {
-            border: 3px solid #f3f3f3;
-            border-top: 3px solid #1a73e8;
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255, 255, 255, 0.3);
             border-radius: 50%;
-            width: 30px;
-            height: 30px;
-            animation: spin 1s linear infinite;
-            margin: 0 auto;
+            border-top-color: #4ecdc4;
+            animation: spin 1s ease-in-out infinite;
         }
 
         @keyframes spin {
-            0% {
-                transform: rotate(0deg);
-            }
-
-            100% {
+            to {
                 transform: rotate(360deg);
             }
         }
 
-        /* Responsive */
-        @media (max-width: 768px) {
-            .container {
-                padding: 10px;
-            }
-
-            .nav-tabs {
-                flex-direction: column;
-            }
-
-            .row {
-                flex-direction: column;
-            }
-
-            .col-1,
-            .col-2,
-            .col-3,
-            .col-4,
-            .col-6,
-            .col-8,
-            .col-12 {
-                flex: 0 0 100%;
-            }
-
-            .notifications-panel {
-                position: relative;
-                top: auto;
-                right: auto;
-                width: 100%;
-                margin-bottom: 20px;
-                display: block;
-            }
+        .alert {
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+            font-weight: 500;
         }
 
-        /* Status indicators */
-        .status-indicator {
-            width: 10px;
-            height: 10px;
-            border-radius: 50%;
-            display: inline-block;
-            margin-right: 5px;
+        .alert-success {
+            background: rgba(76, 175, 80, 0.2);
+            border: 1px solid rgba(76, 175, 80, 0.5);
+            color: #81c784;
         }
 
-        .status-healthy {
-            background: #34a853;
+        .alert-error {
+            background: rgba(244, 67, 54, 0.2);
+            border: 1px solid rgba(244, 67, 54, 0.5);
+            color: #e57373;
         }
 
-        .status-warning {
-            background: #fbbc04;
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            color: rgba(255, 255, 255, 0.9);
         }
 
-        .status-error {
-            background: #ea4335;
+        .tabs {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 2rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.2);
         }
 
-        .status-offline {
-            background: #9aa0a6;
+        .tab {
+            padding: 1rem 2rem;
+            background: none;
+            border: none;
+            color: rgba(255, 255, 255, 0.7);
+            cursor: pointer;
+            font-size: 1rem;
+            font-weight: 600;
+            border-bottom: 2px solid transparent;
+            transition: all 0.3s ease;
         }
 
-        /* Code blocks */
-        .code-block {
-            background: #f8f9fa;
-            border: 1px solid #e9ecef;
-            border-radius: 4px;
-            padding: 15px;
-            font-family: 'Courier New', monospace;
-            font-size: 14px;
-            overflow-x: auto;
-            margin: 10px 0;
+        .tab.active {
+            color: #4ecdc4;
+            border-bottom-color: #4ecdc4;
         }
 
-        /* Progress bars */
-        .progress {
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .stat-card {
+            background: rgba(255, 255, 255, 0.05);
+            padding: 1.5rem;
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            text-align: center;
+        }
+
+        .stat-number {
+            font-size: 2rem;
+            font-weight: bold;
+            color: #4ecdc4;
+            margin-bottom: 0.5rem;
+        }
+
+        .stat-label {
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 0.9rem;
+        }
+
+        .recommendation-categories {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .category-card {
+            background: rgba(255, 255, 255, 0.05);
+            padding: 1.5rem;
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .category-card:hover {
+            background: rgba(255, 255, 255, 0.1);
+            border-color: #4ecdc4;
+        }
+
+        .category-title {
+            font-size: 1.2rem;
+            font-weight: bold;
+            color: #4ecdc4;
+            margin-bottom: 0.5rem;
+        }
+
+        .category-description {
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 0.9rem;
+        }
+
+        .detail-modal .modal-content {
+            max-width: 800px;
+            max-height: 90vh;
+        }
+
+        .detail-header {
+            display: flex;
+            gap: 2rem;
+            margin-bottom: 2rem;
+        }
+
+        .detail-poster {
+            width: 300px;
+            height: 450px;
+            object-fit: cover;
+            border-radius: 12px;
+        }
+
+        .detail-info {
+            flex: 1;
+        }
+
+        .detail-title {
+            font-size: 2.5rem;
+            font-weight: bold;
+            margin-bottom: 1rem;
+            color: #ffffff;
+        }
+
+        .detail-meta {
+            display: flex;
+            gap: 2rem;
+            margin-bottom: 1rem;
+            color: rgba(255, 255, 255, 0.7);
+        }
+
+        .detail-overview {
+            color: rgba(255, 255, 255, 0.9);
+            line-height: 1.6;
+            margin-bottom: 2rem;
+        }
+
+        .similar-content {
+            margin-top: 2rem;
+        }
+
+        .similar-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            gap: 1rem;
+        }
+
+        .similar-item {
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .similar-item:hover {
+            transform: scale(1.05);
+        }
+
+        .similar-poster {
             width: 100%;
-            height: 20px;
-            background-color: #e9ecef;
-            border-radius: 10px;
-            overflow: hidden;
+            height: 225px;
+            object-fit: cover;
+            border-radius: 8px;
+            margin-bottom: 0.5rem;
         }
 
-        .progress-bar {
-            height: 100%;
-            background-color: #1a73e8;
-            transition: width 0.3s;
+        .similar-title {
+            font-size: 0.9rem;
+            color: rgba(255, 255, 255, 0.9);
+        }
+
+        @media (max-width: 768px) {
+            .header {
+                padding: 1rem;
+                flex-direction: column;
+                gap: 1rem;
+            }
+
+            .nav-buttons {
+                justify-content: center;
+                flex-wrap: wrap;
+            }
+
+            .hero-title {
+                font-size: 2.5rem;
+            }
+
+            .hero-subtitle {
+                font-size: 1.2rem;
+            }
+
+            .content-grid {
+                grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+                gap: 1rem;
+            }
+
+            .detail-header {
+                flex-direction: column;
+                text-align: center;
+            }
+
+            .detail-poster {
+                width: 250px;
+                height: 375px;
+                margin: 0 auto;
+            }
+
+            .detail-meta {
+                justify-content: center;
+                flex-wrap: wrap;
+                gap: 1rem;
+            }
+        }
+
+        .close-btn {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            background: rgba(255, 255, 255, 0.2);
+            border: none;
+            color: white;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2rem;
+        }
+
+        .close-btn:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        .floating-action {
+            position: fixed;
+            bottom: 2rem;
+            right: 2rem;
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            background: linear-gradient(45deg, #ff6b6b, #4ecdc4);
+            border: none;
+            color: white;
+            font-size: 1.5rem;
+            cursor: pointer;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+            transition: all 0.3s ease;
+            z-index: 1000;
+        }
+
+        .floating-action:hover {
+            transform: scale(1.1);
+            box-shadow: 0 6px 25px rgba(0, 0, 0, 0.4);
         }
     </style>
 </head>
 
 <body>
+    <header class="header">
+        <div class="logo">🎬 CinBrain</div>
+        <div class="nav-buttons">
+            <div id="userInfo" class="user-info" style="display: none;">
+                <span id="username"></span>
+            </div>
+            <button class="btn" id="loginBtn">Login</button>
+            <button class="btn btn-secondary" id="registerBtn">Register</button>
+            <button class="btn btn-danger" id="logoutBtn" style="display: none;">Logout</button>
+        </div>
+    </header>
+
     <div class="container">
-        <!-- Header -->
-        <div class="header">
-            <h1>🎬 CineBrain Admin Dashboard - Testing Interface</h1>
+        <section class="hero-section">
+            <h1 class="hero-title">Netflix-Level Recommendations</h1>
+            <p class="hero-subtitle">Discover your next favorite movie or show with AI-powered personalized
+                recommendations</p>
+
+            <div class="search-container">
+                <input type="text" class="search-input" id="searchInput"
+                    placeholder="Search for movies, TV shows, anime...">
+            </div>
+        </section>
+
+        <div class="tabs">
+            <button class="tab active" data-tab="recommendations">🎯 Recommendations</button>
+            <button class="tab" data-tab="search">🔍 Search</button>
+            <button class="tab" data-tab="profile">👤 Profile</button>
+            <button class="tab" data-tab="admin">⚙️ Admin</button>
         </div>
 
-        <!-- Authentication Section -->
-        <div id="authSection" class="auth-section">
-            <h2 style="text-align: center; margin-bottom: 20px;">Admin Login</h2>
-            <div class="form-group">
-                <label for="loginEmail">Email</label>
-                <input type="email" id="loginEmail" class="form-control" value="srinathnani09@gmail.com"
-                    placeholder="Enter admin email">
-            </div>
-            <div class="form-group">
-                <label for="loginPassword">Password</label>
-                <input type="password" id="loginPassword" class="form-control" value="admin123"
-                    placeholder="Enter password">
-            </div>
-            <button onclick="adminLogin()" class="btn btn-primary" style="width: 100%;">Login</button>
-
-            <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 4px;">
-                <h4>Test Credentials:</h4>
-                <p><strong>Email:</strong> srinathnani09@gmail.com</p>
-                <p><strong>Password:</strong> admin123</p>
-                <p><small>These are the default admin credentials from your app.py</small></p>
+        <!-- Recommendations Tab -->
+        <div class="tab-content active" id="recommendations">
+            <div id="authRequired" style="display: none;">
+                <div class="alert alert-error">
+                    Please login to see personalized recommendations
+                </div>
             </div>
 
-            <div style="margin-top: 20px; padding: 15px; background: #e3f2fd; border-radius: 4px;">
-                <h4>API Base URL:</h4>
-                <input type="text" id="apiBaseUrl" class="form-control" value="http://localhost:5000"
-                    placeholder="Enter API base URL">
-                <small>Update this to match your backend server URL</small>
-            </div>
-        </div>
-
-        <!-- Navigation Tabs -->
-        <div id="navTabs" class="nav-tabs" style="display: none;">
-            <div class="nav-tab active" onclick="showSection('dashboard')">📊 Dashboard</div>
-            <div class="nav-tab" onclick="showSection('support')">🎧 Support</div>
-            <div class="nav-tab" onclick="showSection('content')">🎬 Content</div>
-            <div class="nav-tab" onclick="showSection('users')">👥 Users</div>
-            <div class="nav-tab" onclick="showSection('analytics')">📈 Analytics</div>
-            <div class="nav-tab" onclick="showSection('system')">⚙️ System</div>
-            <div class="nav-tab" onclick="showSection('notifications')">🔔 Notifications</div>
-            <div class="nav-tab" onclick="logout()">🚪 Logout</div>
-        </div>
-
-        <!-- Dashboard Section -->
-        <div id="dashboardSection" class="content-section active">
-            <div class="card">
-                <div class="card-header">📊 Admin Dashboard Overview</div>
-                <div class="card-body">
-                    <div class="row" id="dashboardMetrics">
-                        <div class="col-3">
-                            <div class="metric-card">
-                                <div class="metric-number" id="totalUsers">-</div>
-                                <div class="metric-label">Total Users</div>
-                            </div>
+            <div id="recommendationsContent">
+                <!-- Recommendation Categories -->
+                <div class="section">
+                    <h2 class="section-title">🎯 Personalized for You</h2>
+                    <div class="recommendation-categories">
+                        <div class="category-card" data-category="for-you">
+                            <div class="category-title">For You</div>
+                            <div class="category-description">Curated picks based on your taste</div>
                         </div>
-                        <div class="col-3">
-                            <div class="metric-card">
-                                <div class="metric-number" id="totalContent">-</div>
-                                <div class="metric-label">Total Content</div>
-                            </div>
+                        <div class="category-card" data-category="because-you-watched">
+                            <div class="category-title">Because You Watched</div>
+                            <div class="category-description">Similar to your recent activity</div>
                         </div>
-                        <div class="col-3">
-                            <div class="metric-card">
-                                <div class="metric-number" id="totalInteractions">-</div>
-                                <div class="metric-label">Total Interactions</div>
-                            </div>
+                        <div class="category-card" data-category="trending-for-you">
+                            <div class="category-title">Trending for You</div>
+                            <div class="category-description">Popular content you'll love</div>
                         </div>
-                        <div class="col-3">
-                            <div class="metric-card">
-                                <div class="metric-number" id="activeUsers">-</div>
-                                <div class="metric-label">Active Users</div>
-                            </div>
+                        <div class="category-card" data-category="your-language">
+                            <div class="category-title">Your Language</div>
+                            <div class="category-description">Content in your preferred languages</div>
+                        </div>
+                        <div class="category-card" data-category="hidden-gems">
+                            <div class="category-title">Hidden Gems</div>
+                            <div class="category-description">Quality content you might have missed</div>
+                        </div>
+                        <div class="category-card" data-category="trending">
+                            <div class="category-title">Trending Now</div>
+                            <div class="category-description">What's popular right now</div>
                         </div>
                     </div>
+                </div>
 
-                    <div class="row">
-                        <div class="col-6">
-                            <h4>Support Metrics</h4>
-                            <div id="supportMetrics">
-                                <div class="loading">
-                                    <div class="spinner"></div>
-                                    <p>Loading support metrics...</p>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="col-6">
-                            <h4>System Health</h4>
-                            <div id="systemHealth">
-                                <div class="loading">
-                                    <div class="spinner"></div>
-                                    <p>Checking system health...</p>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
+                <!-- Dynamic content will be loaded here -->
+                <div id="dynamicRecommendations"></div>
+            </div>
+        </div>
 
-                    <button onclick="loadDashboard()" class="btn btn-primary">🔄 Refresh Dashboard</button>
+        <!-- Search Tab -->
+        <div class="tab-content" id="search">
+            <div class="section">
+                <h2 class="section-title">🔍 Search Results</h2>
+                <div id="searchResults" class="content-grid"></div>
+            </div>
+        </div>
+
+        <!-- Profile Tab -->
+        <div class="tab-content" id="profile">
+            <div id="profileAuthRequired" style="display: none;">
+                <div class="alert alert-error">
+                    Please login to view your profile
+                </div>
+            </div>
+
+            <div id="profileContent">
+                <div class="section">
+                    <h2 class="section-title">📊 Profile Insights</h2>
+                    <div id="profileInsights"></div>
+                </div>
+
+                <div class="section">
+                    <h2 class="section-title">📚 My Watchlist</h2>
+                    <div id="watchlist" class="content-grid"></div>
+                </div>
+
+                <div class="section">
+                    <h2 class="section-title">❤️ My Favorites</h2>
+                    <div id="favorites" class="content-grid"></div>
                 </div>
             </div>
         </div>
 
-        <!-- Support Section -->
-        <div id="supportSection" class="content-section">
-            <div class="card">
-                <div class="card-header">🎧 Support Management</div>
-                <div class="card-body">
-                    <!-- Support Dashboard -->
-                    <div class="row">
-                        <div class="col-12">
-                            <h4>Support Dashboard</h4>
-                            <button onclick="loadSupportDashboard()" class="btn btn-primary">📊 Load Support
-                                Dashboard</button>
-                            <div id="supportDashboardData"></div>
-                        </div>
-                    </div>
-
-                    <!-- Tickets Management -->
-                    <div class="row" style="margin-top: 30px;">
-                        <div class="col-12">
-                            <h4>Support Tickets</h4>
-
-                            <!-- Filters -->
-                            <div class="search-filters">
-                                <div class="row">
-                                    <div class="col-3">
-                                        <label>Status</label>
-                                        <select id="ticketStatus" class="form-control">
-                                            <option value="">All Statuses</option>
-                                            <option value="open">Open</option>
-                                            <option value="in_progress">In Progress</option>
-                                            <option value="resolved">Resolved</option>
-                                            <option value="closed">Closed</option>
-                                        </select>
-                                    </div>
-                                    <div class="col-3">
-                                        <label>Priority</label>
-                                        <select id="ticketPriority" class="form-control">
-                                            <option value="">All Priorities</option>
-                                            <option value="low">Low</option>
-                                            <option value="normal">Normal</option>
-                                            <option value="high">High</option>
-                                            <option value="urgent">Urgent</option>
-                                        </select>
-                                    </div>
-                                    <div class="col-3">
-                                        <label>Search</label>
-                                        <input type="text" id="ticketSearch" class="form-control"
-                                            placeholder="Search tickets...">
-                                    </div>
-                                    <div class="col-3">
-                                        <label>&nbsp;</label><br>
-                                        <button onclick="loadSupportTickets()" class="btn btn-primary">🔍 Search
-                                            Tickets</button>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div id="supportTicketsData"></div>
-                        </div>
-                    </div>
-
-                    <!-- FAQ Management -->
-                    <div class="row" style="margin-top: 30px;">
-                        <div class="col-12">
-                            <h4>FAQ Management</h4>
-                            <button onclick="loadFAQs()" class="btn btn-primary">📋 Load FAQs</button>
-                            <button onclick="showCreateFAQModal()" class="btn btn-success">➕ Create FAQ</button>
-                            <div id="faqData"></div>
-                        </div>
-                    </div>
-
-                    <!-- Feedback Management -->
-                    <div class="row" style="margin-top: 30px;">
-                        <div class="col-12">
-                            <h4>Feedback Management</h4>
-                            <button onclick="loadFeedback()" class="btn btn-primary">💬 Load Feedback</button>
-                            <div id="feedbackData"></div>
-                        </div>
-                    </div>
+        <!-- Admin Tab -->
+        <div class="tab-content" id="admin">
+            <div id="adminAuthRequired" style="display: none;">
+                <div class="alert alert-error">
+                    Admin access required
                 </div>
             </div>
-        </div>
 
-        <!-- Content Section -->
-        <div id="contentSection" class="content-section">
-            <div class="card">
-                <div class="card-header">🎬 Content Management</div>
-                <div class="card-body">
-                    <!-- External Content Search -->
-                    <div class="row">
-                        <div class="col-12">
-                            <h4>Search External Content</h4>
-                            <div class="row">
-                                <div class="col-4">
-                                    <input type="text" id="contentSearchQuery" class="form-control"
-                                        placeholder="Search movies, TV shows, anime...">
-                                </div>
-                                <div class="col-3">
-                                    <select id="contentSearchSource" class="form-control">
-                                        <option value="tmdb">TMDB (Movies/TV)</option>
-                                        <option value="anime">Anime</option>
-                                    </select>
-                                </div>
-                                <div class="col-3">
-                                    <button onclick="searchExternalContent()" class="btn btn-primary">🔍 Search</button>
-                                </div>
-                            </div>
-                            <div id="externalContentResults"></div>
-                        </div>
-                    </div>
-
-                    <!-- Admin Recommendations -->
-                    <div class="row" style="margin-top: 30px;">
-                        <div class="col-12">
-                            <h4>Create Admin Recommendation</h4>
-                            <div class="row">
-                                <div class="col-4">
-                                    <input type="number" id="recContentId" class="form-control"
-                                        placeholder="Content ID">
-                                </div>
-                                <div class="col-3">
-                                    <select id="recType" class="form-control">
-                                        <option value="admin_choice">Admin Choice</option>
-                                        <option value="editors_pick">Editor's Pick</option>
-                                        <option value="trending">Trending</option>
-                                        <option value="must_watch">Must Watch</option>
-                                    </select>
-                                </div>
-                                <div class="col-5">
-                                    <input type="text" id="recDescription" class="form-control"
-                                        placeholder="Recommendation description">
-                                </div>
-                            </div>
-                            <button onclick="createAdminRecommendation()" class="btn btn-success"
-                                style="margin-top: 10px;">✨ Create Recommendation</button>
-                        </div>
-                    </div>
-
-                    <!-- Content Management -->
-                    <div class="row" style="margin-top: 30px;">
-                        <div class="col-12">
-                            <h4>Manage Existing Content</h4>
-                            <button onclick="loadContentManagement()" class="btn btn-primary">📑 Load Content</button>
-                            <div id="contentManagementData"></div>
-                        </div>
-                    </div>
-
-                    <!-- Admin Recommendations List -->
-                    <div class="row" style="margin-top: 30px;">
-                        <div class="col-12">
-                            <h4>Admin Recommendations</h4>
-                            <button onclick="loadAdminRecommendations()" class="btn btn-primary">⭐ Load
-                                Recommendations</button>
-                            <div id="adminRecommendationsData"></div>
-                        </div>
-                    </div>
+            <div id="adminContent">
+                <div class="section">
+                    <h2 class="section-title">⚙️ System Health</h2>
+                    <div id="systemHealth"></div>
                 </div>
-            </div>
-        </div>
 
-        <!-- Users Section -->
-        <div id="usersSection" class="content-section">
-            <div class="card">
-                <div class="card-header">👥 User Management</div>
-                <div class="card-body">
-                    <div class="search-filters">
-                        <div class="row">
-                            <div class="col-4">
-                                <input type="text" id="userSearch" class="form-control" placeholder="Search users...">
-                            </div>
-                            <div class="col-2">
-                                <button onclick="loadUsers()" class="btn btn-primary">🔍 Search Users</button>
-                            </div>
-                        </div>
-                    </div>
-                    <div id="usersData"></div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Analytics Section -->
-        <div id="analyticsSection" class="content-section">
-            <div class="card">
-                <div class="card-header">📈 Analytics & Reports</div>
-                <div class="card-body">
-                    <button onclick="loadAnalytics()" class="btn btn-primary">📊 Load Analytics</button>
-                    <div id="analyticsData"></div>
-                </div>
-            </div>
-        </div>
-
-        <!-- System Section -->
-        <div id="systemSection" class="content-section">
-            <div class="card">
-                <div class="card-header">⚙️ System Management</div>
-                <div class="card-body">
-                    <!-- Cache Management -->
-                    <div class="row">
-                        <div class="col-6">
-                            <h4>Cache Management</h4>
-                            <button onclick="clearCache('all')" class="btn btn-warning">🗑️ Clear All Cache</button>
-                            <button onclick="clearCache('search')" class="btn btn-warning">🔍 Clear Search
-                                Cache</button>
-                            <button onclick="clearCache('recommendations')" class="btn btn-warning">⭐ Clear
-                                Recommendations Cache</button>
-                            <button onclick="clearCache('support')" class="btn btn-warning">🎧 Clear Support
-                                Cache</button>
-                            <button onclick="loadCacheStats()" class="btn btn-primary">📊 Cache Statistics</button>
-                        </div>
-                        <div class="col-6">
-                            <h4>System Health</h4>
-                            <button onclick="loadSystemHealth()" class="btn btn-primary">🏥 Check System Health</button>
-                        </div>
-                    </div>
-
-                    <div class="row" style="margin-top: 20px;">
-                        <div class="col-12">
-                            <div id="systemData"></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Notifications Section -->
-        <div id="notificationsSection" class="content-section">
-            <div class="card">
-                <div class="card-header">🔔 Real-time Notifications</div>
-                <div class="card-body">
-                    <button onclick="loadNotifications()" class="btn btn-primary">🔔 Load Notifications</button>
-                    <button onclick="sendTestNotification()" class="btn btn-success">📤 Send Test Notification</button>
-                    <div id="notificationsData"></div>
+                <div class="section">
+                    <h2 class="section-title">📈 Analytics</h2>
+                    <div id="adminAnalytics"></div>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Notifications Panel -->
-    <div id="notificationsPanel" class="notifications-panel">
-        <div class="card-header">
-            <strong>Live Notifications</strong>
-            <span onclick="toggleNotificationsPanel()" class="close">&times;</span>
-        </div>
-        <div id="liveNotifications"></div>
-    </div>
-
-    <!-- Modal for Ticket Details -->
-    <div id="ticketModal" class="modal">
+    <!-- Login Modal -->
+    <div class="modal" id="loginModal">
         <div class="modal-content">
-            <div class="modal-header">
-                <h3 id="ticketModalTitle">Ticket Details</h3>
-                <span class="close" onclick="closeModal('ticketModal')">&times;</span>
-            </div>
-            <div class="modal-body" id="ticketModalBody">
-                <!-- Ticket details will be loaded here -->
-            </div>
-            <div class="modal-footer">
-                <button onclick="closeModal('ticketModal')" class="btn btn-secondary">Close</button>
-            </div>
+            <button class="close-btn" onclick="closeModal('loginModal')">&times;</button>
+            <h2 style="color: #4ecdc4; margin-bottom: 2rem;">Login to CinBrain</h2>
+            <form id="loginForm">
+                <div class="form-group">
+                    <label class="form-label">Username</label>
+                    <input type="text" class="form-input" id="loginUsername" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Password</label>
+                    <input type="password" class="form-input" id="loginPassword" required>
+                </div>
+                <button type="submit" class="btn" style="width: 100%;">
+                    <span id="loginLoadingText">Login</span>
+                    <span id="loginLoading" class="loading" style="display: none;"></span>
+                </button>
+            </form>
+            <div id="loginAlert"></div>
         </div>
     </div>
 
-    <!-- Modal for FAQ Creation -->
-    <div id="faqModal" class="modal">
+    <!-- Register Modal -->
+    <div class="modal" id="registerModal">
         <div class="modal-content">
-            <div class="modal-header">
-                <h3 id="faqModalTitle">Create FAQ</h3>
-                <span class="close" onclick="closeModal('faqModal')">&times;</span>
-            </div>
-            <div class="modal-body">
+            <button class="close-btn" onclick="closeModal('registerModal')">&times;</button>
+            <h2 style="color: #4ecdc4; margin-bottom: 2rem;">Join CinBrain</h2>
+            <form id="registerForm">
                 <div class="form-group">
-                    <label>Question</label>
-                    <input type="text" id="faqQuestion" class="form-control" placeholder="Enter FAQ question">
+                    <label class="form-label">Username</label>
+                    <input type="text" class="form-input" id="registerUsername" required>
                 </div>
                 <div class="form-group">
-                    <label>Answer</label>
-                    <textarea id="faqAnswer" class="form-control" rows="5" placeholder="Enter FAQ answer"></textarea>
+                    <label class="form-label">Email</label>
+                    <input type="email" class="form-input" id="registerEmail" required>
                 </div>
                 <div class="form-group">
-                    <label>Category ID</label>
-                    <input type="number" id="faqCategoryId" class="form-control" placeholder="Enter category ID"
-                        value="1">
+                    <label class="form-label">Password</label>
+                    <input type="password" class="form-input" id="registerPassword" required>
                 </div>
                 <div class="form-group">
-                    <label>Tags (comma-separated)</label>
-                    <input type="text" id="faqTags" class="form-control" placeholder="e.g., account, login, password">
+                    <label class="form-label">Preferred Languages (comma separated)</label>
+                    <input type="text" class="form-input" id="registerLanguages" placeholder="Telugu, English, Hindi">
                 </div>
                 <div class="form-group">
-                    <label>
-                        <input type="checkbox" id="faqFeatured"> Featured FAQ
-                    </label>
+                    <label class="form-label">Preferred Genres (comma separated)</label>
+                    <input type="text" class="form-input" id="registerGenres" placeholder="Action, Comedy, Drama">
                 </div>
-                <div class="form-group">
-                    <label>
-                        <input type="checkbox" id="faqPublished" checked> Published
-                    </label>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button onclick="createFAQ()" class="btn btn-success">Create FAQ</button>
-                <button onclick="closeModal('faqModal')" class="btn btn-secondary">Cancel</button>
-            </div>
+                <button type="submit" class="btn" style="width: 100%;">
+                    <span id="registerLoadingText">Register</span>
+                    <span id="registerLoading" class="loading" style="display: none;"></span>
+                </button>
+            </form>
+            <div id="registerAlert"></div>
         </div>
     </div>
 
-    <!-- Alert Container -->
-    <div id="alertContainer"
-        style="position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 1001; width: 400px;"></div>
+    <!-- Content Detail Modal -->
+    <div class="modal detail-modal" id="detailModal">
+        <div class="modal-content">
+            <button class="close-btn" onclick="closeModal('detailModal')">&times;</button>
+            <div id="detailContent"></div>
+        </div>
+    </div>
+
+    <!-- Floating Action Button -->
+    <button class="floating-action" onclick="scrollToTop()" title="Back to top">↑</button>
 
     <script>
         // Global variables
-        let authToken = '';
-        let apiBaseUrl = 'http://127.0.0.1:5000';
         let currentUser = null;
+        let authToken = localStorage.getItem('authToken');
+        const API_BASE = "https://backend-app-970m.onrender.com";
 
-        // Utility functions
-        function showAlert(message, type = 'info') {
-            const alertContainer = document.getElementById('alertContainer');
-            const alertDiv = document.createElement('div');
-            alertDiv.className = `alert alert-${type}`;
-            alertDiv.innerHTML = `
-                ${message}
-                <button onclick="this.parentElement.remove()" style="float: right; background: none; border: none; font-size: 16px; cursor: pointer;">&times;</button>
-            `;
-            alertContainer.appendChild(alertDiv);
+        // Initialize app
+        document.addEventListener('DOMContentLoaded', function () {
+            initializeApp();
+            setupEventListeners();
+            checkAuthStatus();
+        });
 
-            setTimeout(() => {
-                if (alertDiv.parentElement) {
-                    alertDiv.remove();
-                }
-            }, 5000);
-        }
+        function initializeApp() {
+            // Load initial content
+            loadTrendingRecommendations();
 
-        function getApiHeaders() {
-            return {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${authToken}`
-            };
-        }
-
-        async function apiCall(endpoint, method = 'GET', data = null) {
-            try {
-                const url = `${apiBaseUrl}${endpoint}`;
-                const options = {
-                    method,
-                    headers: getApiHeaders()
-                };
-
-                if (data) {
-                    options.body = JSON.stringify(data);
-                }
-
-                const response = await fetch(url, options);
-                const result = await response.json();
-
-                if (!response.ok) {
-                    throw new Error(result.error || `HTTP ${response.status}`);
-                }
-
-                return result;
-            } catch (error) {
-                console.error('API call failed:', error);
-                showAlert(`API Error: ${error.message}`, 'error');
-                throw error;
+            // Check for existing auth
+            if (authToken) {
+                validateToken();
             }
         }
 
-        // Authentication
-        async function adminLogin() {
-            const email = document.getElementById('loginEmail').value;
+        function setupEventListeners() {
+            // Tab switching
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.addEventListener('click', function () {
+                    switchTab(this.dataset.tab);
+                });
+            });
+
+            // Search
+            const searchInput = document.getElementById('searchInput');
+            let searchTimeout;
+            searchInput.addEventListener('input', function () {
+                clearTimeout(searchTimeout);
+                searchTimeout = setTimeout(() => {
+                    if (this.value.trim()) {
+                        performSearch(this.value.trim());
+                    }
+                }, 500);
+            });
+
+            // Auth buttons
+            document.getElementById('loginBtn').addEventListener('click', () => openModal('loginModal'));
+            document.getElementById('registerBtn').addEventListener('click', () => openModal('registerModal'));
+            document.getElementById('logoutBtn').addEventListener('click', logout);
+
+            // Forms
+            document.getElementById('loginForm').addEventListener('submit', handleLogin);
+            document.getElementById('registerForm').addEventListener('submit', handleRegister);
+
+            // Recommendation categories
+            document.querySelectorAll('.category-card').forEach(card => {
+                card.addEventListener('click', function () {
+                    loadRecommendationCategory(this.dataset.category);
+                });
+            });
+
+            // Modal close on outside click
+            document.querySelectorAll('.modal').forEach(modal => {
+                modal.addEventListener('click', function (e) {
+                    if (e.target === this) {
+                        closeModal(this.id);
+                    }
+                });
+            });
+        }
+
+        // Authentication functions
+        async function handleLogin(e) {
+            e.preventDefault();
+            const username = document.getElementById('loginUsername').value;
             const password = document.getElementById('loginPassword').value;
-            apiBaseUrl = document.getElementById('apiBaseUrl').value;
 
-            if (!email || !password) {
-                showAlert('Please enter email and password', 'error');
-                return;
-            }
+            setLoadingState('login', true);
 
             try {
-                const response = await fetch(`${apiBaseUrl}/api/auth/login`, {
+                const response = await fetch(`${API_BASE}/api/login`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ email, password })
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ username, password })
                 });
 
-                const result = await response.json();
+                const data = await response.json();
 
-                if (response.ok && result.token) {
-                    authToken = result.token;
-                    currentUser = result.user;
+                if (response.ok) {
+                    authToken = data.token;
+                    currentUser = data.user;
+                    localStorage.setItem('authToken', authToken);
+                    localStorage.setItem('currentUser', JSON.stringify(currentUser));
 
-                    if (!currentUser.is_admin) {
-                        showAlert('Admin access required', 'error');
-                        return;
-                    }
-
-                    document.getElementById('authSection').style.display = 'none';
-                    document.getElementById('navTabs').style.display = 'flex';
-                    showAlert(`Welcome, ${currentUser.username}!`, 'success');
-                    loadDashboard();
+                    showAlert('loginAlert', 'Login successful!', 'success');
+                    updateAuthUI();
+                    setTimeout(() => {
+                        closeModal('loginModal');
+                        loadPersonalizedContent();
+                    }, 1000);
                 } else {
-                    showAlert(result.error || 'Login failed', 'error');
+                    showAlert('loginAlert', data.error || 'Login failed', 'error');
                 }
             } catch (error) {
-                showAlert(`Login error: ${error.message}`, 'error');
+                showAlert('loginAlert', 'Network error. Please try again.', 'error');
             }
+
+            setLoadingState('login', false);
+        }
+
+        async function handleRegister(e) {
+            e.preventDefault();
+            const username = document.getElementById('registerUsername').value;
+            const email = document.getElementById('registerEmail').value;
+            const password = document.getElementById('registerPassword').value;
+            const languages = document.getElementById('registerLanguages').value.split(',').map(l => l.trim()).filter(l => l);
+            const genres = document.getElementById('registerGenres').value.split(',').map(g => g.trim()).filter(g => g);
+
+            setLoadingState('register', true);
+
+            try {
+                const response = await fetch(`${API_BASE}/api/register`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        username,
+                        email,
+                        password,
+                        preferred_languages: languages,
+                        preferred_genres: genres
+                    })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    authToken = data.token;
+                    currentUser = data.user;
+                    localStorage.setItem('authToken', authToken);
+                    localStorage.setItem('currentUser', JSON.stringify(currentUser));
+
+                    showAlert('registerAlert', 'Registration successful!', 'success');
+                    updateAuthUI();
+                    setTimeout(() => {
+                        closeModal('registerModal');
+                        loadPersonalizedContent();
+                    }, 1000);
+                } else {
+                    showAlert('registerAlert', data.error || 'Registration failed', 'error');
+                }
+            } catch (error) {
+                showAlert('registerAlert', 'Network error. Please try again.', 'error');
+            }
+
+            setLoadingState('register', false);
         }
 
         function logout() {
-            authToken = '';
+            authToken = null;
             currentUser = null;
-            document.getElementById('authSection').style.display = 'block';
-            document.getElementById('navTabs').style.display = 'none';
-
-            // Hide all sections
-            document.querySelectorAll('.content-section').forEach(section => {
-                section.style.display = 'none';
-            });
-
-            showAlert('Logged out successfully', 'info');
+            localStorage.removeItem('authToken');
+            localStorage.removeItem('currentUser');
+            updateAuthUI();
+            switchTab('recommendations');
+            loadTrendingRecommendations();
         }
 
-        // Navigation
-        function showSection(sectionName) {
-            // Update nav tabs
-            document.querySelectorAll('.nav-tab').forEach(tab => {
-                tab.classList.remove('active');
-            });
-            event.target.classList.add('active');
-
-            // Show selected section
-            document.querySelectorAll('.content-section').forEach(section => {
-                section.classList.remove('active');
-            });
-            document.getElementById(`${sectionName}Section`).classList.add('active');
+        function checkAuthStatus() {
+            const savedUser = localStorage.getItem('currentUser');
+            if (authToken && savedUser) {
+                currentUser = JSON.parse(savedUser);
+                updateAuthUI();
+                loadPersonalizedContent();
+            }
         }
 
-        // Dashboard functions
-        async function loadDashboard() {
+        async function validateToken() {
             try {
-                const analytics = await apiCall('/api/admin/analytics');
-
-                document.getElementById('totalUsers').textContent = analytics.total_users || 0;
-                document.getElementById('totalContent').textContent = analytics.total_content || 0;
-                document.getElementById('totalInteractions').textContent = analytics.total_interactions || 0;
-                document.getElementById('activeUsers').textContent = analytics.active_users_last_week || 0;
-
-                // Load support metrics
-                if (analytics.support_metrics) {
-                    const supportHtml = `
-                        <div class="row">
-                            <div class="col-6">
-                                <div class="metric-card">
-                                    <div class="metric-number">${analytics.support_metrics.tickets?.total || 0}</div>
-                                    <div class="metric-label">Total Tickets</div>
-                                </div>
-                            </div>
-                            <div class="col-6">
-                                <div class="metric-card">
-                                    <div class="metric-number">${analytics.support_metrics.tickets?.open || 0}</div>
-                                    <div class="metric-label">Open Tickets</div>
-                                </div>
-                            </div>
-                        </div>
-                    `;
-                    document.getElementById('supportMetrics').innerHTML = supportHtml;
-                }
-
-                // Load system health
-                const health = await apiCall('/api/admin/system-health');
-                const healthHtml = `
-                    <div class="status-item">
-                        <span class="status-indicator status-${health.status === 'healthy' ? 'healthy' : 'error'}"></span>
-                        Overall Status: ${health.status}
-                    </div>
-                    <div class="status-item">
-                        <span class="status-indicator status-${health.components?.database?.status === 'healthy' ? 'healthy' : 'error'}"></span>
-                        Database: ${health.components?.database?.status || 'unknown'}
-                    </div>
-                    <div class="status-item">
-                        <span class="status-indicator status-${health.components?.cache?.status === 'healthy' ? 'healthy' : 'warning'}"></span>
-                        Cache: ${health.components?.cache?.status || 'unknown'}
-                    </div>
-                `;
-                document.getElementById('systemHealth').innerHTML = healthHtml;
-
-            } catch (error) {
-                showAlert('Failed to load dashboard', 'error');
-            }
-        }
-
-        // Support functions
-        async function loadSupportDashboard() {
-            try {
-                const dashboard = await apiCall('/api/admin/support/dashboard');
-
-                const html = `
-                    <div class="row">
-                        <div class="col-3">
-                            <div class="metric-card">
-                                <div class="metric-number">${dashboard.metrics?.tickets?.total || 0}</div>
-                                <div class="metric-label">Total Tickets</div>
-                            </div>
-                        </div>
-                        <div class="col-3">
-                            <div class="metric-card">
-                                <div class="metric-number">${dashboard.metrics?.tickets?.open || 0}</div>
-                                <div class="metric-label">Open Tickets</div>
-                            </div>
-                        </div>
-                        <div class="col-3">
-                            <div class="metric-card">
-                                <div class="metric-number">${dashboard.metrics?.tickets?.overdue || 0}</div>
-                                <div class="metric-label">Overdue Tickets</div>
-                            </div>
-                        </div>
-                        <div class="col-3">
-                            <div class="metric-card">
-                                <div class="metric-number">${dashboard.unassigned_tickets || 0}</div>
-                                <div class="metric-label">Unassigned</div>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    ${dashboard.urgent_tickets?.length > 0 ? `
-                        <h4 style="margin-top: 20px;">Urgent Tickets</h4>
-                        <table class="table">
-                            <thead>
-                                <tr>
-                                    <th>Ticket #</th>
-                                    <th>Subject</th>
-                                    <th>Priority</th>
-                                    <th>Status</th>
-                                    <th>User</th>
-                                    <th>Created</th>
-                                    <th>Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                ${dashboard.urgent_tickets.map(ticket => `
-                                    <tr>
-                                        <td>${ticket.ticket_number}</td>
-                                        <td>${ticket.subject}</td>
-                                        <td><span class="badge badge-danger">${ticket.priority}</span></td>
-                                        <td><span class="badge badge-warning">${ticket.status}</span></td>
-                                        <td>${ticket.user_name}</td>
-                                        <td>${new Date(ticket.created_at).toLocaleString()}</td>
-                                        <td>
-                                            <button onclick="viewTicketDetails(${ticket.id})" class="btn btn-primary">View</button>
-                                        </td>
-                                    </tr>
-                                `).join('')}
-                            </tbody>
-                        </table>
-                    ` : '<p>No urgent tickets</p>'}
-                `;
-
-                document.getElementById('supportDashboardData').innerHTML = html;
-            } catch (error) {
-                showAlert('Failed to load support dashboard', 'error');
-            }
-        }
-
-        async function loadSupportTickets(page = 1) {
-            try {
-                const status = document.getElementById('ticketStatus').value;
-                const priority = document.getElementById('ticketPriority').value;
-                const search = document.getElementById('ticketSearch').value;
-
-                let url = `/api/admin/support/tickets?page=${page}&per_page=20`;
-                if (status) url += `&status=${status}`;
-                if (priority) url += `&priority=${priority}`;
-                if (search) url += `&search=${encodeURIComponent(search)}`;
-
-                const response = await apiCall(url);
-
-                const html = `
-                    <table class="table">
-                        <thead>
-                            <tr>
-                                <th>Ticket #</th>
-                                <th>Subject</th>
-                                <th>User</th>
-                                <th>Priority</th>
-                                <th>Status</th>
-                                <th>Created</th>
-                                <th>Assigned To</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${response.tickets.map(ticket => `
-                                <tr>
-                                    <td>${ticket.ticket_number}</td>
-                                    <td>${ticket.subject}</td>
-                                    <td>${ticket.user_name}<br><small>${ticket.user_email}</small></td>
-                                    <td><span class="badge badge-${ticket.priority === 'urgent' ? 'danger' : ticket.priority === 'high' ? 'warning' : 'info'}">${ticket.priority}</span></td>
-                                    <td><span class="badge badge-${ticket.status === 'resolved' ? 'success' : ticket.status === 'open' ? 'danger' : 'warning'}">${ticket.status}</span></td>
-                                    <td>${new Date(ticket.created_at).toLocaleString()}</td>
-                                    <td>${ticket.assigned_to ? ticket.assigned_to.username : 'Unassigned'}</td>
-                                    <td>
-                                        <button onclick="viewTicketDetails(${ticket.id})" class="btn btn-primary">View</button>
-                                        <button onclick="assignTicket(${ticket.id})" class="btn btn-secondary">Assign</button>
-                                    </td>
-                                </tr>
-                            `).join('')}
-                        </tbody>
-                    </table>
-                    
-                    <div style="margin-top: 20px;">
-                        <p>Page ${response.current_page} of ${response.pages} (${response.total} total tickets)</p>
-                        ${response.current_page > 1 ? `<button onclick="loadSupportTickets(${response.current_page - 1})" class="btn btn-secondary">Previous</button>` : ''}
-                        ${response.current_page < response.pages ? `<button onclick="loadSupportTickets(${response.current_page + 1})" class="btn btn-secondary">Next</button>` : ''}
-                    </div>
-                `;
-
-                document.getElementById('supportTicketsData').innerHTML = html;
-            } catch (error) {
-                showAlert('Failed to load support tickets', 'error');
-            }
-        }
-
-        async function viewTicketDetails(ticketId) {
-            try {
-                const ticket = await apiCall(`/api/admin/support/tickets/${ticketId}`);
-
-                const html = `
-                    <div class="ticket-details">
-                        <h4>Ticket #${ticket.ticket.ticket_number}</h4>
-                        <div class="row">
-                            <div class="col-6">
-                                <p><strong>Subject:</strong> ${ticket.ticket.subject}</p>
-                                <p><strong>User:</strong> ${ticket.ticket.user_name} (${ticket.ticket.user_email})</p>
-                                <p><strong>Priority:</strong> <span class="badge badge-${ticket.ticket.priority === 'urgent' ? 'danger' : 'warning'}">${ticket.ticket.priority}</span></p>
-                                <p><strong>Status:</strong> <span class="badge badge-info">${ticket.ticket.status}</span></p>
-                            </div>
-                            <div class="col-6">
-                                <p><strong>Created:</strong> ${new Date(ticket.ticket.created_at).toLocaleString()}</p>
-                                <p><strong>Assigned:</strong> ${ticket.ticket.assigned_to ? ticket.ticket.assigned_to.username : 'Unassigned'}</p>
-                                <p><strong>SLA Deadline:</strong> ${ticket.ticket.sla_deadline ? new Date(ticket.ticket.sla_deadline).toLocaleString() : 'N/A'}</p>
-                            </div>
-                        </div>
-                        
-                        <div style="margin-top: 20px;">
-                            <h5>Description</h5>
-                            <div class="code-block">${ticket.ticket.description}</div>
-                        </div>
-                        
-                        <div style="margin-top: 20px;">
-                            <h5>Conversation (${ticket.responses.length} responses)</h5>
-                            <div style="max-height: 300px; overflow-y: auto; border: 1px solid #ddd; padding: 15px;">
-                                ${ticket.responses.map(response => `
-                                    <div style="margin-bottom: 15px; padding: 10px; background: ${response.is_from_staff ? '#e3f2fd' : '#f8f9fa'}; border-radius: 4px;">
-                                        <strong>${response.is_from_staff ? response.staff_name : ticket.ticket.user_name}:</strong>
-                                        <small style="float: right;">${new Date(response.created_at).toLocaleString()}</small>
-                                        <p style="margin-top: 5px;">${response.message}</p>
-                                    </div>
-                                `).join('')}
-                            </div>
-                        </div>
-                        
-                        <div style="margin-top: 20px;">
-                            <h5>Add Response</h5>
-                            <textarea id="ticketResponse" class="form-control" rows="3" placeholder="Enter your response..."></textarea>
-                            <div style="margin-top: 10px;">
-                                <select id="ticketResponseStatus" class="form-control" style="width: 200px; display: inline-block;">
-                                    <option value="">Keep current status</option>
-                                    <option value="in_progress">In Progress</option>
-                                    <option value="resolved">Resolved</option>
-                                    <option value="closed">Closed</option>
-                                </select>
-                                <button onclick="respondToTicket(${ticketId})" class="btn btn-success" style="margin-left: 10px;">Send Response</button>
-                            </div>
-                        </div>
-                    </div>
-                `;
-
-                document.getElementById('ticketModalBody').innerHTML = html;
-                document.getElementById('ticketModal').style.display = 'block';
-            } catch (error) {
-                showAlert('Failed to load ticket details', 'error');
-            }
-        }
-
-        async function respondToTicket(ticketId) {
-            const message = document.getElementById('ticketResponse').value;
-            const status = document.getElementById('ticketResponseStatus').value;
-
-            if (!message.trim()) {
-                showAlert('Please enter a response message', 'error');
-                return;
-            }
-
-            try {
-                const data = { message };
-                if (status) data.status = status;
-
-                await apiCall(`/api/admin/support/tickets/${ticketId}/respond`, 'POST', data);
-                showAlert('Response added successfully', 'success');
-                closeModal('ticketModal');
-                loadSupportTickets(); // Refresh tickets list
-            } catch (error) {
-                showAlert('Failed to add response', 'error');
-            }
-        }
-
-        async function assignTicket(ticketId) {
-            const adminId = prompt('Enter admin ID to assign (or leave empty to unassign):');
-
-            try {
-                await apiCall(`/api/admin/support/tickets/${ticketId}/assign`, 'POST', {
-                    admin_id: adminId ? parseInt(adminId) : null
-                });
-                showAlert('Ticket assigned successfully', 'success');
-                loadSupportTickets(); // Refresh tickets list
-            } catch (error) {
-                showAlert('Failed to assign ticket', 'error');
-            }
-        }
-
-        // FAQ functions
-        async function loadFAQs() {
-            try {
-                const response = await apiCall('/api/admin/support/faq');
-
-                const html = `
-                    <table class="table">
-                        <thead>
-                            <tr>
-                                <th>Question</th>
-                                <th>Category</th>
-                                <th>Published</th>
-                                <th>Featured</th>
-                                <th>Views</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${response.faqs.map(faq => `
-                                <tr>
-                                    <td>${faq.question}</td>
-                                    <td>${faq.category ? faq.category.name : 'No category'}</td>
-                                    <td><span class="badge badge-${faq.is_published ? 'success' : 'secondary'}">${faq.is_published ? 'Yes' : 'No'}</span></td>
-                                    <td><span class="badge badge-${faq.is_featured ? 'warning' : 'secondary'}">${faq.is_featured ? 'Yes' : 'No'}</span></td>
-                                    <td>${faq.view_count}</td>
-                                    <td>
-                                        <button onclick="editFAQ(${faq.id})" class="btn btn-primary">Edit</button>
-                                        <button onclick="deleteFAQ(${faq.id})" class="btn btn-danger">Delete</button>
-                                    </td>
-                                </tr>
-                            `).join('')}
-                        </tbody>
-                    </table>
-                `;
-
-                document.getElementById('faqData').innerHTML = html;
-            } catch (error) {
-                showAlert('Failed to load FAQs', 'error');
-            }
-        }
-
-        function showCreateFAQModal() {
-            document.getElementById('faqModal').style.display = 'block';
-        }
-
-        async function createFAQ() {
-            const question = document.getElementById('faqQuestion').value;
-            const answer = document.getElementById('faqAnswer').value;
-            const categoryId = document.getElementById('faqCategoryId').value;
-            const tags = document.getElementById('faqTags').value.split(',').map(tag => tag.trim()).filter(tag => tag);
-            const isFeatured = document.getElementById('faqFeatured').checked;
-            const isPublished = document.getElementById('faqPublished').checked;
-
-            if (!question || !answer || !categoryId) {
-                showAlert('Please fill in all required fields', 'error');
-                return;
-            }
-
-            try {
-                await apiCall('/api/admin/support/faq', 'POST', {
-                    question,
-                    answer,
-                    category_id: parseInt(categoryId),
-                    tags,
-                    is_featured: isFeatured,
-                    is_published: isPublished
-                });
-
-                showAlert('FAQ created successfully', 'success');
-                closeModal('faqModal');
-                loadFAQs(); // Refresh FAQ list
-            } catch (error) {
-                showAlert('Failed to create FAQ', 'error');
-            }
-        }
-
-        async function deleteFAQ(faqId) {
-            if (!confirm('Are you sure you want to delete this FAQ?')) return;
-
-            try {
-                await apiCall(`/api/admin/support/faq/${faqId}`, 'DELETE');
-                showAlert('FAQ deleted successfully', 'success');
-                loadFAQs(); // Refresh FAQ list
-            } catch (error) {
-                showAlert('Failed to delete FAQ', 'error');
-            }
-        }
-
-        // Feedback functions
-        async function loadFeedback() {
-            try {
-                const response = await apiCall('/api/admin/support/feedback');
-
-                const html = `
-                    <table class="table">
-                        <thead>
-                            <tr>
-                                <th>Subject</th>
-                                <th>User</th>
-                                <th>Type</th>
-                                <th>Rating</th>
-                                <th>Read</th>
-                                <th>Created</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${response.feedback.map(feedback => `
-                                <tr class="${!feedback.is_read ? 'table-warning' : ''}">
-                                    <td>${feedback.subject}</td>
-                                    <td>${feedback.user_name}<br><small>${feedback.user_email}</small></td>
-                                    <td><span class="badge badge-info">${feedback.feedback_type}</span></td>
-                                    <td>${feedback.rating ? `${feedback.rating}/5 ⭐` : 'N/A'}</td>
-                                    <td><span class="badge badge-${feedback.is_read ? 'success' : 'warning'}">${feedback.is_read ? 'Read' : 'Unread'}</span></td>
-                                    <td>${new Date(feedback.created_at).toLocaleString()}</td>
-                                    <td>
-                                        ${!feedback.is_read ? `<button onclick="markFeedbackRead(${feedback.id})" class="btn btn-primary">Mark Read</button>` : ''}
-                                        <button onclick="viewFeedbackDetails(${feedback.id})" class="btn btn-secondary">View</button>
-                                    </td>
-                                </tr>
-                            `).join('')}
-                        </tbody>
-                    </table>
-                `;
-
-                document.getElementById('feedbackData').innerHTML = html;
-            } catch (error) {
-                showAlert('Failed to load feedback', 'error');
-            }
-        }
-
-        async function markFeedbackRead(feedbackId) {
-            const notes = prompt('Add admin notes (optional):');
-
-            try {
-                await apiCall(`/api/admin/support/feedback/${feedbackId}/mark-read`, 'POST', {
-                    admin_notes: notes || ''
-                });
-                showAlert('Feedback marked as read', 'success');
-                loadFeedback(); // Refresh feedback list
-            } catch (error) {
-                showAlert('Failed to mark feedback as read', 'error');
-            }
-        }
-
-        // Content management functions
-        async function searchExternalContent() {
-            const query = document.getElementById('contentSearchQuery').value;
-            const source = document.getElementById('contentSearchSource').value;
-
-            if (!query.trim()) {
-                showAlert('Please enter a search query', 'error');
-                return;
-            }
-
-            try {
-                const response = await apiCall(`/api/admin/search?query=${encodeURIComponent(query)}&source=${source}`);
-
-                const html = `
-                    <h5>Search Results (${response.results.length} found)</h5>
-                    <div class="row">
-                        ${response.results.map(item => `
-                            <div class="col-4" style="margin-bottom: 20px;">
-                                <div class="card">
-                                    <div class="card-body">
-                                        <h6>${item.title}</h6>
-                                        <p><strong>Type:</strong> ${item.content_type}</p>
-                                        <p><strong>Rating:</strong> ${item.rating || 'N/A'}</p>
-                                        <p><strong>Release:</strong> ${item.release_date || 'N/A'}</p>
-                                        ${item.poster_path ? `<img src="${item.poster_path}" style="width: 100px; height: 150px; object-fit: cover;">` : ''}
-                                        <div style="margin-top: 10px;">
-                                            <button onclick="saveExternalContent(${JSON.stringify(item).replace(/"/g, '&quot;')})" class="btn btn-success">Save to Database</button>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        `).join('')}
-                    </div>
-                `;
-
-                document.getElementById('externalContentResults').innerHTML = html;
-            } catch (error) {
-                showAlert('Failed to search external content', 'error');
-            }
-        }
-
-        async function saveExternalContent(item) {
-            try {
-                await apiCall('/api/admin/content', 'POST', item);
-                showAlert(`Content "${item.title}" saved successfully`, 'success');
-            } catch (error) {
-                showAlert('Failed to save content', 'error');
-            }
-        }
-
-        async function createAdminRecommendation() {
-            const contentId = document.getElementById('recContentId').value;
-            const recType = document.getElementById('recType').value;
-            const description = document.getElementById('recDescription').value;
-
-            if (!contentId || !description.trim()) {
-                showAlert('Please fill in all fields', 'error');
-                return;
-            }
-
-            try {
-                await apiCall('/api/admin/recommendations', 'POST', {
-                    content_id: parseInt(contentId),
-                    recommendation_type: recType,
-                    description: description
-                });
-
-                showAlert('Admin recommendation created successfully', 'success');
-
-                // Clear form
-                document.getElementById('recContentId').value = '';
-                document.getElementById('recDescription').value = '';
-            } catch (error) {
-                showAlert('Failed to create recommendation', 'error');
-            }
-        }
-
-        async function loadContentManagement() {
-            try {
-                const response = await apiCall('/api/admin/content/manage');
-
-                const html = `
-                    <table class="table">
-                        <thead>
-                            <tr>
-                                <th>ID</th>
-                                <th>Title</th>
-                                <th>Type</th>
-                                <th>Rating</th>
-                                <th>Release Date</th>
-                                <th>Interactions</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${response.content.map(item => `
-                                <tr>
-                                    <td>${item.id}</td>
-                                    <td>${item.title}</td>
-                                    <td><span class="badge badge-info">${item.content_type}</span></td>
-                                    <td>${item.rating || 'N/A'}</td>
-                                    <td>${item.release_date ? new Date(item.release_date).toLocaleDateString() : 'N/A'}</td>
-                                    <td>${item.interaction_count}</td>
-                                    <td>
-                                        <button onclick="window.open('/api/details/${item.slug}', '_blank')" class="btn btn-primary">View</button>
-                                    </td>
-                                </tr>
-                            `).join('')}
-                        </tbody>
-                    </table>
-                `;
-
-                document.getElementById('contentManagementData').innerHTML = html;
-            } catch (error) {
-                showAlert('Failed to load content management', 'error');
-            }
-        }
-
-        async function loadAdminRecommendations() {
-            try {
-                const response = await apiCall('/api/admin/recommendations');
-
-                const html = `
-                    <table class="table">
-                        <thead>
-                            <tr>
-                                <th>Content</th>
-                                <th>Type</th>
-                                <th>Description</th>
-                                <th>Admin</th>
-                                <th>Created</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${response.recommendations.map(rec => `
-                                <tr>
-                                    <td>
-                                        <div style="display: flex; align-items: center;">
-                                            ${rec.content.poster_path ? `<img src="${rec.content.poster_path}" style="width: 40px; height: 60px; margin-right: 10px; object-fit: cover;">` : ''}
-                                            <div>
-                                                <strong>${rec.content.title}</strong><br>
-                                                <small>${rec.content.content_type} • ${rec.content.rating || 'N/A'}/10</small>
-                                            </div>
-                                        </div>
-                                    </td>
-                                    <td><span class="badge badge-warning">${rec.recommendation_type}</span></td>
-                                    <td>${rec.description}</td>
-                                    <td>${rec.admin_name}</td>
-                                    <td>${new Date(rec.created_at).toLocaleString()}</td>
-                                    <td>
-                                        <button onclick="window.open('/api/details/${rec.content.slug}', '_blank')" class="btn btn-primary">View Content</button>
-                                    </td>
-                                </tr>
-                            `).join('')}
-                        </tbody>
-                    </table>
-                `;
-
-                document.getElementById('adminRecommendationsData').innerHTML = html;
-            } catch (error) {
-                showAlert('Failed to load admin recommendations', 'error');
-            }
-        }
-
-        // User management functions
-        async function loadUsers() {
-            try {
-                const search = document.getElementById('userSearch').value;
-                let url = '/api/admin/users';
-                if (search) url += `?search=${encodeURIComponent(search)}`;
-
-                const response = await apiCall(url);
-
-                const html = `
-                    <table class="table">
-                        <thead>
-                            <tr>
-                                <th>Username</th>
-                                <th>Email</th>
-                                <th>Admin</th>
-                                <th>Joined</th>
-                                <th>Last Active</th>
-                                <th>Interactions</th>
-                                <th>Support Tickets</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${response.users.map(user => `
-                                <tr>
-                                    <td>${user.username}</td>
-                                    <td>${user.email}</td>
-                                    <td><span class="badge badge-${user.is_admin ? 'success' : 'secondary'}">${user.is_admin ? 'Yes' : 'No'}</span></td>
-                                    <td>${new Date(user.created_at).toLocaleDateString()}</td>
-                                    <td>${user.last_active ? new Date(user.last_active).toLocaleDateString() : 'Never'}</td>
-                                    <td>${user.total_interactions}</td>
-                                    <td>${user.total_support_tickets}</td>
-                                </tr>
-                            `).join('')}
-                        </tbody>
-                    </table>
-                `;
-
-                document.getElementById('usersData').innerHTML = html;
-            } catch (error) {
-                showAlert('Failed to load users', 'error');
-            }
-        }
-
-        // Analytics functions
-        async function loadAnalytics() {
-            try {
-                const analytics = await apiCall('/api/admin/analytics');
-
-                const html = `
-                    <div class="row">
-                        <div class="col-6">
-                            <h4>Popular Content</h4>
-                            <table class="table">
-                                <thead>
-                                    <tr><th>Title</th><th>Interactions</th></tr>
-                                </thead>
-                                <tbody>
-                                    ${analytics.popular_content.map(item => `
-                                        <tr>
-                                            <td>${item.title}</td>
-                                            <td>${item.interactions}</td>
-                                        </tr>
-                                    `).join('')}
-                                </tbody>
-                            </table>
-                        </div>
-                        <div class="col-6">
-                            <h4>Popular Genres</h4>
-                            <table class="table">
-                                <thead>
-                                    <tr><th>Genre</th><th>Count</th></tr>
-                                </thead>
-                                <tbody>
-                                    ${analytics.popular_genres.map(item => `
-                                        <tr>
-                                            <td>${item.genre}</td>
-                                            <td>${item.count}</td>
-                                        </tr>
-                                    `).join('')}
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                    
-                    <div class="row">
-                        <div class="col-6">
-                            <h4>Interactions by Type</h4>
-                            <table class="table">
-                                <thead>
-                                    <tr><th>Type</th><th>Count</th></tr>
-                                </thead>
-                                <tbody>
-                                    ${analytics.interactions_by_type.map(item => `
-                                        <tr>
-                                            <td>${item.type}</td>
-                                            <td>${item.count}</td>
-                                        </tr>
-                                    `).join('')}
-                                </tbody>
-                            </table>
-                        </div>
-                        <div class="col-6">
-                            <h4>Content by Type</h4>
-                            <table class="table">
-                                <thead>
-                                    <tr><th>Type</th><th>Count</th></tr>
-                                </thead>
-                                <tbody>
-                                    ${analytics.content_by_type.map(item => `
-                                        <tr>
-                                            <td>${item.type}</td>
-                                            <td>${item.count}</td>
-                                        </tr>
-                                    `).join('')}
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                `;
-
-                document.getElementById('analyticsData').innerHTML = html;
-            } catch (error) {
-                showAlert('Failed to load analytics', 'error');
-            }
-        }
-
-        // System management functions
-        async function clearCache(type) {
-            if (!confirm(`Are you sure you want to clear ${type} cache?`)) return;
-
-            try {
-                await apiCall(`/api/admin/cache/clear?type=${type}`, 'POST');
-                showAlert(`${type} cache cleared successfully`, 'success');
-            } catch (error) {
-                showAlert('Failed to clear cache', 'error');
-            }
-        }
-
-        async function loadCacheStats() {
-            try {
-                const stats = await apiCall('/api/admin/cache/stats');
-
-                const html = `
-                    <h4>Cache Statistics</h4>
-                    <div class="code-block">
-                        <strong>Type:</strong> ${stats.type}<br>
-                        <strong>Default Timeout:</strong> ${stats.default_timeout} seconds<br>
-                        ${stats.redis ? `
-                            <strong>Redis Stats:</strong><br>
-                            - Used Memory: ${stats.redis.used_memory}<br>
-                            - Connected Clients: ${stats.redis.connected_clients}<br>
-                            - Commands Processed: ${stats.redis.total_commands_processed}<br>
-                            - Uptime: ${Math.floor(stats.redis.uptime_in_seconds / 3600)} hours
-                        ` : ''}
-                        ${stats.support_queues ? `
-                            <br><strong>Support Queues:</strong><br>
-                            - Admin Notifications: ${stats.support_queues.admin_notifications}<br>
-                            - Admin Emails: ${stats.support_queues.admin_emails}<br>
-                            - Dashboard Notifications: ${stats.support_queues.dashboard_notifications}
-                        ` : ''}
-                    </div>
-                `;
-
-                document.getElementById('systemData').innerHTML = html;
-            } catch (error) {
-                showAlert('Failed to load cache stats', 'error');
-            }
-        }
-
-        async function loadSystemHealth() {
-            try {
-                const health = await apiCall('/api/admin/system-health');
-
-                const html = `
-                    <h4>System Health Check</h4>
-                    <div class="row">
-                        <div class="col-12">
-                            <div style="padding: 15px; background: ${health.status === 'healthy' ? '#d4edda' : '#f8d7da'}; border-radius: 4px; margin-bottom: 15px;">
-                                <h5>Overall Status: <span class="badge badge-${health.status === 'healthy' ? 'success' : 'danger'}">${health.status.toUpperCase()}</span></h5>
-                                <small>Last checked: ${new Date(health.timestamp).toLocaleString()}</small>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <div class="row">
-                        ${Object.entries(health.components).map(([component, data]) => `
-                            <div class="col-4" style="margin-bottom: 15px;">
-                                <div class="card">
-                                    <div class="card-header">
-                                        <span class="status-indicator status-${data.status === 'healthy' ? 'healthy' : data.status === 'degraded' ? 'warning' : 'error'}"></span>
-                                        ${component.replace('_', ' ').toUpperCase()}
-                                    </div>
-                                    <div class="card-body">
-                                        <p><strong>Status:</strong> ${data.status}</p>
-                                        ${data.total_users ? `<p><strong>Users:</strong> ${data.total_users}</p>` : ''}
-                                        ${data.total_content ? `<p><strong>Content:</strong> ${data.total_content}</p>` : ''}
-                                        ${data.total_tickets ? `<p><strong>Tickets:</strong> ${data.total_tickets}</p>` : ''}
-                                        ${data.error ? `<p style="color: red;"><strong>Error:</strong> ${data.error}</p>` : ''}
-                                    </div>
-                                </div>
-                            </div>
-                        `).join('')}
-                    </div>
-                `;
-
-                document.getElementById('systemData').innerHTML = html;
-            } catch (error) {
-                showAlert('Failed to load system health', 'error');
-            }
-        }
-
-        // Notification functions
-        async function loadNotifications() {
-            try {
-                const response = await apiCall('/api/admin/notifications');
-
-                const html = `
-                    <table class="table">
-                        <thead>
-                            <tr>
-                                <th>Title</th>
-                                <th>Message</th>
-                                <th>Type</th>
-                                <th>Priority</th>
-                                <th>Time</th>
-                                <th>Status</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${response.notifications.map(notification => `
-                                <tr class="${!notification.read ? 'table-warning' : ''}">
-                                    <td>${notification.title}</td>
-                                    <td>${notification.message.substring(0, 100)}${notification.message.length > 100 ? '...' : ''}</td>
-                                    <td><span class="badge badge-info">${notification.type}</span></td>
-                                    <td><span class="badge badge-${notification.priority === 'urgent' ? 'danger' : notification.priority === 'high' ? 'warning' : 'info'}">${notification.priority}</span></td>
-                                    <td>${new Date(notification.timestamp).toLocaleString()}</td>
-                                    <td><span class="badge badge-${notification.read ? 'success' : 'warning'}">${notification.read ? 'Read' : 'Unread'}</span></td>
-                                </tr>
-                            `).join('')}
-                        </tbody>
-                    </table>
-                `;
-
-                document.getElementById('notificationsData').innerHTML = html;
-            } catch (error) {
-                showAlert('Failed to load notifications', 'error');
-            }
-        }
-
-        async function sendTestNotification() {
-            try {
-                // This would typically be done automatically by the system
-                // For testing, we can create a dummy notification
-                showAlert('Test notification feature would be triggered by system events', 'info');
-            } catch (error) {
-                showAlert('Failed to send test notification', 'error');
-            }
-        }
-
-        // Modal functions
-        function closeModal(modalId) {
-            document.getElementById(modalId).style.display = 'none';
-        }
-
-        function toggleNotificationsPanel() {
-            const panel = document.getElementById('notificationsPanel');
-            panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
-        }
-
-        // Event listeners
-        document.addEventListener('DOMContentLoaded', function () {
-            // Auto-load dashboard if already authenticated
-            if (authToken) {
-                loadDashboard();
-            }
-
-            // Enter key for login
-            document.getElementById('loginPassword').addEventListener('keypress', function (e) {
-                if (e.key === 'Enter') {
-                    adminLogin();
-                }
-            });
-
-            // Close modals when clicking outside
-            window.onclick = function (event) {
-                const modals = document.querySelectorAll('.modal');
-                modals.forEach(modal => {
-                    if (event.target === modal) {
-                        modal.style.display = 'none';
+                const response = await fetch(`${API_BASE}/api/user/watchlist`, {
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`
                     }
                 });
-            };
-        });
 
-        // Auto-refresh dashboard every 30 seconds
-        setInterval(() => {
-            if (authToken && document.querySelector('.nav-tab.active')?.textContent?.includes('Dashboard')) {
-                loadDashboard();
+                if (!response.ok) {
+                    logout();
+                }
+            } catch (error) {
+                console.warn('Token validation failed');
             }
-        }, 30000);
+        }
 
-        // Show notifications panel on page load
-        setTimeout(() => {
-            document.getElementById('notificationsPanel').style.display = 'block';
-        }, 2000);
+        function updateAuthUI() {
+            const loginBtn = document.getElementById('loginBtn');
+            const registerBtn = document.getElementById('registerBtn');
+            const logoutBtn = document.getElementById('logoutBtn');
+            const userInfo = document.getElementById('userInfo');
+            const username = document.getElementById('username');
+
+            if (currentUser) {
+                loginBtn.style.display = 'none';
+                registerBtn.style.display = 'none';
+                logoutBtn.style.display = 'block';
+                userInfo.style.display = 'flex';
+                username.textContent = `Welcome, ${currentUser.username}!`;
+
+                // Show personalized content
+                document.getElementById('authRequired').style.display = 'none';
+                document.getElementById('profileAuthRequired').style.display = 'none';
+                document.getElementById('adminAuthRequired').style.display = currentUser.is_admin ? 'none' : 'block';
+            } else {
+                loginBtn.style.display = 'block';
+                registerBtn.style.display = 'block';
+                logoutBtn.style.display = 'none';
+                userInfo.style.display = 'none';
+
+                // Hide personalized content
+                document.getElementById('authRequired').style.display = 'block';
+                document.getElementById('profileAuthRequired').style.display = 'block';
+                document.getElementById('adminAuthRequired').style.display = 'block';
+            }
+        }
+
+        // Content loading functions
+        async function loadTrendingRecommendations() {
+            try {
+                const response = await fetch(`${API_BASE}/api/recommendations/trending?category=all&limit=12`);
+                const data = await response.json();
+
+                if (response.ok && data.categories) {
+                    displayRecommendations('Trending Now', data.categories.trending_movies || [], 'trending');
+                }
+            } catch (error) {
+                console.error('Error loading trending:', error);
+            }
+        }
+
+        async function loadPersonalizedContent() {
+            if (!authToken) return;
+
+            try {
+                const response = await fetch(`${API_BASE}/api/personalized/`, {
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`
+                    }
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.success) {
+                    const recommendations = data.data.recommendations;
+                    let content = '';
+
+                    // Display each category
+                    Object.entries(recommendations).forEach(([category, items]) => {
+                        if (items && items.length > 0) {
+                            content += generateRecommendationSection(getCategoryTitle(category), items, category);
+                        }
+                    });
+
+                    document.getElementById('dynamicRecommendations').innerHTML = content;
+                    addContentEventListeners();
+                }
+            } catch (error) {
+                console.error('Error loading personalized content:', error);
+            }
+        }
+
+        async function loadRecommendationCategory(category) {
+            let endpoint = '';
+            let title = '';
+
+            switch (category) {
+                case 'for-you':
+                    if (!authToken) {
+                        showAlert('', 'Please login to see personalized recommendations', 'error');
+                        return;
+                    }
+                    endpoint = '/api/personalized/for-you';
+                    title = 'For You';
+                    break;
+                case 'because-you-watched':
+                    if (!authToken) {
+                        showAlert('', 'Please login to see this category', 'error');
+                        return;
+                    }
+                    endpoint = '/api/personalized/because-you-watched';
+                    title = 'Because You Watched';
+                    break;
+                case 'trending-for-you':
+                    if (!authToken) {
+                        showAlert('', 'Please login to see personalized trending', 'error');
+                        return;
+                    }
+                    endpoint = '/api/personalized/trending-for-you';
+                    title = 'Trending for You';
+                    break;
+                case 'your-language':
+                    if (!authToken) {
+                        showAlert('', 'Please login to see language recommendations', 'error');
+                        return;
+                    }
+                    endpoint = '/api/personalized/your-language';
+                    title = 'Your Language';
+                    break;
+                case 'hidden-gems':
+                    if (!authToken) {
+                        showAlert('', 'Please login to see hidden gems', 'error');
+                        return;
+                    }
+                    endpoint = '/api/personalized/hidden-gems';
+                    title = 'Hidden Gems';
+                    break;
+                case 'trending':
+                    endpoint = '/api/recommendations/trending?category=all';
+                    title = 'Trending Now';
+                    break;
+                default:
+                    return;
+            }
+
+            try {
+                const headers = {};
+                if (authToken) {
+                    headers['Authorization'] = `Bearer ${authToken}`;
+                }
+
+                const response = await fetch(`${API_BASE}${endpoint}`, { headers });
+                const data = await response.json();
+
+                if (response.ok) {
+                    let items = [];
+                    if (data.recommendations) {
+                        items = data.recommendations;
+                    } else if (data.categories && category === 'trending') {
+                        // For trending, show all categories
+                        let content = '';
+                        Object.entries(data.categories).forEach(([cat, categoryItems]) => {
+                            if (categoryItems && categoryItems.length > 0) {
+                                content += generateRecommendationSection(getCategoryTitle(cat), categoryItems, cat);
+                            }
+                        });
+                        document.getElementById('dynamicRecommendations').innerHTML = content;
+                        addContentEventListeners();
+                        return;
+                    }
+
+                    const content = generateRecommendationSection(title, items, category);
+                    document.getElementById('dynamicRecommendations').innerHTML = content;
+                    addContentEventListeners();
+                }
+            } catch (error) {
+                console.error(`Error loading ${category}:`, error);
+            }
+        }
+
+        async function performSearch(query) {
+            switchTab('search');
+
+            try {
+                const response = await fetch(`${API_BASE}/api/search?query=${encodeURIComponent(query)}&type=multi`);
+                const data = await response.json();
+
+                if (response.ok) {
+                    displaySearchResults(data.results || []);
+                }
+            } catch (error) {
+                console.error('Search error:', error);
+            }
+        }
+
+        function displaySearchResults(results) {
+            const container = document.getElementById('searchResults');
+
+            if (results.length === 0) {
+                container.innerHTML = '<div class="alert alert-error">No results found</div>';
+                return;
+            }
+
+            container.innerHTML = results.map(item => generateContentCard(item)).join('');
+            addContentEventListeners();
+        }
+
+        function displayRecommendations(title, items, category) {
+            const content = generateRecommendationSection(title, items, category);
+            document.getElementById('dynamicRecommendations').innerHTML = content;
+            addContentEventListeners();
+        }
+
+        // Profile functions
+        async function loadProfile() {
+            if (!authToken) return;
+
+            try {
+                // Load profile insights
+                const insightsResponse = await fetch(`${API_BASE}/api/personalized/profile-insights`, {
+                    headers: { 'Authorization': `Bearer ${authToken}` }
+                });
+
+                if (insightsResponse.ok) {
+                    const insights = await insightsResponse.json();
+                    displayProfileInsights(insights.insights);
+                }
+
+                // Load watchlist
+                const watchlistResponse = await fetch(`${API_BASE}/api/user/watchlist`, {
+                    headers: { 'Authorization': `Bearer ${authToken}` }
+                });
+
+                if (watchlistResponse.ok) {
+                    const watchlistData = await watchlistResponse.json();
+                    displayWatchlist(watchlistData.watchlist || []);
+                }
+
+                // Load favorites
+                const favoritesResponse = await fetch(`${API_BASE}/api/user/favorites`, {
+                    headers: { 'Authorization': `Bearer ${authToken}` }
+                });
+
+                if (favoritesResponse.ok) {
+                    const favoritesData = await favoritesResponse.json();
+                    displayFavorites(favoritesData.favorites || []);
+                }
+            } catch (error) {
+                console.error('Error loading profile:', error);
+            }
+        }
+
+        function displayProfileInsights(insights) {
+            const container = document.getElementById('profileInsights');
+
+            const html = `
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-number">${Math.round(insights.profile_strength.completeness * 100)}%</div>
+                        <div class="stat-label">Profile Completeness</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number">${Math.round(insights.profile_strength.confidence * 100)}%</div>
+                        <div class="stat-label">Confidence Score</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number">${insights.behavior.total_interactions}</div>
+                        <div class="stat-label">Total Interactions</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number">${Math.round(insights.behavior.engagement_score * 100)}%</div>
+                        <div class="stat-label">Engagement Score</div>
+                    </div>
+                </div>
+                <div style="margin-top: 2rem;">
+                    <h3 style="color: #4ecdc4; margin-bottom: 1rem;">Your Preferences</h3>
+                    <div style="display: grid; gap: 1rem;">
+                        <div>
+                            <strong>Top Genres:</strong> ${insights.preferences.top_genres.join(', ') || 'None yet'}
+                        </div>
+                        <div>
+                            <strong>Preferred Languages:</strong> ${insights.preferences.preferred_languages.join(', ') || 'None set'}
+                        </div>
+                        <div>
+                            <strong>Viewing Style:</strong> ${insights.behavior.viewing_style || 'Casual'}
+                        </div>
+                        <div style="margin-top: 1rem; padding: 1rem; background: rgba(255,255,255,0.05); border-radius: 8px;">
+                            <strong>Recommendation Tip:</strong> ${insights.recommendations_quality.next_improvement}
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            container.innerHTML = html;
+        }
+
+        function displayWatchlist(items) {
+            const container = document.getElementById('watchlist');
+
+            if (items.length === 0) {
+                container.innerHTML = '<div class="alert alert-error">Your watchlist is empty</div>';
+                return;
+            }
+
+            container.innerHTML = items.map(item => generateContentCard(item, true)).join('');
+            addContentEventListeners();
+        }
+
+        function displayFavorites(items) {
+            const container = document.getElementById('favorites');
+
+            if (items.length === 0) {
+                container.innerHTML = '<div class="alert alert-error">No favorites yet</div>';
+                return;
+            }
+
+            container.innerHTML = items.map(item => generateContentCard(item, false, true)).join('');
+            addContentEventListeners();
+        }
+
+        // Admin functions
+        async function loadAdminContent() {
+            if (!authToken || !currentUser?.is_admin) return;
+
+            try {
+                const healthResponse = await fetch(`${API_BASE}/api/health`);
+                const healthData = await healthResponse.json();
+                displaySystemHealth(healthData);
+
+                const performanceResponse = await fetch(`${API_BASE}/api/performance`);
+                const performanceData = await performanceResponse.json();
+                displayAdminAnalytics(performanceData);
+            } catch (error) {
+                console.error('Error loading admin content:', error);
+            }
+        }
+
+        function displaySystemHealth(health) {
+            const container = document.getElementById('systemHealth');
+
+            const html = `
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-number" style="color: ${health.status === 'healthy' ? '#4ecdc4' : '#ff6b6b'}">${health.status}</div>
+                        <div class="stat-label">System Status</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number">${health.services.tmdb ? '✅' : '❌'}</div>
+                        <div class="stat-label">TMDB API</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number">${health.database === 'connected' ? '✅' : '❌'}</div>
+                        <div class="stat-label">Database</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number">${health.cache === 'connected' ? '✅' : '❌'}</div>
+                        <div class="stat-label">Cache</div>
+                    </div>
+                </div>
+            `;
+
+            container.innerHTML = html;
+        }
+
+        function displayAdminAnalytics(data) {
+            const container = document.getElementById('adminAnalytics');
+
+            const html = `
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-number">${data.database?.total_content || 0}</div>
+                        <div class="stat-label">Total Content</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number">${data.database?.slug_coverage || 0}%</div>
+                        <div class="stat-label">Slug Coverage</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number">${data.performance?.optimization_level || 'Unknown'}</div>
+                        <div class="stat-label">Optimization</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number">${data.cache_type || 'Unknown'}</div>
+                        <div class="stat-label">Cache Type</div>
+                    </div>
+                </div>
+            `;
+
+            container.innerHTML = html;
+        }
+
+        // Content interaction functions
+        async function toggleWatchlist(contentId) {
+            if (!authToken) {
+                showAlert('', 'Please login to add to watchlist', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/api/interactions`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${authToken}`
+                    },
+                    body: JSON.stringify({
+                        content_id: contentId,
+                        interaction_type: 'watchlist'
+                    })
+                });
+
+                if (response.ok) {
+                    showAlert('', 'Added to watchlist!', 'success');
+                }
+            } catch (error) {
+                console.error('Watchlist error:', error);
+            }
+        }
+
+        async function toggleFavorite(contentId) {
+            if (!authToken) {
+                showAlert('', 'Please login to add to favorites', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/api/interactions`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${authToken}`
+                    },
+                    body: JSON.stringify({
+                        content_id: contentId,
+                        interaction_type: 'favorite'
+                    })
+                });
+
+                if (response.ok) {
+                    showAlert('', 'Added to favorites!', 'success');
+                }
+            } catch (error) {
+                console.error('Favorite error:', error);
+            }
+        }
+
+        async function viewContent(contentId) {
+            try {
+                const response = await fetch(`${API_BASE}/api/content/${contentId}`);
+                const data = await response.json();
+
+                if (response.ok) {
+                    displayContentDetail(data);
+                    openModal('detailModal');
+                }
+            } catch (error) {
+                console.error('Content detail error:', error);
+            }
+        }
+
+        function displayContentDetail(content) {
+            const container = document.getElementById('detailContent');
+
+            const html = `
+                <div class="detail-header">
+                    <img src="${content.poster_path || '/api/placeholder/300/450'}" alt="${content.title}" class="detail-poster">
+                    <div class="detail-info">
+                        <h1 class="detail-title">${content.title}</h1>
+                        <div class="detail-meta">
+                            <span>⭐ ${content.rating || 'N/A'}</span>
+                            <span>📅 ${content.release_date ? new Date(content.release_date).getFullYear() : 'N/A'}</span>
+                            <span>🎬 ${content.content_type}</span>
+                            ${content.runtime ? `<span>⏱️ ${content.runtime}m</span>` : ''}
+                        </div>
+                        <div class="genres">
+                            ${content.genres.map(genre => `<span class="genre-tag">${genre}</span>`).join('')}
+                        </div>
+                        <p class="detail-overview">${content.overview || 'No description available.'}</p>
+                        <div class="card-actions">
+                            <button class="btn btn-small" onclick="toggleWatchlist(${content.id})">+ Watchlist</button>
+                            <button class="btn btn-small btn-secondary" onclick="toggleFavorite(${content.id})">❤️ Favorite</button>
+                            ${content.youtube_trailer ? `<a href="${content.youtube_trailer}" target="_blank" class="btn btn-small btn-success">🎬 Trailer</a>` : ''}
+                        </div>
+                    </div>
+                </div>
+                ${content.similar_content && content.similar_content.length > 0 ? `
+                    <div class="similar-content">
+                        <h3 style="color: #4ecdc4; margin-bottom: 1rem;">Similar Content</h3>
+                        <div class="similar-grid">
+                            ${content.similar_content.map(item => `
+                                <div class="similar-item" onclick="viewContent(${item.id})">
+                                    <img src="${item.poster_path || '/api/placeholder/150/225'}" alt="${item.title}" class="similar-poster">
+                                    <div class="similar-title">${item.title}</div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                ` : ''}
+            `;
+
+            container.innerHTML = html;
+        }
+
+        // UI helper functions
+        function switchTab(tabName) {
+            // Update tab buttons
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            document.querySelector(`[data-tab="${tabName}"]`).classList.add('active');
+
+            // Update tab content
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.classList.remove('active');
+            });
+            document.getElementById(tabName).classList.add('active');
+
+            // Load content based on tab
+            switch (tabName) {
+                case 'profile':
+                    if (currentUser) loadProfile();
+                    break;
+                case 'admin':
+                    if (currentUser?.is_admin) loadAdminContent();
+                    break;
+                case 'recommendations':
+                    if (currentUser) {
+                        loadPersonalizedContent();
+                    } else {
+                        loadTrendingRecommendations();
+                    }
+                    break;
+            }
+        }
+
+        function openModal(modalId) {
+            document.getElementById(modalId).style.display = 'flex';
+            document.body.style.overflow = 'hidden';
+        }
+
+        function closeModal(modalId) {
+            document.getElementById(modalId).style.display = 'none';
+            document.body.style.overflow = 'auto';
+
+            // Clear form data
+            const modal = document.getElementById(modalId);
+            const forms = modal.querySelectorAll('form');
+            forms.forEach(form => form.reset());
+
+            // Clear alerts
+            const alerts = modal.querySelectorAll('[id$="Alert"]');
+            alerts.forEach(alert => alert.innerHTML = '');
+        }
+
+        function showAlert(containerId, message, type) {
+            if (containerId) {
+                const container = document.getElementById(containerId);
+                container.innerHTML = `<div class="alert alert-${type}">${message}</div>`;
+            } else {
+                // Show global alert
+                const alertDiv = document.createElement('div');
+                alertDiv.className = `alert alert-${type}`;
+                alertDiv.textContent = message;
+                alertDiv.style.position = 'fixed';
+                alertDiv.style.top = '120px';
+                alertDiv.style.right = '2rem';
+                alertDiv.style.zIndex = '3000';
+                alertDiv.style.maxWidth = '400px';
+
+                document.body.appendChild(alertDiv);
+
+                setTimeout(() => {
+                    alertDiv.remove();
+                }, 3000);
+            }
+        }
+
+        function setLoadingState(prefix, loading) {
+            const loadingText = document.getElementById(`${prefix}LoadingText`);
+            const loadingSpinner = document.getElementById(`${prefix}Loading`);
+
+            if (loading) {
+                loadingText.style.display = 'none';
+                loadingSpinner.style.display = 'inline-block';
+            } else {
+                loadingText.style.display = 'inline';
+                loadingSpinner.style.display = 'none';
+            }
+        }
+
+        function scrollToTop() {
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        // Content generation functions
+        function generateContentCard(item, isWatchlist = false, isFavorite = false) {
+            return `
+                <div class="content-card" onclick="viewContent(${item.id})">
+                    <img src="${item.poster_path || '/api/placeholder/280/400'}" alt="${item.title}" class="card-image">
+                    <div class="card-content">
+                        <h3 class="card-title">${item.title}</h3>
+                        <div class="card-meta">
+                            <span class="rating">⭐ ${item.rating || 'N/A'}</span>
+                            <span>${item.content_type}</span>
+                        </div>
+                        <div class="genres">
+                            ${(item.genres || []).slice(0, 3).map(genre => `<span class="genre-tag">${genre}</span>`).join('')}
+                        </div>
+                        <div class="card-actions">
+                            ${!isWatchlist ? `<button class="btn btn-small" onclick="event.stopPropagation(); toggleWatchlist(${item.id})">+ Watchlist</button>` : ''}
+                            ${!isFavorite ? `<button class="btn btn-small btn-secondary" onclick="event.stopPropagation(); toggleFavorite(${item.id})">❤️ Favorite</button>` : ''}
+                            ${item.youtube_trailer ? `<a href="${item.youtube_trailer}" target="_blank" class="btn btn-small btn-success" onclick="event.stopPropagation()">🎬 Trailer</a>` : ''}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function generateRecommendationSection(title, items, category) {
+            if (!items || items.length === 0) return '';
+
+            return `
+                <div class="section">
+                    <h2 class="section-title">${title}</h2>
+                    <div class="content-grid">
+                        ${items.slice(0, 12).map(item => generateContentCard(item)).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        function getCategoryTitle(category) {
+            const titles = {
+                'for_you': '🎯 For You',
+                'because_you_watched': '👀 Because You Watched',
+                'trending_for_you': '🔥 Trending for You',
+                'new_releases_for_you': '🆕 New Releases for You',
+                'your_language': '🌍 Your Language',
+                'your_genres': '🎭 Your Genres',
+                'hidden_gems': '💎 Hidden Gems',
+                'continue_watching': '▶️ Continue Watching',
+                'quick_picks': '⚡ Quick Picks',
+                'critically_acclaimed': '🏆 Critically Acclaimed',
+                'trending_movies': '🎬 Trending Movies',
+                'trending_tv_shows': '📺 Trending TV Shows',
+                'trending_anime': '🎌 Trending Anime',
+                'popular_nearby': '📍 Popular Nearby',
+                'top_10_today': '🔟 Top 10 Today',
+                'critics_choice': '⭐ Critics Choice'
+            };
+
+            return titles[category] || category.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+        }
+
+        function addContentEventListeners() {
+            // Add event listeners to dynamically generated content
+            document.querySelectorAll('.content-card').forEach(card => {
+                if (!card.hasAttribute('data-listener-added')) {
+                    card.setAttribute('data-listener-added', 'true');
+                }
+            });
+        }
+
+        // Keyboard shortcuts
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape') {
+                // Close any open modal
+                document.querySelectorAll('.modal').forEach(modal => {
+                    if (modal.style.display === 'flex') {
+                        closeModal(modal.id);
+                    }
+                });
+            } else if (e.key === '/' && !e.target.matches('input, textarea')) {
+                e.preventDefault();
+                document.getElementById('searchInput').focus();
+            }
+        });
     </script>
 </body>
 

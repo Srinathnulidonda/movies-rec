@@ -249,3 +249,115 @@ System Endpoints
 make sure that all the support related thing also should be send and mannaged by the admin all the oparation related the above backend/services/support.py and the notifications should be send to the admin login dashboard and gmail 
 and add some useful and best features in this also
 provide me the updated production grade code
+
+
+provide the designed CineBrain Support & Admin Testing Interface file with the bootstrap5 and tailwind css
+
+
+
+
+
+Create a production-ready backend/services/personalized.py file that implements an advanced personalized recommendation system for movies, TV shows, and anime. The service must:
+1.	Continuously track user interactions including search history, views, likes, favorites, watchlist, and ratings.
+2.	Generate highly accurate, user-specific recommendations based on these signals.
+3.	Apply the best recommendation approaches (hybrid filtering, collaborative filtering, content-based filtering, sequence-aware models, embeddings, context-aware ranking) to ensure maximum relevance.
+4.	Provide personalized recommendations across categories (movies, anime, TV shows) tailored precisely to each user’s interests.
+5.	Be structured with modular, scalable, and clean architecture for production use.
+6.	Include additional useful features for user interaction (feedback, preference updates, personalization settings,Notification/Alert Settings) and integrate these properly in an updated backend/services/user.py file.
+7.	Deliver the final output as two files: personalized.py and user.py, both fully updated, production-grade, and without comments.
+
+
+
+
+
+update my production-ready backend files: backend/services/personalized.py and backend/services/user.py.
+personalized.py
+Implement an advanced personalized recommendation system for movies, TV shows, and anime that:
+1.	Continuously tracks user interactions (search history, views, favorites, watchlist, ratings).
+2.	Generates highly accurate recommendations tailored to each user using hybrid filtering, collaborative filtering, content-based filtering, sequence-aware models, embeddings, and context-aware ranking.
+3.	Provides recommendations across categories (movies, anime, TV shows) based on user interests, history, and preferences.
+4.	Is production-grade, modular, scalable, and follows clean architecture best practices.
+5.	Dynamically updates recommendations when user preferences, watch history, or ratings change.
+user.py
+Implement an advanced User Service with full personalization and interaction features:
+👤 User Profile Features
+•	Customizable profiles: upload avatar using Cloudinary free tier (fallback: auto-generated via ui-avatars), edit username & bio, theme preference (light/dark).
+•	Activity Page: full viewing history with rewatch option, track watch streaks, total watch time.
+•	Preferences: favorite genres, preferred languages (content + UI), region-based content prioritization.
+🔥 Engagement Features
+•	Notifications (in-app + email, optional): alerts for new releases in watchlist genres, trending updates, personalized recommendations refresh.
+•	Trending Now alerts: dynamically surface trending movies, anime, and TV shows.
+⚙️ User Settings Features
+•	Account settings: update username, email, password, manage sessions (logout all), enable 2FA, delete account.
+•	Preferences: theme toggle (dark/light), language selection (UI + content), region selection, default homepage option (Trending/Anime/Movies/etc).
+•	Content & personalization: manage watchlist (bulk remove/reorder), manage favorites, clear viewing history, maturity filters, favorite genres for better recommendations.
+•	Notifications: toggle in-app/email alerts for new releases, trending, personalized recommendations.
+Requirements
+•	Use Cloudinary free tier for avatar uploads.
+•	Both files (personalized.py and user.py) must be production-grade, modular, scalable, and written without comments.
+•	Ensure clean code and seamless integration between user features and personalized recommendations.
+•	make the personlized recommendation according to the users preferrences and users intrests make this 100% accurate and other best algorithm if need combine some of the best algorithms to get 100% accurate personlized recommendation according to the users preferrences and users intrests
+•	Final output: deliver updated personalized.py and user.py files.
+
+
+
+
+provide the complete updated files with the complete issues and errors solved make each of the line in the code works well 
+make the personlized recommendation according to the users preferrences and users intrests make this 100% accurate and other best algorithm if need combine some of the best algorithms to get 100% accurate personlized recommendation according to the users preferrences and users intrests
+
+provide the updated files without comments
+
+
+create backend/services/personalized.py which should have
+You are an advanced recommendation system tasked with generating highly accurate, personalized recommendations for each user. Continuously analyze and learn from the user’s full spectrum of interactions, including search history, viewed items, likes, favorites, watchlist activity, and ratings.
+1.	Deep Profiling: Build a dynamic profile of the user that updates in real-time based on new behavior. Identify core preferences, hidden patterns, niche interests, and evolving tastes.
+2.	Multi-Algorithm Fusion: Combine the strengths of several recommendation approaches for maximal accuracy:
+•	Collaborative Filtering (user–user & item–item): Find similarity clusters among users and items.
+•	Content-Based Filtering: Match item features (genres, tags, keywords, metadata) to user history.
+•	Matrix Factorization / Embeddings (e.g., SVD, Word2Vec, Deep learning embeddings): Capture latent factors behind user preferences.
+•	Context-Aware Filtering: Incorporate temporal signals (time of day, recency bias), location (if applicable), and sequential behavior.
+•	Hybrid Models: Merge different signals into a reinforced scoring/ranking mechanism.
+3.	Precision & Adaptation:
+•	Continuously balance accuracy (matching the user’s known interests) with serendipity (introducing novel but relevant options).
+•	Factor in long-term preferences and short-term trends within the user’s behavior.
+•	Prioritize recommendations that maximize satisfaction, engagement, and predicted rating.
+
+Build a Netflix-level personalized recommendation system for movies, TV shows, and anime.
+Continuously track user interactions (search history, views, favorites, watchlist, ratings) to update real-time profiles.
+Analyze storylines, synopsis, genres, and metadata using NLP + embeddings to detect deep content similarity.
+Use a hybrid model (collaborative, content-based, matrix factorization, context-aware) to generate adaptive, accurate, and unique recommendations with short justifications.
+
+
+
+
+provides complete Netflix-level personalization movies, tv-show and anime recommendations according to the user search history, views, favorites, watchlist, ratings, etc.
+
+
+according to the above files create backend/services/personalized.py file with the following and update user.py there should only the personlized recommendations should be there provided and also add this file in backend/app.py(main file) make sure that all the tables and database is created
+
+Implement an advanced personalized recommendation system for movies, TV shows, and anime that:
+provides complete Netflix-level personalization movies, tv-show and anime recommendations according to the user search  history, views, favorites, watchlist, ratings, etc.
+1.	Continuously tracks user interactions (search history, views, favorites, watchlist, ratings) and Analyze storylines, synopsis, genres.
+2.	Generates highly accurate recommendations tailored to each user using hybrid filtering, collaborative filtering, content-based filtering, sequence-aware models, embeddings, and context-aware ranking.
+3.	Provides recommendations across categories (movies, anime, TV shows) based on user interests, history, and preferences and also based on the language preference.
+4.	Is production-grade, modular, scalable, and follows clean architecture best practices.
+5.	Dynamically updates recommendations when user preferences, watch history, or ratings change.
+6. Analyze storylines, synopsis, genres
+7. personalized recommendation also based on the language preference
+8. add the all endpoints in the user.py file all the logics and algorithms should be in personalized.py file
+9. Create a production-ready /api/personalized/ endpoint at user.py that analyzes user interactions (search history, views, favorites, watchlist, ratings) and content metadata (storylines, synopsis, genres) using hybrid recommendation techniques to deliver highly accurate, real-time personalized recommendations.
+10.it should be only for my cinbrain(website brand name) users
+
+make the backend/services/personalized.py file more better personalization movies, tv-show and anime recommendations according to the user search  history, views, favorites, watchlist, ratings and personalized recommendation also based on the language preference and Analyze storylines, synopsis, genres to get the 100% accurate results
+
+
+make the backend/services/personalized.py file more better personalization movies, tv-show and anime recommendations according to the user search  history, views, favorites, watchlist, ratings and personalized recommendation also based on the language preference and Analyze storylines, synopsis, genres to get the 100% accurate results
+update my production-ready /api/personalized/ endpoint at user.py that analyzes user interactions (search history, views, favorites, watchlist, ratings) and content metadata (storylines, synopsis, genres) using hybrid recommendation techniques to deliver highly accurate, real-time personalized recommendations.
+it should be only for my cinbrain(website brand name) users
+
+
+
+memorize my backend/app.py file
+memorize my backend/services/alogrithms.py file
+memorize my backend/services/personalized.py file
+memorize my backend/services/users.py file

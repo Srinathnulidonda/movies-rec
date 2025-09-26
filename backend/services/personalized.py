@@ -1,4 +1,3 @@
-# backend/services/personalized.py
 import numpy as np
 import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -844,6 +843,9 @@ class NetflixLevelRecommendationEngine:
             user_profile=user_profile
         )
         
+        if not content_pool:
+            return []
+        
         recommendations = []
         
         hybrid_recs = self._hybrid_matrix_factorization(user_profile, content_pool, limit)
@@ -858,9 +860,9 @@ class NetflixLevelRecommendationEngine:
             rec['weight'] = 0.3
             recommendations.append(rec)
         
-        language_recs = self._language_priority_recommendations(user_profile, content_pool, limit)
-        for rec in language_recs[:int(limit * 0.2)]:
-            rec['source'] = 'language_priority'
+        content_recs = self._content_based_recommendations(user_profile, content_pool, limit)
+        for rec in content_recs[:int(limit * 0.2)]:
+            rec['source'] = 'content_based'
             rec['weight'] = 0.2
             recommendations.append(rec)
         
@@ -906,13 +908,7 @@ class NetflixLevelRecommendationEngine:
                         logger.warning(f"Content not found for ID: {interaction.content_id}")
                         continue
                     
-                    similar_content = self.similarity_engine.find_ultra_similar_content(
-                        base_content,
-                        content_pool,
-                        limit=10,
-                        min_similarity=0.6,
-                        strict_mode=True
-                    )
+                    similar_content = self._find_similar_content_simple(base_content, content_pool, limit=10)
                     
                     for similar in similar_content:
                         content = similar['content']
@@ -925,15 +921,14 @@ class NetflixLevelRecommendationEngine:
                             'rating': content.rating,
                             'poster_path': self._format_poster_path(content.poster_path),
                             'overview': content.overview[:150] + '...' if content.overview else '',
-                            'similarity_score': similar['similarity_score'],
-                            'match_explanation': similar.get('match_explanation', {}),
+                            'similarity_score': similar['score'],
                             'because_of': {
                                 'title': base_content.title,
                                 'content_id': base_content.id,
                                 'interaction_type': interaction.interaction_type
                             },
                             'source': 'similarity_engine',
-                            'confidence': similar.get('confidence', 'medium')
+                            'confidence': 'medium'
                         })
                 
                 except Exception as e:
@@ -1131,6 +1126,9 @@ class NetflixLevelRecommendationEngine:
             )
         ).all()
         
+        if not tv_interactions:
+            return []
+        
         recommendations = []
         content_pool = self._get_base_content_pool()
         
@@ -1139,11 +1137,10 @@ class NetflixLevelRecommendationEngine:
             if not base_content:
                 continue
             
-            similar_series = self.similarity_engine.find_ultra_similar_content(
+            similar_series = self._find_similar_content_simple(
                 base_content,
                 [c for c in content_pool if c.content_type == base_content.content_type],
-                limit=5,
-                min_similarity=0.5
+                limit=5
             )
             
             for similar in similar_series:
@@ -1157,7 +1154,7 @@ class NetflixLevelRecommendationEngine:
                     'rating': content.rating,
                     'poster_path': self._format_poster_path(content.poster_path),
                     'overview': content.overview[:150] + '...' if content.overview else '',
-                    'similarity_score': similar['similarity_score'],
+                    'similarity_score': similar['score'],
                     'continue_reason': f"Similar to {base_content.title}",
                     'source': 'continue_watching'
                 })
@@ -1235,6 +1232,386 @@ class NetflixLevelRecommendationEngine:
         
         recommendations.sort(key=lambda x: x['personalization_score'], reverse=True)
         return recommendations[:limit]
+    
+    def _hybrid_matrix_factorization(self, user_profile: Dict[str, Any], 
+                                   content_pool: List[Any], limit: int) -> List[Dict[str, Any]]:
+        try:
+            user_id = user_profile['user_id']
+            
+            interactions = self.models['UserInteraction'].query.filter_by(user_id=user_id).all()
+            if not interactions:
+                return []
+            
+            user_ratings = {}
+            for interaction in interactions:
+                if interaction.rating:
+                    user_ratings[interaction.content_id] = interaction.rating
+                elif interaction.interaction_type == 'favorite':
+                    user_ratings[interaction.content_id] = 9.0
+                elif interaction.interaction_type == 'watchlist':
+                    user_ratings[interaction.content_id] = 7.0
+                elif interaction.interaction_type == 'view':
+                    user_ratings[interaction.content_id] = 6.0
+            
+            if not user_ratings:
+                return []
+            
+            recommendations = []
+            user_genres = user_profile.get('genre_preferences', {}).get('genre_scores', {})
+            user_languages = user_profile.get('language_preferences', {}).get('preferred_languages', [])
+            
+            for content in content_pool:
+                if content.id in user_ratings:
+                    continue
+                
+                score = 0.0
+                
+                if content.genres and user_genres:
+                    try:
+                        content_genres = json.loads(content.genres)
+                        for genre in content_genres:
+                            if genre in user_genres:
+                                score += user_genres[genre] * 0.4
+                    except:
+                        pass
+                
+                if content.languages and user_languages:
+                    try:
+                        content_languages = json.loads(content.languages)
+                        for lang in content_languages:
+                            if any(ul.lower() in lang.lower() for ul in user_languages):
+                                score += 0.3
+                                break
+                    except:
+                        pass
+                
+                if content.rating and content.rating >= 7.0:
+                    score += 0.2
+                
+                if content.popularity:
+                    score += min(content.popularity / 100, 0.1)
+                
+                if score > 0.3:
+                    recommendations.append({
+                        'id': content.id,
+                        'title': content.title,
+                        'content_type': content.content_type,
+                        'genres': json.loads(content.genres or '[]'),
+                        'languages': json.loads(content.languages or '[]'),
+                        'rating': content.rating,
+                        'poster_path': self._format_poster_path(content.poster_path),
+                        'overview': content.overview[:150] + '...' if content.overview else '',
+                        'similarity_score': score,
+                        'source': 'hybrid_matrix_factorization',
+                        'youtube_trailer_id': content.youtube_trailer_id
+                    })
+            
+            recommendations.sort(key=lambda x: x['similarity_score'], reverse=True)
+            return recommendations[:limit]
+            
+        except Exception as e:
+            logger.error(f"Hybrid matrix factorization error: {e}")
+            return []
+
+    def _similarity_based_recommendations(self, user_profile: Dict[str, Any], 
+                                        content_pool: List[Any], limit: int) -> List[Dict[str, Any]]:
+        try:
+            user_id = user_profile['user_id']
+            
+            recent_interactions = self.models['UserInteraction'].query.filter(
+                and_(
+                    self.models['UserInteraction'].user_id == user_id,
+                    self.models['UserInteraction'].interaction_type.in_(['favorite', 'view', 'watchlist']),
+                    self.models['UserInteraction'].timestamp > datetime.utcnow() - timedelta(days=90)
+                )
+            ).order_by(desc(self.models['UserInteraction'].timestamp)).limit(10).all()
+            
+            if not recent_interactions:
+                return []
+            
+            recommendations = []
+            processed_content = set()
+            
+            for interaction in recent_interactions:
+                try:
+                    base_content = self.models['Content'].query.get(interaction.content_id)
+                    if not base_content:
+                        continue
+                    
+                    similar_content = self._find_similar_content_simple(base_content, content_pool, limit=5)
+                    
+                    for similar in similar_content:
+                        if similar['content'].id not in processed_content:
+                            processed_content.add(similar['content'].id)
+                            
+                            similar_item = similar['content']
+                            recommendations.append({
+                                'id': similar_item.id,
+                                'title': similar_item.title,
+                                'content_type': similar_item.content_type,
+                                'genres': json.loads(similar_item.genres or '[]'),
+                                'languages': json.loads(similar_item.languages or '[]'),
+                                'rating': similar_item.rating,
+                                'poster_path': self._format_poster_path(similar_item.poster_path),
+                                'overview': similar_item.overview[:150] + '...' if similar_item.overview else '',
+                                'similarity_score': similar['score'],
+                                'source': 'similarity_based',
+                                'based_on': base_content.title,
+                                'youtube_trailer_id': similar_item.youtube_trailer_id
+                            })
+                            
+                            if len(recommendations) >= limit:
+                                break
+                    
+                    if len(recommendations) >= limit:
+                        break
+                        
+                except Exception as e:
+                    logger.warning(f"Error processing interaction {interaction.id}: {e}")
+                    continue
+            
+            recommendations.sort(key=lambda x: x['similarity_score'], reverse=True)
+            return recommendations[:limit]
+            
+        except Exception as e:
+            logger.error(f"Similarity-based recommendations error: {e}")
+            return []
+
+    def _content_based_recommendations(self, user_profile: Dict[str, Any], 
+                                     content_pool: List[Any], limit: int) -> List[Dict[str, Any]]:
+        try:
+            recommendations = []
+            
+            genre_prefs = user_profile.get('genre_preferences', {}).get('genre_scores', {})
+            language_prefs = user_profile.get('language_preferences', {}).get('preferred_languages', [])
+            content_type_prefs = user_profile.get('content_type_preferences', {}).get('content_type_scores', {})
+            
+            for content in content_pool:
+                score = 0.0
+                
+                if content.genres and genre_prefs:
+                    try:
+                        content_genres = json.loads(content.genres)
+                        for genre in content_genres:
+                            if genre in genre_prefs:
+                                score += genre_prefs[genre] * 0.4
+                    except:
+                        pass
+                
+                if content.languages and language_prefs:
+                    try:
+                        content_languages = json.loads(content.languages)
+                        for lang in content_languages:
+                            if any(pref.lower() in lang.lower() for pref in language_prefs):
+                                score += 0.3
+                                break
+                    except:
+                        pass
+                
+                if content_type_prefs and content.content_type in content_type_prefs:
+                    score += content_type_prefs[content.content_type] * 0.2
+                
+                if content.rating and content.rating >= 7.0:
+                    score += 0.1
+                
+                if score > 0.2:
+                    recommendations.append({
+                        'id': content.id,
+                        'title': content.title,
+                        'content_type': content.content_type,
+                        'genres': json.loads(content.genres or '[]'),
+                        'languages': json.loads(content.languages or '[]'),
+                        'rating': content.rating,
+                        'poster_path': self._format_poster_path(content.poster_path),
+                        'overview': content.overview[:150] + '...' if content.overview else '',
+                        'similarity_score': score,
+                        'source': 'content_based',
+                        'youtube_trailer_id': content.youtube_trailer_id
+                    })
+            
+            recommendations.sort(key=lambda x: x['similarity_score'], reverse=True)
+            return recommendations[:limit]
+            
+        except Exception as e:
+            logger.error(f"Content-based recommendations error: {e}")
+            return []
+
+    def _collaborative_filtering_recommendations(self, user_profile: Dict[str, Any], 
+                                               content_pool: List[Any], limit: int) -> List[Dict[str, Any]]:
+        try:
+            user_id = user_profile['user_id']
+            
+            all_interactions = self.models['UserInteraction'].query.filter(
+                self.models['UserInteraction'].interaction_type.in_(['favorite', 'watchlist', 'view'])
+            ).all()
+            
+            if len(all_interactions) < 10:
+                return []
+            
+            user_items = defaultdict(set)
+            for interaction in all_interactions:
+                user_items[interaction.user_id].add(interaction.content_id)
+            
+            current_user_items = user_items[user_id]
+            if len(current_user_items) < 3:
+                return []
+            
+            similar_users = []
+            for other_user_id, other_items in user_items.items():
+                if other_user_id == user_id or len(other_items) < 3:
+                    continue
+                
+                intersection = len(current_user_items & other_items)
+                union = len(current_user_items | other_items)
+                
+                if union > 0 and intersection >= 2:
+                    similarity = intersection / union
+                    similar_users.append((other_user_id, similarity))
+            
+            similar_users.sort(key=lambda x: x[1], reverse=True)
+            top_similar_users = similar_users[:10]
+            
+            if not top_similar_users:
+                return []
+            
+            recommended_items = defaultdict(float)
+            for similar_user_id, similarity_score in top_similar_users:
+                similar_user_items = user_items[similar_user_id]
+                new_items = similar_user_items - current_user_items
+                
+                for item_id in new_items:
+                    recommended_items[item_id] += similarity_score
+            
+            recommendations = []
+            for content in content_pool:
+                if content.id in recommended_items:
+                    score = recommended_items[content.id]
+                    
+                    recommendations.append({
+                        'id': content.id,
+                        'title': content.title,
+                        'content_type': content.content_type,
+                        'genres': json.loads(content.genres or '[]'),
+                        'languages': json.loads(content.languages or '[]'),
+                        'rating': content.rating,
+                        'poster_path': self._format_poster_path(content.poster_path),
+                        'overview': content.overview[:150] + '...' if content.overview else '',
+                        'similarity_score': score,
+                        'source': 'collaborative_filtering',
+                        'youtube_trailer_id': content.youtube_trailer_id
+                    })
+            
+            recommendations.sort(key=lambda x: x['similarity_score'], reverse=True)
+            return recommendations[:limit]
+            
+        except Exception as e:
+            logger.error(f"Collaborative filtering error: {e}")
+            return []
+
+    def _generate_serendipity_recommendations(self, user_profile: Dict[str, Any], 
+                                            content_pool: List[Any], limit: int) -> List[Dict[str, Any]]:
+        try:
+            user_genres = set(user_profile.get('genre_preferences', {}).get('top_genres', []))
+            user_languages = set(user_profile.get('language_preferences', {}).get('preferred_languages', []))
+            
+            serendipity_recs = []
+            
+            for content in content_pool:
+                try:
+                    content_genres = set(json.loads(content.genres or '[]'))
+                    content_languages = set(json.loads(content.languages or '[]'))
+                    
+                    is_different_genre = not (content_genres & user_genres) if user_genres else False
+                    is_different_language = not any(
+                        ul.lower() in cl.lower() 
+                        for ul in user_languages 
+                        for cl in content_languages
+                    ) if user_languages and content_languages else False
+                    
+                    if (is_different_genre or is_different_language) and content.rating and content.rating >= 7.5:
+                        score = content.rating / 10
+                        
+                        if content.rating >= 8.5:
+                            score += 0.2
+                        
+                        serendipity_recs.append({
+                            'id': content.id,
+                            'title': content.title,
+                            'content_type': content.content_type,
+                            'genres': json.loads(content.genres or '[]'),
+                            'languages': json.loads(content.languages or '[]'),
+                            'rating': content.rating,
+                            'poster_path': self._format_poster_path(content.poster_path),
+                            'overview': content.overview[:150] + '...' if content.overview else '',
+                            'similarity_score': score,
+                            'source': 'serendipity',
+                            'reason': 'High quality content outside your usual preferences',
+                            'youtube_trailer_id': content.youtube_trailer_id
+                        })
+                except:
+                    continue
+            
+            serendipity_recs.sort(key=lambda x: x['similarity_score'], reverse=True)
+            return serendipity_recs[:limit]
+            
+        except Exception as e:
+            logger.error(f"Serendipity recommendations error: {e}")
+            return []
+
+    def _find_similar_content_simple(self, base_content: Any, content_pool: List[Any], limit: int = 10) -> List[Dict]:
+        try:
+            base_genres = set(json.loads(base_content.genres or '[]'))
+            base_languages = set(json.loads(base_content.languages or '[]'))
+            
+            similar_items = []
+            
+            for content in content_pool:
+                if content.id == base_content.id:
+                    continue
+                
+                score = 0.0
+                
+                try:
+                    content_genres = set(json.loads(content.genres or '[]'))
+                    if base_genres and content_genres:
+                        genre_intersection = len(base_genres & content_genres)
+                        genre_union = len(base_genres | content_genres)
+                        if genre_union > 0:
+                            score += (genre_intersection / genre_union) * 0.5
+                except:
+                    pass
+                
+                try:
+                    content_languages = set(json.loads(content.languages or '[]'))
+                    if base_languages and content_languages:
+                        if base_languages & content_languages:
+                            score += 0.2
+                except:
+                    pass
+                
+                if content.content_type == base_content.content_type:
+                    score += 0.1
+                
+                if base_content.rating and content.rating:
+                    rating_diff = abs(base_content.rating - content.rating)
+                    if rating_diff < 2.0:
+                        score += 0.1
+                
+                if content.rating and content.rating >= 6.0:
+                    score += 0.1
+                
+                if score > 0.3:
+                    similar_items.append({
+                        'content': content,
+                        'score': score
+                    })
+            
+            similar_items.sort(key=lambda x: x['score'], reverse=True)
+            return similar_items[:limit]
+            
+        except Exception as e:
+            logger.error(f"Simple similarity error: {e}")
+            return []
     
     def _calculate_personalization_score(self, content: Any, user_profile: Dict[str, Any]) -> float:
         score = 0.0
@@ -1433,18 +1810,6 @@ class NetflixLevelRecommendationEngine:
             logger.error(f"Error updating user preferences: {e}")
             return False
     
-    def _collaborative_filtering_recommendations(self, user_profile: Dict[str, Any], 
-                                               content_pool: List[Any], limit: int) -> List[Dict[str, Any]]:
-        return []
-    
-    def _content_based_recommendations(self, user_profile: Dict[str, Any], 
-                                     content_pool: List[Any], limit: int) -> List[Dict[str, Any]]:
-        return []
-    
-    def _hybrid_matrix_factorization(self, user_profile: Dict[str, Any], 
-                                   content_pool: List[Any], limit: int) -> List[Dict[str, Any]]:
-        return []
-    
     def _sequence_aware_recommendations(self, user_profile: Dict[str, Any], 
                                       content_pool: List[Any], limit: int) -> List[Dict[str, Any]]:
         return []
@@ -1461,26 +1826,30 @@ class NetflixLevelRecommendationEngine:
                                   content_pool: List[Any], limit: int) -> List[Dict[str, Any]]:
         return []
     
-    def _similarity_based_recommendations(self, user_profile: Dict[str, Any], 
-                                        content_pool: List[Any], limit: int) -> List[Dict[str, Any]]:
-        return []
-    
-    def _generate_serendipity_recommendations(self, user_profile: Dict[str, Any], 
-                                            content_pool: List[Any], limit: int) -> List[Dict[str, Any]]:
-        return []
-    
     def _get_user_interacted_content(self, user_id: int) -> List[int]:
         interactions = self.models['UserInteraction'].query.filter_by(user_id=user_id).all()
         return [i.content_id for i in interactions]
     
     def _get_filtered_content_pool(self, exclude_ids: List[int] = None, 
                                   user_profile: Dict[str, Any] = None) -> List[Any]:
-        query = self.models['Content'].query
-        
-        if exclude_ids:
-            query = query.filter(~self.models['Content'].id.in_(exclude_ids))
-        
-        return query.order_by(desc(self.models['Content'].rating)).limit(1000).all()
+        try:
+            query = self.models['Content'].query
+            
+            if exclude_ids:
+                query = query.filter(~self.models['Content'].id.in_(exclude_ids))
+            
+            query = query.filter(
+                and_(
+                    self.models['Content'].title.isnot(None),
+                    self.models['Content'].content_type.isnot(None)
+                )
+            )
+            
+            return query.order_by(desc(self.models['Content'].rating)).limit(500).all()
+            
+        except Exception as e:
+            logger.error(f"Error getting filtered content pool: {e}")
+            return []
     
     def _get_base_content_pool(self) -> List[Any]:
         try:
