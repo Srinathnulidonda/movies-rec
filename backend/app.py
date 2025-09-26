@@ -28,7 +28,7 @@ from urllib3.util.retry import Retry
 from flask_mail import Mail
 from services.upcoming import UpcomingContentService, ContentType, LanguagePriority
 import asyncio
-from services.auth import init_auth, auth_bp, EnhancedUserAnalytics
+from services.auth import auth_bp, init_auth
 from services.admin import admin_bp, init_admin
 from services.users import users_bp, init_users
 from services.support import support_bp, init_support
@@ -91,6 +91,7 @@ YOUTUBE_API_KEY = os.environ.get('YOUTUBE_API_KEY', 'AIzaSyDU-JLASTdIdoLOmlpWuJY
 app.config['TMDB_API_KEY'] = TMDB_API_KEY
 app.config['OMDB_API_KEY'] = OMDB_API_KEY
 app.config['YOUTUBE_API_KEY'] = YOUTUBE_API_KEY
+app.config['SECRET_KEY'] = app.secret_key
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -735,12 +736,6 @@ try:
 except Exception as e:
     logger.error(f"Failed to initialize personalized recommendation system: {e}")
 
-app.register_blueprint(auth_bp)
-app.register_blueprint(admin_bp)
-app.register_blueprint(users_bp)
-
-init_admin(app, db, models, services)
-
 try:
     init_auth(app, db, User)
     app.register_blueprint(auth_bp)
@@ -748,9 +743,16 @@ try:
 except Exception as e:
     logger.error(f"Failed to initialize authentication service: {e}")
 
+try:
+    init_admin(app, db, models, services)
+    app.register_blueprint(admin_bp)
+    logger.info("Admin service initialized successfully")
+except Exception as e:
+    logger.error(f"Failed to initialize admin service: {e}")
 
 try:
     init_users(app, db, models, {**services, 'cache': cache})
+    app.register_blueprint(users_bp)
     logger.info("Users service with personalized recommendations initialized successfully")
 except Exception as e:
     logger.error(f"Failed to initialize users service: {e}")
@@ -2201,7 +2203,9 @@ def health_check():
             'cast_crew': 'fully_enabled',
             'support_service': 'enabled' if 'support_bp' in app.blueprints else 'disabled',
             'admin_notifications': 'enabled',
-            'monitoring': 'active'
+            'monitoring': 'active',
+            'auth_service': 'enabled' if 'auth_bp' in app.blueprints else 'disabled',
+            'users_service': 'enabled' if 'users_bp' in app.blueprints else 'disabled'
         }
         
         try:
@@ -2253,7 +2257,9 @@ def health_check():
                 'cast_crew_optimization',
                 'support_service_integration',
                 'admin_notification_system',
-                'real_time_monitoring'
+                'real_time_monitoring',
+                'auth_service_enhanced',
+                'users_service_personalized'
             ],
             'memory_optimizations': 'enabled',
             'unicode_fixes': 'applied',
@@ -2386,6 +2392,8 @@ else:
     print(f"Details service status: {'Initialized' if details_service else 'Failed to initialize'}")
     print(f"Content service status: {'Initialized' if content_service else 'Failed to initialize'}")
     print(f"Support service status: {'Integrated' if 'support_bp' in app.blueprints else 'Not integrated'}")
+    print(f"Auth service status: {'Integrated' if 'auth_bp' in app.blueprints else 'Not integrated'}")
+    print(f"Users service status: {'Integrated' if 'users_bp' in app.blueprints else 'Not integrated'}")
     print(f"Admin support management: Fully enabled")
     print(f"Real-time notifications: Enabled")
     print(f"Email notifications: Enabled")
@@ -2404,6 +2412,8 @@ else:
     print("✅ Comprehensive analytics dashboard")
     print("✅ Automated background monitoring")
     print("✅ Webhook support for integrations")
+    print("✅ Enhanced authentication with email")
+    print("✅ Personalized user recommendations")
     
     print("\n=== Registered Routes ===")
     for rule in app.url_map.iter_rules():
