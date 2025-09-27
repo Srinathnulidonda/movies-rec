@@ -1,4 +1,4 @@
-# backend/services/auth.py
+# backend/auth.py
 from flask import Blueprint, request, jsonify
 from flask_mail import Mail, Message
 from itsdangerous import URLSafeTimedSerializer, SignatureExpired, BadTimeSignature
@@ -23,19 +23,25 @@ import hashlib
 import json
 import redis
 from urllib.parse import urlparse
-import socket
 
+# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Create blueprint
 auth_bp = Blueprint('auth', __name__)
 
+# Frontend URL configuration
 FRONTEND_URL = os.environ.get('FRONTEND_URL', 'https://cinebrain.vercel.app')
 BACKEND_URL = os.environ.get('BACKEND_URL', 'https://backend-app-970m.onrender.com')
+
+# Redis configuration
 REDIS_URL = os.environ.get('REDIS_URL', 'redis://red-d2qlbuje5dus73c71qog:xp7inVzgblGCbo9I4taSGLdKUg0xY91I@red-d2qlbuje5dus73c71qog:6379')
 
+# Email validation regex
 EMAIL_REGEX = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
 
+# These will be initialized by init_auth function
 app = None
 db = None
 User = None
@@ -43,12 +49,16 @@ mail = None
 serializer = None
 redis_client = None
 
+# Password reset token salt
 PASSWORD_RESET_SALT = 'password-reset-salt-cinebrain-2025'
 
 def init_redis():
+    """Initialize Redis connection"""
     global redis_client
     try:
+        # Parse Redis URL
         url = urlparse(REDIS_URL)
+        
         redis_client = redis.StrictRedis(
             host=url.hostname,
             port=url.port,
@@ -59,379 +69,153 @@ def init_redis():
             retry_on_timeout=True,
             health_check_interval=30
         )
+        
+        # Test connection
         redis_client.ping()
         logger.info("Redis connected successfully")
         return redis_client
     except Exception as e:
         logger.error(f"Redis connection failed: {e}")
+        # Fall back to in-memory storage if Redis fails
         return None
 
-class FreeEmailService:
-    def __init__(self, username=None, password=None):
-        self.username = username or os.environ.get('GMAIL_USERNAME', 'projects.srinath@gmail.com')
-        self.password = password or os.environ.get('GMAIL_APP_PASSWORD', 'nddg lphy ajjy rnuq')
-        self.from_email = "noreply@cinebrain.com"
+class ProfessionalEmailService:
+    """Professional email service using Gmail SMTP with Redis queue"""
+    
+    def __init__(self, username, password):
+        self.smtp_server = "smtp.gmail.com"
+        self.smtp_port = 587
+        self.username = username
+        self.password = password
+        self.from_email = "noreply@cinebrain.com"  # Display email
         self.from_name = "CineBrain"
         self.reply_to = "support@cinebrain.com"
+        
+        # Initialize Redis
         self.redis_client = redis_client
-        self.use_http_fallback = False
-        self.working_config = None
         
-        # Extended SMTP configurations including alternative ports and servers
-        self.smtp_configs = [
-            {
-                'name': 'Gmail TLS 587',
-                'server': 'smtp.gmail.com',
-                'port': 587,
-                'use_tls': True,
-                'use_ssl': False
-            },
-            {
-                'name': 'Gmail Alternative 2525',
-                'server': 'smtp.gmail.com',
-                'port': 2525,  # Alternative port sometimes not blocked
-                'use_tls': True,
-                'use_ssl': False
-            },
-            {
-                'name': 'Gmail Alternative 2587',
-                'server': 'smtp.gmail.com',
-                'port': 2587,  # Another alternative port
-                'use_tls': True,
-                'use_ssl': False
-            },
-            {
-                'name': 'Gmail Relay 587',
-                'server': 'smtp-relay.gmail.com',  # Gmail relay server
-                'port': 587,
-                'use_tls': True,
-                'use_ssl': False
-            },
-            {
-                'name': 'Gmail SSL 465',
-                'server': 'smtp.gmail.com',
-                'port': 465,
-                'use_tls': False,
-                'use_ssl': True
-            },
-            {
-                'name': 'Gmail Alternative SSL 8465',
-                'server': 'smtp.gmail.com',
-                'port': 8465,  # Alternative SSL port
-                'use_tls': False,
-                'use_ssl': True
-            },
-            {
-                'name': 'Gmail Submission 25',
-                'server': 'smtp.gmail.com',
-                'port': 25,
-                'use_tls': True,
-                'use_ssl': False
-            },
-            {
-                'name': 'Gmail HTTP Tunnel 8025',
-                'server': 'smtp.gmail.com',
-                'port': 8025,  # Sometimes works on cloud providers
-                'use_tls': True,
-                'use_ssl': False
-            }
-        ]
-        
-        # Try to establish SMTP connection
-        self.email_enabled = self._test_smtp_connection()
-        
-        # If direct SMTP fails, try alternative methods
-        if not self.email_enabled:
-            logger.warning("Direct SMTP failed, trying alternative methods...")
-            self.email_enabled = self._try_alternative_smtp()
-        
-        if self.email_enabled:
-            self.start_email_worker()
-        else:
-            logger.warning("⚠️ Email service running in fallback mode - direct links will be provided")
-            self._setup_fallback_system()
-    
-    def _test_smtp_connection(self):
-        """Test SMTP connectivity with extended timeout and retry logic"""
-        for config in self.smtp_configs:
-            for attempt in range(2):  # Try each config twice
-                try:
-                    logger.info(f"Testing {config['name']} connection (attempt {attempt + 1})...")
-                    
-                    # First test if port is reachable using basic socket
-                    socket.setdefaulttimeout(10)
-                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    sock.settimeout(10)
-                    
-                    try:
-                        # Try connecting to the server
-                        result = sock.connect_ex((config['server'], config['port']))
-                        sock.close()
-                        
-                        if result != 0:
-                            logger.warning(f"{config['name']} port {config['port']} appears blocked (error code: {result})")
-                            continue
-                    except Exception as sock_err:
-                        logger.warning(f"Socket test failed for {config['name']}: {sock_err}")
-                        continue
-                    
-                    # Port seems open, try SMTP connection
-                    if config['use_ssl']:
-                        context = ssl.create_default_context()
-                        # For testing - in production, use proper certificate validation
-                        context.check_hostname = False
-                        context.verify_mode = ssl.CERT_NONE
-                        
-                        server = smtplib.SMTP_SSL(config['server'], config['port'], 
-                                                 context=context, timeout=15)
-                        try:
-                            server.set_debuglevel(1)  # Enable debug output
-                            server.login(self.username, self.password)
-                            server.quit()
-                            logger.info(f"✅ {config['name']} connection successful!")
-                            self.working_config = config
-                            return True
-                        except Exception as smtp_err:
-                            logger.warning(f"SMTP SSL error for {config['name']}: {smtp_err}")
-                            server.quit()
-                    else:
-                        server = smtplib.SMTP(config['server'], config['port'], timeout=15)
-                        try:
-                            server.set_debuglevel(1)
-                            server.ehlo()
-                            
-                            if config['use_tls']:
-                                context = ssl.create_default_context()
-                                context.check_hostname = False
-                                context.verify_mode = ssl.CERT_NONE
-                                server.starttls(context=context)
-                                server.ehlo()
-                            
-                            server.login(self.username, self.password)
-                            server.quit()
-                            logger.info(f"✅ {config['name']} connection successful!")
-                            self.working_config = config
-                            return True
-                        except Exception as smtp_err:
-                            logger.warning(f"SMTP error for {config['name']}: {smtp_err}")
-                            try:
-                                server.quit()
-                            except:
-                                pass
-                            
-                except socket.timeout:
-                    logger.warning(f"{config['name']} connection timed out (attempt {attempt + 1})")
-                except socket.gaierror as e:
-                    logger.warning(f"{config['name']} DNS resolution failed: {e}")
-                except smtplib.SMTPAuthenticationError as e:
-                    logger.error(f"{config['name']} authentication failed: {e}")
-                    if "Application-specific password required" in str(e):
-                        logger.error("⚠️ Gmail requires an App Password, not regular password!")
-                        logger.error("Go to: https://myaccount.google.com/apppasswords to generate one")
-                except Exception as e:
-                    logger.warning(f"{config['name']} unexpected error: {type(e).__name__}: {e}")
-                
-                time.sleep(1)  # Small delay between attempts
-        
-        logger.error("❌ All standard SMTP configurations failed")
-        return False
-    
-    def _try_alternative_smtp(self):
-        """Try alternative SMTP methods including proxy and relay services"""
-        try:
-            # Try using environment variable for custom SMTP server if provided
-            custom_smtp = os.environ.get('CUSTOM_SMTP_SERVER')
-            custom_port = int(os.environ.get('CUSTOM_SMTP_PORT', 587))
-            
-            if custom_smtp:
-                logger.info(f"Trying custom SMTP server: {custom_smtp}:{custom_port}")
-                try:
-                    server = smtplib.SMTP(custom_smtp, custom_port, timeout=15)
-                    server.ehlo()
-                    server.starttls()
-                    server.ehlo()
-                    server.login(self.username, self.password)
-                    server.quit()
-                    
-                    self.working_config = {
-                        'name': 'Custom SMTP',
-                        'server': custom_smtp,
-                        'port': custom_port,
-                        'use_tls': True,
-                        'use_ssl': False
-                    }
-                    logger.info("✅ Custom SMTP server connected successfully!")
-                    return True
-                except Exception as e:
-                    logger.error(f"Custom SMTP failed: {e}")
-            
-            # If no custom SMTP or it failed, return False
-            return False
-            
-        except Exception as e:
-            logger.error(f"Alternative SMTP methods failed: {e}")
-            return False
-    
-    def _setup_fallback_system(self):
-        """Setup fallback system for when SMTP is completely blocked"""
-        try:
-            logger.info("📧 Setting up email fallback system")
-            self.use_http_fallback = True
-            
-            # Create a simple queue system in Redis for storing emails
-            if self.redis_client:
-                self.redis_client.set('email_fallback_enabled', 'true')
-                logger.info("✅ Fallback email system ready")
-            
-        except Exception as e:
-            logger.error(f"Fallback system setup failed: {e}")
+        # Start email worker
+        self.start_email_worker()
     
     def start_email_worker(self):
-        """Start background worker for processing email queue"""
+        """Start background thread for sending emails from Redis queue"""
         def worker():
             while True:
                 try:
-                    if self.redis_client and self.email_enabled:
+                    # Try to get email from Redis queue
+                    if self.redis_client:
                         email_json = self.redis_client.lpop('email_queue')
                         if email_json:
                             email_data = json.loads(email_json)
                             self._send_email_smtp(email_data)
                         else:
-                            time.sleep(1)
+                            time.sleep(1)  # Wait if queue is empty
                     else:
-                        time.sleep(5)
+                        time.sleep(5)  # Wait longer if Redis is not available
                 except Exception as e:
                     logger.error(f"Email worker error: {e}")
                     time.sleep(5)
         
-        thread = threading.Thread(target=worker, daemon=True, name="EmailWorker")
-        thread.start()
-        logger.info("Started email worker thread")
+        # Start multiple worker threads for better performance
+        for i in range(3):
+            thread = threading.Thread(target=worker, daemon=True, name=f"EmailWorker-{i}")
+            thread.start()
+            logger.info(f"Started email worker thread {i}")
     
     def _send_email_smtp(self, email_data: Dict):
-        """Send email via SMTP with retry logic"""
-        if not self.email_enabled:
-            logger.warning(f"Email service disabled - storing email for {email_data['to']}")
-            self._store_fallback_email(email_data)
-            return False
-        
+        """Send email using Gmail SMTP with retry logic"""
         max_retries = 3
         retry_count = email_data.get('retry_count', 0)
         
-        for attempt in range(max_retries - retry_count):
-            try:
-                msg = MIMEMultipart('alternative')
-                msg['From'] = formataddr((self.from_name, self.username))
-                msg['To'] = email_data['to']
-                msg['Subject'] = email_data['subject']
-                msg['Reply-To'] = self.reply_to
-                msg['Date'] = formatdate(localtime=True)
-                msg['Message-ID'] = f"<{email_data.get('id', uuid.uuid4())}@cinebrain.com>"
-                
-                text_part = MIMEText(email_data['text'], 'plain', 'utf-8')
-                html_part = MIMEText(email_data['html'], 'html', 'utf-8')
-                
-                msg.attach(text_part)
-                msg.attach(html_part)
-                
-                config = self.working_config
-                
-                # Send email using the working configuration
-                if config['use_ssl']:
-                    context = ssl.create_default_context()
-                    context.check_hostname = False
-                    context.verify_mode = ssl.CERT_NONE
-                    
-                    with smtplib.SMTP_SSL(config['server'], config['port'], 
-                                         context=context, timeout=30) as server:
-                        server.login(self.username, self.password)
-                        server.send_message(msg)
-                else:
-                    with smtplib.SMTP(config['server'], config['port'], timeout=30) as server:
-                        server.ehlo()
-                        if config['use_tls']:
-                            context = ssl.create_default_context()
-                            context.check_hostname = False
-                            context.verify_mode = ssl.CERT_NONE
-                            server.starttls(context=context)
-                            server.ehlo()
-                        server.login(self.username, self.password)
-                        server.send_message(msg)
-                
-                logger.info(f"✅ Email sent successfully to {email_data['to']}")
-                
-                # Log success in Redis
-                if self.redis_client:
-                    self.redis_client.setex(
-                        f"email_sent:{email_data.get('id', 'unknown')}",
-                        86400,
-                        json.dumps({
-                            'status': 'sent',
-                            'timestamp': datetime.utcnow().isoformat(),
-                            'to': email_data['to'],
-                            'method': config['name']
-                        })
-                    )
-                return True
-                
-            except smtplib.SMTPServerDisconnected:
-                logger.error(f"SMTP server disconnected, trying to reconnect...")
-                self.email_enabled = self._test_smtp_connection()
-                if not self.email_enabled:
-                    self._store_fallback_email(email_data)
-                    return False
-                    
-            except Exception as e:
-                logger.error(f"SMTP Error: {e} (attempt {attempt + 1}/{max_retries})")
-                
-                if attempt < max_retries - 1:
-                    time.sleep(2 ** attempt)  # Exponential backoff
-                else:
-                    self._store_fallback_email(email_data)
-                    return False
-        
-        return False
-    
-    def _store_fallback_email(self, email_data: Dict):
-        """Store email data for manual retrieval when SMTP fails"""
         try:
+            # Create message
+            msg = MIMEMultipart('alternative')
+            
+            # Professional headers for better deliverability
+            msg['From'] = formataddr((self.from_name, self.username))
+            msg['To'] = email_data['to']
+            msg['Subject'] = email_data['subject']
+            msg['Reply-To'] = self.reply_to
+            msg['Date'] = formatdate(localtime=True)
+            msg['Message-ID'] = f"<{email_data.get('id', uuid.uuid4())}@cinebrain.com>"
+            
+            # Anti-spam headers
+            msg['X-Priority'] = '1' if email_data.get('priority') == 'high' else '3'
+            msg['X-Mailer'] = 'CineBrain-Mailer/2.0'
+            msg['X-Entity-Ref-ID'] = str(uuid.uuid4())
+            msg['List-Unsubscribe'] = f'<mailto:unsubscribe@cinebrain.com?subject=Unsubscribe>'
+            msg['List-Unsubscribe-Post'] = 'List-Unsubscribe=One-Click'
+            msg['Precedence'] = 'bulk'
+            msg['Auto-Submitted'] = 'auto-generated'
+            msg['X-Auto-Response-Suppress'] = 'All'
+            msg['X-Campaign-Id'] = 'password-reset' if 'reset' in email_data['subject'].lower() else 'transactional'
+            
+            # Add both plain text and HTML parts
+            text_part = MIMEText(email_data['text'], 'plain', 'utf-8')
+            html_part = MIMEText(email_data['html'], 'html', 'utf-8')
+            
+            msg.attach(text_part)
+            msg.attach(html_part)
+            
+            # Send email with SSL
+            context = ssl.create_default_context()
+            
+            with smtplib.SMTP(self.smtp_server, self.smtp_port, timeout=30) as server:
+                server.ehlo()
+                server.starttls(context=context)
+                server.ehlo()
+                server.login(self.username, self.password)
+                server.send_message(msg)
+            
+            logger.info(f"✅ Email sent successfully to {email_data['to']} - Subject: {email_data['subject']}")
+            
+            # Store success in Redis
             if self.redis_client:
-                fallback_key = f"email_fallback:{email_data.get('id', uuid.uuid4())}"
                 self.redis_client.setex(
-                    fallback_key,
-                    604800,  # 7 days
+                    f"email_sent:{email_data.get('id', 'unknown')}",
+                    86400,  # 24 hours TTL
                     json.dumps({
-                        'to': email_data['to'],
-                        'subject': email_data['subject'],
+                        'status': 'sent',
                         'timestamp': datetime.utcnow().isoformat(),
-                        'reset_token': email_data.get('reset_token'),
-                        'reset_url': f"{FRONTEND_URL}/auth/reset-password.html?token={email_data.get('reset_token')}" if email_data.get('reset_token') else None,
-                        'fallback_reason': 'SMTP connection failed'
+                        'to': email_data['to']
                     })
                 )
+            
+        except Exception as e:
+            logger.error(f"❌ SMTP Error sending to {email_data['to']}: {e}")
+            
+            # Retry logic with exponential backoff
+            if retry_count < max_retries:
+                retry_count += 1
+                email_data['retry_count'] = retry_count
+                retry_delay = 5 * (2 ** retry_count)  # 5, 10, 20 seconds
                 
-                self.redis_client.rpush('email_fallback_queue', fallback_key)
-                logger.info(f"📥 Email stored in fallback queue: {fallback_key}")
+                logger.info(f"🔄 Retrying email to {email_data['to']} in {retry_delay} seconds (attempt {retry_count}/{max_retries})")
                 
-                # If it's a password reset, also store direct access
-                if email_data.get('reset_token'):
-                    reset_url = f"{FRONTEND_URL}/auth/reset-password.html?token={email_data.get('reset_token')}"
+                # Re-queue with delay
+                if self.redis_client:
+                    threading.Timer(
+                        retry_delay,
+                        lambda: self.redis_client.rpush('email_queue', json.dumps(email_data))
+                    ).start()
+            else:
+                logger.error(f"❌ Failed to send email after {max_retries} attempts to {email_data['to']}")
+                
+                # Store failure in Redis
+                if self.redis_client:
                     self.redis_client.setex(
-                        f"direct_reset:{email_data['to']}",
-                        3600,  # 1 hour
+                        f"email_failed:{email_data.get('id', 'unknown')}",
+                        86400,  # 24 hours TTL
                         json.dumps({
-                            'url': reset_url,
-                            'token': email_data.get('reset_token'),
-                            'created_at': datetime.utcnow().isoformat()
+                            'status': 'failed',
+                            'error': str(e),
+                            'timestamp': datetime.utcnow().isoformat(),
+                            'to': email_data['to']
                         })
                     )
-                    logger.info(f"🔗 Direct reset link stored for {email_data['to']}: {reset_url}")
-                    
-        except Exception as e:
-            logger.error(f"Failed to store fallback email: {e}")
     
-    def queue_email(self, to: str, subject: str, html: str, text: str, priority: str = 'normal', reset_token: str = None):
-        """Queue email for sending"""
+    def queue_email(self, to: str, subject: str, html: str, text: str, priority: str = 'normal'):
+        """Add email to Redis queue for async sending"""
         email_id = str(uuid.uuid4())
         email_data = {
             'id': email_id,
@@ -441,46 +225,35 @@ class FreeEmailService:
             'text': text,
             'priority': priority,
             'timestamp': datetime.utcnow().isoformat(),
-            'retry_count': 0,
-            'reset_token': reset_token
+            'retry_count': 0
         }
         
         try:
-            # If email is disabled and this is critical (password reset), handle specially
-            if not self.email_enabled:
-                logger.warning(f"Email service disabled - using fallback for {to}")
-                self._store_fallback_email(email_data)
-                
-                if reset_token:
-                    reset_url = f"{FRONTEND_URL}/auth/reset-password.html?token={reset_token}"
-                    logger.info(f"🔗 Password reset link for {to}: {reset_url}")
-                    
-                    # Store for API retrieval
-                    if self.redis_client:
-                        self.redis_client.setex(
-                            f"pending_reset:{to}",
-                            3600,
-                            json.dumps({
-                                'token': reset_token,
-                                'url': reset_url,
-                                'email_id': email_id,
-                                'created_at': datetime.utcnow().isoformat()
-                            })
-                        )
-                
-                return True
-            
-            # Normal email queueing when service is enabled
             if self.redis_client:
+                # Use Redis queue
                 if priority == 'high':
+                    # Add to front of queue for high priority
                     self.redis_client.lpush('email_queue', json.dumps(email_data))
                 else:
+                    # Add to back of queue for normal priority
                     self.redis_client.rpush('email_queue', json.dumps(email_data))
                 
-                logger.info(f"📧 Email queued for {to} - ID: {email_id}")
+                # Track email status
+                self.redis_client.setex(
+                    f"email_queued:{email_id}",
+                    3600,  # 1 hour TTL
+                    json.dumps({
+                        'status': 'queued',
+                        'timestamp': datetime.utcnow().isoformat(),
+                        'to': to,
+                        'subject': subject
+                    })
+                )
+                
+                logger.info(f"📧 Email queued (Redis) for {to} - ID: {email_id}")
             else:
-                # Direct send if no Redis
-                logger.warning("Redis not available, attempting direct send")
+                # Fallback: send directly if Redis is not available
+                logger.warning("Redis not available, sending email directly")
                 threading.Thread(
                     target=self._send_email_smtp,
                     args=(email_data,),
@@ -491,166 +264,294 @@ class FreeEmailService:
             
         except Exception as e:
             logger.error(f"Failed to queue email: {e}")
-            
-            # Last resort - log the reset link
-            if reset_token:
-                reset_url = f"{FRONTEND_URL}/auth/reset-password.html?token={reset_token}"
-                logger.critical(f"EMERGENCY: Reset link for {to}: {reset_url}")
-            
-            return False
+            # Try to send directly as last resort
+            threading.Thread(
+                target=self._send_email_smtp,
+                args=(email_data,),
+                daemon=True
+            ).start()
+            return True
     
     def get_email_status(self, email_id: str) -> Dict:
-        """Get status of a queued email"""
+        """Get email status from Redis"""
         if not self.redis_client:
             return {'status': 'unknown', 'id': email_id}
         
         try:
-            # Check various status keys
+            # Check different status keys
             for status_type in ['sent', 'failed', 'queued']:
                 key = f"email_{status_type}:{email_id}"
                 data = self.redis_client.get(key)
                 if data:
                     return json.loads(data)
             
-            # Check fallback queue
-            fallback_key = f"email_fallback:{email_id}"
-            fallback_data = self.redis_client.get(fallback_key)
-            if fallback_data:
-                return json.loads(fallback_data)
-            
             return {'status': 'not_found', 'id': email_id}
         except Exception as e:
             logger.error(f"Error getting email status: {e}")
             return {'status': 'error', 'id': email_id}
     
-    def get_fallback_emails(self, limit: int = 10) -> list:
-        """Get recent fallback emails for manual processing"""
-        if not self.redis_client:
-            return []
-        
-        try:
-            keys = self.redis_client.lrange('email_fallback_queue', 0, limit - 1)
-            emails = []
-            for key in keys:
-                data = self.redis_client.get(key)
-                if data:
-                    emails.append(json.loads(data))
-            return emails
-        except Exception as e:
-            logger.error(f"Error getting fallback emails: {e}")
-            return []
-    
     def get_professional_template(self, content_type: str, **kwargs) -> tuple:
-        """Generate professional email templates"""
+        """Get professional HTML and text email templates"""
+        
+        # Base CSS for all emails (Google/Microsoft/Spotify style)
         base_css = """
         <style type="text/css">
-            @import url('https://fonts.googleapis.com/css2?family=Bangers&family=Inter:wght@300;400;500;600;700&display=swap');
+            /* Reset styles */
+            body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
+            table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
+            img { -ms-interpolation-mode: bicubic; border: 0; outline: none; text-decoration: none; }
             
+            /* Base styles */
             body {
-                margin: 0;
-                padding: 0;
-                font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-                font-size: 16px;
+                margin: 0 !important;
+                padding: 0 !important;
+                width: 100% !important;
+                min-width: 100% !important;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
+                -webkit-font-smoothing: antialiased;
+                -moz-osx-font-smoothing: grayscale;
+                font-size: 14px;
                 line-height: 1.6;
-                color: #1a1a1a;
-                background: #f8f9fa;
+                color: #202124;
+                background-color: #f8f9fa;
             }
             
+            /* Container styles */
             .email-wrapper {
                 width: 100%;
-                background: #f8f9fa;
-                padding: 32px 16px;
+                background-color: #f8f9fa;
+                padding: 40px 20px;
             }
             
             .email-container {
                 max-width: 600px;
                 margin: 0 auto;
-                background: #ffffff;
-                border-radius: 16px;
-                box-shadow: 0 8px 32px rgba(17,60,207,0.2);
+                background-color: #ffffff;
+                border-radius: 8px;
+                box-shadow: 0 1px 2px 0 rgba(60,64,67,0.3), 0 1px 3px 1px rgba(60,64,67,0.15);
                 overflow: hidden;
+            }
+            
+            /* Header styles - Spotify inspired gradient */
+            .header {
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                padding: 40px 48px;
+                text-align: center;
+            }
+            
+            .header-logo {
+                font-size: 32px;
+                font-weight: 700;
+                color: #ffffff;
+                letter-spacing: -0.5px;
+                margin: 0;
+                text-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            }
+            
+            .header-tagline {
+                font-size: 14px;
+                color: rgba(255,255,255,0.95);
+                margin: 8px 0 0 0;
+                font-weight: 400;
+            }
+            
+            /* Content styles */
+            .content {
+                padding: 48px;
+                background-color: #ffffff;
+            }
+            
+            h1 {
+                font-size: 24px;
+                font-weight: 400;
+                color: #202124;
+                margin: 0 0 24px;
+                line-height: 1.3;
+            }
+            
+            h2 {
+                font-size: 18px;
+                font-weight: 500;
+                color: #202124;
+                margin: 24px 0 12px;
+            }
+            
+            p {
+                margin: 0 0 16px;
+                color: #5f6368;
+                font-size: 14px;
+                line-height: 1.6;
+            }
+            
+            /* Button styles - Google Material Design */
+            .btn {
+                display: inline-block;
+                padding: 12px 32px;
+                font-size: 14px;
+                font-weight: 500;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
+                text-decoration: none !important;
+                text-align: center;
+                border-radius: 24px;
+                transition: all 0.3s;
+                cursor: pointer;
+                margin: 24px 0;
+            }
+            
+            .btn-primary {
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: #ffffff !important;
+                box-shadow: 0 4px 15px 0 rgba(102, 126, 234, 0.4);
+            }
+            
+            .btn-primary:hover {
+                box-shadow: 0 6px 20px 0 rgba(102, 126, 234, 0.6);
+                transform: translateY(-1px);
+            }
+            
+            /* Alert boxes */
+            .alert {
+                padding: 16px;
+                border-radius: 8px;
+                margin: 24px 0;
+                font-size: 14px;
+            }
+            
+            .alert-info {
+                background-color: #e8f0fe;
+                border-left: 4px solid #1a73e8;
+                color: #1967d2;
+            }
+            
+            .alert-success {
+                background-color: #e6f4ea;
+                border-left: 4px solid #34a853;
+                color: #188038;
+            }
+            
+            .alert-warning {
+                background-color: #fef7e0;
+                border-left: 4px solid #fbbc04;
+                color: #ea8600;
+            }
+            
+            .alert-error {
+                background-color: #fce8e6;
+                border-left: 4px solid #ea4335;
+                color: #d33b27;
+            }
+            
+            /* Code block */
+            .code-block {
+                background-color: #f8f9fa;
+                border: 1px solid #dadce0;
+                border-radius: 8px;
+                padding: 16px;
+                font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Courier New', monospace;
+                font-size: 13px;
+                color: #202124;
+                word-break: break-all;
+                margin: 16px 0;
+            }
+            
+            /* Info box */
+            .info-box {
+                background-color: #f8f9fa;
+                border-radius: 8px;
+                padding: 24px;
+                margin: 24px 0;
                 border: 1px solid #e8eaed;
             }
             
-            .header {
-                background: linear-gradient(135deg, #113CCF 0%, #1E4FE5 50%, #1E4FE5 100%);
-                padding: 48px 32px;
-                text-align: center;
-            }
-            
-            .brand-logo {
-                font-family: 'Bangers', cursive;
-                font-size: 42px;
-                font-weight: 400;
-                letter-spacing: 1px;
-                color: #ffffff;
-                margin: 0;
-            }
-            
-            .brand-tagline {
-                font-size: 14px;
-                color: rgba(255,255,255,0.95);
-                margin: 8px 0 0;
-            }
-            
-            .content {
-                padding: 48px 32px;
-                background: #ffffff;
-            }
-            
-            .content-title {
-                font-size: 32px;
-                font-weight: 600;
-                color: #1a1a1a;
-                margin: 0 0 16px;
-                text-align: center;
-            }
-            
-            .content-body {
-                font-size: 16px;
-                line-height: 1.7;
-                color: #1a1a1a;
-                margin-bottom: 24px;
-            }
-            
-            .btn {
-                display: inline-block;
-                font-size: 16px;
-                font-weight: 600;
-                text-decoration: none;
-                text-align: center;
-                padding: 16px 32px;
-                border-radius: 50px;
-                background: linear-gradient(135deg, #113CCF 0%, #1E4FE5 100%);
-                color: #ffffff !important;
-                min-width: 200px;
-            }
-            
-            .btn-container {
-                text-align: center;
-                margin: 32px 0;
-            }
-            
-            .alert {
-                padding: 16px 24px;
-                border-radius: 12px;
-                margin: 24px 0;
-                background: rgba(245,158,11,0.1);
-                border-left: 4px solid #f59e0b;
-                color: #d97706;
-            }
-            
+            /* Footer */
             .footer {
-                background: #f8f9fa;
-                padding: 32px;
+                background-color: #f8f9fa;
+                padding: 32px 48px;
                 text-align: center;
                 border-top: 1px solid #e8eaed;
             }
             
             .footer-text {
                 font-size: 12px;
-                color: #999999;
-                margin: 8px 0;
+                color: #80868b;
+                margin: 0 0 8px;
+                line-height: 1.5;
+            }
+            
+            .footer-links {
+                margin: 16px 0;
+            }
+            
+            .footer-link {
+                color: #1a73e8 !important;
+                text-decoration: none;
+                font-size: 12px;
+                margin: 0 12px;
+            }
+            
+            .footer-link:hover {
+                text-decoration: underline;
+            }
+            
+            .social-links {
+                margin: 20px 0;
+            }
+            
+            .social-link {
+                display: inline-block;
+                margin: 0 8px;
+                text-decoration: none;
+            }
+            
+            /* Divider */
+            .divider {
+                height: 1px;
+                background-color: #e8eaed;
+                margin: 32px 0;
+            }
+            
+            /* Responsive */
+            @media screen and (max-width: 600px) {
+                .email-wrapper {
+                    padding: 0 !important;
+                }
+                .email-container {
+                    width: 100% !important;
+                    border-radius: 0 !important;
+                }
+                .content, .footer {
+                    padding: 32px 24px !important;
+                }
+                .header {
+                    padding: 32px 24px !important;
+                }
+                h1 {
+                    font-size: 20px !important;
+                }
+                .btn {
+                    display: block !important;
+                    width: 100% !important;
+                }
+            }
+            
+            /* Dark mode support */
+            @media (prefers-color-scheme: dark) {
+                body { background-color: #202124 !important; }
+                .email-wrapper { background-color: #202124 !important; }
+                .email-container { 
+                    background-color: #292a2d !important;
+                    box-shadow: 0 1px 2px 0 rgba(0,0,0,0.6), 0 2px 6px 2px rgba(0,0,0,0.3) !important;
+                }
+                .content { background-color: #292a2d !important; }
+                .footer { background-color: #202124 !important; }
+                h1, h2 { color: #e8eaed !important; }
+                p { color: #9aa0a6 !important; }
+                .footer-text { color: #9aa0a6 !important; }
+                .info-box, .code-block { 
+                    background-color: #35363a !important;
+                    border-color: #5f6368 !important;
+                }
+                .divider { background-color: #5f6368 !important; }
             }
         </style>
         """
@@ -663,68 +564,91 @@ class FreeEmailService:
             return self._get_generic_template(base_css, **kwargs)
     
     def _get_password_reset_template(self, base_css: str, **kwargs) -> tuple:
+        """Password reset email template"""
         reset_url = kwargs.get('reset_url', '')
         user_name = kwargs.get('user_name', 'there')
-        user_email = kwargs.get('user_email', '')
         
         html = f"""
         <!DOCTYPE html>
-        <html>
+        <html lang="en">
         <head>
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <meta http-equiv="X-UA-Compatible" content="IE=edge">
             <title>Reset your password - CineBrain</title>
             {base_css}
         </head>
         <body>
             <div class="email-wrapper">
-                <div class="email-container">
-                    <div class="header">
-                        <div class="brand-logo">CineBrain</div>
-                        <div class="brand-tagline">The Mind Behind Your Next Favorite</div>
-                    </div>
-                    
-                    <div class="content">
-                        <h1 class="content-title">Reset your password</h1>
-                        
-                        <div class="content-body">
-                            <p>Hi {user_name},</p>
-                            <p>We received a request to reset your CineBrain account password. Click the button below to create a new password:</p>
-                        </div>
-                        
-                        <div class="btn-container">
-                            <a href="{reset_url}" class="btn">Reset Password</a>
-                        </div>
-                        
-                        <div class="alert">
-                            <strong>⏰ This link expires in 1 hour</strong><br>
-                            For security reasons, this password reset link will expire soon.
-                        </div>
-                        
-                        <div style="margin-top: 24px; padding: 16px; background: #f8f9fa; border-radius: 8px;">
-                            <p style="margin: 0; font-size: 13px; color: #666;">
-                                Can't click the button? Copy this link:<br>
-                                <code style="word-break: break-all;">{reset_url}</code>
-                            </p>
-                        </div>
-                    </div>
-                    
-                    <div class="footer">
-                        <p class="footer-text">
-                            If you didn't request this, you can safely ignore this email.
-                        </p>
-                        <p class="footer-text">
-                            © {datetime.now().year} CineBrain, Inc.
-                        </p>
-                    </div>
-                </div>
+                <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                    <tr>
+                        <td>
+                            <div class="email-container">
+                                <!-- Header -->
+                                <div class="header">
+                                    <h1 class="header-logo">🎬 CineBrain</h1>
+                                    <p class="header-tagline">Your AI-Powered Entertainment Companion</p>
+                                </div>
+                                
+                                <!-- Content -->
+                                <div class="content">
+                                    <h1>Reset your password</h1>
+                                    
+                                    <p>Hi {user_name},</p>
+                                    
+                                    <p>We received a request to reset your CineBrain account password. Click the button below to create a new password:</p>
+                                    
+                                    <center>
+                                        <a href="{reset_url}" class="btn btn-primary">Reset Password</a>
+                                    </center>
+                                    
+                                    <div class="info-box">
+                                        <p style="margin: 0; font-size: 13px; color: #5f6368;">
+                                            <strong>Can't click the button?</strong><br>
+                                            Copy and paste this link into your browser:
+                                        </p>
+                                        <div class="code-block">
+                                            {reset_url}
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="alert alert-warning">
+                                        <strong>⏰ This link expires in 1 hour</strong><br>
+                                        For security reasons, this password reset link will expire soon.
+                                    </div>
+                                    
+                                    <div class="divider"></div>
+                                    
+                                    <p style="font-size: 13px; color: #5f6368;">
+                                        <strong>Didn't request this?</strong><br>
+                                        If you didn't request a password reset, you can safely ignore this email. Your password won't be changed.
+                                    </p>
+                                </div>
+                                
+                                <!-- Footer -->
+                                <div class="footer">
+                                    <div class="footer-links">
+                                        <a href="{FRONTEND_URL}/privacy" class="footer-link">Privacy</a>
+                                        <a href="{FRONTEND_URL}/terms" class="footer-link">Terms</a>
+                                        <a href="{FRONTEND_URL}/help" class="footer-link">Help</a>
+                                    </div>
+                                    
+                                    <p class="footer-text">
+                                        © {datetime.now().year} CineBrain, Inc. All rights reserved.<br>
+                                        This email was sent to {kwargs.get('user_email', '')}
+                                    </p>
+                                </div>
+                            </div>
+                        </td>
+                    </tr>
+                </table>
             </div>
         </body>
         </html>
         """
         
         text = f"""
-Reset your password - CineBrain
+Reset your password
 
 Hi {user_name},
 
@@ -746,12 +670,14 @@ The CineBrain Team
         return html, text
     
     def _get_password_changed_template(self, base_css: str, **kwargs) -> tuple:
+        """Password changed confirmation template"""
         user_name = kwargs.get('user_name', 'there')
         user_email = kwargs.get('user_email', '')
+        change_time = datetime.now().strftime('%B %d, %Y at %I:%M %p UTC')
         
         html = f"""
         <!DOCTYPE html>
-        <html>
+        <html lang="en">
         <head>
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -760,47 +686,81 @@ The CineBrain Team
         </head>
         <body>
             <div class="email-wrapper">
-                <div class="email-container">
-                    <div class="header" style="background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);">
-                        <div class="brand-logo">✅ Password Changed</div>
-                        <div class="brand-tagline">Your account is now secured</div>
-                    </div>
-                    
-                    <div class="content">
-                        <h1 class="content-title">Password successfully changed</h1>
-                        
-                        <div class="content-body">
-                            <p>Hi {user_name},</p>
-                            <p>Your CineBrain account password was successfully changed.</p>
-                        </div>
-                        
-                        <div class="btn-container">
-                            <a href="{FRONTEND_URL}/login" class="btn">Sign in to CineBrain</a>
-                        </div>
-                    </div>
-                    
-                    <div class="footer">
-                        <p class="footer-text">
-                            If you didn't make this change, please contact support immediately.
-                        </p>
-                        <p class="footer-text">
-                            © {datetime.now().year} CineBrain, Inc.
-                        </p>
-                    </div>
-                </div>
+                <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                    <tr>
+                        <td>
+                            <div class="email-container">
+                                <!-- Header with success theme -->
+                                <div class="header" style="background: linear-gradient(135deg, #34a853 0%, #0d8043 100%);">
+                                    <h1 class="header-logo">✅ Password Changed</h1>
+                                    <p class="header-tagline">Your account is now secured</p>
+                                </div>
+                                
+                                <!-- Content -->
+                                <div class="content">
+                                    <h1>Password successfully changed</h1>
+                                    
+                                    <p>Hi {user_name},</p>
+                                    
+                                    <p>Your CineBrain account password was successfully changed.</p>
+                                    
+                                    <div class="alert alert-success">
+                                        <strong>✓ Your account is secured</strong><br>
+                                        You can now sign in with your new password.
+                                    </div>
+                                    
+                                    <center>
+                                        <a href="{FRONTEND_URL}/login" class="btn btn-primary">Sign in to CineBrain</a>
+                                    </center>
+                                    
+                                    <div class="alert alert-error">
+                                        <strong>⚠️ Didn't make this change?</strong><br>
+                                        If you didn't change your password, 
+                                        <a href="{FRONTEND_URL}/security/recover" style="color: #ea4335; font-weight: bold;">secure your account immediately</a>
+                                    </div>
+                                    
+                                    <p style="font-size: 12px; color: #5f6368; margin-top: 24px;">
+                                        <strong>Change details:</strong><br>
+                                        Time: {change_time}<br>
+                                        IP: {kwargs.get('ip_address', 'Unknown')}<br>
+                                        Location: {kwargs.get('location', 'Unknown')}<br>
+                                        Device: {kwargs.get('device', 'Unknown')}
+                                    </p>
+                                </div>
+                                
+                                <!-- Footer -->
+                                <div class="footer">
+                                    <p class="footer-text">
+                                        This is a security notification for {user_email}
+                                    </p>
+                                    <p class="footer-text">
+                                        © {datetime.now().year} CineBrain, Inc.
+                                    </p>
+                                </div>
+                            </div>
+                        </td>
+                    </tr>
+                </table>
             </div>
         </body>
         </html>
         """
         
         text = f"""
-Password Changed Successfully - CineBrain
+Password Changed Successfully
 
 Hi {user_name},
 
 Your CineBrain account password was successfully changed.
 
-If you didn't make this change, please contact support immediately.
+Change details:
+- Time: {change_time}
+- IP: {kwargs.get('ip_address', 'Unknown')}
+- Location: {kwargs.get('location', 'Unknown')}
+- Device: {kwargs.get('device', 'Unknown')}
+
+If you didn't make this change, secure your account immediately:
+{FRONTEND_URL}/security/recover
 
 © {datetime.now().year} CineBrain, Inc.
         """
@@ -808,12 +768,13 @@ If you didn't make this change, please contact support immediately.
         return html, text
     
     def _get_generic_template(self, base_css: str, **kwargs) -> tuple:
+        """Generic email template"""
         subject = kwargs.get('subject', 'CineBrain')
         content = kwargs.get('content', '')
         
         html = f"""
         <!DOCTYPE html>
-        <html>
+        <html lang="en">
         <head>
             <meta charset="utf-8">
             <title>{subject}</title>
@@ -823,11 +784,9 @@ If you didn't make this change, please contact support immediately.
             <div class="email-wrapper">
                 <div class="email-container">
                     <div class="header">
-                        <div class="brand-logo">CineBrain</div>
+                        <h1 class="header-logo">🎬 CineBrain</h1>
                     </div>
-                    <div class="content">
-                        <div class="content-body">{content}</div>
-                    </div>
+                    <div class="content">{content}</div>
                     <div class="footer">
                         <p class="footer-text">© {datetime.now().year} CineBrain, Inc.</p>
                     </div>
@@ -841,33 +800,42 @@ If you didn't make this change, please contact support immediately.
         
         return html, text
 
+# Initialize email service (will be done in init_auth)
 email_service = None
 
 def init_auth(flask_app, database, user_model):
+    """Initialize auth module with Flask app and models"""
     global app, db, User, mail, serializer, email_service, redis_client
     
     app = flask_app
     db = database
     User = user_model
     
+    # Initialize Redis
     redis_client = init_redis()
     
-    email_service = FreeEmailService()
+    # Initialize professional email service with Gmail SMTP
+    gmail_username = os.environ.get('GMAIL_USERNAME', 'projects.srinath@gmail.com')
+    gmail_password = os.environ.get('GMAIL_APP_PASSWORD', 'nddg lphy ajjy rnuq')
     
+    email_service = ProfessionalEmailService(gmail_username, gmail_password)
+    
+    # Initialize token serializer
     serializer = URLSafeTimedSerializer(app.secret_key)
     
-    if email_service.email_enabled:
-        logger.info("✅ Auth module initialized with email support")
-    else:
-        logger.warning("⚠️ Auth module initialized in FALLBACK MODE - direct links will be provided")
+    logger.info("✅ Auth module initialized with Gmail SMTP and Redis")
 
+# Rate limiting with Redis
 def check_rate_limit(identifier: str, max_requests: int = 5, window: int = 300) -> bool:
+    """Check if rate limit is exceeded using Redis"""
     if not redis_client:
+        # Fallback to always allow if Redis is not available
         return True
     
     try:
         key = f"rate_limit:{identifier}"
         
+        # Use Redis pipeline for atomic operations
         pipe = redis_client.pipeline()
         pipe.incr(key)
         pipe.expire(key, window)
@@ -883,16 +851,20 @@ def check_rate_limit(identifier: str, max_requests: int = 5, window: int = 300) 
         
     except Exception as e:
         logger.error(f"Rate limit check error: {e}")
+        # Allow request if Redis fails
         return True
 
+# Token generation and verification with Redis caching
 def generate_reset_token(email):
+    """Generate a secure password reset token and cache in Redis"""
     token = serializer.dumps(email, salt=PASSWORD_RESET_SALT)
     
+    # Cache token in Redis for quick validation
     if redis_client:
         try:
             redis_client.setex(
-                f"reset_token:{token[:20]}",
-                3600,
+                f"reset_token:{token[:20]}",  # Use first 20 chars as key
+                3600,  # 1 hour TTL
                 email
             )
         except Exception as e:
@@ -901,16 +873,20 @@ def generate_reset_token(email):
     return token
 
 def verify_reset_token(token, expiration=3600):
+    """Verify password reset token with Redis cache"""
+    # Quick check in Redis first
     if redis_client:
         try:
             cached_email = redis_client.get(f"reset_token:{token[:20]}")
             if cached_email:
+                # Still verify the actual token
                 email = serializer.loads(token, salt=PASSWORD_RESET_SALT, max_age=expiration)
                 if email == cached_email:
                     return email
         except Exception as e:
             logger.error(f"Redis token verification error: {e}")
     
+    # Fallback to regular verification
     try:
         email = serializer.loads(token, salt=PASSWORD_RESET_SALT, max_age=expiration)
         return email
@@ -920,6 +896,7 @@ def verify_reset_token(token, expiration=3600):
         return None
 
 def validate_password(password):
+    """Validate password strength"""
     if len(password) < 8:
         return False, "Password must be at least 8 characters long"
     if not re.search(r'[A-Z]', password):
@@ -933,12 +910,14 @@ def validate_password(password):
     return True, "Valid password"
 
 def get_request_info(request):
+    """Get request information for security emails"""
     ip_address = request.headers.get('X-Forwarded-For', request.remote_addr)
     if ip_address:
         ip_address = ip_address.split(',')[0].strip()
     
     user_agent = request.headers.get('User-Agent', 'Unknown')
     
+    # Simple device detection
     device = "Unknown device"
     if 'Mobile' in user_agent or 'Android' in user_agent:
         device = "Mobile device"
@@ -951,6 +930,7 @@ def get_request_info(request):
     elif 'Linux' in user_agent:
         device = "Linux PC"
     
+    # Simple browser detection
     browser = ""
     if 'Chrome' in user_agent and 'Edg' not in user_agent:
         browser = "Chrome"
@@ -964,12 +944,15 @@ def get_request_info(request):
     if browser:
         device = f"{browser} on {device}"
     
+    # For location, we'll use a placeholder (you'd need GeoIP service for real data)
     location = "Unknown location"
     
     return ip_address, location, device
 
+# Authentication routes
 @auth_bp.route('/api/auth/forgot-password', methods=['POST', 'OPTIONS'])
 def forgot_password():
+    """Request password reset with professional email"""
     if request.method == 'OPTIONS':
         return '', 200
     
@@ -977,21 +960,26 @@ def forgot_password():
         data = request.get_json()
         email = data.get('email', '').strip().lower()
         
+        # Validate email format
         if not email or not EMAIL_REGEX.match(email):
             return jsonify({'error': 'Please provide a valid email address'}), 400
         
+        # Check rate limiting with Redis
         if not check_rate_limit(f"forgot_password:{email}", max_requests=3, window=600):
             return jsonify({
                 'error': 'Too many password reset requests. Please try again in 10 minutes.'
             }), 429
         
+        # Check if user exists
         user = User.query.filter_by(email=email).first()
         
+        # Always return success to prevent email enumeration
         if user:
+            # Generate reset token
             token = generate_reset_token(email)
             reset_url = f"{FRONTEND_URL}/auth/reset-password.html?token={token}"
             
-            # Try to send email
+            # Get professional email template
             html_content, text_content = email_service.get_professional_template(
                 'password_reset',
                 reset_url=reset_url,
@@ -999,29 +987,17 @@ def forgot_password():
                 user_email=email
             )
             
+            # Queue email for sending
             email_service.queue_email(
                 to=email,
                 subject="Reset your password - CineBrain",
                 html=html_content,
                 text=text_content,
-                priority='high',
-                reset_token=token
+                priority='high'
             )
             
             logger.info(f"Password reset requested for {email}")
-            
-            # Check if email service is disabled and provide fallback
-            if not email_service.email_enabled or email_service.use_http_fallback:
-                # For testing/development - remove in production
-                return jsonify({
-                    'success': True,
-                    'message': 'Password reset link generated',
-                    'fallback_mode': True,
-                    'reset_url': reset_url,  # REMOVE IN PRODUCTION
-                    'note': 'Email service is currently unavailable. Use the link above to reset your password.'
-                }), 200
         
-        # Always return success to prevent email enumeration
         return jsonify({
             'success': True,
             'message': 'If an account exists with this email, you will receive password reset instructions shortly.'
@@ -1033,6 +1009,7 @@ def forgot_password():
 
 @auth_bp.route('/api/auth/reset-password', methods=['POST', 'OPTIONS'])
 def reset_password():
+    """Reset password with token"""
     if request.method == 'OPTIONS':
         return '', 200
     
@@ -1042,6 +1019,7 @@ def reset_password():
         new_password = data.get('password', '')
         confirm_password = data.get('confirmPassword', '')
         
+        # Validate input
         if not token:
             return jsonify({'error': 'Reset token is required'}), 400
         
@@ -1051,31 +1029,34 @@ def reset_password():
         if new_password != confirm_password:
             return jsonify({'error': 'Passwords do not match'}), 400
         
+        # Validate password strength
         is_valid, message = validate_password(new_password)
         if not is_valid:
             return jsonify({'error': message}), 400
         
+        # Verify token
         email = verify_reset_token(token)
         if not email:
             return jsonify({'error': 'Invalid or expired reset token'}), 400
         
+        # Find user
         user = User.query.filter_by(email=email).first()
         if not user:
             return jsonify({'error': 'User not found'}), 404
         
+        # Update password
         user.password_hash = generate_password_hash(new_password)
         user.last_active = datetime.utcnow()
         db.session.commit()
         
-        # Clear the reset token from Redis
+        # Clear token from Redis cache
         if redis_client:
             try:
                 redis_client.delete(f"reset_token:{token[:20]}")
-                redis_client.delete(f"pending_reset:{email}")
-                redis_client.delete(f"direct_reset:{email}")
             except:
                 pass
         
+        # Get request info for security email
         ip_address, location, device = get_request_info(request)
         
         # Send confirmation email
@@ -1096,7 +1077,7 @@ def reset_password():
             priority='high'
         )
         
-        # Generate new auth token
+        # Generate a new auth token for immediate login
         auth_token = jwt.encode({
             'user_id': user.id,
             'exp': datetime.utcnow() + timedelta(days=30),
@@ -1123,6 +1104,7 @@ def reset_password():
 
 @auth_bp.route('/api/auth/verify-reset-token', methods=['POST', 'OPTIONS'])
 def verify_token():
+    """Verify if a reset token is valid"""
     if request.method == 'OPTIONS':
         return '', 200
     
@@ -1151,64 +1133,22 @@ def verify_token():
         logger.error(f"Token verification error: {e}")
         return jsonify({'valid': False, 'error': 'Failed to verify token'}), 500
 
-@auth_bp.route('/api/auth/fallback-emails', methods=['GET'])
-def get_fallback_emails():
-    """Admin endpoint to retrieve fallback emails when SMTP fails"""
-    try:
-        auth_header = request.headers.get('Authorization')
-        if not auth_header or not auth_header.startswith('Bearer '):
-            return jsonify({'error': 'Admin authentication required'}), 401
-        
-        # Verify admin token
-        try:
-            token = auth_header.split(' ')[1]
-            payload = jwt.decode(token, app.secret_key, algorithms=['HS256'])
-            user = User.query.get(payload['user_id'])
-            if not user or not user.is_admin:
-                return jsonify({'error': 'Admin access required'}), 403
-        except:
-            return jsonify({'error': 'Invalid authentication'}), 401
-        
-        emails = email_service.get_fallback_emails(limit=50)
-        
-        # Also get any pending reset links
-        pending_resets = []
-        if redis_client:
-            for key in redis_client.scan_iter("pending_reset:*"):
-                data = redis_client.get(key)
-                if data:
-                    reset_info = json.loads(data)
-                    reset_info['email'] = key.replace('pending_reset:', '')
-                    pending_resets.append(reset_info)
-        
-        return jsonify({
-            'success': True,
-            'fallback_emails': emails,
-            'pending_resets': pending_resets,
-            'smtp_enabled': email_service.email_enabled,
-            'smtp_config': email_service.working_config['name'] if email_service.working_config else None,
-            'count': len(emails)
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"Get fallback emails error: {e}")
-        return jsonify({'error': 'Failed to retrieve fallback emails'}), 500
-
 @auth_bp.route('/api/auth/health', methods=['GET'])
 def auth_health():
+    """Check auth service health including Redis"""
     try:
         # Test database connection
         if User:
             User.query.limit(1).first()
         
-        # Check Redis status
+        # Test Redis connection
         redis_status = 'not_configured'
-        redis_stats = {}
         if redis_client:
             try:
                 redis_client.ping()
                 redis_status = 'connected'
                 
+                # Get Redis stats
                 info = redis_client.info()
                 redis_stats = {
                     'connected_clients': info.get('connected_clients', 0),
@@ -1217,38 +1157,30 @@ def auth_health():
                 }
             except:
                 redis_status = 'disconnected'
+                redis_stats = {}
+        else:
+            redis_stats = {}
         
-        # Check email service status
+        # Check email service
         email_configured = email_service is not None
-        email_enabled = email_service.email_enabled if email_service else False
         
+        # Get email queue size from Redis
         queue_size = 0
-        fallback_queue_size = 0
         if redis_client:
             try:
                 queue_size = redis_client.llen('email_queue')
-                fallback_queue_size = redis_client.llen('email_fallback_queue')
             except:
                 pass
-        
-        smtp_config = None
-        if email_service and email_service.working_config:
-            smtp_config = email_service.working_config.get('name', 'Unknown')
         
         return jsonify({
             'status': 'healthy',
             'service': 'authentication',
             'email_service': 'Gmail SMTP',
             'email_configured': email_configured,
-            'email_enabled': email_enabled,
-            'smtp_config': smtp_config,
             'email_queue_size': queue_size,
-            'fallback_queue_size': fallback_queue_size,
-            'fallback_mode': email_service.use_http_fallback if email_service else True,
             'redis_status': redis_status,
             'redis_stats': redis_stats,
             'frontend_url': FRONTEND_URL,
-            'backend_url': BACKEND_URL,
             'timestamp': datetime.utcnow().isoformat()
         }), 200
         
@@ -1260,10 +1192,12 @@ def auth_health():
             'timestamp': datetime.utcnow().isoformat()
         }), 500
 
+# CORS headers for all responses
 @auth_bp.after_request
 def after_request(response):
+    """Add CORS headers to responses"""
     origin = request.headers.get('Origin')
-    allowed_origins = [FRONTEND_URL, 'http://127.0.0.1:5500', 'http://127.0.0.1:5501', 'http://localhost:5500']
+    allowed_origins = [FRONTEND_URL, 'http://127.0.0.1:5500', 'http://127.0.0.1:5501']
     
     if origin in allowed_origins:
         response.headers['Access-Control-Allow-Origin'] = origin
@@ -1273,6 +1207,7 @@ def after_request(response):
     
     return response
 
+# Authentication decorator
 def require_auth(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
@@ -1290,6 +1225,7 @@ def require_auth(f):
             if not current_user:
                 return jsonify({'error': 'Invalid token'}), 401
             
+            # Update last active
             current_user.last_active = datetime.utcnow()
             db.session.commit()
             
@@ -1301,39 +1237,12 @@ def require_auth(f):
         return f(current_user, *args, **kwargs)
     return decorated_function
 
-class EnhancedUserAnalytics:
-    @staticmethod
-    def get_comprehensive_user_stats(user_id):
-        try:
-            from app import UserInteraction, Content
-            
-            interactions = UserInteraction.query.filter_by(user_id=user_id).all() if UserInteraction else []
-            
-            stats = {
-                'total_interactions': len(interactions),
-                'content_watched': len([i for i in interactions if i.interaction_type == 'view']),
-                'favorites': len([i for i in interactions if i.interaction_type == 'favorite']),
-                'watchlist_items': len([i for i in interactions if i.interaction_type == 'watchlist']),
-                'ratings_given': len([i for i in interactions if i.interaction_type == 'rating']),
-                'likes_given': len([i for i in interactions if i.interaction_type == 'like']),
-                'searches_made': len([i for i in interactions if i.interaction_type == 'search'])
-            }
-            
-            ratings = [i.rating for i in interactions if i.rating is not None]
-            stats['average_rating'] = round(sum(ratings) / len(ratings), 1) if ratings else 0
-            
-            return stats
-            
-        except Exception as e:
-            logger.error(f"Error calculating enhanced stats: {e}")
-            return {}
-
+# Export everything needed
 __all__ = [
     'auth_bp',
     'init_auth',
     'require_auth',
     'generate_reset_token',
     'verify_reset_token',
-    'validate_password',
-    'EnhancedUserAnalytics'
+    'validate_password'
 ]
