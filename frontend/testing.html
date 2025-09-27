@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CinBrain - Netflix-Level Recommendations</title>
+    <title>Password Reset - CineBrain</title>
     <style>
         * {
             margin: 0;
@@ -13,364 +13,359 @@
         }
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            background: linear-gradient(135deg, #0f0f23 0%, #1a1a2e 50%, #16213e 100%);
-            color: #ffffff;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             min-height: 100vh;
-            overflow-x: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+            max-width: 400px;
+            width: 100%;
+            transition: all 0.3s ease;
         }
 
         .header {
-            background: rgba(15, 15, 35, 0.95);
-            backdrop-filter: blur(10px);
-            padding: 1rem 2rem;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            z-index: 1000;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            background: linear-gradient(135deg, #113CCF 0%, #1E4FE5 100%);
+            padding: 30px;
+            text-align: center;
+            color: white;
         }
 
-        .logo {
-            font-size: 2rem;
+        .header h1 {
+            font-size: 28px;
+            margin-bottom: 5px;
+            font-weight: 700;
+        }
+
+        .header p {
+            opacity: 0.9;
+            font-size: 14px;
+        }
+
+        .form-container {
+            padding: 30px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 500;
+            font-size: 14px;
+        }
+
+        input {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #e1e4e8;
+            border-radius: 10px;
+            font-size: 16px;
+            transition: all 0.3s;
+            background: #fff;
+        }
+
+        input:focus {
+            outline: none;
+            border-color: #113CCF;
+            box-shadow: 0 0 0 3px rgba(17, 60, 207, 0.1);
+        }
+
+        .code-input {
+            text-align: center;
+            font-size: 24px;
+            letter-spacing: 8px;
+            font-family: 'Monaco', 'Courier New', monospace;
             font-weight: bold;
-            background: linear-gradient(45deg, #ff6b6b, #4ecdc4, #45b7d1);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-        }
-
-        .nav-buttons {
-            display: flex;
-            gap: 1rem;
-            align-items: center;
+            text-transform: uppercase;
         }
 
         .btn {
-            padding: 0.75rem 1.5rem;
-            border: none;
-            border-radius: 8px;
-            background: linear-gradient(45deg, #667eea 0%, #764ba2 100%);
+            width: 100%;
+            padding: 14px;
+            background: linear-gradient(135deg, #113CCF 0%, #1E4FE5 100%);
             color: white;
-            cursor: pointer;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
             font-weight: 600;
-            transition: all 0.3s ease;
-            text-decoration: none;
-            display: inline-flex;
-            align-items: center;
-            gap: 0.5rem;
+            cursor: pointer;
+            transition: all 0.3s;
+            position: relative;
+            overflow: hidden;
         }
 
         .btn:hover {
             transform: translateY(-2px);
-            box-shadow: 0 8px 25px rgba(102, 126, 234, 0.4);
+            box-shadow: 0 10px 20px rgba(17, 60, 207, 0.3);
         }
 
-        .btn-secondary {
-            background: linear-gradient(45deg, #f093fb 0%, #f5576c 100%);
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
         }
 
-        .btn-success {
-            background: linear-gradient(45deg, #4facfe 0%, #00f2fe 100%);
-        }
-
-        .btn-danger {
-            background: linear-gradient(45deg, #fa709a 0%, #fee140 100%);
-        }
-
-        .container {
-            max-width: 1400px;
-            margin: 0 auto;
-            padding: 120px 2rem 2rem;
-        }
-
-        .hero-section {
-            text-align: center;
-            padding: 4rem 0;
-            background: linear-gradient(135deg, rgba(255, 107, 107, 0.1), rgba(78, 205, 196, 0.1));
-            border-radius: 20px;
-            margin-bottom: 3rem;
-        }
-
-        .hero-title {
-            font-size: 3.5rem;
-            font-weight: bold;
-            margin-bottom: 1rem;
-            background: linear-gradient(45deg, #ff6b6b, #4ecdc4, #45b7d1, #96ceb4);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-        }
-
-        .hero-subtitle {
-            font-size: 1.5rem;
-            color: rgba(255, 255, 255, 0.8);
-            margin-bottom: 2rem;
-        }
-
-        .search-container {
-            max-width: 600px;
-            margin: 0 auto 3rem;
-            position: relative;
-        }
-
-        .search-input {
-            width: 100%;
-            padding: 1rem 1.5rem;
-            border: 2px solid rgba(255, 255, 255, 0.2);
-            border-radius: 50px;
-            background: rgba(255, 255, 255, 0.1);
-            color: white;
-            font-size: 1.1rem;
-            backdrop-filter: blur(10px);
-            transition: all 0.3s ease;
-        }
-
-        .search-input:focus {
-            outline: none;
-            border-color: #4ecdc4;
-            box-shadow: 0 0 20px rgba(78, 205, 196, 0.3);
-        }
-
-        .search-input::placeholder {
-            color: rgba(255, 255, 255, 0.6);
-        }
-
-        .section {
-            margin-bottom: 3rem;
-        }
-
-        .section-title {
-            font-size: 2rem;
-            font-weight: bold;
-            margin-bottom: 1.5rem;
-            color: #4ecdc4;
-            position: relative;
-            padding-left: 1rem;
-        }
-
-        .section-title::before {
+        .btn.loading::after {
             content: '';
             position: absolute;
-            left: 0;
-            top: 50%;
-            transform: translateY(-50%);
-            width: 4px;
-            height: 2rem;
-            background: linear-gradient(45deg, #ff6b6b, #4ecdc4);
-            border-radius: 2px;
-        }
-
-        .content-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-            gap: 2rem;
-            margin-bottom: 2rem;
-        }
-
-        .content-card {
-            background: rgba(255, 255, 255, 0.05);
-            border-radius: 16px;
-            overflow: hidden;
-            transition: all 0.3s ease;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            backdrop-filter: blur(10px);
-            cursor: pointer;
-        }
-
-        .content-card:hover {
-            transform: translateY(-8px);
-            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
-            border-color: #4ecdc4;
-        }
-
-        .card-image {
-            width: 100%;
-            height: 400px;
-            object-fit: cover;
-            background: linear-gradient(45deg, #667eea, #764ba2);
-        }
-
-        .card-content {
-            padding: 1.5rem;
-        }
-
-        .card-title {
-            font-size: 1.2rem;
-            font-weight: bold;
-            margin-bottom: 0.5rem;
-            color: #ffffff;
-        }
-
-        .card-meta {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 1rem;
-            color: rgba(255, 255, 255, 0.7);
-            font-size: 0.9rem;
-        }
-
-        .rating {
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-            color: #ffd700;
-        }
-
-        .genres {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 0.5rem;
-            margin-bottom: 1rem;
-        }
-
-        .genre-tag {
-            background: linear-gradient(45deg, #667eea, #764ba2);
-            color: white;
-            padding: 0.25rem 0.75rem;
-            border-radius: 12px;
-            font-size: 0.8rem;
-            font-weight: 500;
-        }
-
-        .card-actions {
-            display: flex;
-            gap: 0.5rem;
-            flex-wrap: wrap;
-        }
-
-        .btn-small {
-            padding: 0.5rem 1rem;
-            font-size: 0.9rem;
-            border-radius: 6px;
-            border: none;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            flex: 1;
-            min-width: 100px;
-        }
-
-        .modal {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.8);
-            backdrop-filter: blur(5px);
-            z-index: 2000;
-            align-items: center;
-            justify-content: center;
-        }
-
-        .modal-content {
-            background: linear-gradient(135deg, #1a1a2e, #16213e);
-            padding: 2rem;
-            border-radius: 16px;
-            max-width: 500px;
-            width: 90%;
-            max-height: 80vh;
-            overflow-y: auto;
-            border: 1px solid rgba(255, 255, 255, 0.2);
-        }
-
-        .form-group {
-            margin-bottom: 1.5rem;
-        }
-
-        .form-label {
-            display: block;
-            margin-bottom: 0.5rem;
-            color: #4ecdc4;
-            font-weight: 600;
-        }
-
-        .form-input {
-            width: 100%;
-            padding: 0.75rem;
-            border: 1px solid rgba(255, 255, 255, 0.3);
-            border-radius: 8px;
-            background: rgba(255, 255, 255, 0.1);
-            color: white;
-            font-size: 1rem;
-        }
-
-        .form-input:focus {
-            outline: none;
-            border-color: #4ecdc4;
-            box-shadow: 0 0 10px rgba(78, 205, 196, 0.2);
-        }
-
-        .loading {
-            display: inline-block;
             width: 20px;
             height: 20px;
-            border: 3px solid rgba(255, 255, 255, 0.3);
+            margin: auto;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            border: 2px solid transparent;
+            border-top-color: white;
             border-radius: 50%;
-            border-top-color: #4ecdc4;
-            animation: spin 1s ease-in-out infinite;
+            animation: spin 1s linear infinite;
         }
 
         @keyframes spin {
-            to {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
                 transform: rotate(360deg);
             }
         }
 
         .alert {
-            padding: 1rem;
-            border-radius: 8px;
-            margin-bottom: 1rem;
-            font-weight: 500;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            display: none;
+            animation: slideIn 0.3s ease;
         }
 
-        .alert-success {
-            background: rgba(76, 175, 80, 0.2);
-            border: 1px solid rgba(76, 175, 80, 0.5);
-            color: #81c784;
+        @keyframes slideIn {
+            from {
+                transform: translateY(-10px);
+                opacity: 0;
+            }
+
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
         }
 
-        .alert-error {
-            background: rgba(244, 67, 54, 0.2);
-            border: 1px solid rgba(244, 67, 54, 0.5);
-            color: #e57373;
+        .alert.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
         }
 
-        .user-info {
+        .alert.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .alert.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+
+        /* Modal Styles */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            z-index: 1000;
+            animation: fadeIn 0.3s;
+            backdrop-filter: blur(5px);
+        }
+
+        .modal.show {
             display: flex;
             align-items: center;
-            gap: 1rem;
-            color: rgba(255, 255, 255, 0.9);
+            justify-content: center;
         }
 
-        .tabs {
+        .modal-content {
+            background: white;
+            border-radius: 20px;
+            padding: 30px;
+            max-width: 400px;
+            width: 90%;
+            animation: slideUp 0.3s;
+            position: relative;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+            }
+
+            to {
+                opacity: 1;
+            }
+        }
+
+        @keyframes slideUp {
+            from {
+                transform: translateY(20px);
+                opacity: 0;
+            }
+
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
+        }
+
+        .reset-code-display {
+            background: linear-gradient(135deg, #f6f8fa 0%, #e9ecef 100%);
+            border: 2px dashed #113CCF;
+            border-radius: 15px;
+            padding: 25px;
+            text-align: center;
+            margin: 20px 0;
+            position: relative;
+        }
+
+        .code-number {
+            font-size: 42px;
+            font-weight: bold;
+            color: #113CCF;
+            letter-spacing: 10px;
+            font-family: 'Monaco', 'Courier New', monospace;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .timer {
+            color: #e74c3c;
+            font-weight: 600;
+            margin-top: 15px;
+            font-size: 14px;
+        }
+
+        .timer.warning {
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.5;
+            }
+        }
+
+        .action-buttons {
             display: flex;
-            gap: 1rem;
-            margin-bottom: 2rem;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+            gap: 10px;
+            margin-top: 20px;
+        }
+
+        .action-buttons button {
+            flex: 1;
+            padding: 12px;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            border: none;
+        }
+
+        .copy-btn {
+            background: #f6f8fa;
+            border: 2px solid #113CCF;
+            color: #113CCF;
+        }
+
+        .copy-btn:hover {
+            background: #113CCF;
+            color: white;
+        }
+
+        .copy-btn.copied {
+            background: #28a745;
+            color: white;
+            border-color: #28a745;
+        }
+
+        .reset-btn {
+            background: linear-gradient(135deg, #113CCF 0%, #1E4FE5 100%);
+            color: white;
+        }
+
+        .reset-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(17, 60, 207, 0.3);
+        }
+
+        .close-btn {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            background: none;
+            border: none;
+            font-size: 24px;
+            cursor: pointer;
+            color: #666;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s;
+        }
+
+        .close-btn:hover {
+            background: #f0f0f0;
+            color: #333;
+        }
+
+        .tab-container {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 25px;
+            background: #f6f8fa;
+            padding: 5px;
+            border-radius: 10px;
         }
 
         .tab {
-            padding: 1rem 2rem;
-            background: none;
+            flex: 1;
+            padding: 10px;
+            background: transparent;
             border: none;
-            color: rgba(255, 255, 255, 0.7);
+            border-radius: 8px;
             cursor: pointer;
-            font-size: 1rem;
-            font-weight: 600;
-            border-bottom: 2px solid transparent;
-            transition: all 0.3s ease;
+            transition: all 0.3s;
+            font-weight: 500;
+            color: #666;
         }
 
         .tab.active {
-            color: #4ecdc4;
-            border-bottom-color: #4ecdc4;
+            background: white;
+            color: #113CCF;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
         }
 
         .tab-content {
@@ -379,1286 +374,563 @@
 
         .tab-content.active {
             display: block;
+            animation: fadeIn 0.3s;
         }
 
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 1.5rem;
-            margin-bottom: 2rem;
+        .password-strength {
+            margin-top: 10px;
+            padding: 8px;
+            border-radius: 5px;
+            font-size: 12px;
+            display: none;
         }
 
-        .stat-card {
-            background: rgba(255, 255, 255, 0.05);
-            padding: 1.5rem;
-            border-radius: 12px;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            text-align: center;
+        .strength-weak {
+            background: #f8d7da;
+            color: #721c24;
         }
 
-        .stat-number {
-            font-size: 2rem;
-            font-weight: bold;
-            color: #4ecdc4;
-            margin-bottom: 0.5rem;
+        .strength-medium {
+            background: #fff3cd;
+            color: #856404;
         }
 
-        .stat-label {
-            color: rgba(255, 255, 255, 0.7);
-            font-size: 0.9rem;
+        .strength-strong {
+            background: #d4edda;
+            color: #155724;
         }
 
-        .recommendation-categories {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-            gap: 1.5rem;
-            margin-bottom: 2rem;
-        }
-
-        .category-card {
-            background: rgba(255, 255, 255, 0.05);
-            padding: 1.5rem;
-            border-radius: 12px;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            cursor: pointer;
-            transition: all 0.3s ease;
-        }
-
-        .category-card:hover {
-            background: rgba(255, 255, 255, 0.1);
-            border-color: #4ecdc4;
-        }
-
-        .category-title {
-            font-size: 1.2rem;
-            font-weight: bold;
-            color: #4ecdc4;
-            margin-bottom: 0.5rem;
-        }
-
-        .category-description {
-            color: rgba(255, 255, 255, 0.7);
-            font-size: 0.9rem;
-        }
-
-        .detail-modal .modal-content {
-            max-width: 800px;
-            max-height: 90vh;
-        }
-
-        .detail-header {
-            display: flex;
-            gap: 2rem;
-            margin-bottom: 2rem;
-        }
-
-        .detail-poster {
-            width: 300px;
-            height: 450px;
-            object-fit: cover;
-            border-radius: 12px;
-        }
-
-        .detail-info {
-            flex: 1;
-        }
-
-        .detail-title {
-            font-size: 2.5rem;
-            font-weight: bold;
-            margin-bottom: 1rem;
-            color: #ffffff;
-        }
-
-        .detail-meta {
-            display: flex;
-            gap: 2rem;
-            margin-bottom: 1rem;
-            color: rgba(255, 255, 255, 0.7);
-        }
-
-        .detail-overview {
-            color: rgba(255, 255, 255, 0.9);
-            line-height: 1.6;
-            margin-bottom: 2rem;
-        }
-
-        .similar-content {
-            margin-top: 2rem;
-        }
-
-        .similar-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-            gap: 1rem;
-        }
-
-        .similar-item {
-            text-align: center;
-            cursor: pointer;
-            transition: all 0.3s ease;
-        }
-
-        .similar-item:hover {
-            transform: scale(1.05);
-        }
-
-        .similar-poster {
-            width: 100%;
-            height: 225px;
-            object-fit: cover;
+        .password-requirements {
+            background: #f8f9fa;
+            padding: 10px;
             border-radius: 8px;
-            margin-bottom: 0.5rem;
+            margin-top: 10px;
+            font-size: 12px;
         }
 
-        .similar-title {
-            font-size: 0.9rem;
-            color: rgba(255, 255, 255, 0.9);
+        .requirement {
+            margin: 5px 0;
+            color: #666;
         }
 
-        @media (max-width: 768px) {
-            .header {
-                padding: 1rem;
-                flex-direction: column;
-                gap: 1rem;
-            }
-
-            .nav-buttons {
-                justify-content: center;
-                flex-wrap: wrap;
-            }
-
-            .hero-title {
-                font-size: 2.5rem;
-            }
-
-            .hero-subtitle {
-                font-size: 1.2rem;
-            }
-
-            .content-grid {
-                grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-                gap: 1rem;
-            }
-
-            .detail-header {
-                flex-direction: column;
-                text-align: center;
-            }
-
-            .detail-poster {
-                width: 250px;
-                height: 375px;
-                margin: 0 auto;
-            }
-
-            .detail-meta {
-                justify-content: center;
-                flex-wrap: wrap;
-                gap: 1rem;
-            }
+        .requirement.met {
+            color: #28a745;
         }
 
-        .close-btn {
-            position: absolute;
-            top: 1rem;
-            right: 1rem;
-            background: rgba(255, 255, 255, 0.2);
-            border: none;
-            color: white;
-            width: 32px;
-            height: 32px;
-            border-radius: 50%;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 1.2rem;
+        .requirement.met::before {
+            content: '✓ ';
         }
 
-        .close-btn:hover {
-            background: rgba(255, 255, 255, 0.3);
+        .requirement:not(.met)::before {
+            content: '○ ';
         }
 
-        .floating-action {
-            position: fixed;
-            bottom: 2rem;
-            right: 2rem;
-            width: 60px;
-            height: 60px;
-            border-radius: 50%;
-            background: linear-gradient(45deg, #ff6b6b, #4ecdc4);
-            border: none;
-            color: white;
-            font-size: 1.5rem;
-            cursor: pointer;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
-            transition: all 0.3s ease;
-            z-index: 1000;
+        .links {
+            text-align: center;
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid #e1e4e8;
         }
 
-        .floating-action:hover {
-            transform: scale(1.1);
-            box-shadow: 0 6px 25px rgba(0, 0, 0, 0.4);
+        .links a {
+            color: #113CCF;
+            text-decoration: none;
+            font-size: 14px;
+            transition: all 0.3s;
+        }
+
+        .links a:hover {
+            text-decoration: underline;
+        }
+
+        .divider {
+            margin: 0 10px;
+            color: #ccc;
+        }
+
+        /* Responsive */
+        @media (max-width: 480px) {
+            .container {
+                margin: 20px;
+            }
+
+            .code-number {
+                font-size: 32px;
+                letter-spacing: 5px;
+            }
         }
     </style>
 </head>
 
 <body>
-    <header class="header">
-        <div class="logo">🎬 CinBrain</div>
-        <div class="nav-buttons">
-            <div id="userInfo" class="user-info" style="display: none;">
-                <span id="username"></span>
-            </div>
-            <button class="btn" id="loginBtn">Login</button>
-            <button class="btn btn-secondary" id="registerBtn">Register</button>
-            <button class="btn btn-danger" id="logoutBtn" style="display: none;">Logout</button>
-        </div>
-    </header>
-
     <div class="container">
-        <section class="hero-section">
-            <h1 class="hero-title">Netflix-Level Recommendations</h1>
-            <p class="hero-subtitle">Discover your next favorite movie or show with AI-powered personalized
-                recommendations</p>
-
-            <div class="search-container">
-                <input type="text" class="search-input" id="searchInput"
-                    placeholder="Search for movies, TV shows, anime...">
-            </div>
-        </section>
-
-        <div class="tabs">
-            <button class="tab active" data-tab="recommendations">🎯 Recommendations</button>
-            <button class="tab" data-tab="search">🔍 Search</button>
-            <button class="tab" data-tab="profile">👤 Profile</button>
-            <button class="tab" data-tab="admin">⚙️ Admin</button>
+        <!-- Tab Navigation -->
+        <div class="header">
+            <h1>Reset Password</h1>
+            <p id="headerText">Choose your reset method</p>
         </div>
 
-        <!-- Recommendations Tab -->
-        <div class="tab-content active" id="recommendations">
-            <div id="authRequired" style="display: none;">
-                <div class="alert alert-error">
-                    Please login to see personalized recommendations
-                </div>
+        <div class="form-container">
+            <!-- Alerts -->
+            <div class="alert success" id="successAlert"></div>
+            <div class="alert error" id="errorAlert"></div>
+            <div class="alert info" id="infoAlert"></div>
+
+            <!-- Tab Buttons -->
+            <div class="tab-container">
+                <button class="tab active" onclick="switchTab('request')">Request Code</button>
+                <button class="tab" onclick="switchTab('reset')">Have a Code?</button>
             </div>
 
-            <div id="recommendationsContent">
-                <!-- Recommendation Categories -->
-                <div class="section">
-                    <h2 class="section-title">🎯 Personalized for You</h2>
-                    <div class="recommendation-categories">
-                        <div class="category-card" data-category="for-you">
-                            <div class="category-title">For You</div>
-                            <div class="category-description">Curated picks based on your taste</div>
-                        </div>
-                        <div class="category-card" data-category="because-you-watched">
-                            <div class="category-title">Because You Watched</div>
-                            <div class="category-description">Similar to your recent activity</div>
-                        </div>
-                        <div class="category-card" data-category="trending-for-you">
-                            <div class="category-title">Trending for You</div>
-                            <div class="category-description">Popular content you'll love</div>
-                        </div>
-                        <div class="category-card" data-category="your-language">
-                            <div class="category-title">Your Language</div>
-                            <div class="category-description">Content in your preferred languages</div>
-                        </div>
-                        <div class="category-card" data-category="hidden-gems">
-                            <div class="category-title">Hidden Gems</div>
-                            <div class="category-description">Quality content you might have missed</div>
-                        </div>
-                        <div class="category-card" data-category="trending">
-                            <div class="category-title">Trending Now</div>
-                            <div class="category-description">What's popular right now</div>
+            <!-- Request Code Tab -->
+            <div id="requestTab" class="tab-content active">
+                <form id="requestForm" onsubmit="handleRequestCode(event)">
+                    <div class="form-group">
+                        <label for="email">Email Address</label>
+                        <input type="email" id="email" name="email" placeholder="Enter your email" required
+                            autocomplete="email">
+                    </div>
+
+                    <button type="submit" class="btn" id="requestBtn">
+                        Get Reset Code
+                    </button>
+                </form>
+            </div>
+
+            <!-- Reset Password Tab -->
+            <div id="resetTab" class="tab-content">
+                <form id="resetForm" onsubmit="handleResetPassword(event)">
+                    <div class="form-group">
+                        <label for="resetCode">Reset Code</label>
+                        <input type="text" id="resetCode" class="code-input" maxlength="6" pattern="[0-9]{6}"
+                            placeholder="000000" required autocomplete="off"
+                            oninput="this.value = this.value.replace(/[^0-9]/g, '')">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="newPassword">New Password</label>
+                        <input type="password" id="newPassword" placeholder="Enter new password" required
+                            autocomplete="new-password" oninput="checkPasswordStrength(this.value)">
+                        <div id="passwordStrength" class="password-strength"></div>
+                        <div class="password-requirements">
+                            <div class="requirement" id="req-length">At least 8 characters</div>
+                            <div class="requirement" id="req-upper">One uppercase letter</div>
+                            <div class="requirement" id="req-lower">One lowercase letter</div>
+                            <div class="requirement" id="req-number">One number</div>
+                            <div class="requirement" id="req-special">One special character</div>
                         </div>
                     </div>
-                </div>
 
-                <!-- Dynamic content will be loaded here -->
-                <div id="dynamicRecommendations"></div>
-            </div>
-        </div>
+                    <div class="form-group">
+                        <label for="confirmPassword">Confirm Password</label>
+                        <input type="password" id="confirmPassword" placeholder="Confirm new password" required
+                            autocomplete="new-password">
+                    </div>
 
-        <!-- Search Tab -->
-        <div class="tab-content" id="search">
-            <div class="section">
-                <h2 class="section-title">🔍 Search Results</h2>
-                <div id="searchResults" class="content-grid"></div>
-            </div>
-        </div>
-
-        <!-- Profile Tab -->
-        <div class="tab-content" id="profile">
-            <div id="profileAuthRequired" style="display: none;">
-                <div class="alert alert-error">
-                    Please login to view your profile
-                </div>
+                    <button type="submit" class="btn" id="resetBtn">
+                        Reset Password
+                    </button>
+                </form>
             </div>
 
-            <div id="profileContent">
-                <div class="section">
-                    <h2 class="section-title">📊 Profile Insights</h2>
-                    <div id="profileInsights"></div>
-                </div>
-
-                <div class="section">
-                    <h2 class="section-title">📚 My Watchlist</h2>
-                    <div id="watchlist" class="content-grid"></div>
-                </div>
-
-                <div class="section">
-                    <h2 class="section-title">❤️ My Favorites</h2>
-                    <div id="favorites" class="content-grid"></div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Admin Tab -->
-        <div class="tab-content" id="admin">
-            <div id="adminAuthRequired" style="display: none;">
-                <div class="alert alert-error">
-                    Admin access required
-                </div>
-            </div>
-
-            <div id="adminContent">
-                <div class="section">
-                    <h2 class="section-title">⚙️ System Health</h2>
-                    <div id="systemHealth"></div>
-                </div>
-
-                <div class="section">
-                    <h2 class="section-title">📈 Analytics</h2>
-                    <div id="adminAnalytics"></div>
-                </div>
+            <!-- Links -->
+            <div class="links">
+                <a href="/login.html">Back to Login</a>
+                <span class="divider">|</span>
+                <a href="/register.html">Create Account</a>
             </div>
         </div>
     </div>
 
-    <!-- Login Modal -->
-    <div class="modal" id="loginModal">
+    <!-- Reset Code Modal -->
+    <div id="resetModal" class="modal">
         <div class="modal-content">
-            <button class="close-btn" onclick="closeModal('loginModal')">&times;</button>
-            <h2 style="color: #4ecdc4; margin-bottom: 2rem;">Login to CinBrain</h2>
-            <form id="loginForm">
-                <div class="form-group">
-                    <label class="form-label">Username</label>
-                    <input type="text" class="form-input" id="loginUsername" required>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Password</label>
-                    <input type="password" class="form-input" id="loginPassword" required>
-                </div>
-                <button type="submit" class="btn" style="width: 100%;">
-                    <span id="loginLoadingText">Login</span>
-                    <span id="loginLoading" class="loading" style="display: none;"></span>
+            <button class="close-btn" onclick="closeModal()">&times;</button>
+
+            <h2 style="text-align: center; color: #113CCF; margin-bottom: 10px;">
+                Password Reset Code
+            </h2>
+            <p style="text-align: center; color: #666; margin-bottom: 20px;">
+                Use this code to reset your password
+            </p>
+
+            <div class="reset-code-display">
+                <div class="code-number" id="displayCode"></div>
+                <div class="timer" id="timer">Expires in: 15:00</div>
+            </div>
+
+            <div class="action-buttons">
+                <button class="copy-btn" id="copyBtn" onclick="copyCode()">
+                    📋 Copy Code
                 </button>
-            </form>
-            <div id="loginAlert"></div>
-        </div>
-    </div>
-
-    <!-- Register Modal -->
-    <div class="modal" id="registerModal">
-        <div class="modal-content">
-            <button class="close-btn" onclick="closeModal('registerModal')">&times;</button>
-            <h2 style="color: #4ecdc4; margin-bottom: 2rem;">Join CinBrain</h2>
-            <form id="registerForm">
-                <div class="form-group">
-                    <label class="form-label">Username</label>
-                    <input type="text" class="form-input" id="registerUsername" required>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Email</label>
-                    <input type="email" class="form-input" id="registerEmail" required>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Password</label>
-                    <input type="password" class="form-input" id="registerPassword" required>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Preferred Languages (comma separated)</label>
-                    <input type="text" class="form-input" id="registerLanguages" placeholder="Telugu, English, Hindi">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Preferred Genres (comma separated)</label>
-                    <input type="text" class="form-input" id="registerGenres" placeholder="Action, Comedy, Drama">
-                </div>
-                <button type="submit" class="btn" style="width: 100%;">
-                    <span id="registerLoadingText">Register</span>
-                    <span id="registerLoading" class="loading" style="display: none;"></span>
+                <button class="reset-btn" onclick="useCode()">
+                    🔐 Use This Code
                 </button>
-            </form>
-            <div id="registerAlert"></div>
+            </div>
+
+            <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 8px;">
+                <p style="color: #666; font-size: 13px; margin: 0;">
+                    <strong>Note:</strong> This code will expire in 15 minutes.
+                    Keep this window open or copy the code before closing.
+                </p>
+            </div>
         </div>
     </div>
-
-    <!-- Content Detail Modal -->
-    <div class="modal detail-modal" id="detailModal">
-        <div class="modal-content">
-            <button class="close-btn" onclick="closeModal('detailModal')">&times;</button>
-            <div id="detailContent"></div>
-        </div>
-    </div>
-
-    <!-- Floating Action Button -->
-    <button class="floating-action" onclick="scrollToTop()" title="Back to top">↑</button>
 
     <script>
-        // Global variables
-        let currentUser = null;
-        let authToken = localStorage.getItem('authToken');
-        const API_BASE = "https://backend-app-970m.onrender.com";
+        // Configuration
+        const API_URL = 'https://backend-app-970m.onrender.com'; // Change this for local testing
+        // const API_URL = 'http://localhost:5000'; // For local testing
 
-        // Initialize app
-        document.addEventListener('DOMContentLoaded', function () {
-            initializeApp();
-            setupEventListeners();
-            checkAuthStatus();
+        let currentResetCode = '';
+        let timerInterval = null;
+        let expiryTime = null;
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            // Check URL parameters
+            const urlParams = new URLSearchParams(window.location.search);
+            const code = urlParams.get('code');
+
+            if (code) {
+                switchTab('reset');
+                document.getElementById('resetCode').value = code;
+                showAlert('info', 'Code pre-filled from link. Enter your new password.');
+            }
+
+            // Check localStorage for saved data
+            const savedData = localStorage.getItem('resetData');
+            if (savedData) {
+                const data = JSON.parse(savedData);
+                if (data.expires > Date.now()) {
+                    switchTab('reset');
+                    document.getElementById('resetCode').value = data.code;
+                    showAlert('info', 'Previous reset code found. It may still be valid.');
+                } else {
+                    localStorage.removeItem('resetData');
+                }
+            }
         });
 
-        function initializeApp() {
-            // Load initial content
-            loadTrendingRecommendations();
+        // Tab Switching
+        function switchTab(tab) {
+            // Update tabs
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
 
-            // Check for existing auth
-            if (authToken) {
-                validateToken();
-            }
-        }
-
-        function setupEventListeners() {
-            // Tab switching
-            document.querySelectorAll('.tab').forEach(tab => {
-                tab.addEventListener('click', function () {
-                    switchTab(this.dataset.tab);
-                });
-            });
-
-            // Search
-            const searchInput = document.getElementById('searchInput');
-            let searchTimeout;
-            searchInput.addEventListener('input', function () {
-                clearTimeout(searchTimeout);
-                searchTimeout = setTimeout(() => {
-                    if (this.value.trim()) {
-                        performSearch(this.value.trim());
-                    }
-                }, 500);
-            });
-
-            // Auth buttons
-            document.getElementById('loginBtn').addEventListener('click', () => openModal('loginModal'));
-            document.getElementById('registerBtn').addEventListener('click', () => openModal('registerModal'));
-            document.getElementById('logoutBtn').addEventListener('click', logout);
-
-            // Forms
-            document.getElementById('loginForm').addEventListener('submit', handleLogin);
-            document.getElementById('registerForm').addEventListener('submit', handleRegister);
-
-            // Recommendation categories
-            document.querySelectorAll('.category-card').forEach(card => {
-                card.addEventListener('click', function () {
-                    loadRecommendationCategory(this.dataset.category);
-                });
-            });
-
-            // Modal close on outside click
-            document.querySelectorAll('.modal').forEach(modal => {
-                modal.addEventListener('click', function (e) {
-                    if (e.target === this) {
-                        closeModal(this.id);
-                    }
-                });
-            });
-        }
-
-        // Authentication functions
-        async function handleLogin(e) {
-            e.preventDefault();
-            const username = document.getElementById('loginUsername').value;
-            const password = document.getElementById('loginPassword').value;
-
-            setLoadingState('login', true);
-
-            try {
-                const response = await fetch(`${API_BASE}/api/login`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ username, password })
-                });
-
-                const data = await response.json();
-
-                if (response.ok) {
-                    authToken = data.token;
-                    currentUser = data.user;
-                    localStorage.setItem('authToken', authToken);
-                    localStorage.setItem('currentUser', JSON.stringify(currentUser));
-
-                    showAlert('loginAlert', 'Login successful!', 'success');
-                    updateAuthUI();
-                    setTimeout(() => {
-                        closeModal('loginModal');
-                        loadPersonalizedContent();
-                    }, 1000);
-                } else {
-                    showAlert('loginAlert', data.error || 'Login failed', 'error');
-                }
-            } catch (error) {
-                showAlert('loginAlert', 'Network error. Please try again.', 'error');
-            }
-
-            setLoadingState('login', false);
-        }
-
-        async function handleRegister(e) {
-            e.preventDefault();
-            const username = document.getElementById('registerUsername').value;
-            const email = document.getElementById('registerEmail').value;
-            const password = document.getElementById('registerPassword').value;
-            const languages = document.getElementById('registerLanguages').value.split(',').map(l => l.trim()).filter(l => l);
-            const genres = document.getElementById('registerGenres').value.split(',').map(g => g.trim()).filter(g => g);
-
-            setLoadingState('register', true);
-
-            try {
-                const response = await fetch(`${API_BASE}/api/register`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        username,
-                        email,
-                        password,
-                        preferred_languages: languages,
-                        preferred_genres: genres
-                    })
-                });
-
-                const data = await response.json();
-
-                if (response.ok) {
-                    authToken = data.token;
-                    currentUser = data.user;
-                    localStorage.setItem('authToken', authToken);
-                    localStorage.setItem('currentUser', JSON.stringify(currentUser));
-
-                    showAlert('registerAlert', 'Registration successful!', 'success');
-                    updateAuthUI();
-                    setTimeout(() => {
-                        closeModal('registerModal');
-                        loadPersonalizedContent();
-                    }, 1000);
-                } else {
-                    showAlert('registerAlert', data.error || 'Registration failed', 'error');
-                }
-            } catch (error) {
-                showAlert('registerAlert', 'Network error. Please try again.', 'error');
-            }
-
-            setLoadingState('register', false);
-        }
-
-        function logout() {
-            authToken = null;
-            currentUser = null;
-            localStorage.removeItem('authToken');
-            localStorage.removeItem('currentUser');
-            updateAuthUI();
-            switchTab('recommendations');
-            loadTrendingRecommendations();
-        }
-
-        function checkAuthStatus() {
-            const savedUser = localStorage.getItem('currentUser');
-            if (authToken && savedUser) {
-                currentUser = JSON.parse(savedUser);
-                updateAuthUI();
-                loadPersonalizedContent();
-            }
-        }
-
-        async function validateToken() {
-            try {
-                const response = await fetch(`${API_BASE}/api/user/watchlist`, {
-                    headers: {
-                        'Authorization': `Bearer ${authToken}`
-                    }
-                });
-
-                if (!response.ok) {
-                    logout();
-                }
-            } catch (error) {
-                console.warn('Token validation failed');
-            }
-        }
-
-        function updateAuthUI() {
-            const loginBtn = document.getElementById('loginBtn');
-            const registerBtn = document.getElementById('registerBtn');
-            const logoutBtn = document.getElementById('logoutBtn');
-            const userInfo = document.getElementById('userInfo');
-            const username = document.getElementById('username');
-
-            if (currentUser) {
-                loginBtn.style.display = 'none';
-                registerBtn.style.display = 'none';
-                logoutBtn.style.display = 'block';
-                userInfo.style.display = 'flex';
-                username.textContent = `Welcome, ${currentUser.username}!`;
-
-                // Show personalized content
-                document.getElementById('authRequired').style.display = 'none';
-                document.getElementById('profileAuthRequired').style.display = 'none';
-                document.getElementById('adminAuthRequired').style.display = currentUser.is_admin ? 'none' : 'block';
+            if (tab === 'request') {
+                document.querySelectorAll('.tab')[0].classList.add('active');
+                document.getElementById('requestTab').classList.add('active');
+                document.getElementById('headerText').textContent = 'Enter your email to receive a reset code';
             } else {
-                loginBtn.style.display = 'block';
-                registerBtn.style.display = 'block';
-                logoutBtn.style.display = 'none';
-                userInfo.style.display = 'none';
-
-                // Hide personalized content
-                document.getElementById('authRequired').style.display = 'block';
-                document.getElementById('profileAuthRequired').style.display = 'block';
-                document.getElementById('adminAuthRequired').style.display = 'block';
+                document.querySelectorAll('.tab')[1].classList.add('active');
+                document.getElementById('resetTab').classList.add('active');
+                document.getElementById('headerText').textContent = 'Enter your code and new password';
             }
+
+            // Clear alerts
+            hideAllAlerts();
         }
 
-        // Content loading functions
-        async function loadTrendingRecommendations() {
-            try {
-                const response = await fetch(`${API_BASE}/api/recommendations/trending?category=all&limit=12`);
-                const data = await response.json();
+        // Handle Request Code
+        async function handleRequestCode(event) {
+            event.preventDefault();
 
-                if (response.ok && data.categories) {
-                    displayRecommendations('Trending Now', data.categories.trending_movies || [], 'trending');
-                }
-            } catch (error) {
-                console.error('Error loading trending:', error);
-            }
-        }
+            const email = document.getElementById('email').value;
+            const btn = document.getElementById('requestBtn');
 
-        async function loadPersonalizedContent() {
-            if (!authToken) return;
+            // Disable button and show loading
+            btn.disabled = true;
+            btn.classList.add('loading');
+            btn.textContent = '';
+
+            hideAllAlerts();
 
             try {
-                const response = await fetch(`${API_BASE}/api/personalized/`, {
+                const response = await fetch(`${API_URL}/api/auth/forgot-password-direct`, {
+                    method: 'POST',
                     headers: {
-                        'Authorization': `Bearer ${authToken}`
-                    }
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ email })
                 });
 
                 const data = await response.json();
 
                 if (response.ok && data.success) {
-                    const recommendations = data.data.recommendations;
-                    let content = '';
+                    currentResetCode = data.resetCode;
 
-                    // Display each category
-                    Object.entries(recommendations).forEach(([category, items]) => {
-                        if (items && items.length > 0) {
-                            content += generateRecommendationSection(getCategoryTitle(category), items, category);
-                        }
-                    });
+                    // Store in localStorage
+                    localStorage.setItem('resetData', JSON.stringify({
+                        code: data.resetCode,
+                        token: data.resetToken,
+                        expires: Date.now() + (data.expiresIn * 60 * 1000)
+                    }));
 
-                    document.getElementById('dynamicRecommendations').innerHTML = content;
-                    addContentEventListeners();
+                    // Show modal with code
+                    showResetCodeModal(data);
+
+                    // Show success message
+                    showAlert('success', 'Reset code generated successfully!');
+
+                    // Clear form
+                    document.getElementById('requestForm').reset();
+                } else {
+                    showAlert('error', data.error || 'Failed to generate reset code. Please try again.');
                 }
             } catch (error) {
-                console.error('Error loading personalized content:', error);
+                console.error('Error:', error);
+                showAlert('error', 'Network error. Please check your connection and try again.');
+            } finally {
+                btn.disabled = false;
+                btn.classList.remove('loading');
+                btn.textContent = 'Get Reset Code';
             }
         }
 
-        async function loadRecommendationCategory(category) {
-            let endpoint = '';
-            let title = '';
+        // Handle Reset Password
+        async function handleResetPassword(event) {
+            event.preventDefault();
 
-            switch (category) {
-                case 'for-you':
-                    if (!authToken) {
-                        showAlert('', 'Please login to see personalized recommendations', 'error');
-                        return;
-                    }
-                    endpoint = '/api/personalized/for-you';
-                    title = 'For You';
-                    break;
-                case 'because-you-watched':
-                    if (!authToken) {
-                        showAlert('', 'Please login to see this category', 'error');
-                        return;
-                    }
-                    endpoint = '/api/personalized/because-you-watched';
-                    title = 'Because You Watched';
-                    break;
-                case 'trending-for-you':
-                    if (!authToken) {
-                        showAlert('', 'Please login to see personalized trending', 'error');
-                        return;
-                    }
-                    endpoint = '/api/personalized/trending-for-you';
-                    title = 'Trending for You';
-                    break;
-                case 'your-language':
-                    if (!authToken) {
-                        showAlert('', 'Please login to see language recommendations', 'error');
-                        return;
-                    }
-                    endpoint = '/api/personalized/your-language';
-                    title = 'Your Language';
-                    break;
-                case 'hidden-gems':
-                    if (!authToken) {
-                        showAlert('', 'Please login to see hidden gems', 'error');
-                        return;
-                    }
-                    endpoint = '/api/personalized/hidden-gems';
-                    title = 'Hidden Gems';
-                    break;
-                case 'trending':
-                    endpoint = '/api/recommendations/trending?category=all';
-                    title = 'Trending Now';
-                    break;
-                default:
-                    return;
-            }
+            const code = document.getElementById('resetCode').value;
+            const newPassword = document.getElementById('newPassword').value;
+            const confirmPassword = document.getElementById('confirmPassword').value;
+            const btn = document.getElementById('resetBtn');
 
-            try {
-                const headers = {};
-                if (authToken) {
-                    headers['Authorization'] = `Bearer ${authToken}`;
-                }
+            hideAllAlerts();
 
-                const response = await fetch(`${API_BASE}${endpoint}`, { headers });
-                const data = await response.json();
-
-                if (response.ok) {
-                    let items = [];
-                    if (data.recommendations) {
-                        items = data.recommendations;
-                    } else if (data.categories && category === 'trending') {
-                        // For trending, show all categories
-                        let content = '';
-                        Object.entries(data.categories).forEach(([cat, categoryItems]) => {
-                            if (categoryItems && categoryItems.length > 0) {
-                                content += generateRecommendationSection(getCategoryTitle(cat), categoryItems, cat);
-                            }
-                        });
-                        document.getElementById('dynamicRecommendations').innerHTML = content;
-                        addContentEventListeners();
-                        return;
-                    }
-
-                    const content = generateRecommendationSection(title, items, category);
-                    document.getElementById('dynamicRecommendations').innerHTML = content;
-                    addContentEventListeners();
-                }
-            } catch (error) {
-                console.error(`Error loading ${category}:`, error);
-            }
-        }
-
-        async function performSearch(query) {
-            switchTab('search');
-
-            try {
-                const response = await fetch(`${API_BASE}/api/search?query=${encodeURIComponent(query)}&type=multi`);
-                const data = await response.json();
-
-                if (response.ok) {
-                    displaySearchResults(data.results || []);
-                }
-            } catch (error) {
-                console.error('Search error:', error);
-            }
-        }
-
-        function displaySearchResults(results) {
-            const container = document.getElementById('searchResults');
-
-            if (results.length === 0) {
-                container.innerHTML = '<div class="alert alert-error">No results found</div>';
+            // Validate passwords match
+            if (newPassword !== confirmPassword) {
+                showAlert('error', 'Passwords do not match');
                 return;
             }
 
-            container.innerHTML = results.map(item => generateContentCard(item)).join('');
-            addContentEventListeners();
-        }
-
-        function displayRecommendations(title, items, category) {
-            const content = generateRecommendationSection(title, items, category);
-            document.getElementById('dynamicRecommendations').innerHTML = content;
-            addContentEventListeners();
-        }
-
-        // Profile functions
-        async function loadProfile() {
-            if (!authToken) return;
-
-            try {
-                // Load profile insights
-                const insightsResponse = await fetch(`${API_BASE}/api/personalized/profile-insights`, {
-                    headers: { 'Authorization': `Bearer ${authToken}` }
-                });
-
-                if (insightsResponse.ok) {
-                    const insights = await insightsResponse.json();
-                    displayProfileInsights(insights.insights);
-                }
-
-                // Load watchlist
-                const watchlistResponse = await fetch(`${API_BASE}/api/user/watchlist`, {
-                    headers: { 'Authorization': `Bearer ${authToken}` }
-                });
-
-                if (watchlistResponse.ok) {
-                    const watchlistData = await watchlistResponse.json();
-                    displayWatchlist(watchlistData.watchlist || []);
-                }
-
-                // Load favorites
-                const favoritesResponse = await fetch(`${API_BASE}/api/user/favorites`, {
-                    headers: { 'Authorization': `Bearer ${authToken}` }
-                });
-
-                if (favoritesResponse.ok) {
-                    const favoritesData = await favoritesResponse.json();
-                    displayFavorites(favoritesData.favorites || []);
-                }
-            } catch (error) {
-                console.error('Error loading profile:', error);
-            }
-        }
-
-        function displayProfileInsights(insights) {
-            const container = document.getElementById('profileInsights');
-
-            const html = `
-                <div class="stats-grid">
-                    <div class="stat-card">
-                        <div class="stat-number">${Math.round(insights.profile_strength.completeness * 100)}%</div>
-                        <div class="stat-label">Profile Completeness</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-number">${Math.round(insights.profile_strength.confidence * 100)}%</div>
-                        <div class="stat-label">Confidence Score</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-number">${insights.behavior.total_interactions}</div>
-                        <div class="stat-label">Total Interactions</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-number">${Math.round(insights.behavior.engagement_score * 100)}%</div>
-                        <div class="stat-label">Engagement Score</div>
-                    </div>
-                </div>
-                <div style="margin-top: 2rem;">
-                    <h3 style="color: #4ecdc4; margin-bottom: 1rem;">Your Preferences</h3>
-                    <div style="display: grid; gap: 1rem;">
-                        <div>
-                            <strong>Top Genres:</strong> ${insights.preferences.top_genres.join(', ') || 'None yet'}
-                        </div>
-                        <div>
-                            <strong>Preferred Languages:</strong> ${insights.preferences.preferred_languages.join(', ') || 'None set'}
-                        </div>
-                        <div>
-                            <strong>Viewing Style:</strong> ${insights.behavior.viewing_style || 'Casual'}
-                        </div>
-                        <div style="margin-top: 1rem; padding: 1rem; background: rgba(255,255,255,0.05); border-radius: 8px;">
-                            <strong>Recommendation Tip:</strong> ${insights.recommendations_quality.next_improvement}
-                        </div>
-                    </div>
-                </div>
-            `;
-
-            container.innerHTML = html;
-        }
-
-        function displayWatchlist(items) {
-            const container = document.getElementById('watchlist');
-
-            if (items.length === 0) {
-                container.innerHTML = '<div class="alert alert-error">Your watchlist is empty</div>';
+            // Validate password strength
+            if (!isPasswordStrong(newPassword)) {
+                showAlert('error', 'Password does not meet requirements');
                 return;
             }
 
-            container.innerHTML = items.map(item => generateContentCard(item, true)).join('');
-            addContentEventListeners();
-        }
-
-        function displayFavorites(items) {
-            const container = document.getElementById('favorites');
-
-            if (items.length === 0) {
-                container.innerHTML = '<div class="alert alert-error">No favorites yet</div>';
-                return;
-            }
-
-            container.innerHTML = items.map(item => generateContentCard(item, false, true)).join('');
-            addContentEventListeners();
-        }
-
-        // Admin functions
-        async function loadAdminContent() {
-            if (!authToken || !currentUser?.is_admin) return;
+            // Disable button and show loading
+            btn.disabled = true;
+            btn.classList.add('loading');
+            btn.textContent = '';
 
             try {
-                const healthResponse = await fetch(`${API_BASE}/api/health`);
-                const healthData = await healthResponse.json();
-                displaySystemHealth(healthData);
-
-                const performanceResponse = await fetch(`${API_BASE}/api/performance`);
-                const performanceData = await performanceResponse.json();
-                displayAdminAnalytics(performanceData);
-            } catch (error) {
-                console.error('Error loading admin content:', error);
-            }
-        }
-
-        function displaySystemHealth(health) {
-            const container = document.getElementById('systemHealth');
-
-            const html = `
-                <div class="stats-grid">
-                    <div class="stat-card">
-                        <div class="stat-number" style="color: ${health.status === 'healthy' ? '#4ecdc4' : '#ff6b6b'}">${health.status}</div>
-                        <div class="stat-label">System Status</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-number">${health.services.tmdb ? '✅' : '❌'}</div>
-                        <div class="stat-label">TMDB API</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-number">${health.database === 'connected' ? '✅' : '❌'}</div>
-                        <div class="stat-label">Database</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-number">${health.cache === 'connected' ? '✅' : '❌'}</div>
-                        <div class="stat-label">Cache</div>
-                    </div>
-                </div>
-            `;
-
-            container.innerHTML = html;
-        }
-
-        function displayAdminAnalytics(data) {
-            const container = document.getElementById('adminAnalytics');
-
-            const html = `
-                <div class="stats-grid">
-                    <div class="stat-card">
-                        <div class="stat-number">${data.database?.total_content || 0}</div>
-                        <div class="stat-label">Total Content</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-number">${data.database?.slug_coverage || 0}%</div>
-                        <div class="stat-label">Slug Coverage</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-number">${data.performance?.optimization_level || 'Unknown'}</div>
-                        <div class="stat-label">Optimization</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-number">${data.cache_type || 'Unknown'}</div>
-                        <div class="stat-label">Cache Type</div>
-                    </div>
-                </div>
-            `;
-
-            container.innerHTML = html;
-        }
-
-        // Content interaction functions
-        async function toggleWatchlist(contentId) {
-            if (!authToken) {
-                showAlert('', 'Please login to add to watchlist', 'error');
-                return;
-            }
-
-            try {
-                const response = await fetch(`${API_BASE}/api/interactions`, {
+                const response = await fetch(`${API_URL}/api/auth/reset-by-code`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${authToken}`
                     },
                     body: JSON.stringify({
-                        content_id: contentId,
-                        interaction_type: 'watchlist'
+                        code: code,
+                        newPassword: newPassword,
+                        confirmPassword: confirmPassword
                     })
                 });
 
-                if (response.ok) {
-                    showAlert('', 'Added to watchlist!', 'success');
-                }
-            } catch (error) {
-                console.error('Watchlist error:', error);
-            }
-        }
-
-        async function toggleFavorite(contentId) {
-            if (!authToken) {
-                showAlert('', 'Please login to add to favorites', 'error');
-                return;
-            }
-
-            try {
-                const response = await fetch(`${API_BASE}/api/interactions`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${authToken}`
-                    },
-                    body: JSON.stringify({
-                        content_id: contentId,
-                        interaction_type: 'favorite'
-                    })
-                });
-
-                if (response.ok) {
-                    showAlert('', 'Added to favorites!', 'success');
-                }
-            } catch (error) {
-                console.error('Favorite error:', error);
-            }
-        }
-
-        async function viewContent(contentId) {
-            try {
-                const response = await fetch(`${API_BASE}/api/content/${contentId}`);
                 const data = await response.json();
 
-                if (response.ok) {
-                    displayContentDetail(data);
-                    openModal('detailModal');
+                if (response.ok && data.success) {
+                    // Clear stored data
+                    localStorage.removeItem('resetData');
+
+                    // Store auth token if provided
+                    if (data.token) {
+                        localStorage.setItem('authToken', data.token);
+                        localStorage.setItem('user', JSON.stringify(data.user));
+                    }
+
+                    showAlert('success', 'Password reset successfully! Redirecting to login...');
+
+                    // Redirect after 2 seconds
+                    setTimeout(() => {
+                        window.location.href = '/login.html';
+                    }, 2000);
+                } else {
+                    showAlert('error', data.error || 'Failed to reset password');
                 }
             } catch (error) {
-                console.error('Content detail error:', error);
+                console.error('Error:', error);
+                showAlert('error', 'Network error. Please try again.');
+            } finally {
+                btn.disabled = false;
+                btn.classList.remove('loading');
+                btn.textContent = 'Reset Password';
             }
         }
 
-        function displayContentDetail(content) {
-            const container = document.getElementById('detailContent');
+        // Show Reset Code Modal
+        function showResetCodeModal(data) {
+            const modal = document.getElementById('resetModal');
+            const codeDisplay = document.getElementById('displayCode');
 
-            const html = `
-                <div class="detail-header">
-                    <img src="${content.poster_path || '/api/placeholder/300/450'}" alt="${content.title}" class="detail-poster">
-                    <div class="detail-info">
-                        <h1 class="detail-title">${content.title}</h1>
-                        <div class="detail-meta">
-                            <span>⭐ ${content.rating || 'N/A'}</span>
-                            <span>📅 ${content.release_date ? new Date(content.release_date).getFullYear() : 'N/A'}</span>
-                            <span>🎬 ${content.content_type}</span>
-                            ${content.runtime ? `<span>⏱️ ${content.runtime}m</span>` : ''}
-                        </div>
-                        <div class="genres">
-                            ${content.genres.map(genre => `<span class="genre-tag">${genre}</span>`).join('')}
-                        </div>
-                        <p class="detail-overview">${content.overview || 'No description available.'}</p>
-                        <div class="card-actions">
-                            <button class="btn btn-small" onclick="toggleWatchlist(${content.id})">+ Watchlist</button>
-                            <button class="btn btn-small btn-secondary" onclick="toggleFavorite(${content.id})">❤️ Favorite</button>
-                            ${content.youtube_trailer ? `<a href="${content.youtube_trailer}" target="_blank" class="btn btn-small btn-success">🎬 Trailer</a>` : ''}
-                        </div>
-                    </div>
-                </div>
-                ${content.similar_content && content.similar_content.length > 0 ? `
-                    <div class="similar-content">
-                        <h3 style="color: #4ecdc4; margin-bottom: 1rem;">Similar Content</h3>
-                        <div class="similar-grid">
-                            ${content.similar_content.map(item => `
-                                <div class="similar-item" onclick="viewContent(${item.id})">
-                                    <img src="${item.poster_path || '/api/placeholder/150/225'}" alt="${item.title}" class="similar-poster">
-                                    <div class="similar-title">${item.title}</div>
-                                </div>
-                            `).join('')}
-                        </div>
-                    </div>
-                ` : ''}
-            `;
+            codeDisplay.textContent = data.resetCode;
+            modal.classList.add('show');
 
-            container.innerHTML = html;
+            // Start timer
+            startTimer(data.expiresIn);
         }
 
-        // UI helper functions
-        function switchTab(tabName) {
-            // Update tab buttons
-            document.querySelectorAll('.tab').forEach(tab => {
-                tab.classList.remove('active');
-            });
-            document.querySelector(`[data-tab="${tabName}"]`).classList.add('active');
+        // Close Modal
+        function closeModal() {
+            const modal = document.getElementById('resetModal');
+            modal.classList.remove('show');
 
-            // Update tab content
-            document.querySelectorAll('.tab-content').forEach(content => {
-                content.classList.remove('active');
-            });
-            document.getElementById(tabName).classList.add('active');
-
-            // Load content based on tab
-            switch (tabName) {
-                case 'profile':
-                    if (currentUser) loadProfile();
-                    break;
-                case 'admin':
-                    if (currentUser?.is_admin) loadAdminContent();
-                    break;
-                case 'recommendations':
-                    if (currentUser) {
-                        loadPersonalizedContent();
-                    } else {
-                        loadTrendingRecommendations();
-                    }
-                    break;
+            if (timerInterval) {
+                clearInterval(timerInterval);
             }
         }
 
-        function openModal(modalId) {
-            document.getElementById(modalId).style.display = 'flex';
-            document.body.style.overflow = 'hidden';
-        }
+        // Copy Code
+        function copyCode() {
+            const btn = document.getElementById('copyBtn');
 
-        function closeModal(modalId) {
-            document.getElementById(modalId).style.display = 'none';
-            document.body.style.overflow = 'auto';
-
-            // Clear form data
-            const modal = document.getElementById(modalId);
-            const forms = modal.querySelectorAll('form');
-            forms.forEach(form => form.reset());
-
-            // Clear alerts
-            const alerts = modal.querySelectorAll('[id$="Alert"]');
-            alerts.forEach(alert => alert.innerHTML = '');
-        }
-
-        function showAlert(containerId, message, type) {
-            if (containerId) {
-                const container = document.getElementById(containerId);
-                container.innerHTML = `<div class="alert alert-${type}">${message}</div>`;
-            } else {
-                // Show global alert
-                const alertDiv = document.createElement('div');
-                alertDiv.className = `alert alert-${type}`;
-                alertDiv.textContent = message;
-                alertDiv.style.position = 'fixed';
-                alertDiv.style.top = '120px';
-                alertDiv.style.right = '2rem';
-                alertDiv.style.zIndex = '3000';
-                alertDiv.style.maxWidth = '400px';
-
-                document.body.appendChild(alertDiv);
+            navigator.clipboard.writeText(currentResetCode).then(() => {
+                btn.classList.add('copied');
+                btn.textContent = '✅ Copied!';
 
                 setTimeout(() => {
-                    alertDiv.remove();
-                }, 3000);
-            }
-        }
+                    btn.classList.remove('copied');
+                    btn.textContent = '📋 Copy Code';
+                }, 2000);
+            }).catch(() => {
+                // Fallback for older browsers
+                const textArea = document.createElement('textarea');
+                textArea.value = currentResetCode;
+                document.body.appendChild(textArea);
+                textArea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textArea);
 
-        function setLoadingState(prefix, loading) {
-            const loadingText = document.getElementById(`${prefix}LoadingText`);
-            const loadingSpinner = document.getElementById(`${prefix}Loading`);
+                btn.classList.add('copied');
+                btn.textContent = '✅ Copied!';
 
-            if (loading) {
-                loadingText.style.display = 'none';
-                loadingSpinner.style.display = 'inline-block';
-            } else {
-                loadingText.style.display = 'inline';
-                loadingSpinner.style.display = 'none';
-            }
-        }
-
-        function scrollToTop() {
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-        }
-
-        // Content generation functions
-        function generateContentCard(item, isWatchlist = false, isFavorite = false) {
-            return `
-                <div class="content-card" onclick="viewContent(${item.id})">
-                    <img src="${item.poster_path || '/api/placeholder/280/400'}" alt="${item.title}" class="card-image">
-                    <div class="card-content">
-                        <h3 class="card-title">${item.title}</h3>
-                        <div class="card-meta">
-                            <span class="rating">⭐ ${item.rating || 'N/A'}</span>
-                            <span>${item.content_type}</span>
-                        </div>
-                        <div class="genres">
-                            ${(item.genres || []).slice(0, 3).map(genre => `<span class="genre-tag">${genre}</span>`).join('')}
-                        </div>
-                        <div class="card-actions">
-                            ${!isWatchlist ? `<button class="btn btn-small" onclick="event.stopPropagation(); toggleWatchlist(${item.id})">+ Watchlist</button>` : ''}
-                            ${!isFavorite ? `<button class="btn btn-small btn-secondary" onclick="event.stopPropagation(); toggleFavorite(${item.id})">❤️ Favorite</button>` : ''}
-                            ${item.youtube_trailer ? `<a href="${item.youtube_trailer}" target="_blank" class="btn btn-small btn-success" onclick="event.stopPropagation()">🎬 Trailer</a>` : ''}
-                        </div>
-                    </div>
-                </div>
-            `;
-        }
-
-        function generateRecommendationSection(title, items, category) {
-            if (!items || items.length === 0) return '';
-
-            return `
-                <div class="section">
-                    <h2 class="section-title">${title}</h2>
-                    <div class="content-grid">
-                        ${items.slice(0, 12).map(item => generateContentCard(item)).join('')}
-                    </div>
-                </div>
-            `;
-        }
-
-        function getCategoryTitle(category) {
-            const titles = {
-                'for_you': '🎯 For You',
-                'because_you_watched': '👀 Because You Watched',
-                'trending_for_you': '🔥 Trending for You',
-                'new_releases_for_you': '🆕 New Releases for You',
-                'your_language': '🌍 Your Language',
-                'your_genres': '🎭 Your Genres',
-                'hidden_gems': '💎 Hidden Gems',
-                'continue_watching': '▶️ Continue Watching',
-                'quick_picks': '⚡ Quick Picks',
-                'critically_acclaimed': '🏆 Critically Acclaimed',
-                'trending_movies': '🎬 Trending Movies',
-                'trending_tv_shows': '📺 Trending TV Shows',
-                'trending_anime': '🎌 Trending Anime',
-                'popular_nearby': '📍 Popular Nearby',
-                'top_10_today': '🔟 Top 10 Today',
-                'critics_choice': '⭐ Critics Choice'
-            };
-
-            return titles[category] || category.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-        }
-
-        function addContentEventListeners() {
-            // Add event listeners to dynamically generated content
-            document.querySelectorAll('.content-card').forEach(card => {
-                if (!card.hasAttribute('data-listener-added')) {
-                    card.setAttribute('data-listener-added', 'true');
-                }
+                setTimeout(() => {
+                    btn.classList.remove('copied');
+                    btn.textContent = '📋 Copy Code';
+                }, 2000);
             });
         }
 
-        // Keyboard shortcuts
-        document.addEventListener('keydown', function (e) {
-            if (e.key === 'Escape') {
-                // Close any open modal
-                document.querySelectorAll('.modal').forEach(modal => {
-                    if (modal.style.display === 'flex') {
-                        closeModal(modal.id);
-                    }
-                });
-            } else if (e.key === '/' && !e.target.matches('input, textarea')) {
+        // Use Code
+        function useCode() {
+            switchTab('reset');
+            document.getElementById('resetCode').value = currentResetCode;
+            closeModal();
+            document.getElementById('newPassword').focus();
+        }
+
+        // Start Timer
+        function startTimer(minutes) {
+            expiryTime = Date.now() + (minutes * 60 * 1000);
+
+            if (timerInterval) {
+                clearInterval(timerInterval);
+            }
+
+            timerInterval = setInterval(() => {
+                const now = Date.now();
+                const remaining = expiryTime - now;
+
+                if (remaining <= 0) {
+                    clearInterval(timerInterval);
+                    document.getElementById('timer').textContent = 'Code Expired';
+                    document.getElementById('timer').classList.add('warning');
+                    return;
+                }
+
+                const mins = Math.floor(remaining / 60000);
+                const secs = Math.floor((remaining % 60000) / 1000);
+
+                const timerElement = document.getElementById('timer');
+                timerElement.textContent = `Expires in: ${mins}:${secs.toString().padStart(2, '0')}`;
+
+                // Add warning class when less than 2 minutes
+                if (mins < 2) {
+                    timerElement.classList.add('warning');
+                }
+            }, 1000);
+        }
+
+        // Password Strength Checker
+        function checkPasswordStrength(password) {
+            const strengthDiv = document.getElementById('passwordStrength');
+
+            // Update requirements
+            document.getElementById('req-length').classList.toggle('met', password.length >= 8);
+            document.getElementById('req-upper').classList.toggle('met', /[A-Z]/.test(password));
+            document.getElementById('req-lower').classList.toggle('met', /[a-z]/.test(password));
+            document.getElementById('req-number').classList.toggle('met', /[0-9]/.test(password));
+            document.getElementById('req-special').classList.toggle('met', /[!@#$%^&*(),.?":{}|<>]/.test(password));
+
+            if (password.length === 0) {
+                strengthDiv.style.display = 'none';
+                return;
+            }
+
+            let strength = 0;
+            if (password.length >= 8) strength++;
+            if (/[A-Z]/.test(password)) strength++;
+            if (/[a-z]/.test(password)) strength++;
+            if (/[0-9]/.test(password)) strength++;
+            if (/[!@#$%^&*(),.?":{}|<>]/.test(password)) strength++;
+
+            strengthDiv.style.display = 'block';
+
+            if (strength < 3) {
+                strengthDiv.className = 'password-strength strength-weak';
+                strengthDiv.textContent = '⚠️ Weak Password';
+            } else if (strength < 5) {
+                strengthDiv.className = 'password-strength strength-medium';
+                strengthDiv.textContent = '📊 Medium Strength';
+            } else {
+                strengthDiv.className = 'password-strength strength-strong';
+                strengthDiv.textContent = '✅ Strong Password';
+            }
+        }
+
+        // Check if password is strong
+        function isPasswordStrong(password) {
+            return password.length >= 8 &&
+                /[A-Z]/.test(password) &&
+                /[a-z]/.test(password) &&
+                /[0-9]/.test(password) &&
+                /[!@#$%^&*(),.?":{}|<>]/.test(password);
+        }
+
+        // Alert Functions
+        function showAlert(type, message) {
+            hideAllAlerts();
+            const alert = document.getElementById(`${type}Alert`);
+            alert.textContent = message;
+            alert.style.display = 'block';
+
+            // Auto-hide after 5 seconds
+            setTimeout(() => {
+                alert.style.display = 'none';
+            }, 5000);
+        }
+
+        function hideAllAlerts() {
+            document.querySelectorAll('.alert').forEach(alert => {
+                alert.style.display = 'none';
+            });
+        }
+
+        // Close modal when clicking outside
+        window.onclick = function (event) {
+            const modal = document.getElementById('resetModal');
+            if (event.target === modal) {
+                closeModal();
+            }
+        }
+
+        // Handle Enter key in code input
+        document.getElementById('resetCode').addEventListener('keypress', function (e) {
+            if (e.key === 'Enter') {
                 e.preventDefault();
-                document.getElementById('searchInput').focus();
+                document.getElementById('newPassword').focus();
             }
         });
     </script>
