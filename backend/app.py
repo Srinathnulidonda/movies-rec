@@ -1,4 +1,4 @@
-#backend/app.py
+# backend/app.py
 from typing import Optional
 from flask import Flask, request, jsonify, session, render_template
 from flask_sqlalchemy import SQLAlchemy
@@ -50,15 +50,31 @@ import re
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'your-secret-key-change-in-production')
 
-DATABASE_URL = 'postgresql://movies_rec_panf_user:BO5X3d2QihK7GG9hxgtBiCtni8NTbbIi@dpg-d2q7gamr433s73e0hcm0-a/movies_rec_panf'
+# Database Configuration
+DATABASE_URL = os.environ.get('DATABASE_URL', 'postgresql://movies_rec_panf_user:BO5X3d2QihK7GG9hxgtBiCtni8NTbbIi@dpg-d2q7gamr433s73e0hcm0-a/movies_rec_panf')
 
-if os.environ.get('DATABASE_URL'):
-    app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL').replace('postgres://', 'postgresql://')
-else:
+if DATABASE_URL:
+    # Handle Render's postgres:// URLs
+    if DATABASE_URL.startswith('postgres://'):
+        DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
+    
     app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
+    
+    # Add SSL requirement for production
+    if 'localhost' not in DATABASE_URL and '127.0.0.1' not in DATABASE_URL:
+        app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL + ('?sslmode=require' if '?' not in DATABASE_URL else '&sslmode=require')
+        app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+            'pool_pre_ping': True,
+            'pool_recycle': 300,
+            'connect_args': {
+                'sslmode': 'require',
+                'connect_timeout': 10
+            }
+        }
 
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
+# Redis Configuration
 REDIS_URL = os.environ.get('REDIS_URL', 'redis://red-d2qlbuje5dus73c71qog:xp7inVzgblGCbo9I4taSGLdKUg0xY91I@red-d2qlbuje5dus73c71qog:6379')
 
 if REDIS_URL and REDIS_URL.startswith(('redis://', 'rediss://')):
@@ -69,21 +85,22 @@ else:
     app.config['CACHE_TYPE'] = 'simple'
     app.config['CACHE_DEFAULT_TIMEOUT'] = 1800
 
-if DATABASE_URL and DATABASE_URL.startswith('postgresql://'):
-    app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL + '?sslmode=require'
-    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
-        'pool_pre_ping': True,
-        'pool_recycle': 300,
-        'connect_args': {
-            'sslmode': 'require',
-            'connect_timeout': 10
-        }
-    }
+# Email Configuration (for fallback)
+app.config['MAIL_SERVER'] = os.environ.get('MAIL_SERVER', 'smtp.gmail.com')
+app.config['MAIL_PORT'] = int(os.environ.get('MAIL_PORT', 587))
+app.config['MAIL_USE_TLS'] = os.environ.get('MAIL_USE_TLS', 'true').lower() == 'true'
+app.config['MAIL_USE_SSL'] = os.environ.get('MAIL_USE_SSL', 'false').lower() == 'true'
+app.config['MAIL_USERNAME'] = os.environ.get('GMAIL_USERNAME', 'projects.srinath@gmail.com')
+app.config['MAIL_PASSWORD'] = os.environ.get('GMAIL_APP_PASSWORD', 'nddg lphy ajjy rnuq')
+app.config['MAIL_DEFAULT_SENDER'] = os.environ.get('MAIL_DEFAULT_SENDER', 'noreply@cinebrain.com')
 
+# Initialize extensions
 db = SQLAlchemy(app)
-CORS(app)
+CORS(app, supports_credentials=True, origins=['https://cinebrain.vercel.app', 'http://localhost:5500', 'http://127.0.0.1:5500'])
 cache = Cache(app)
+mail = Mail(app)
 
+# API Keys
 TMDB_API_KEY = os.environ.get('TMDB_API_KEY', '1cf86635f20bb2aff8e70940e7c3ddd5')
 OMDB_API_KEY = os.environ.get('OMDB_API_KEY', '52260795')
 YOUTUBE_API_KEY = os.environ.get('YOUTUBE_API_KEY', 'AIzaSyDU-JLASTdIdoLOmlpWuJYLTZDUspqw2T4')
@@ -93,9 +110,11 @@ app.config['OMDB_API_KEY'] = OMDB_API_KEY
 app.config['YOUTUBE_API_KEY'] = YOUTUBE_API_KEY
 app.config['SECRET_KEY'] = app.secret_key
 
+# Logging Configuration
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# HTTP Session Configuration
 def create_http_session():
     session = requests.Session()
     retry = Retry(
@@ -113,6 +132,7 @@ def create_http_session():
 http_session = create_http_session()
 executor = ThreadPoolExecutor(max_workers=3)
 
+# Language Configuration
 REGIONAL_LANGUAGES = {
     'hindi': ['hi', 'hindi', 'bollywood'],
     'telugu': ['te', 'telugu', 'tollywood'],
@@ -145,6 +165,7 @@ ANIME_GENRES = {
 
 recommendation_orchestrator = RecommendationOrchestrator()
 
+# Cache key generators
 def make_cache_key(*args, **kwargs):
     path = request.path
     args_str = str(hash(frozenset(request.args.items())))
@@ -160,6 +181,7 @@ def recommendations_cache_key(rec_type, **kwargs):
     params = ':'.join([f"{k}={v}" for k, v in sorted(kwargs.items())])
     return f"recommendations:{rec_type}:{params}"
 
+# Authentication decorator
 def auth_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
@@ -179,6 +201,7 @@ def auth_required(f):
     
     return decorated_function
 
+# Database Models
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
@@ -320,6 +343,7 @@ class Review(db.Model):
         db.UniqueConstraint('content_id', 'user_id'),
     )
 
+# Helper functions
 def get_session_id():
     if 'session_id' not in session:
         session['session_id'] = hashlib.md5(f"{request.remote_addr}{time.time()}".encode()).hexdigest()
@@ -350,6 +374,7 @@ def get_user_location(ip_address):
         pass
     return None
 
+# Service Classes
 class TMDBService:
     BASE_URL = 'https://api.themoviedb.org/3'
     
@@ -690,6 +715,7 @@ class AnonymousRecommendationEngine:
             logger.error(f"Error getting anonymous recommendations: {e}")
             return []
 
+# Initialize models dict
 models = {
     'User': User,
     'Content': Content,
@@ -701,6 +727,7 @@ models = {
     'AnonymousInteraction': AnonymousInteraction
 }
 
+# Initialize services
 details_service = None
 content_service = None
 try:
@@ -719,6 +746,7 @@ services = {
     'cache': cache
 }
 
+# Initialize support service
 try:
     init_support(app, db, models, services)
     app.register_blueprint(support_bp)
@@ -726,6 +754,7 @@ try:
 except Exception as e:
     logger.error(f"Failed to initialize support service: {e}")
 
+# Initialize personalized engine
 try:
     personalized_engine = init_personalized(app, db, models, services, cache)
     if personalized_engine:
@@ -736,13 +765,16 @@ try:
 except Exception as e:
     logger.error(f"Failed to initialize personalized recommendation system: {e}")
 
+# Initialize authentication service with fallback handling
 try:
     init_auth(app, db, User)
     app.register_blueprint(auth_bp)
     logger.info("Enhanced authentication service initialized successfully")
 except Exception as e:
     logger.error(f"Failed to initialize authentication service: {e}")
+    logger.error("WARNING: Authentication service not available - password resets will not work!")
 
+# Initialize admin service
 try:
     init_admin(app, db, models, services)
     app.register_blueprint(admin_bp)
@@ -750,6 +782,7 @@ try:
 except Exception as e:
     logger.error(f"Failed to initialize admin service: {e}")
 
+# Initialize users service
 try:
     init_users(app, db, models, {**services, 'cache': cache})
     app.register_blueprint(users_bp)
@@ -757,6 +790,7 @@ try:
 except Exception as e:
     logger.error(f"Failed to initialize users service: {e}")
 
+# Support monitoring setup
 def setup_support_monitoring():
     def support_monitor():
         while True:
@@ -815,6 +849,7 @@ def setup_support_monitoring():
     monitor_thread.start()
     logger.info("Support monitoring thread started")
 
+# Webhook handlers
 def on_new_support_ticket(ticket):
     try:
         from services.admin import AdminNotificationService
@@ -828,6 +863,24 @@ def on_new_feedback(feedback):
         AdminNotificationService.notify_feedback_received(feedback)
     except Exception as e:
         logger.error(f"Error handling new feedback notification: {e}")
+
+# Routes
+
+@app.route('/')
+def index():
+    return jsonify({
+        'status': 'online',
+        'service': 'CineBrain Backend API',
+        'version': '5.3.0',
+        'endpoints': {
+            'health': '/api/health',
+            'auth': '/api/auth/health',
+            'support': '/api/support/health',
+            'admin': '/api/admin/system-health'
+        },
+        'documentation': 'https://github.com/Srinathnulidonda/movies-rec',
+        'frontend': 'https://cinebrain.vercel.app'
+    }), 200
 
 @app.route('/api/webhooks/support/ticket-created', methods=['POST'])
 def webhook_ticket_created():
@@ -2144,7 +2197,11 @@ def performance_check():
             'cache_type': app.config.get('CACHE_TYPE', 'unknown'),
             'services': {
                 'details_service': 'enabled' if details_service else 'disabled',
-                'content_service': 'enabled' if content_service else 'disabled'
+                'content_service': 'enabled' if content_service else 'disabled',
+                'auth_service': 'enabled' if 'auth_bp' in app.blueprints else 'disabled',
+                'support_service': 'enabled' if 'support_bp' in app.blueprints else 'disabled',
+                'admin_service': 'enabled' if 'admin_bp' in app.blueprints else 'disabled',
+                'users_service': 'enabled' if 'users_bp' in app.blueprints else 'disabled'
             },
             'performance': {
                 'thread_pool_workers': 3,
@@ -2174,6 +2231,7 @@ def health_check():
             'python_version': '3.13.4'
         }
         
+        # Check database
         try:
             db.session.execute(text('SELECT 1'))
             health_info['database'] = 'connected'
@@ -2181,6 +2239,7 @@ def health_check():
             health_info['database'] = 'disconnected'
             health_info['status'] = 'degraded'
         
+        # Check cache
         try:
             cache.set('health_check', 'ok', timeout=10)
             if cache.get('health_check') == 'ok':
@@ -2192,6 +2251,7 @@ def health_check():
             health_info['cache'] = 'disconnected'
             health_info['status'] = 'degraded'
         
+        # Check services
         health_info['services'] = {
             'tmdb': bool(TMDB_API_KEY),
             'omdb': bool(OMDB_API_KEY),
@@ -2208,6 +2268,30 @@ def health_check():
             'users_service': 'enabled' if 'users_bp' in app.blueprints else 'disabled'
         }
         
+        # Check email service status specifically
+        try:
+            from services.auth import email_service as auth_email_service
+            if auth_email_service:
+                health_info['email_service'] = {
+                    'configured': True,
+                    'enabled': auth_email_service.email_enabled,
+                    'fallback_mode': auth_email_service.use_http_fallback if hasattr(auth_email_service, 'use_http_fallback') else False,
+                    'smtp_config': auth_email_service.working_config['name'] if auth_email_service.working_config else 'None'
+                }
+            else:
+                health_info['email_service'] = {
+                    'configured': False,
+                    'enabled': False,
+                    'fallback_mode': True,
+                    'note': 'Email service not initialized'
+                }
+        except Exception as e:
+            health_info['email_service'] = {
+                'error': str(e),
+                'status': 'unavailable'
+            }
+        
+        # Slug status
         try:
             total_content = Content.query.count()
             content_with_slugs = Content.query.filter(
@@ -2223,6 +2307,7 @@ def health_check():
         except Exception as e:
             health_info['slug_status'] = {'error': str(e)}
         
+        # Cast/crew status
         try:
             total_content_persons = ContentPerson.query.count()
             total_persons = Person.query.count()
@@ -2235,6 +2320,7 @@ def health_check():
         except Exception as e:
             health_info['cast_crew_status'] = {'error': str(e)}
         
+        # Support status
         try:
             if 'SupportTicket' in globals():
                 health_info['support_status'] = {
@@ -2259,7 +2345,8 @@ def health_check():
                 'admin_notification_system',
                 'real_time_monitoring',
                 'auth_service_enhanced',
-                'users_service_personalized'
+                'users_service_personalized',
+                'email_fallback_system'
             ],
             'memory_optimizations': 'enabled',
             'unicode_fixes': 'applied',
@@ -2275,6 +2362,7 @@ def health_check():
             'timestamp': datetime.utcnow().isoformat()
         }), 500
 
+# CLI Commands
 @app.cli.command('generate-slugs')
 def generate_slugs():
     try:
@@ -2353,11 +2441,13 @@ def populate_cast_crew_cli():
         print(f"Failed to populate cast/crew: {e}")
         logger.error(f"CLI cast/crew population error: {e}")
 
+# Database initialization
 def create_tables():
     try:
         with app.app_context():
             db.create_all()
             
+            # Create default admin user if not exists
             admin = User.query.filter_by(username='admin').first()
             if not admin:
                 admin = User(
@@ -2370,14 +2460,17 @@ def create_tables():
                 db.session.commit()
                 logger.info("Admin user created with username: admin, password: admin123")
             
+            # Start support monitoring
             setup_support_monitoring()
             
             logger.info("Database tables created successfully including support tables with monitoring")
     except Exception as e:
         logger.error(f"Database initialization error: {e}")
 
+# Initialize database
 create_tables()
 
+# Main execution
 if __name__ == '__main__':
     print("=== Running Flask in development mode with Full Support Management ===")
     port = int(os.environ.get('PORT', 5000))
@@ -2396,7 +2489,7 @@ else:
     print(f"Users service status: {'Integrated' if 'users_bp' in app.blueprints else 'Not integrated'}")
     print(f"Admin support management: Fully enabled")
     print(f"Real-time notifications: Enabled")
-    print(f"Email notifications: Enabled")
+    print(f"Email notifications: Enabled (with fallback)")
     print(f"Telegram integration: Enabled")
     print(f"Background monitoring: Active")
     print(f"Performance optimizations: Applied")
@@ -2404,7 +2497,7 @@ else:
     print("\n=== Support Management Features ===")
     print("✅ Complete support ticket management")
     print("✅ Real-time admin notifications")
-    print("✅ Email alerts for urgent issues")
+    print("✅ Email alerts for urgent issues (with fallback)")
     print("✅ Telegram channel integration")
     print("✅ FAQ management system")
     print("✅ Feedback collection and review")
@@ -2412,8 +2505,21 @@ else:
     print("✅ Comprehensive analytics dashboard")
     print("✅ Automated background monitoring")
     print("✅ Webhook support for integrations")
-    print("✅ Enhanced authentication with email")
+    print("✅ Enhanced authentication with email fallback")
     print("✅ Personalized user recommendations")
+    
+    print("\n=== Email Service Status ===")
+    try:
+        from services.auth import email_service
+        if email_service:
+            if email_service.email_enabled:
+                print(f"✅ Email service ENABLED via {email_service.working_config['name'] if email_service.working_config else 'Unknown'}")
+            else:
+                print("⚠️ Email service in FALLBACK MODE - direct links will be provided")
+        else:
+            print("❌ Email service NOT INITIALIZED")
+    except:
+        print("❌ Email service status UNKNOWN")
     
     print("\n=== Registered Routes ===")
     for rule in app.url_map.iter_rules():

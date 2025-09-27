@@ -365,3 +365,29 @@ memorize my backend/services/users.py file
 1.	Continuously tracks user interactions (search history, views, favorites, watchlist, ratings) and Analyze storylines, synopsis, genres.
 so for example if an user like an film like rrr, The Shawshank Redemption, The Godfather, The Prestige, bahubali like this if the users  have some contents in  Favorites, Watchlist  it should analaize that what is user whats and what user like to watch and what type and what kind of content is users Favorites, Watchlist and if user have some preferrences like genre and language we should
 first find the user preferred language content recommendation and followed by other and it should continously anlaze the users intersets and find and deliver the recommendations to the user 
+
+
+
+
+
+
+
+
+
+
+
+
+this is my backend/services/personalized.py file make this even more better for this and add the endpoints and make the updated in users.py file
+
+1. Deep Taste Analyzer
+•	Emotional Tone Analysis: Identifies if users prefer intense/gripping, heartwarming, dark/gritty, epic/grand content
+•	Storytelling Style Detection: Complex narratives, character-driven, action spectacle, psychological mind-bending
+•	Cultural Pattern Recognition: Telugu cinema, Bollywood, Hollywood blockbuster, indie/arthouse preferences
+•	Quality Standards Assessment: Determines user's quality threshold and sensitivity
+•	Taste Evolution Tracking: Identifies emerging interests and taste stability
+2. Intelligent Recommendation Generator
+•	Detailed Match Scoring: Multi-dimensional scoring with emotional tone, themes, quality, and similarity
+•	Sophisticated Reasoning: Generates specific explanations like "Because you loved the intricate plot of X, you'll enjoy Y"
+•	Language-First Filtering: Strict language prioritization with cultural pattern matching
+•	Hidden Gem Discovery: Identifies high-quality, low-popularity content matching user taste
+•	Confidence Levels: Assigns confidence levels (very high, high, medium, low) to each recommendation

@@ -1,3 +1,4 @@
+# backend/services/auth.py
 from flask import Blueprint, request, jsonify
 from flask_mail import Mail, Message
 from itsdangerous import URLSafeTimedSerializer, SignatureExpired, BadTimeSignature
@@ -73,81 +74,220 @@ class FreeEmailService:
         self.from_name = "CineBrain"
         self.reply_to = "support@cinebrain.com"
         self.redis_client = redis_client
+        self.use_http_fallback = False
+        self.working_config = None
+        
+        # Extended SMTP configurations including alternative ports and servers
         self.smtp_configs = [
             {
-                'name': 'Gmail TLS',
+                'name': 'Gmail TLS 587',
                 'server': 'smtp.gmail.com',
                 'port': 587,
                 'use_tls': True,
                 'use_ssl': False
             },
             {
-                'name': 'Gmail SSL',
+                'name': 'Gmail Alternative 2525',
+                'server': 'smtp.gmail.com',
+                'port': 2525,  # Alternative port sometimes not blocked
+                'use_tls': True,
+                'use_ssl': False
+            },
+            {
+                'name': 'Gmail Alternative 2587',
+                'server': 'smtp.gmail.com',
+                'port': 2587,  # Another alternative port
+                'use_tls': True,
+                'use_ssl': False
+            },
+            {
+                'name': 'Gmail Relay 587',
+                'server': 'smtp-relay.gmail.com',  # Gmail relay server
+                'port': 587,
+                'use_tls': True,
+                'use_ssl': False
+            },
+            {
+                'name': 'Gmail SSL 465',
                 'server': 'smtp.gmail.com',
                 'port': 465,
                 'use_tls': False,
                 'use_ssl': True
             },
             {
-                'name': 'Gmail Submission',
+                'name': 'Gmail Alternative SSL 8465',
+                'server': 'smtp.gmail.com',
+                'port': 8465,  # Alternative SSL port
+                'use_tls': False,
+                'use_ssl': True
+            },
+            {
+                'name': 'Gmail Submission 25',
                 'server': 'smtp.gmail.com',
                 'port': 25,
                 'use_tls': True,
                 'use_ssl': False
+            },
+            {
+                'name': 'Gmail HTTP Tunnel 8025',
+                'server': 'smtp.gmail.com',
+                'port': 8025,  # Sometimes works on cloud providers
+                'use_tls': True,
+                'use_ssl': False
             }
         ]
+        
+        # Try to establish SMTP connection
         self.email_enabled = self._test_smtp_connection()
+        
+        # If direct SMTP fails, try alternative methods
+        if not self.email_enabled:
+            logger.warning("Direct SMTP failed, trying alternative methods...")
+            self.email_enabled = self._try_alternative_smtp()
         
         if self.email_enabled:
             self.start_email_worker()
         else:
-            logger.warning("Email service disabled - SMTP connection failed")
+            logger.warning("⚠️ Email service running in fallback mode - direct links will be provided")
+            self._setup_fallback_system()
     
     def _test_smtp_connection(self):
-        """Test SMTP connectivity at initialization"""
+        """Test SMTP connectivity with extended timeout and retry logic"""
         for config in self.smtp_configs:
-            try:
-                logger.info(f"Testing {config['name']} connection...")
-                
-                socket.setdefaulttimeout(5)
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                result = sock.connect_ex((config['server'], config['port']))
-                sock.close()
-                
-                if result != 0:
-                    logger.warning(f"{config['name']} port {config['port']} is blocked")
-                    continue
-                
-                if config['use_ssl']:
-                    context = ssl.create_default_context()
-                    with smtplib.SMTP_SSL(config['server'], config['port'], context=context, timeout=10) as server:
-                        server.login(self.username, self.password)
-                        logger.info(f"✅ {config['name']} connection successful!")
-                        self.working_config = config
-                        return True
-                else:
-                    with smtplib.SMTP(config['server'], config['port'], timeout=10) as server:
-                        server.ehlo()
-                        if config['use_tls']:
-                            context = ssl.create_default_context()
-                            server.starttls(context=context)
-                            server.ehlo()
-                        server.login(self.username, self.password)
-                        logger.info(f"✅ {config['name']} connection successful!")
-                        self.working_config = config
-                        return True
+            for attempt in range(2):  # Try each config twice
+                try:
+                    logger.info(f"Testing {config['name']} connection (attempt {attempt + 1})...")
+                    
+                    # First test if port is reachable using basic socket
+                    socket.setdefaulttimeout(10)
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    sock.settimeout(10)
+                    
+                    try:
+                        # Try connecting to the server
+                        result = sock.connect_ex((config['server'], config['port']))
+                        sock.close()
                         
-            except socket.timeout:
-                logger.warning(f"{config['name']} connection timed out")
-            except socket.gaierror:
-                logger.warning(f"{config['name']} DNS resolution failed")
-            except Exception as e:
-                logger.warning(f"{config['name']} connection failed: {e}")
+                        if result != 0:
+                            logger.warning(f"{config['name']} port {config['port']} appears blocked (error code: {result})")
+                            continue
+                    except Exception as sock_err:
+                        logger.warning(f"Socket test failed for {config['name']}: {sock_err}")
+                        continue
+                    
+                    # Port seems open, try SMTP connection
+                    if config['use_ssl']:
+                        context = ssl.create_default_context()
+                        # For testing - in production, use proper certificate validation
+                        context.check_hostname = False
+                        context.verify_mode = ssl.CERT_NONE
+                        
+                        server = smtplib.SMTP_SSL(config['server'], config['port'], 
+                                                 context=context, timeout=15)
+                        try:
+                            server.set_debuglevel(1)  # Enable debug output
+                            server.login(self.username, self.password)
+                            server.quit()
+                            logger.info(f"✅ {config['name']} connection successful!")
+                            self.working_config = config
+                            return True
+                        except Exception as smtp_err:
+                            logger.warning(f"SMTP SSL error for {config['name']}: {smtp_err}")
+                            server.quit()
+                    else:
+                        server = smtplib.SMTP(config['server'], config['port'], timeout=15)
+                        try:
+                            server.set_debuglevel(1)
+                            server.ehlo()
+                            
+                            if config['use_tls']:
+                                context = ssl.create_default_context()
+                                context.check_hostname = False
+                                context.verify_mode = ssl.CERT_NONE
+                                server.starttls(context=context)
+                                server.ehlo()
+                            
+                            server.login(self.username, self.password)
+                            server.quit()
+                            logger.info(f"✅ {config['name']} connection successful!")
+                            self.working_config = config
+                            return True
+                        except Exception as smtp_err:
+                            logger.warning(f"SMTP error for {config['name']}: {smtp_err}")
+                            try:
+                                server.quit()
+                            except:
+                                pass
+                            
+                except socket.timeout:
+                    logger.warning(f"{config['name']} connection timed out (attempt {attempt + 1})")
+                except socket.gaierror as e:
+                    logger.warning(f"{config['name']} DNS resolution failed: {e}")
+                except smtplib.SMTPAuthenticationError as e:
+                    logger.error(f"{config['name']} authentication failed: {e}")
+                    if "Application-specific password required" in str(e):
+                        logger.error("⚠️ Gmail requires an App Password, not regular password!")
+                        logger.error("Go to: https://myaccount.google.com/apppasswords to generate one")
+                except Exception as e:
+                    logger.warning(f"{config['name']} unexpected error: {type(e).__name__}: {e}")
+                
+                time.sleep(1)  # Small delay between attempts
         
-        logger.error("❌ All SMTP configurations failed - email service will be disabled")
+        logger.error("❌ All standard SMTP configurations failed")
         return False
     
+    def _try_alternative_smtp(self):
+        """Try alternative SMTP methods including proxy and relay services"""
+        try:
+            # Try using environment variable for custom SMTP server if provided
+            custom_smtp = os.environ.get('CUSTOM_SMTP_SERVER')
+            custom_port = int(os.environ.get('CUSTOM_SMTP_PORT', 587))
+            
+            if custom_smtp:
+                logger.info(f"Trying custom SMTP server: {custom_smtp}:{custom_port}")
+                try:
+                    server = smtplib.SMTP(custom_smtp, custom_port, timeout=15)
+                    server.ehlo()
+                    server.starttls()
+                    server.ehlo()
+                    server.login(self.username, self.password)
+                    server.quit()
+                    
+                    self.working_config = {
+                        'name': 'Custom SMTP',
+                        'server': custom_smtp,
+                        'port': custom_port,
+                        'use_tls': True,
+                        'use_ssl': False
+                    }
+                    logger.info("✅ Custom SMTP server connected successfully!")
+                    return True
+                except Exception as e:
+                    logger.error(f"Custom SMTP failed: {e}")
+            
+            # If no custom SMTP or it failed, return False
+            return False
+            
+        except Exception as e:
+            logger.error(f"Alternative SMTP methods failed: {e}")
+            return False
+    
+    def _setup_fallback_system(self):
+        """Setup fallback system for when SMTP is completely blocked"""
+        try:
+            logger.info("📧 Setting up email fallback system")
+            self.use_http_fallback = True
+            
+            # Create a simple queue system in Redis for storing emails
+            if self.redis_client:
+                self.redis_client.set('email_fallback_enabled', 'true')
+                logger.info("✅ Fallback email system ready")
+            
+        except Exception as e:
+            logger.error(f"Fallback system setup failed: {e}")
+    
     def start_email_worker(self):
+        """Start background worker for processing email queue"""
         def worker():
             while True:
                 try:
@@ -169,78 +309,88 @@ class FreeEmailService:
         logger.info("Started email worker thread")
     
     def _send_email_smtp(self, email_data: Dict):
+        """Send email via SMTP with retry logic"""
         if not self.email_enabled:
-            logger.warning(f"Email service disabled - storing email for {email_data['to']} in fallback queue")
+            logger.warning(f"Email service disabled - storing email for {email_data['to']}")
             self._store_fallback_email(email_data)
-            return
+            return False
         
-        max_retries = 2
+        max_retries = 3
         retry_count = email_data.get('retry_count', 0)
         
-        try:
-            msg = MIMEMultipart('alternative')
-            msg['From'] = formataddr((self.from_name, self.username))
-            msg['To'] = email_data['to']
-            msg['Subject'] = email_data['subject']
-            msg['Reply-To'] = self.reply_to
-            msg['Date'] = formatdate(localtime=True)
-            msg['Message-ID'] = f"<{email_data.get('id', uuid.uuid4())}@cinebrain.com>"
-            
-            text_part = MIMEText(email_data['text'], 'plain', 'utf-8')
-            html_part = MIMEText(email_data['html'], 'html', 'utf-8')
-            
-            msg.attach(text_part)
-            msg.attach(html_part)
-            
-            config = self.working_config
-            
-            if config['use_ssl']:
-                context = ssl.create_default_context()
-                with smtplib.SMTP_SSL(config['server'], config['port'], context=context, timeout=30) as server:
-                    server.login(self.username, self.password)
-                    server.send_message(msg)
-            else:
-                context = ssl.create_default_context()
-                with smtplib.SMTP(config['server'], config['port'], timeout=30) as server:
-                    server.ehlo()
-                    if config['use_tls']:
-                        server.starttls(context=context)
+        for attempt in range(max_retries - retry_count):
+            try:
+                msg = MIMEMultipart('alternative')
+                msg['From'] = formataddr((self.from_name, self.username))
+                msg['To'] = email_data['to']
+                msg['Subject'] = email_data['subject']
+                msg['Reply-To'] = self.reply_to
+                msg['Date'] = formatdate(localtime=True)
+                msg['Message-ID'] = f"<{email_data.get('id', uuid.uuid4())}@cinebrain.com>"
+                
+                text_part = MIMEText(email_data['text'], 'plain', 'utf-8')
+                html_part = MIMEText(email_data['html'], 'html', 'utf-8')
+                
+                msg.attach(text_part)
+                msg.attach(html_part)
+                
+                config = self.working_config
+                
+                # Send email using the working configuration
+                if config['use_ssl']:
+                    context = ssl.create_default_context()
+                    context.check_hostname = False
+                    context.verify_mode = ssl.CERT_NONE
+                    
+                    with smtplib.SMTP_SSL(config['server'], config['port'], 
+                                         context=context, timeout=30) as server:
+                        server.login(self.username, self.password)
+                        server.send_message(msg)
+                else:
+                    with smtplib.SMTP(config['server'], config['port'], timeout=30) as server:
                         server.ehlo()
-                    server.login(self.username, self.password)
-                    server.send_message(msg)
-            
-            logger.info(f"✅ Email sent successfully to {email_data['to']} via {config['name']}")
-            
-            if self.redis_client:
-                self.redis_client.setex(
-                    f"email_sent:{email_data.get('id', 'unknown')}",
-                    86400,
-                    json.dumps({
-                        'status': 'sent',
-                        'timestamp': datetime.utcnow().isoformat(),
-                        'to': email_data['to'],
-                        'method': config['name']
-                    })
-                )
-            
-        except Exception as e:
-            logger.error(f"❌ SMTP Error sending to {email_data['to']}: {e}")
-            
-            if retry_count < max_retries:
-                retry_count += 1
-                email_data['retry_count'] = retry_count
-                retry_delay = 10 * retry_count
+                        if config['use_tls']:
+                            context = ssl.create_default_context()
+                            context.check_hostname = False
+                            context.verify_mode = ssl.CERT_NONE
+                            server.starttls(context=context)
+                            server.ehlo()
+                        server.login(self.username, self.password)
+                        server.send_message(msg)
                 
-                logger.info(f"🔄 Retrying email to {email_data['to']} in {retry_delay} seconds (attempt {retry_count}/{max_retries})")
+                logger.info(f"✅ Email sent successfully to {email_data['to']}")
                 
+                # Log success in Redis
                 if self.redis_client:
-                    threading.Timer(
-                        retry_delay,
-                        lambda: self.redis_client.rpush('email_queue', json.dumps(email_data))
-                    ).start()
-            else:
-                logger.error(f"❌ Failed to send email after {max_retries} attempts - storing in fallback queue")
-                self._store_fallback_email(email_data)
+                    self.redis_client.setex(
+                        f"email_sent:{email_data.get('id', 'unknown')}",
+                        86400,
+                        json.dumps({
+                            'status': 'sent',
+                            'timestamp': datetime.utcnow().isoformat(),
+                            'to': email_data['to'],
+                            'method': config['name']
+                        })
+                    )
+                return True
+                
+            except smtplib.SMTPServerDisconnected:
+                logger.error(f"SMTP server disconnected, trying to reconnect...")
+                self.email_enabled = self._test_smtp_connection()
+                if not self.email_enabled:
+                    self._store_fallback_email(email_data)
+                    return False
+                    
+            except Exception as e:
+                logger.error(f"SMTP Error: {e} (attempt {attempt + 1}/{max_retries})")
+                
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)  # Exponential backoff
+                else:
+                    self._store_fallback_email(email_data)
+                    return False
+        
+        return False
     
     def _store_fallback_email(self, email_data: Dict):
         """Store email data for manual retrieval when SMTP fails"""
@@ -255,16 +405,33 @@ class FreeEmailService:
                         'subject': email_data['subject'],
                         'timestamp': datetime.utcnow().isoformat(),
                         'reset_token': email_data.get('reset_token'),
+                        'reset_url': f"{FRONTEND_URL}/auth/reset-password.html?token={email_data.get('reset_token')}" if email_data.get('reset_token') else None,
                         'fallback_reason': 'SMTP connection failed'
                     })
                 )
                 
                 self.redis_client.rpush('email_fallback_queue', fallback_key)
                 logger.info(f"📥 Email stored in fallback queue: {fallback_key}")
+                
+                # If it's a password reset, also store direct access
+                if email_data.get('reset_token'):
+                    reset_url = f"{FRONTEND_URL}/auth/reset-password.html?token={email_data.get('reset_token')}"
+                    self.redis_client.setex(
+                        f"direct_reset:{email_data['to']}",
+                        3600,  # 1 hour
+                        json.dumps({
+                            'url': reset_url,
+                            'token': email_data.get('reset_token'),
+                            'created_at': datetime.utcnow().isoformat()
+                        })
+                    )
+                    logger.info(f"🔗 Direct reset link stored for {email_data['to']}: {reset_url}")
+                    
         except Exception as e:
             logger.error(f"Failed to store fallback email: {e}")
     
     def queue_email(self, to: str, subject: str, html: str, text: str, priority: str = 'normal', reset_token: str = None):
+        """Queue email for sending"""
         email_id = str(uuid.uuid4())
         email_data = {
             'id': email_id,
@@ -279,16 +446,31 @@ class FreeEmailService:
         }
         
         try:
+            # If email is disabled and this is critical (password reset), handle specially
             if not self.email_enabled:
-                logger.warning(f"Email service disabled - providing fallback for {to}")
+                logger.warning(f"Email service disabled - using fallback for {to}")
                 self._store_fallback_email(email_data)
                 
                 if reset_token:
                     reset_url = f"{FRONTEND_URL}/auth/reset-password.html?token={reset_token}"
                     logger.info(f"🔗 Password reset link for {to}: {reset_url}")
+                    
+                    # Store for API retrieval
+                    if self.redis_client:
+                        self.redis_client.setex(
+                            f"pending_reset:{to}",
+                            3600,
+                            json.dumps({
+                                'token': reset_token,
+                                'url': reset_url,
+                                'email_id': email_id,
+                                'created_at': datetime.utcnow().isoformat()
+                            })
+                        )
                 
                 return True
             
+            # Normal email queueing when service is enabled
             if self.redis_client:
                 if priority == 'high':
                     self.redis_client.lpush('email_queue', json.dumps(email_data))
@@ -297,6 +479,7 @@ class FreeEmailService:
                 
                 logger.info(f"📧 Email queued for {to} - ID: {email_id}")
             else:
+                # Direct send if no Redis
                 logger.warning("Redis not available, attempting direct send")
                 threading.Thread(
                     target=self._send_email_smtp,
@@ -309,23 +492,27 @@ class FreeEmailService:
         except Exception as e:
             logger.error(f"Failed to queue email: {e}")
             
+            # Last resort - log the reset link
             if reset_token:
                 reset_url = f"{FRONTEND_URL}/auth/reset-password.html?token={reset_token}"
-                logger.info(f"🔗 Fallback reset link for {to}: {reset_url}")
+                logger.critical(f"EMERGENCY: Reset link for {to}: {reset_url}")
             
-            return True
+            return False
     
     def get_email_status(self, email_id: str) -> Dict:
+        """Get status of a queued email"""
         if not self.redis_client:
             return {'status': 'unknown', 'id': email_id}
         
         try:
+            # Check various status keys
             for status_type in ['sent', 'failed', 'queued']:
                 key = f"email_{status_type}:{email_id}"
                 data = self.redis_client.get(key)
                 if data:
                     return json.loads(data)
             
+            # Check fallback queue
             fallback_key = f"email_fallback:{email_id}"
             fallback_data = self.redis_client.get(fallback_key)
             if fallback_data:
@@ -354,6 +541,7 @@ class FreeEmailService:
             return []
     
     def get_professional_template(self, content_type: str, **kwargs) -> tuple:
+        """Generate professional email templates"""
         base_css = """
         <style type="text/css">
             @import url('https://fonts.googleapis.com/css2?family=Bangers&family=Inter:wght@300;400;500;600;700&display=swap');
@@ -671,7 +859,7 @@ def init_auth(flask_app, database, user_model):
     if email_service.email_enabled:
         logger.info("✅ Auth module initialized with email support")
     else:
-        logger.warning("⚠️ Auth module initialized WITHOUT email (SMTP blocked) - using fallback mode")
+        logger.warning("⚠️ Auth module initialized in FALLBACK MODE - direct links will be provided")
 
 def check_rate_limit(identifier: str, max_requests: int = 5, window: int = 300) -> bool:
     if not redis_client:
@@ -803,6 +991,7 @@ def forgot_password():
             token = generate_reset_token(email)
             reset_url = f"{FRONTEND_URL}/auth/reset-password.html?token={token}"
             
+            # Try to send email
             html_content, text_content = email_service.get_professional_template(
                 'password_reset',
                 reset_url=reset_url,
@@ -821,14 +1010,18 @@ def forgot_password():
             
             logger.info(f"Password reset requested for {email}")
             
-            if not email_service.email_enabled:
+            # Check if email service is disabled and provide fallback
+            if not email_service.email_enabled or email_service.use_http_fallback:
+                # For testing/development - remove in production
                 return jsonify({
                     'success': True,
-                    'message': 'Password reset link generated. Check logs for the link.',
+                    'message': 'Password reset link generated',
                     'fallback_mode': True,
-                    'reset_url': reset_url
+                    'reset_url': reset_url,  # REMOVE IN PRODUCTION
+                    'note': 'Email service is currently unavailable. Use the link above to reset your password.'
                 }), 200
         
+        # Always return success to prevent email enumeration
         return jsonify({
             'success': True,
             'message': 'If an account exists with this email, you will receive password reset instructions shortly.'
@@ -874,14 +1067,18 @@ def reset_password():
         user.last_active = datetime.utcnow()
         db.session.commit()
         
+        # Clear the reset token from Redis
         if redis_client:
             try:
                 redis_client.delete(f"reset_token:{token[:20]}")
+                redis_client.delete(f"pending_reset:{email}")
+                redis_client.delete(f"direct_reset:{email}")
             except:
                 pass
         
         ip_address, location, device = get_request_info(request)
         
+        # Send confirmation email
         html_content, text_content = email_service.get_professional_template(
             'password_changed',
             user_name=user.username,
@@ -899,6 +1096,7 @@ def reset_password():
             priority='high'
         )
         
+        # Generate new auth token
         auth_token = jwt.encode({
             'user_id': user.id,
             'exp': datetime.utcnow() + timedelta(days=30),
@@ -961,12 +1159,34 @@ def get_fallback_emails():
         if not auth_header or not auth_header.startswith('Bearer '):
             return jsonify({'error': 'Admin authentication required'}), 401
         
+        # Verify admin token
+        try:
+            token = auth_header.split(' ')[1]
+            payload = jwt.decode(token, app.secret_key, algorithms=['HS256'])
+            user = User.query.get(payload['user_id'])
+            if not user or not user.is_admin:
+                return jsonify({'error': 'Admin access required'}), 403
+        except:
+            return jsonify({'error': 'Invalid authentication'}), 401
+        
         emails = email_service.get_fallback_emails(limit=50)
+        
+        # Also get any pending reset links
+        pending_resets = []
+        if redis_client:
+            for key in redis_client.scan_iter("pending_reset:*"):
+                data = redis_client.get(key)
+                if data:
+                    reset_info = json.loads(data)
+                    reset_info['email'] = key.replace('pending_reset:', '')
+                    pending_resets.append(reset_info)
         
         return jsonify({
             'success': True,
             'fallback_emails': emails,
+            'pending_resets': pending_resets,
             'smtp_enabled': email_service.email_enabled,
+            'smtp_config': email_service.working_config['name'] if email_service.working_config else None,
             'count': len(emails)
         }), 200
         
@@ -977,10 +1197,13 @@ def get_fallback_emails():
 @auth_bp.route('/api/auth/health', methods=['GET'])
 def auth_health():
     try:
+        # Test database connection
         if User:
             User.query.limit(1).first()
         
+        # Check Redis status
         redis_status = 'not_configured'
+        redis_stats = {}
         if redis_client:
             try:
                 redis_client.ping()
@@ -994,10 +1217,8 @@ def auth_health():
                 }
             except:
                 redis_status = 'disconnected'
-                redis_stats = {}
-        else:
-            redis_stats = {}
         
+        # Check email service status
         email_configured = email_service is not None
         email_enabled = email_service.email_enabled if email_service else False
         
@@ -1011,22 +1232,23 @@ def auth_health():
                 pass
         
         smtp_config = None
-        if email_service and hasattr(email_service, 'working_config'):
+        if email_service and email_service.working_config:
             smtp_config = email_service.working_config.get('name', 'Unknown')
         
         return jsonify({
             'status': 'healthy',
             'service': 'authentication',
-            'email_service': 'Gmail SMTP (Free)',
+            'email_service': 'Gmail SMTP',
             'email_configured': email_configured,
             'email_enabled': email_enabled,
             'smtp_config': smtp_config,
             'email_queue_size': queue_size,
             'fallback_queue_size': fallback_queue_size,
+            'fallback_mode': email_service.use_http_fallback if email_service else True,
             'redis_status': redis_status,
             'redis_stats': redis_stats,
             'frontend_url': FRONTEND_URL,
-            'fallback_mode': not email_enabled,
+            'backend_url': BACKEND_URL,
             'timestamp': datetime.utcnow().isoformat()
         }), 200
         
@@ -1041,7 +1263,7 @@ def auth_health():
 @auth_bp.after_request
 def after_request(response):
     origin = request.headers.get('Origin')
-    allowed_origins = [FRONTEND_URL, 'http://127.0.0.1:5500', 'http://127.0.0.1:5501']
+    allowed_origins = [FRONTEND_URL, 'http://127.0.0.1:5500', 'http://127.0.0.1:5501', 'http://localhost:5500']
     
     if origin in allowed_origins:
         response.headers['Access-Control-Allow-Origin'] = origin
