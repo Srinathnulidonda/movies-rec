@@ -265,6 +265,7 @@ class SlugManager:
             content_type = 'movie'
             clean_slug = slug
             
+            # Handle content type prefixes
             if slug.startswith('anime-'):
                 content_type = 'anime'
                 clean_slug = slug[6:]
@@ -278,6 +279,7 @@ class SlugManager:
                 content_type = 'person'
                 clean_slug = slug[7:]
             
+            # Extract year from end
             year_match = re.search(r'-(\d{4})$', clean_slug)
             year = None
             title_slug = clean_slug
@@ -287,6 +289,7 @@ class SlugManager:
                 title_slug = clean_slug[:year_match.start()]
                 
                 if 1900 <= year <= 2030:
+                    # Convert slug to title with smart formatting
                     title = SlugManager._slug_to_title(title_slug)
                     return {
                         'title': title,
@@ -294,6 +297,7 @@ class SlugManager:
                         'content_type': content_type
                     }
             
+            # No year found or invalid year
             title = SlugManager._slug_to_title(title_slug)
             return {
                 'title': title,
@@ -310,24 +314,24 @@ class SlugManager:
             }
     @staticmethod
     def _slug_to_title(slug: str) -> str:
+        """Convert slug to title with smart formatting for common patterns"""
         try:
+            # Basic conversion
             title = slug.replace('-', ' ').title()
             
+            # Handle specific patterns
+            # Mission: Impossible pattern
             if 'mission impossible' in title.lower():
                 title = re.sub(r'Mission Impossible', 'Mission: Impossible', title, flags=re.IGNORECASE)
             
-            title = re.sub(r'\bDc\b', 'DC', title)
-            title = re.sub(r'\bMcu\b', 'MCU', title)
-            title = re.sub(r'\bUk\b', 'UK', title)
-            title = re.sub(r'\bUs\b', 'US', title)
-            title = re.sub(r'\bTv\b', 'TV', title)
-            title = re.sub(r'\bF1\b', 'F1', title)
-            title = re.sub(r'\bF2\b', 'F2', title)
-            title = re.sub(r'\bUfc\b', 'UFC', title)
-            title = re.sub(r'\bWwe\b', 'WWE', title)
-            title = re.sub(r'\bNba\b', 'NBA', title)
-            title = re.sub(r'\bNfl\b', 'NFL', title)
+            # Other common franchise patterns
+            title = re.sub(r'\bDc\b', 'DC', title)  # DC Comics
+            title = re.sub(r'\bMcu\b', 'MCU', title)  # Marvel
+            title = re.sub(r'\bUk\b', 'UK', title)  # United Kingdom
+            title = re.sub(r'\bUs\b', 'US', title)  # United States
+            title = re.sub(r'\bTv\b', 'TV', title)  # Television
             
+            # Roman numerals
             roman_numerals = ['Ii', 'Iii', 'Iv', 'Vi', 'Vii', 'Viii', 'Ix', 'Xi', 'Xii']
             for numeral in roman_numerals:
                 title = re.sub(f'\\b{numeral}\\b', numeral.upper(), title)
@@ -780,46 +784,170 @@ class DetailsService:
             year = info['year']
             content_type = info['content_type']
             
-            logger.info(f"Enhanced fuzzy search for slug '{slug}': title='{title}', year={year}, type={content_type}")
+            logger.info(f"Fuzzy search for slug '{slug}': title='{title}', year={year}, type={content_type}")
             
-            title_variations = self._generate_comprehensive_title_variations(title)
+            # Start with the extracted title
+            title_variations = [title.lower()]
             
-            logger.info(f"Generated {len(title_variations)} title variations for '{title}'")
+            # Add common Mission: Impossible specific patterns
+            if 'mission' in title.lower() and 'impossible' in title.lower():
+                # Try the standard Mission: Impossible format
+                parts = title.lower().split()
+                mission_idx = next((i for i, part in enumerate(parts) if 'mission' in part), -1)
+                impossible_idx = next((i for i, part in enumerate(parts) if 'impossible' in part), -1)
+                
+                if mission_idx >= 0 and impossible_idx >= 0:
+                    # Reconstruct with proper punctuation
+                    before_impossible = ' '.join(parts[:impossible_idx])
+                    after_impossible = ' '.join(parts[impossible_idx+1:])
+                    
+                    title_variations.extend([
+                        f"mission: impossible {after_impossible}".strip(),
+                        f"mission: impossible – {after_impossible}".strip(),
+                        f"mission: impossible - {after_impossible}".strip(),
+                        f"mission impossible {after_impossible}".strip(),
+                    ])
+            
+            # Add general punctuation variations
+            title_variations.extend([
+                title.replace(':', '').lower(),
+                title.replace(':', ' -').lower(),
+                title.replace(':', ' –').lower(),
+                title.replace(':', ' ').lower(),
+                title.replace(' ', '').lower(),
+                title.replace('-', ' ').lower(),
+                title.replace('–', ' ').lower(),
+            ])
+            
+            # Handle franchise patterns (extract main title)
+            if ':' in title or '–' in title or '-' in title:
+                for separator in [':', '–', '-']:
+                    if separator in title:
+                        main_title = title.split(separator)[0].strip()
+                        title_variations.append(main_title.lower())
+                        # Try with common subtitle patterns
+                        subtitle = title.split(separator, 1)[1].strip() if separator in title else ''
+                        if subtitle:
+                            title_variations.extend([
+                                f"{main_title.lower()}: {subtitle.lower()}",
+                                f"{main_title.lower()} – {subtitle.lower()}",
+                                f"{main_title.lower()} - {subtitle.lower()}",
+                                f"{main_title.lower()} {subtitle.lower()}",
+                            ])
+                        break
+            
+            # Try with "the" added/removed
+            if title.lower().startswith('the '):
+                title_variations.append(title[4:].lower())
+            else:
+                title_variations.append(f"the {title.lower()}")
+            
+            # Remove duplicates while preserving order and filter empty strings
+            seen = set()
+            unique_variations = []
+            for variation in title_variations:
+                clean_variation = variation.strip()
+                if clean_variation and clean_variation not in seen and len(clean_variation) > 2:
+                    seen.add(clean_variation)
+                    unique_variations.append(clean_variation)
+            
+            logger.info(f"Trying {len(unique_variations)} title variations: {unique_variations[:5]}...")  # Log first 5
             
             results = []
             
-            strategies = [
-                ('exact_match_with_year', lambda v: self._search_exact_with_year(v, content_type, year)),
-                ('flexible_year_match', lambda v: self._search_flexible_year(v, content_type, year)),
-                ('content_type_match', lambda v: self._search_by_content_type(v, content_type)),
-                ('contains_search', lambda v: self._search_contains(v, content_type)),
-                ('partial_word_match', lambda v: self._search_partial_words(v, content_type)),
-                ('broad_search', lambda v: self._search_broad(v)),
-                ('super_fuzzy', lambda v: self._search_super_fuzzy(v, content_type, year))
-            ]
-            
-            for strategy_name, search_func in strategies:
-                if results and len(results) >= 5:
+            # Try each variation with different strategies
+            for i, variation in enumerate(unique_variations):
+                if results and len(results) >= 3:  # Stop if we found good matches
                     break
                     
-                logger.info(f"Trying strategy: {strategy_name}")
+                logger.info(f"Trying variation {i+1}: '{variation}'")
                 
-                for i, variation in enumerate(title_variations):
-                    if results and len(results) >= 10:
-                        break
+                # Strategy 1: Exact type and year match
+                if content_type and year:
+                    query_results = self.Content.query.filter(
+                        func.lower(self.Content.title).like(f"%{variation}%"),
+                        self.Content.content_type == content_type,
+                        func.extract('year', self.Content.release_date) == year
+                    ).limit(3).all()
                     
-                    try:
-                        strategy_results = search_func(variation)
-                        if strategy_results:
-                            results.extend(strategy_results)
-                            logger.info(f"Strategy '{strategy_name}' found {len(strategy_results)} results for variation '{variation}'")
-                    except Exception as e:
-                        logger.warning(f"Error in strategy {strategy_name} for variation '{variation}': {e}")
+                    if query_results:
+                        logger.info(f"Found {len(query_results)} matches with exact type and year for '{variation}'")
+                        results.extend(query_results)
                         continue
                 
-                if results:
-                    logger.info(f"Strategy '{strategy_name}' completed with {len(results)} total results")
+                # Strategy 2: Type match with flexible year (±2 years)
+                if content_type and year:
+                    query_results = self.Content.query.filter(
+                        func.lower(self.Content.title).like(f"%{variation}%"),
+                        self.Content.content_type == content_type,
+                        func.extract('year', self.Content.release_date).between(year - 2, year + 2)
+                    ).limit(3).all()
+                    
+                    if query_results:
+                        logger.info(f"Found {len(query_results)} matches with type and flexible year for '{variation}'")
+                        results.extend(query_results)
+                        continue
+                
+                # Strategy 3: Type match only
+                if content_type:
+                    query_results = self.Content.query.filter(
+                        func.lower(self.Content.title).like(f"%{variation}%"),
+                        self.Content.content_type == content_type
+                    ).order_by(self.Content.popularity.desc()).limit(5).all()
+                    
+                    if query_results:
+                        logger.info(f"Found {len(query_results)} matches with type only for '{variation}'")
+                        results.extend(query_results)
+                        continue
             
+            # If still no results, try broader searches with the best variations
+            if not results:
+                logger.info("No matches found with specific strategies, trying broader search...")
+                best_variations = unique_variations[:5]  # Try top 5 variations
+                
+                for variation in best_variations:
+                    # Strategy 4: Any content type, flexible year
+                    if year:
+                        query_results = self.Content.query.filter(
+                            func.lower(self.Content.title).like(f"%{variation}%"),
+                            func.extract('year', self.Content.release_date).between(year - 3, year + 3)
+                        ).order_by(self.Content.popularity.desc()).limit(5).all()
+                        
+                        if query_results:
+                            logger.info(f"Found {len(query_results)} matches with flexible criteria for '{variation}'")
+                            results.extend(query_results)
+                            break
+                    
+                    # Strategy 5: Just title matching
+                    query_results = self.Content.query.filter(
+                        func.lower(self.Content.title).like(f"%{variation}%")
+                    ).order_by(self.Content.popularity.desc()).limit(10).all()
+                    
+                    if query_results:
+                        logger.info(f"Found {len(query_results)} matches with title only for '{variation}'")
+                        results.extend(query_results)
+                        break
+            
+            # Final attempt: partial word matching for franchise content
+            if not results and len(unique_variations) > 0:
+                logger.info("Trying partial word matching...")
+                words = [word.strip() for word in title.lower().split() if len(word.strip()) > 2]
+                if len(words) >= 2:
+                    # For Mission: Impossible, try just "mission impossible"
+                    if 'mission' in words and 'impossible' in words:
+                        partial_search = "mission impossible"
+                    else:
+                        partial_search = ' '.join(words[:min(2, len(words))])
+                    
+                    query_results = self.Content.query.filter(
+                        func.lower(self.Content.title).like(f"%{partial_search}%")
+                    ).order_by(self.Content.popularity.desc()).limit(5).all()
+                    
+                    if query_results:
+                        logger.info(f"Found {len(query_results)} matches with partial search '{partial_search}'")
+                        results.extend(query_results)
+            
+            # Remove duplicates
             seen_ids = set()
             unique_results = []
             for result in results:
@@ -828,310 +956,18 @@ class DetailsService:
                     unique_results.append(result)
             
             if unique_results:
-                best_match = self._find_best_match(unique_results, title, year, content_type)
+                # Return best match (highest similarity score)
+                best_match = max(unique_results, key=lambda x: self._calculate_similarity(x.title.lower(), title.lower()))
                 logger.info(f"Best fuzzy match for '{slug}': {best_match.title} (ID: {best_match.id}, slug: {best_match.slug})")
                 return best_match
             
             logger.warning(f"No fuzzy match found for '{slug}' with title '{title}' and year {year}")
+            logger.info(f"Consider fetching '{title}' ({year}) from external APIs")
             return None
             
         except Exception as e:
             logger.error(f"Error in fuzzy content search: {e}")
             return None
-    
-    def _generate_comprehensive_title_variations(self, title: str) -> List[str]:
-        try:
-            variations = []
-            title_lower = title.lower().strip()
-            
-            if not title_lower or len(title_lower) < 1:
-                return [title_lower] if title_lower else []
-            
-            variations.append(title_lower)
-            
-            if len(title_lower) <= 5:
-                variations.extend([
-                    f"{title_lower} movie",
-                    f"{title_lower} film",
-                    f"{title_lower} series",
-                    f"{title_lower} show",
-                    f"{title_lower}:",
-                    f"the {title_lower}",
-                    f"{title_lower} the",
-                    f"{title_lower} 2024",
-                    f"{title_lower} 2025",
-                    f"{title_lower} documentary",
-                    f"{title_lower} season",
-                ])
-                
-                for year in range(2020, 2026):
-                    variations.append(f"{title_lower} {year}")
-                    variations.append(f"{title_lower}-{year}")
-            
-            if title_lower in ['f1', 'f2']:
-                variations.extend([
-                    f"formula {title_lower[-1]}",
-                    f"formula one" if title_lower == 'f1' else f"formula two",
-                    f"{title_lower} racing",
-                    f"{title_lower} grand prix",
-                    f"{title_lower} championship"
-                ])
-            
-            for separator in [':', '–', '-', ' - ', ' – ']:
-                if separator in title:
-                    parts = title.split(separator)
-                    if len(parts) >= 2:
-                        main_part = parts[0].strip().lower()
-                        sub_part = parts[1].strip().lower()
-                        
-                        variations.extend([
-                            main_part,
-                            sub_part,
-                            f"{main_part}: {sub_part}",
-                            f"{main_part} - {sub_part}",
-                            f"{main_part} {sub_part}",
-                            f"{main_part}{sub_part}",
-                        ])
-            
-            variations.extend([
-                title.replace(':', '').lower(),
-                title.replace(':', ' -').lower(),
-                title.replace(':', ' –').lower(),
-                title.replace(':', ' ').lower(),
-                title.replace(' ', '').lower(),
-                title.replace('-', ' ').lower(),
-                title.replace('–', ' ').lower(),
-                title.replace('_', ' ').lower(),
-                title.replace('.', ' ').lower(),
-            ])
-            
-            if title_lower.startswith('the '):
-                variations.append(title_lower[4:])
-            else:
-                variations.append(f"the {title_lower}")
-            
-            if 'mission' in title_lower and 'impossible' in title_lower:
-                parts = title_lower.split()
-                mission_idx = next((i for i, part in enumerate(parts) if 'mission' in part), -1)
-                impossible_idx = next((i for i, part in enumerate(parts) if 'impossible' in part), -1)
-                
-                if mission_idx >= 0 and impossible_idx >= 0:
-                    after_impossible = ' '.join(parts[impossible_idx+1:]) if impossible_idx < len(parts) - 1 else ''
-                    
-                    variations.extend([
-                        f"mission: impossible {after_impossible}".strip(),
-                        f"mission: impossible – {after_impossible}".strip(),
-                        f"mission: impossible - {after_impossible}".strip(),
-                        f"mission impossible {after_impossible}".strip(),
-                        "mission: impossible",
-                        "mission impossible"
-                    ])
-            
-            words = [w.strip() for w in title_lower.split() if len(w.strip()) > 0]
-            if len(words) > 1:
-                for i in range(len(words)):
-                    for j in range(i+1, min(i+4, len(words)+1)):
-                        phrase = ' '.join(words[i:j])
-                        if len(phrase) >= 2:
-                            variations.append(phrase)
-                
-                if len(words) >= 2:
-                    variations.append(' '.join(words[:2]))
-                    variations.append(' '.join(words[-2:]))
-            
-            abbreviations = {
-                'and': '&',
-                '&': 'and',
-                'versus': 'vs',
-                'vs': 'versus',
-                'vs.': 'vs',
-                'doctor': 'dr',
-                'dr': 'doctor',
-                'mister': 'mr',
-                'mr': 'mister'
-            }
-            
-            for old, new in abbreviations.items():
-                if old in title_lower:
-                    variations.append(title_lower.replace(old, new))
-            
-            seen = set()
-            unique_variations = []
-            for var in variations:
-                clean_var = var.strip()
-                if clean_var and clean_var not in seen and len(clean_var) >= 1:
-                    seen.add(clean_var)
-                    unique_variations.append(clean_var)
-            
-            return unique_variations[:50]
-            
-        except Exception as e:
-            logger.error(f"Error generating title variations: {e}")
-            return [title.lower().strip()] if title else []
-    
-    def _search_exact_with_year(self, variation: str, content_type: str, year: Optional[int]) -> List[Any]:
-        if not year or not content_type:
-            return []
-        
-        try:
-            return self.Content.query.filter(
-                func.lower(self.Content.title) == variation,
-                self.Content.content_type == content_type,
-                func.extract('year', self.Content.release_date) == year
-            ).limit(5).all()
-        except Exception:
-            return []
-    
-    def _search_flexible_year(self, variation: str, content_type: str, year: Optional[int]) -> List[Any]:
-        if not year:
-            return []
-        
-        try:
-            return self.Content.query.filter(
-                func.lower(self.Content.title).like(f"%{variation}%"),
-                self.Content.content_type == content_type if content_type else True,
-                func.extract('year', self.Content.release_date).between(year - 3, year + 3)
-            ).order_by(self.Content.popularity.desc()).limit(10).all()
-        except Exception:
-            return []
-    
-    def _search_by_content_type(self, variation: str, content_type: str) -> List[Any]:
-        try:
-            return self.Content.query.filter(
-                func.lower(self.Content.title).like(f"%{variation}%"),
-                self.Content.content_type == content_type if content_type else True
-            ).order_by(self.Content.popularity.desc()).limit(15).all()
-        except Exception:
-            return []
-    
-    def _search_contains(self, variation: str, content_type: str) -> List[Any]:
-        try:
-            results = []
-            
-            exact_results = self.Content.query.filter(
-                func.lower(self.Content.title) == variation
-            ).order_by(self.Content.popularity.desc()).limit(10).all()
-            results.extend(exact_results)
-            
-            if len(results) < 10:
-                contains_results = self.Content.query.filter(
-                    func.lower(self.Content.title).like(f"%{variation}%"),
-                    ~self.Content.id.in_([r.id for r in exact_results])
-                ).order_by(self.Content.popularity.desc()).limit(15 - len(results)).all()
-                results.extend(contains_results)
-            
-            return results
-        except Exception:
-            return []
-    
-    def _search_partial_words(self, variation: str, content_type: str) -> List[Any]:
-        try:
-            words = [w.strip() for w in variation.split() if len(w.strip()) >= 2]
-            if not words:
-                return []
-            
-            conditions = []
-            for word in words[:3]:
-                conditions.append(func.lower(self.Content.title).like(f"%{word}%"))
-            
-            if conditions:
-                return self.Content.query.filter(
-                    and_(*conditions)
-                ).order_by(self.Content.popularity.desc()).limit(10).all()
-            
-            return []
-        except Exception:
-            return []
-    
-    def _search_broad(self, variation: str) -> List[Any]:
-        try:
-            if len(variation) < 2:
-                return []
-            
-            return self.Content.query.filter(
-                func.lower(self.Content.title).like(f"%{variation}%")
-            ).order_by(self.Content.popularity.desc()).limit(20).all()
-        except Exception:
-            return []
-    
-    def _search_super_fuzzy(self, variation: str, content_type: str, year: Optional[int]) -> List[Any]:
-        try:
-            results = []
-            
-            if len(variation) >= 2:
-                for i in range(max(1, len(variation) - 3), len(variation)):
-                    partial = variation[:i]
-                    if len(partial) >= 2:
-                        partial_results = self.Content.query.filter(
-                            func.lower(self.Content.title).like(f"{partial}%")
-                        ).order_by(self.Content.popularity.desc()).limit(5).all()
-                        results.extend(partial_results)
-                
-                for i in range(2, min(len(variation), 6)):
-                    partial = variation[:i]
-                    partial_results = self.Content.query.filter(
-                        func.lower(self.Content.title).like(f"%{partial}%")
-                    ).order_by(self.Content.popularity.desc()).limit(5).all()
-                    results.extend(partial_results)
-            
-            return results[:15]
-        except Exception:
-            return []
-    
-    def _find_best_match(self, results: List[Any], title: str, year: Optional[int], content_type: str) -> Any:
-        try:
-            if not results:
-                return None
-            
-            if len(results) == 1:
-                return results[0]
-            
-            scored_results = []
-            
-            for result in results:
-                score = 0
-                
-                try:
-                    title_similarity = self._calculate_similarity(result.title.lower(), title.lower())
-                    score += title_similarity * 50
-                except Exception:
-                    pass
-                
-                if year and result.release_date:
-                    try:
-                        year_diff = abs(result.release_date.year - year)
-                        if year_diff == 0:
-                            score += 30
-                        elif year_diff <= 1:
-                            score += 20
-                        elif year_diff <= 3:
-                            score += 10
-                    except Exception:
-                        pass
-                
-                if content_type and result.content_type == content_type:
-                    score += 15
-                
-                try:
-                    if result.popularity:
-                        score += min(result.popularity / 100, 10)
-                except Exception:
-                    pass
-                
-                try:
-                    if result.rating:
-                        score += min(result.rating, 10)
-                except Exception:
-                    pass
-                
-                scored_results.append((result, score))
-            
-            scored_results.sort(key=lambda x: x[1], reverse=True)
-            return scored_results[0][0]
-            
-        except Exception as e:
-            logger.error(f"Error finding best match: {e}")
-            return results[0] if results else None
             
     def _calculate_similarity(self, str1: str, str2: str) -> float:
         try:
@@ -1140,9 +976,6 @@ class DetailsService:
             clean_str1 = str1.lower().strip()
             clean_str2 = str2.lower().strip()
             
-            if clean_str1 == clean_str2:
-                return 1.0
-            
             basic_sim = SequenceMatcher(None, clean_str1, clean_str2).ratio()
             
             words1 = set(clean_str1.split())
@@ -1150,7 +983,7 @@ class DetailsService:
             
             if words1 and words2:
                 word_overlap = len(words1.intersection(words2)) / len(words1.union(words2))
-                return 0.6 * basic_sim + 0.4 * word_overlap
+                return 0.7 * basic_sim + 0.3 * word_overlap
             
             return basic_sim
             
@@ -1609,7 +1442,6 @@ class DetailsService:
                 person = self._find_person_fuzzy(person_slug)
                 
                 if not person:
-                    logger.warning(f"Person not found for slug: {person_slug}")
                     return None
             
             if not person.slug:
@@ -1621,432 +1453,24 @@ class DetailsService:
             
             tmdb_data = {}
             if person.tmdb_id and TMDB_API_KEY:
-                logger.info(f"Fetching comprehensive TMDB data for {person.name} (ID: {person.tmdb_id})")
                 tmdb_data = self._fetch_complete_person_details(person.tmdb_id)
-                
-                self._update_person_from_tmdb(person, tmdb_data)
-                
-                if tmdb_data:
-                    self._fetch_and_save_person_credits(person, tmdb_data)
             
-            filmography = self._get_enhanced_filmography(person.id, tmdb_data)
+            filmography = self._get_complete_filmography(person.id)
+            self._update_person_from_tmdb(person, tmdb_data)
             
-            person_details = self._build_comprehensive_person_details(person, tmdb_data, filmography)
-            
-            return person_details
-            
-        except Exception as e:
-            logger.error(f"Error getting person details for slug {person_slug}: {e}")
-            logger.exception(e)
-            return None
-
-    def _fetch_complete_person_details(self, tmdb_id: int) -> Dict:
-        try:
-            url = f"{TMDB_BASE_URL}/person/{tmdb_id}"
-            params = {
-                'api_key': TMDB_API_KEY,
-                'append_to_response': 'images,external_ids,combined_credits,movie_credits,tv_credits,tagged_images'
-            }
-            
-            response = self.session.get(url, params=params, timeout=10)
-            
-            if response.status_code == 200:
-                data = response.json()
-                logger.info(f"Successfully fetched TMDB data for person {tmdb_id}, includes external_ids: {bool(data.get('external_ids'))}")
-                return data
-            else:
-                logger.warning(f"TMDB person API returned {response.status_code} for person {tmdb_id}")
-                return {}
-                
-        except Exception as e:
-            logger.error(f"Error fetching complete person details from TMDB: {e}")
-            return {}
-    
-    def _fetch_and_save_person_credits(self, person: Any, tmdb_data: Dict):
-        try:
-            if not tmdb_data:
-                return
-            
-            movie_credits = tmdb_data.get('movie_credits', {})
-            self._process_person_credits(person, movie_credits.get('cast', []), 'cast', 'movie')
-            self._process_person_credits(person, movie_credits.get('crew', []), 'crew', 'movie')
-            
-            tv_credits = tmdb_data.get('tv_credits', {})
-            self._process_person_credits(person, tv_credits.get('cast', []), 'cast', 'tv')
-            self._process_person_credits(person, tv_credits.get('crew', []), 'crew', 'tv')
-            
-            combined_credits = tmdb_data.get('combined_credits', {})
-            if combined_credits:
-                self._process_person_credits(person, combined_credits.get('cast', []), 'cast', None)
-                self._process_person_credits(person, combined_credits.get('crew', []), 'crew', None)
-            
-            self.db.session.commit()
-            logger.info(f"Successfully saved credits for {person.name}")
-            
-        except Exception as e:
-            logger.error(f"Error fetching/saving person credits: {e}")
-            self.db.session.rollback()
-
-    def _process_person_credits(self, person: Any, credits: List[Dict], role_type: str, content_type: Optional[str]):
-        try:
-            for credit in credits:
-                try:
-                    content = self._get_or_create_content_from_credit(credit, content_type)
-                    if not content:
-                        continue
-                    
-                    if role_type == 'cast':
-                        self._get_or_create_content_person(
-                            content.id, 
-                            person.id, 
-                            'cast',
-                            character=credit.get('character'),
-                            order=credit.get('order', 999)
-                        )
-                    else:
-                        self._get_or_create_content_person(
-                            content.id,
-                            person.id,
-                            'crew',
-                            job=credit.get('job'),
-                            department=credit.get('department')
-                        )
-                        
-                except Exception as e:
-                    logger.warning(f"Error processing credit: {e}")
-                    continue
-                    
-        except Exception as e:
-            logger.error(f"Error processing person credits: {e}")
-
-    def _get_or_create_content_from_credit(self, credit: Dict, content_type: Optional[str]) -> Any:
-        try:
-            tmdb_id = credit.get('id')
-            if not tmdb_id:
-                return None
-            
-            existing = self.Content.query.filter_by(tmdb_id=tmdb_id).first()
-            if existing:
-                return existing
-            
-            if not content_type:
-                media_type = credit.get('media_type', 'movie')
-                content_type = 'tv' if media_type == 'tv' else 'movie'
-            
-            title = credit.get('title') or credit.get('name') or 'Unknown Title'
-            
-            release_date = None
-            year = None
-            date_str = credit.get('release_date') or credit.get('first_air_date')
-            if date_str:
-                try:
-                    release_date = datetime.strptime(date_str, '%Y-%m-%d').date()
-                    year = release_date.year
-                except:
-                    pass
-            
-            slug = SlugManager.generate_unique_slug(
-                self.db, self.Content, title, year, content_type
-            )
-            
-            content = self.Content(
-                slug=slug,
-                tmdb_id=tmdb_id,
-                title=title,
-                original_title=credit.get('original_title') or credit.get('original_name'),
-                content_type=content_type,
-                release_date=release_date,
-                rating=credit.get('vote_average'),
-                vote_count=credit.get('vote_count'),
-                popularity=credit.get('popularity'),
-                overview=credit.get('overview'),
-                poster_path=credit.get('poster_path'),
-                backdrop_path=credit.get('backdrop_path')
-            )
-            
-            self.db.session.add(content)
-            self.db.session.flush()
-            
-            return content
-            
-        except Exception as e:
-            logger.error(f"Error creating content from credit: {e}")
-            return None
-
-    def _get_enhanced_filmography(self, person_id: int, tmdb_data: Dict) -> Dict:
-        try:
-            filmography = {
-                'as_actor': [],
-                'as_director': [],
-                'as_writer': [],
-                'as_producer': [],
-                'as_other_crew': [],
-                'upcoming': [],
-                'by_year': {},
-                'by_decade': {},
-                'statistics': {
-                    'total_projects': 0,
-                    'years_active': 0,
-                    'debut_year': None,
-                    'latest_year': None,
-                    'highest_rated': None,
-                    'most_popular': None,
-                    'average_rating': 0,
-                    'total_votes': 0
-                }
-            }
-            
-            filmography_entries = self.db.session.query(
-                self.ContentPerson, self.Content
-            ).join(
-                self.Content
-            ).filter(
-                self.ContentPerson.person_id == person_id
-            ).order_by(
-                self.Content.release_date.desc().nullslast()
-            ).all()
-            
-            upcoming_from_tmdb = []
-            if tmdb_data:
-                combined_credits = tmdb_data.get('combined_credits', {})
-                for credit_type in ['cast', 'crew']:
-                    for credit in combined_credits.get(credit_type, []):
-                        release_date_str = credit.get('release_date') or credit.get('first_air_date')
-                        if release_date_str:
-                            try:
-                                release_date = datetime.strptime(release_date_str, '%Y-%m-%d').date()
-                                if release_date >= datetime.now().date():
-                                    upcoming_from_tmdb.append((credit, credit_type))
-                            except:
-                                pass
-            
-            years = []
-            all_ratings = []
-            all_popularity = []
-            total_votes = 0
-            current_date = datetime.now().date()
-            
-            for cp, content in filmography_entries:
-                try:
-                    if not content.slug:
-                        try:
-                            SlugManager.update_content_slug(self.db, content)
-                        except Exception:
-                            content.slug = f"content-{content.id}"
-                    
-                    year = None
-                    is_upcoming = False
-                    if content.release_date:
-                        try:
-                            year = int(content.release_date.year)
-                            years.append(year)
-                            if content.release_date >= current_date:
-                                is_upcoming = True
-                        except (AttributeError, TypeError, ValueError):
-                            pass
-                    
-                    rating = 0
-                    try:
-                        if content.rating and isinstance(content.rating, (int, float)):
-                            rating = float(content.rating)
-                            if rating > 0:
-                                all_ratings.append(rating)
-                    except (TypeError, ValueError):
-                        pass
-                    
-                    popularity = 0
-                    try:
-                        if content.popularity and isinstance(content.popularity, (int, float)):
-                            popularity = float(content.popularity)
-                            if popularity > 0:
-                                all_popularity.append(popularity)
-                    except (TypeError, ValueError):
-                        pass
-                    
-                    try:
-                        if content.vote_count and isinstance(content.vote_count, (int, float)):
-                            total_votes += int(content.vote_count)
-                    except (TypeError, ValueError):
-                        pass
-                    
-                    work = {
-                        'id': content.id,
-                        'slug': content.slug,
-                        'title': content.title,
-                        'original_title': content.original_title,
-                        'year': year,
-                        'content_type': content.content_type,
-                        'poster_path': self._format_image_url(content.poster_path, 'poster'),
-                        'backdrop_path': self._format_image_url(content.backdrop_path, 'backdrop'),
-                        'rating': rating,
-                        'popularity': popularity,
-                        'vote_count': content.vote_count or 0,
-                        'character': cp.character,
-                        'job': cp.job,
-                        'department': cp.department,
-                        'role_type': cp.role_type,
-                        'release_date': content.release_date.isoformat() if content.release_date else None,
-                        'overview': content.overview or '',
-                        'status': 'Upcoming' if is_upcoming else 'Released'
-                    }
-                    
-                    if is_upcoming:
-                        filmography['upcoming'].append(work)
-                    
-                    year_key = str(year) if year else 'Unknown'
-                    if year_key not in filmography['by_year']:
-                        filmography['by_year'][year_key] = []
-                    filmography['by_year'][year_key].append(work)
-                    
-                    if year:
-                        decade = (year // 10) * 10
-                        decade_key = f"{decade}s"
-                        if decade_key not in filmography['by_decade']:
-                            filmography['by_decade'][decade_key] = []
-                        filmography['by_decade'][decade_key].append(work)
-                    
-                    if cp.role_type == 'cast':
-                        filmography['as_actor'].append(work)
-                    elif cp.role_type == 'crew':
-                        job = (cp.job or '').lower()
-                        department = (cp.department or '').lower()
-                        
-                        if 'director' in job or department == 'directing':
-                            filmography['as_director'].append(work)
-                        elif 'writer' in job or 'screenplay' in job or department == 'writing':
-                            filmography['as_writer'].append(work)
-                        elif 'producer' in job or department == 'production':
-                            filmography['as_producer'].append(work)
-                        else:
-                            filmography['as_other_crew'].append(work)
-                            
-                except Exception as e:
-                    logger.warning(f"Error processing filmography entry: {e}")
-                    continue
-            
-            for credit, credit_type in upcoming_from_tmdb:
-                try:
-                    tmdb_id = credit.get('id')
-                    already_exists = any(
-                        work.get('tmdb_id') == tmdb_id for work in filmography['upcoming']
-                    )
-                    
-                    if not already_exists and tmdb_id:
-                        release_date_str = credit.get('release_date') or credit.get('first_air_date')
-                        release_date = None
-                        year = None
-                        
-                        if release_date_str:
-                            try:
-                                release_date = datetime.strptime(release_date_str, '%Y-%m-%d').date()
-                                year = release_date.year
-                            except:
-                                pass
-                        
-                        upcoming_work = {
-                            'id': None,
-                            'tmdb_id': tmdb_id,
-                            'slug': None,
-                            'title': credit.get('title') or credit.get('name', 'Unknown Title'),
-                            'original_title': credit.get('original_title') or credit.get('original_name'),
-                            'year': year,
-                            'content_type': 'tv' if credit.get('media_type') == 'tv' else 'movie',
-                            'poster_path': self._format_image_url(credit.get('poster_path'), 'poster'),
-                            'backdrop_path': self._format_image_url(credit.get('backdrop_path'), 'backdrop'),
-                            'rating': credit.get('vote_average', 0),
-                            'popularity': credit.get('popularity', 0),
-                            'vote_count': credit.get('vote_count', 0),
-                            'character': credit.get('character') if credit_type == 'cast' else None,
-                            'job': credit.get('job') if credit_type == 'crew' else None,
-                            'department': credit.get('department') if credit_type == 'crew' else None,
-                            'role_type': credit_type,
-                            'release_date': release_date.isoformat() if release_date else None,
-                            'overview': credit.get('overview', ''),
-                            'status': 'Upcoming'
-                        }
-                        
-                        filmography['upcoming'].append(upcoming_work)
-                        
-                except Exception as e:
-                    logger.warning(f"Error processing upcoming TMDB credit: {e}")
-                    continue
-            
-            filmography['upcoming'].sort(key=lambda x: x.get('release_date') or '9999-12-31')
-            
-            try:
-                filmography['statistics']['total_projects'] = len(filmography_entries)
-                
-                if years:
-                    valid_years = [y for y in years if isinstance(y, int) and 1900 <= y <= 2030]
-                    if valid_years:
-                        filmography['statistics']['debut_year'] = min(valid_years)
-                        filmography['statistics']['latest_year'] = max(valid_years)
-                        filmography['statistics']['years_active'] = max(valid_years) - min(valid_years) + 1
-                
-                if all_ratings:
-                    filmography['statistics']['average_rating'] = round(sum(all_ratings) / len(all_ratings), 1)
-                    
-                    highest_rated_score = max(all_ratings)
-                    for role_type in ['as_actor', 'as_director', 'as_writer', 'as_producer', 'as_other_crew']:
-                        for work in filmography[role_type]:
-                            if work['rating'] == highest_rated_score:
-                                filmography['statistics']['highest_rated'] = work
-                                break
-                        if filmography['statistics']['highest_rated']:
-                            break
-                
-                if all_popularity:
-                    highest_popularity = max(all_popularity)
-                    for role_type in ['as_actor', 'as_director', 'as_writer', 'as_producer', 'as_other_crew']:
-                        for work in filmography[role_type]:
-                            if work['popularity'] == highest_popularity:
-                                filmography['statistics']['most_popular'] = work
-                                break
-                        if filmography['statistics']['most_popular']:
-                            break
-                
-                filmography['statistics']['total_votes'] = total_votes
-                
-            except Exception as e:
-                logger.warning(f"Error calculating filmography statistics: {e}")
-            
-            total_upcoming = len(filmography['upcoming'])
-            logger.info(f"Retrieved enhanced filmography: {filmography['statistics']['total_projects']} projects, {total_upcoming} upcoming")
-            return filmography
-            
-        except Exception as e:
-            logger.error(f"Error getting enhanced filmography: {e}")
-            return {
-                'as_actor': [], 'as_director': [], 'as_writer': [], 'as_producer': [], 'as_other_crew': [],
-                'upcoming': [], 'by_year': {}, 'by_decade': {}, 'statistics': {}
-            }
-
-    def _build_comprehensive_person_details(self, person: Any, tmdb_data: Dict, filmography: Dict) -> Dict:
-        try:
             also_known_as = []
             try:
                 if person.also_known_as:
-                    if isinstance(person.also_known_as, str):
-                        also_known_as = json.loads(person.also_known_as)
-                    elif isinstance(person.also_known_as, list):
-                        also_known_as = person.also_known_as
+                    also_known_as = json.loads(person.also_known_as)
             except (json.JSONDecodeError, TypeError):
                 pass
             
             if not also_known_as and tmdb_data.get('also_known_as'):
                 also_known_as = tmdb_data['also_known_as']
             
-            personal_info = self._build_enhanced_personal_info(person, tmdb_data, filmography)
-            career_highlights = self._build_enhanced_career_highlights(filmography)
-            images = self._get_person_images(tmdb_data)
-            social_media = self._get_person_social_media(tmdb_data)
-            
-            external_ids = tmdb_data.get('external_ids', {})
-            
             person_details = {
                 'id': person.id,
                 'slug': person.slug,
-                'tmdb_id': person.tmdb_id,
                 'name': person.name,
                 'biography': person.biography or tmdb_data.get('biography', ''),
                 'birthday': person.birthday.isoformat() if person.birthday else tmdb_data.get('birthday'),
@@ -2058,275 +1482,41 @@ class DetailsService:
                 'also_known_as': also_known_as,
                 'gender': person.gender,
                 'filmography': filmography,
-                'images': images,
-                'social_media': social_media,
+                'images': self._get_person_images(tmdb_data),
+                'social_media': self._get_person_social_media(tmdb_data),
                 'total_works': self._calculate_total_works(filmography),
-                'personal_info': personal_info,
-                'career_highlights': career_highlights,
-                'external_ids': external_ids,
-                'known_for': self._get_known_for_works(filmography),
-                'awards_recognition': self._build_awards_info(tmdb_data, filmography),
-                'trivia': self._extract_trivia(person, tmdb_data),
-                'collaborations': self._analyze_collaborations(filmography),
-                'upcoming_projects_count': len(filmography.get('upcoming', [])),
-                'social_media_count': len(social_media)
+                'awards': [],
+                'personal_info': self._build_personal_info(person, tmdb_data),
+                'career_highlights': self._build_career_highlights(filmography),
+                'external_ids': tmdb_data.get('external_ids', {}),
+                'tmdb_id': person.tmdb_id
             }
             
             return person_details
             
         except Exception as e:
-            logger.error(f"Error building comprehensive person details: {e}")
-            return self._get_minimal_person_details(person)
+            logger.error(f"Error getting person details: {e}")
+            return None
 
-    def _build_enhanced_personal_info(self, person: Any, tmdb_data: Dict, filmography: Dict) -> Dict:
+    def _fetch_complete_person_details(self, tmdb_id: int) -> Dict:
         try:
-            personal_info = {
-                'age': None,
-                'age_at_death': None,
-                'zodiac_sign': None,
-                'nationality': None,
-                'birth_name': None,
-                'height': None,
-                'career_span': None,
-                'status': 'Active',
-                'family': {},
-                'education': []
+            url = f"{TMDB_BASE_URL}/person/{tmdb_id}"
+            params = {
+                'api_key': TMDB_API_KEY,
+                'append_to_response': 'images,external_ids,combined_credits,movie_credits,tv_credits'
             }
             
-            if person.birthday:
-                try:
-                    birth_date = person.birthday
-                    if person.deathday:
-                        end_date = person.deathday
-                        personal_info['status'] = 'Deceased'
-                        personal_info['age_at_death'] = end_date.year - birth_date.year
-                        if end_date.month < birth_date.month or (end_date.month == birth_date.month and end_date.day < birth_date.day):
-                            personal_info['age_at_death'] -= 1
-                    else:
-                        today = datetime.now().date()
-                        personal_info['age'] = today.year - birth_date.year
-                        if today.month < birth_date.month or (today.month == birth_date.month and today.day < birth_date.day):
-                            personal_info['age'] -= 1
-                    
-                    personal_info['zodiac_sign'] = self._get_zodiac_sign(birth_date.month, birth_date.day)
-                    
-                except Exception as e:
-                    logger.warning(f"Error calculating age: {e}")
+            response = self.session.get(url, params=params, timeout=10)
             
-            if person.place_of_birth:
-                try:
-                    place_parts = person.place_of_birth.split(',')
-                    if len(place_parts) > 0:
-                        country = place_parts[-1].strip()
-                        personal_info['nationality'] = country
-                except Exception:
-                    pass
-            
-            stats = filmography.get('statistics', {})
-            if stats.get('debut_year') and stats.get('latest_year'):
-                debut = stats['debut_year']
-                latest = stats['latest_year']
-                if isinstance(debut, int) and isinstance(latest, int):
-                    personal_info['career_span'] = f"{debut} - {latest if latest != datetime.now().year else 'Present'}"
-            
-            return personal_info
-            
-        except Exception as e:
-            logger.error(f"Error building enhanced personal info: {e}")
-            return {}
-
-    def _get_zodiac_sign(self, month: int, day: int) -> str:
-        try:
-            zodiac_signs = [
-                (120, "Capricorn"), (218, "Aquarius"), (320, "Pisces"), (420, "Aries"),
-                (521, "Taurus"), (621, "Gemini"), (722, "Cancer"), (823, "Leo"),
-                (923, "Virgo"), (1023, "Libra"), (1122, "Scorpio"), (1222, "Sagittarius"), (1231, "Capricorn")
-            ]
-            
-            date_number = month * 100 + day
-            for date_limit, sign in zodiac_signs:
-                if date_number <= date_limit:
-                    return sign
-            return "Capricorn"
-        except:
-            return ""
-
-    def _build_enhanced_career_highlights(self, filmography: Dict) -> Dict:
-        try:
-            highlights = {
-                'debut_work': None,
-                'breakthrough_role': None,
-                'latest_work': None,
-                'most_successful_decade': None,
-                'genre_expertise': {},
-                'collaboration_frequency': {},
-                'career_phases': [],
-                'notable_achievements': []
-            }
-            
-            stats = filmography.get('statistics', {})
-            
-            if stats.get('debut_year'):
-                debut_year = stats['debut_year']
-                for role_type in ['as_actor', 'as_director', 'as_writer', 'as_producer']:
-                    for work in filmography.get(role_type, []):
-                        if work.get('year') == debut_year:
-                            highlights['debut_work'] = work
-                            break
-                    if highlights['debut_work']:
-                        break
-            
-            if stats.get('latest_year'):
-                latest_year = stats['latest_year']
-                for role_type in ['as_actor', 'as_director', 'as_writer', 'as_producer']:
-                    for work in filmography.get(role_type, []):
-                        if work.get('year') == latest_year:
-                            highlights['latest_work'] = work
-                            break
-                    if highlights['latest_work']:
-                        break
-            
-            decade_stats = {}
-            for decade, works in filmography.get('by_decade', {}).items():
-                decade_stats[decade] = {
-                    'count': len(works),
-                    'avg_rating': 0,
-                    'total_popularity': 0
-                }
+            if response.status_code == 200:
+                return response.json()
+            else:
+                logger.warning(f"TMDB person API returned {response.status_code} for person {tmdb_id}")
+                return {}
                 
-                ratings = [w['rating'] for w in works if w.get('rating', 0) > 0]
-                if ratings:
-                    decade_stats[decade]['avg_rating'] = sum(ratings) / len(ratings)
-                
-                popularity = [w['popularity'] for w in works if w.get('popularity', 0) > 0]
-                if popularity:
-                    decade_stats[decade]['total_popularity'] = sum(popularity)
-            
-            if decade_stats:
-                best_decade = max(decade_stats.items(), 
-                                key=lambda x: x[1]['count'] * x[1]['avg_rating'])
-                highlights['most_successful_decade'] = {
-                    'decade': best_decade[0],
-                    'projects': best_decade[1]['count'],
-                    'avg_rating': round(best_decade[1]['avg_rating'], 1)
-                }
-            
-            return highlights
-            
         except Exception as e:
-            logger.error(f"Error building enhanced career highlights: {e}")
+            logger.error(f"Error fetching complete person details from TMDB: {e}")
             return {}
-
-    def _get_known_for_works(self, filmography: Dict) -> List[Dict]:
-        try:
-            all_works = []
-            
-            for role_type in ['as_actor', 'as_director', 'as_writer', 'as_producer']:
-                for work in filmography.get(role_type, []):
-                    if work.get('rating', 0) > 0 or work.get('popularity', 0) > 0:
-                        rating_score = work.get('rating', 0) * 10
-                        popularity_score = min(work.get('popularity', 0), 100)
-                        combined_score = (rating_score + popularity_score) / 2
-                        
-                        work_copy = work.copy()
-                        work_copy['combined_score'] = combined_score
-                        work_copy['role_description'] = work.get('character') or work.get('job') or 'Unknown Role'
-                        all_works.append(work_copy)
-            
-            all_works.sort(key=lambda x: x.get('combined_score', 0), reverse=True)
-            return all_works[:10]
-            
-        except Exception as e:
-            logger.error(f"Error getting known for works: {e}")
-            return []
-
-    def _build_awards_info(self, tmdb_data: Dict, filmography: Dict) -> Dict:
-        try:
-            awards_info = {
-                'major_awards': [],
-                'nominations': [],
-                'recognition': [],
-                'honors': []
-            }
-            
-            stats = filmography.get('statistics', {})
-            
-            if stats.get('highest_rated'):
-                highest = stats['highest_rated']
-                if highest.get('rating', 0) >= 8.0:
-                    awards_info['recognition'].append({
-                        'type': 'Critical Acclaim',
-                        'description': f"Highly rated performance in '{highest.get('title', 'Unknown')}'",
-                        'rating': highest.get('rating'),
-                        'year': highest.get('year')
-                    })
-            
-            if stats.get('total_projects', 0) >= 50:
-                awards_info['honors'].append({
-                    'type': 'Prolific Career',
-                    'description': f"Over {stats['total_projects']} film and television credits"
-                })
-            
-            return awards_info
-            
-        except Exception as e:
-            logger.error(f"Error building awards info: {e}")
-            return {}
-
-    def _extract_trivia(self, person: Any, tmdb_data: Dict) -> List[str]:
-        try:
-            trivia = []
-            
-            if person.birthday and person.place_of_birth:
-                try:
-                    age = datetime.now().year - person.birthday.year
-                    trivia.append(f"Born in {person.place_of_birth}")
-                    if age > 0:
-                        trivia.append(f"Currently {age} years old")
-                except:
-                    pass
-            
-            if person.known_for_department:
-                trivia.append(f"Primarily known for work in {person.known_for_department}")
-            
-            return trivia
-            
-        except Exception as e:
-            logger.error(f"Error extracting trivia: {e}")
-            return []
-
-    def _analyze_collaborations(self, filmography: Dict) -> Dict:
-        try:
-            return {
-                'frequent_co_stars': [],
-                'frequent_directors': [],
-                'frequent_writers': [],
-                'production_companies': []
-            }
-            
-        except Exception as e:
-            logger.error(f"Error analyzing collaborations: {e}")
-            return {}
-
-    def _get_minimal_person_details(self, person: Any) -> Dict:
-        try:
-            return {
-                'id': person.id,
-                'slug': person.slug or f"person-{person.id}",
-                'name': person.name,
-                'biography': person.biography or '',
-                'profile_path': self._format_image_url(person.profile_path, 'profile'),
-                'popularity': person.popularity or 0,
-                'known_for_department': person.known_for_department,
-                'filmography': {
-                    'as_actor': [], 'as_director': [], 'as_writer': [], 'as_producer': [],
-                    'statistics': {'total_projects': 0}
-                },
-                'error': 'Detailed information temporarily unavailable'
-            }
-        except Exception as e:
-            logger.error(f"Error creating minimal person details: {e}")
-            return {'error': 'Person details unavailable'}
 
     def _update_person_from_tmdb(self, person: Any, tmdb_data: Dict):
         try:
@@ -2373,6 +1563,180 @@ class DetailsService:
             logger.error(f"Error updating person from TMDB: {e}")
             self.db.session.rollback()
 
+    def _get_complete_filmography(self, person_id: int) -> Dict:
+        try:
+            filmography = {
+                'as_actor': [],
+                'as_director': [],
+                'as_writer': [],
+                'as_producer': [],
+                'upcoming': [],
+                'by_year': {},
+                'statistics': {
+                    'total_projects': 0,
+                    'years_active': 0,
+                    'highest_rated': None,
+                    'most_popular': None
+                }
+            }
+            
+            filmography_entries = self.db.session.query(
+                self.ContentPerson, self.Content
+            ).join(
+                self.Content
+            ).filter(
+                self.ContentPerson.person_id == person_id
+            ).order_by(
+                self.Content.release_date.desc()
+            ).all()
+            
+            years = set()
+            all_ratings = []
+            all_popularity = []
+            
+            for cp, content in filmography_entries:
+                if not content.slug:
+                    try:
+                        SlugManager.update_content_slug(self.db, content)
+                    except Exception:
+                        content.slug = f"content-{content.id}"
+                
+                work = {
+                    'id': content.id,
+                    'slug': content.slug,
+                    'title': content.title,
+                    'year': content.release_date.year if content.release_date else None,
+                    'content_type': content.content_type,
+                    'poster_path': self._format_image_url(content.poster_path, 'poster'),
+                    'rating': content.rating,
+                    'popularity': content.popularity,
+                    'character': cp.character,
+                    'job': cp.job,
+                    'department': cp.department,
+                    'release_date': content.release_date.isoformat() if content.release_date else None
+                }
+                
+                if content.release_date:
+                    years.add(content.release_date.year)
+                if content.rating:
+                    all_ratings.append((content.rating, work))
+                if content.popularity:
+                    all_popularity.append((content.popularity, work))
+                
+                year_key = work['year'] or 'Unknown'
+                if year_key not in filmography['by_year']:
+                    filmography['by_year'][year_key] = []
+                filmography['by_year'][year_key].append(work)
+                
+                if content.release_date and content.release_date > datetime.now().date():
+                    filmography['upcoming'].append(work)
+                elif cp.role_type == 'cast':
+                    filmography['as_actor'].append(work)
+                elif cp.department == 'Directing' or cp.job == 'Director':
+                    filmography['as_director'].append(work)
+                elif cp.department == 'Writing' or cp.job in ['Writer', 'Screenplay', 'Story']:
+                    filmography['as_writer'].append(work)
+                elif 'Producer' in (cp.job or ''):
+                    filmography['as_producer'].append(work)
+            
+            filmography['statistics']['total_projects'] = len(filmography_entries)
+            if years:
+                filmography['statistics']['years_active'] = max(years) - min(years) + 1
+            
+            if all_ratings:
+                filmography['statistics']['highest_rated'] = max(all_ratings, key=lambda x: x[0])[1]
+            
+            if all_popularity:
+                filmography['statistics']['most_popular'] = max(all_popularity, key=lambda x: x[0])[1]
+            
+            logger.info(f"Retrieved complete filmography: {filmography['statistics']['total_projects']} projects")
+            return filmography
+            
+        except Exception as e:
+            logger.error(f"Error getting complete filmography: {e}")
+            return {
+                'as_actor': [], 'as_director': [], 'as_writer': [], 'as_producer': [],
+                'upcoming': [], 'by_year': {}, 'statistics': {}
+            }
+
+    def _build_personal_info(self, person: Any, tmdb_data: Dict) -> Dict:
+        try:
+            personal_info = {
+                'age': None,
+                'zodiac_sign': None,
+                'nationality': None,
+                'height': None,
+                'awards_count': 0,
+                'trivia': []
+            }
+            
+            if person.birthday:
+                today = datetime.now().date()
+                if person.deathday:
+                    end_date = person.deathday
+                else:
+                    end_date = today
+                
+                personal_info['age'] = end_date.year - person.birthday.year
+                if end_date.month < person.birthday.month or (end_date.month == person.birthday.month and end_date.day < person.birthday.day):
+                    personal_info['age'] -= 1
+            
+            if person.place_of_birth:
+                place_parts = person.place_of_birth.split(',')
+                if len(place_parts) > 0:
+                    country = place_parts[-1].strip()
+                    personal_info['nationality'] = country
+            
+            return personal_info
+            
+        except Exception as e:
+            logger.error(f"Error building personal info: {e}")
+            return {}
+
+    def _build_career_highlights(self, filmography: Dict) -> Dict:
+        try:
+            highlights = {
+                'debut_year': None,
+                'breakthrough_role': None,
+                'most_successful_decade': None,
+                'collaboration_frequency': {},
+                'genre_distribution': {},
+                'career_phases': []
+            }
+            
+            all_years = []
+            for role_type in ['as_actor', 'as_director', 'as_writer', 'as_producer']:
+                for work in filmography.get(role_type, []):
+                    if work.get('year'):
+                        all_years.append(work['year'])
+            
+            if all_years:
+                highlights['debut_year'] = min(all_years)
+            
+            decade_count = {}
+            for year in all_years:
+                decade = (year // 10) * 10
+                decade_count[decade] = decade_count.get(decade, 0) + 1
+            
+            if decade_count:
+                most_successful_decade = max(decade_count.items(), key=lambda x: x[1])
+                highlights['most_successful_decade'] = f"{most_successful_decade[0]}s"
+            
+            return highlights
+            
+        except Exception as e:
+            logger.error(f"Error building career highlights: {e}")
+            return {}
+
+    def _calculate_total_works(self, filmography: Dict) -> int:
+        try:
+            total = 0
+            for role_type in ['as_actor', 'as_director', 'as_writer', 'as_producer']:
+                total += len(filmography.get(role_type, []))
+            return total
+        except:
+            return 0
+
     def _find_person_fuzzy(self, slug: str) -> Optional[Any]:
         try:
             info = SlugManager.extract_info_from_slug(slug)
@@ -2412,84 +1776,26 @@ class DetailsService:
     def _get_person_social_media(self, tmdb_data: Dict) -> Dict:
         try:
             social = {}
-            
-            logger.info(f"Processing social media from TMDB data: {bool(tmdb_data.get('external_ids'))}")
-            
             if tmdb_data.get('external_ids'):
                 ids = tmdb_data['external_ids']
-                logger.info(f"Available external IDs: {list(ids.keys())}")
-                
                 if ids.get('twitter_id'):
-                    social['twitter'] = {
-                        'url': f"https://twitter.com/{ids['twitter_id']}",
-                        'handle': f"@{ids['twitter_id']}",
-                        'platform': 'Twitter'
-                    }
-                
+                    social['twitter'] = f"https://twitter.com/{ids['twitter_id']}"
                 if ids.get('instagram_id'):
-                    social['instagram'] = {
-                        'url': f"https://instagram.com/{ids['instagram_id']}",
-                        'handle': f"@{ids['instagram_id']}",
-                        'platform': 'Instagram'
-                    }
-                
+                    social['instagram'] = f"https://instagram.com/{ids['instagram_id']}"
                 if ids.get('facebook_id'):
-                    social['facebook'] = {
-                        'url': f"https://facebook.com/{ids['facebook_id']}",
-                        'handle': ids['facebook_id'],
-                        'platform': 'Facebook'
-                    }
-                
+                    social['facebook'] = f"https://facebook.com/{ids['facebook_id']}"
                 if ids.get('imdb_id'):
-                    social['imdb'] = {
-                        'url': f"https://www.imdb.com/name/{ids['imdb_id']}",
-                        'handle': ids['imdb_id'],
-                        'platform': 'IMDb'
-                    }
-                
+                    social['imdb'] = f"https://www.imdb.com/name/{ids['imdb_id']}"
                 if ids.get('tiktok_id'):
-                    social['tiktok'] = {
-                        'url': f"https://tiktok.com/@{ids['tiktok_id']}",
-                        'handle': f"@{ids['tiktok_id']}",
-                        'platform': 'TikTok'
-                    }
-                
+                    social['tiktok'] = f"https://tiktok.com/@{ids['tiktok_id']}"
                 if ids.get('youtube_id'):
-                    social['youtube'] = {
-                        'url': f"https://youtube.com/channel/{ids['youtube_id']}",
-                        'handle': ids['youtube_id'],
-                        'platform': 'YouTube'
-                    }
-                
+                    social['youtube'] = f"https://youtube.com/channel/{ids['youtube_id']}"
                 if ids.get('wikidata_id'):
-                    social['wikidata'] = {
-                        'url': f"https://www.wikidata.org/wiki/{ids['wikidata_id']}",
-                        'handle': ids['wikidata_id'],
-                        'platform': 'Wikidata'
-                    }
-                
-                if ids.get('twitter_id'):
-                    social['x'] = {
-                        'url': f"https://x.com/{ids['twitter_id']}",
-                        'handle': f"@{ids['twitter_id']}",
-                        'platform': 'X (Twitter)'
-                    }
-            
-            logger.info(f"Found social media links: {list(social.keys())}")
+                    social['wikidata'] = f"https://www.wikidata.org/wiki/{ids['wikidata_id']}"
             return social
-            
         except Exception as e:
             logger.error(f"Error getting person social media: {e}")
             return {}
-
-    def _calculate_total_works(self, filmography: Dict) -> int:
-        try:
-            total = 0
-            for role_type in ['as_actor', 'as_director', 'as_writer', 'as_producer']:
-                total += len(filmography.get(role_type, []))
-            return total
-        except:
-            return 0
 
     def _get_gallery(self, content_id: int) -> Dict:
         try:
@@ -3164,9 +2470,6 @@ class DetailsService:
                     'message': 'You have already reviewed this content'
                 }
             
-            user = self.User.query.get(user_id) if self.User else None
-            should_auto_approve = self._should_auto_approve_review(user, review_data)
-            
             review = self.Review(
                 content_id=content_id,
                 user_id=user_id,
@@ -3174,7 +2477,7 @@ class DetailsService:
                 title=review_data.get('title'),
                 review_text=review_data.get('review_text'),
                 has_spoilers=review_data.get('has_spoilers', False),
-                is_approved=should_auto_approve
+                is_approved=False
             )
             
             self.db.session.add(review)
@@ -3188,13 +2491,10 @@ class DetailsService:
                 except Exception as e:
                     logger.warning(f"Cache invalidation error: {e}")
             
-            message = 'Review published successfully' if should_auto_approve else 'Review submitted for moderation'
-            
             return {
                 'success': True,
                 'review_id': review.id,
-                'message': message,
-                'auto_approved': should_auto_approve
+                'message': 'Review submitted for moderation'
             }
             
         except Exception as e:
@@ -3204,33 +2504,6 @@ class DetailsService:
                 'success': False,
                 'message': 'Failed to add review'
             }
-
-    def _should_auto_approve_review(self, user, review_data: Dict) -> bool:
-        try:
-            if user and getattr(user, 'is_admin', False):
-                return True
-            
-            review_text = review_data.get('review_text', '')
-            rating = review_data.get('rating', 0)
-            
-            if len(review_text.strip()) >= 20 and 1 <= rating <= 10:
-                if user and self.Review:
-                    approved_reviews_count = self.Review.query.filter_by(
-                        user_id=user.id,
-                        is_approved=True
-                    ).count()
-                    
-                    if approved_reviews_count >= 1:
-                        return True
-                    
-                    if len(review_text.strip()) >= 50:
-                        return True
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error in auto-approval logic: {e}")
-            return False
     
     @ensure_app_context
     def vote_review_helpful(self, review_id: int, user_id: int, is_helpful: bool = True) -> bool:
