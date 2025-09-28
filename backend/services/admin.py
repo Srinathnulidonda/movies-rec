@@ -1,4 +1,3 @@
-#backend/services/admin.py
 from flask import Blueprint, request, jsonify
 from flask_caching import Cache
 from datetime import datetime, timedelta
@@ -6,21 +5,11 @@ import json
 import logging
 import time
 import telebot
-from sqlalchemy import func, desc, and_, or_, text
+from sqlalchemy import func, desc
 from collections import defaultdict
 from functools import wraps
 import jwt
 import os
-import threading
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-import smtplib
-import ssl
-import uuid
-import redis
-from typing import Dict, List, Optional
-import enum
-from urllib.parse import urlparse
 
 admin_bp = Blueprint('admin', __name__)
 
@@ -30,10 +19,6 @@ cache = Cache()
 
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '7974343726:AAFUCW444L6jbj1tVLRyf8V7Isz2Ua1SxSk')
 TELEGRAM_CHANNEL_ID = os.environ.get('TELEGRAM_CHANNEL_ID', '-1002850793757')
-TELEGRAM_ADMIN_CHAT_ID = os.environ.get('TELEGRAM_ADMIN_CHAT_ID', '-1002850793757')
-GMAIL_USERNAME = os.environ.get('GMAIL_USERNAME', 'projects.srinath@gmail.com')
-GMAIL_APP_PASSWORD = os.environ.get('GMAIL_APP_PASSWORD', 'wuus nsow nbee xewv')
-REDIS_URL = os.environ.get('REDIS_URL', 'redis://red-d3cdplidbo4c73e352eg:Fin34Hk4Hq42PYejhV4Tufncmi4Ym4H6@red-d3cdplidbo4c73e352eg:6379')
 
 if TELEGRAM_BOT_TOKEN and TELEGRAM_BOT_TOKEN != 'your_telegram_bot_token':
     try:
@@ -49,53 +34,30 @@ User = None
 Content = None
 UserInteraction = None
 AdminRecommendation = None
-SupportCategory = None
-SupportTicket = None
-SupportResponse = None
-FAQ = None
-Feedback = None
-TicketActivity = None
 TMDBService = None
 JikanService = None
 ContentService = None
 http_session = None
 cache = None
 app = None
-redis_client = None
 
-TicketStatus = None
-TicketPriority = None
-TicketType = None
-FeedbackType = None
-
-class NotificationType(enum.Enum):
-    NEW_TICKET = "new_ticket"
-    URGENT_TICKET = "urgent_ticket"
-    TICKET_ESCALATION = "ticket_escalation"
-    SLA_BREACH = "sla_breach"
-    FEEDBACK_RECEIVED = "feedback_received"
-    SYSTEM_ALERT = "system_alert"
-
-def init_redis_admin():
-    global redis_client
-    try:
-        url = urlparse(REDIS_URL)
-        redis_client = redis.StrictRedis(
-            host=url.hostname,
-            port=url.port,
-            password=url.password,
-            decode_responses=True,
-            socket_connect_timeout=5,
-            socket_timeout=5,
-            retry_on_timeout=True,
-            health_check_interval=30
-        )
-        redis_client.ping()
-        logger.info("Admin Redis connected successfully")
-        return redis_client
-    except Exception as e:
-        logger.error(f"Admin Redis connection failed: {e}")
-        return None
+def init_admin(flask_app, database, models, services):
+    global db, User, Content, UserInteraction, AdminRecommendation
+    global TMDBService, JikanService, ContentService
+    global http_session, cache, app
+    
+    app = flask_app
+    db = database
+    User = models['User']
+    Content = models['Content']
+    UserInteraction = models['UserInteraction']
+    AdminRecommendation = models['AdminRecommendation']
+    
+    TMDBService = services['TMDBService']
+    JikanService = services['JikanService']
+    ContentService = services['ContentService']
+    http_session = services['http_session']
+    cache = services['cache']
 
 def require_admin(f):
     @wraps(f)
@@ -115,325 +77,6 @@ def require_admin(f):
         
         return f(current_user, *args, **kwargs)
     return decorated_function
-
-class AdminEmailService:
-    def __init__(self):
-        self.smtp_server = "smtp.gmail.com"
-        self.smtp_port = 587
-        self.username = GMAIL_USERNAME
-        self.password = GMAIL_APP_PASSWORD
-        self.from_email = "admin@cinebrain.com"
-        self.from_name = "CineBrain Admin"
-    
-    def send_admin_notification(self, subject: str, content: str, admin_emails: List[str]):
-        try:
-            msg = MIMEMultipart('alternative')
-            msg['From'] = f"{self.from_name} <{self.username}>"
-            msg['To'] = ', '.join(admin_emails)
-            msg['Subject'] = f"[CineBrain Admin] {subject}"
-            
-            html_content = f"""
-            <html>
-            <body style="font-family: Arial, sans-serif; margin: 0; padding: 20px; background-color: #f5f5f5;">
-                <div style="max-width: 600px; margin: 0 auto; background-color: white; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-                    <div style="background: linear-gradient(135deg, #1a73e8 0%, #4285f4 100%); padding: 30px; text-align: center;">
-                        <h1 style="color: white; margin: 0; font-size: 24px;">🎬 CineBrain Admin Alert</h1>
-                    </div>
-                    <div style="padding: 30px;">
-                        <h2 style="color: #333; margin-top: 0;">{subject}</h2>
-                        <div style="color: #666; line-height: 1.6;">
-                            {content}
-                        </div>
-                        <div style="margin-top: 30px; padding: 20px; background-color: #f8f9fa; border-radius: 8px;">
-                            <p style="margin: 0; color: #666; font-size: 14px;">
-                                <strong>Timestamp:</strong> {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}<br>
-                                <strong>System:</strong> CineBrain Admin Dashboard
-                            </p>
-                        </div>
-                    </div>
-                </div>
-            </body>
-            </html>
-            """
-            
-            text_content = f"{subject}\n\n{content}\n\nTimestamp: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}"
-            
-            msg.attach(MIMEText(text_content, 'plain'))
-            msg.attach(MIMEText(html_content, 'html'))
-            
-            context = ssl.create_default_context()
-            with smtplib.SMTP(self.smtp_server, self.smtp_port, timeout=30) as server:
-                server.ehlo()
-                server.starttls(context=context)
-                server.ehlo()
-                server.login(self.username, self.password)
-                server.send_message(msg)
-            
-            logger.info(f"✅ Admin notification email sent: {subject}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ Admin email error: {e}")
-            return False
-
-class TelegramAdminService:
-    @staticmethod
-    def send_admin_notification(notification_type: str, message: str, is_urgent: bool = False):
-        try:
-            if not bot or not TELEGRAM_ADMIN_CHAT_ID:
-                logger.warning("Telegram bot or admin chat ID not configured")
-                return False
-            
-            icon_map = {
-                'new_ticket': '🎫',
-                'urgent_ticket': '🚨',
-                'sla_breach': '⚠️',
-                'feedback': '📝',
-                'system_alert': '🔔',
-                'recommendation': '🎬'
-            }
-            
-            icon = icon_map.get(notification_type, '📢')
-            priority = "🚨 URGENT" if is_urgent else "📋 NORMAL"
-            
-            formatted_message = f"""
-{icon} **CineBrain Admin Alert**
-
-**Priority:** {priority}
-**Type:** {notification_type.replace('_', ' ').title()}
-**Time:** {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}
-
-**Message:**
-{message}
-
-**Dashboard:** [View Admin Panel](https://cinebrain.vercel.app/admin)
-
-#AdminAlert #CineBrain #{notification_type}
-            """
-            
-            bot.send_message(
-                chat_id=TELEGRAM_ADMIN_CHAT_ID,
-                text=formatted_message,
-                parse_mode='Markdown'
-            )
-            
-            return True
-        except Exception as e:
-            logger.error(f"Telegram admin notification error: {e}")
-            return False
-    
-    @staticmethod
-    def send_support_summary():
-        try:
-            if not SupportTicket:
-                return False
-            
-            today = datetime.utcnow().date()
-            yesterday = today - timedelta(days=1)
-            
-            new_tickets = SupportTicket.query.filter(
-                func.date(SupportTicket.created_at) == today
-            ).count()
-            
-            resolved_tickets = SupportTicket.query.filter(
-                func.date(SupportTicket.resolved_at) == today
-            ).count()
-            
-            try:
-                from services.support import TicketStatus, TicketPriority
-                open_tickets = SupportTicket.query.filter(
-                    SupportTicket.status.in_([TicketStatus.OPEN, TicketStatus.IN_PROGRESS])
-                ).count()
-                
-                urgent_tickets = SupportTicket.query.filter(
-                    and_(
-                        SupportTicket.priority == TicketPriority.URGENT,
-                        SupportTicket.status.in_([TicketStatus.OPEN, TicketStatus.IN_PROGRESS])
-                    )
-                ).count()
-            except:
-                open_tickets = 0
-                urgent_tickets = 0
-            
-            new_feedback = Feedback.query.filter(
-                func.date(Feedback.created_at) == today
-            ).count() if Feedback else 0
-            
-            message = f"""📊 **Daily Support Summary**
-
-**Today's Activity:**
-🎫 New Tickets: {new_tickets}
-✅ Resolved: {resolved_tickets}
-📋 Open Tickets: {open_tickets}
-🚨 Urgent: {urgent_tickets}
-💬 New Feedback: {new_feedback}
-
-**Status:** {'🟢 Good' if urgent_tickets == 0 else '🟡 Attention Needed' if urgent_tickets < 5 else '🔴 Critical'}
-
-#DailySummary #Support"""
-            
-            TelegramAdminService.send_admin_notification('daily_summary', message)
-            return True
-            
-        except Exception as e:
-            logger.error(f"Support summary error: {e}")
-            return False
-
-class AdminNotificationService:
-    email_service = None
-    
-    @classmethod
-    def initialize(cls):
-        cls.email_service = AdminEmailService()
-        
-        def schedule_daily_summary():
-            import threading
-            import time
-            
-            def daily_summary_worker():
-                while True:
-                    try:
-                        now = datetime.utcnow()
-                        if now.hour == 9 and now.minute == 0:
-                            TelegramAdminService.send_support_summary()
-                        time.sleep(60)
-                    except Exception as e:
-                        logger.error(f"Daily summary scheduler error: {e}")
-                        time.sleep(300)
-            
-            thread = threading.Thread(target=daily_summary_worker, daemon=True)
-            thread.start()
-        
-        schedule_daily_summary()
-    
-    @classmethod
-    def create_notification(cls, notification_type: NotificationType, title: str, message: str, 
-                          admin_id: int = None, related_ticket_id: int = None, 
-                          related_content_id: int = None, is_urgent: bool = False,
-                          action_required: bool = False, action_url: str = None,
-                          metadata: dict = None):
-        try:
-            if not globals().get('AdminNotification'):
-                logger.warning("AdminNotification model not available")
-                return None
-            
-            notification = globals()['AdminNotification'](
-                notification_type=notification_type,
-                title=title,
-                message=message,
-                admin_id=admin_id,
-                related_ticket_id=related_ticket_id,
-                related_content_id=related_content_id,
-                is_urgent=is_urgent,
-                action_required=action_required,
-                action_url=action_url,
-                notification_metadata=metadata or {}
-            )
-            
-            db.session.add(notification)
-            db.session.commit()
-            
-            TelegramAdminService.send_admin_notification(
-                notification_type.value, 
-                f"{title}\n\n{message}", 
-                is_urgent
-            )
-            
-            if is_urgent:
-                admin_emails = [user.email for user in User.query.filter_by(is_admin=True).all()]
-                if admin_emails:
-                    cls.email_service.send_admin_notification(title, message, admin_emails)
-            
-            if redis_client:
-                try:
-                    notification_data = {
-                        'id': notification.id,
-                        'type': notification_type.value,
-                        'title': title,
-                        'message': message,
-                        'is_urgent': is_urgent,
-                        'action_required': action_required,
-                        'action_url': action_url,
-                        'timestamp': datetime.utcnow().isoformat()
-                    }
-                    redis_client.lpush('admin_notifications', json.dumps(notification_data))
-                    redis_client.ltrim('admin_notifications', 0, 99)
-                    redis_client.expire('admin_notifications', 86400)
-                except Exception as e:
-                    logger.error(f"Redis notification error: {e}")
-            
-            logger.info(f"Admin notification created: {title}")
-            return notification
-            
-        except Exception as e:
-            logger.error(f"Error creating admin notification: {e}")
-            if db:
-                db.session.rollback()
-            return None
-
-    @classmethod
-    def notify_new_ticket(cls, ticket):
-        try:
-            is_urgent = hasattr(ticket, 'priority') and ticket.priority and ticket.priority.value == 'urgent'
-            
-            cls.create_notification(
-                NotificationType.NEW_TICKET,
-                f"New {'Urgent ' if is_urgent else ''}Support Ticket",
-                f"Ticket #{ticket.ticket_number} created by {ticket.user_name}\n"
-                f"Subject: {ticket.subject}\n"
-                f"Priority: {ticket.priority.value.upper() if hasattr(ticket, 'priority') and ticket.priority else 'NORMAL'}\n"
-                f"Category: {ticket.category.name if hasattr(ticket, 'category') and ticket.category else 'Unknown'}",
-                related_ticket_id=ticket.id,
-                is_urgent=is_urgent,
-                action_required=True,
-                action_url=f"/admin/support/tickets/{ticket.id}",
-                metadata={
-                    'ticket_number': ticket.ticket_number,
-                    'priority': ticket.priority.value if hasattr(ticket, 'priority') and ticket.priority else 'normal',
-                    'user_email': ticket.user_email
-                }
-            )
-        except Exception as e:
-            logger.error(f"Error notifying new ticket: {e}")
-    
-    @classmethod
-    def notify_sla_breach(cls, ticket):
-        try:
-            cls.create_notification(
-                NotificationType.SLA_BREACH,
-                f"SLA Breach - Ticket #{ticket.ticket_number}",
-                f"Ticket #{ticket.ticket_number} has exceeded its SLA deadline\n"
-                f"Created: {ticket.created_at.strftime('%Y-%m-%d %H:%M UTC')}\n"
-                f"Deadline: {ticket.sla_deadline.strftime('%Y-%m-%d %H:%M UTC') if ticket.sla_deadline else 'N/A'}\n"
-                f"Priority: {ticket.priority.value.upper() if hasattr(ticket, 'priority') and ticket.priority else 'NORMAL'}",
-                related_ticket_id=ticket.id,
-                is_urgent=True,
-                action_required=True,
-                action_url=f"/admin/support/tickets/{ticket.id}"
-            )
-        except Exception as e:
-            logger.error(f"Error notifying SLA breach: {e}")
-    
-    @classmethod
-    def notify_feedback_received(cls, feedback):
-        try:
-            cls.create_notification(
-                NotificationType.FEEDBACK_RECEIVED,
-                "New User Feedback Received",
-                f"Feedback from {feedback.user_name}\n"
-                f"Type: {feedback.feedback_type.value.replace('_', ' ').title() if hasattr(feedback, 'feedback_type') and feedback.feedback_type else 'General'}\n"
-                f"Subject: {feedback.subject}\n"
-                f"Rating: {'⭐' * (feedback.rating or 0) if feedback.rating else 'No rating'}",
-                action_required=False,
-                action_url=f"/admin/support/feedback/{feedback.id}",
-                metadata={
-                    'feedback_type': feedback.feedback_type.value if hasattr(feedback, 'feedback_type') and feedback.feedback_type else 'general',
-                    'user_email': feedback.user_email,
-                    'rating': feedback.rating
-                }
-            )
-        except Exception as e:
-            logger.error(f"Error notifying feedback: {e}")
 
 class TelegramService:
     @staticmethod
@@ -489,121 +132,6 @@ class TelegramService:
         except Exception as e:
             logger.error(f"Telegram send error: {e}")
             return False
-
-def init_admin(flask_app, database, models, services):
-    global db, User, Content, UserInteraction, AdminRecommendation
-    global SupportCategory, SupportTicket, SupportResponse, FAQ, Feedback, TicketActivity
-    global TMDBService, JikanService, ContentService
-    global http_session, cache, app, redis_client
-    global TicketStatus, TicketPriority, TicketType, FeedbackType
-    
-    app = flask_app
-    db = database
-    User = models['User']
-    Content = models['Content']
-    UserInteraction = models['UserInteraction']
-    AdminRecommendation = models['AdminRecommendation']
-    
-    SupportCategory = models.get('SupportCategory')
-    SupportTicket = models.get('SupportTicket')
-    SupportResponse = models.get('SupportResponse')
-    FAQ = models.get('FAQ')
-    Feedback = models.get('Feedback')
-    TicketActivity = models.get('TicketActivity')
-    
-    try:
-        from services.support import TicketStatus as TS, TicketPriority as TP, TicketType as TT, FeedbackType as FT
-        TicketStatus = TS
-        TicketPriority = TP
-        TicketType = TT
-        FeedbackType = FT
-    except ImportError:
-        logger.warning("Support enums not available")
-    
-    TMDBService = services['TMDBService']
-    JikanService = services['JikanService']
-    ContentService = services['ContentService']
-    http_session = services['http_session']
-    cache = services['cache']
-    
-    redis_client = init_redis_admin()
-    
-    create_admin_models(database)
-    AdminNotificationService.initialize()
-    
-    logger.info("✅ Admin service with support management initialized successfully")
-
-def create_admin_models(database):
-    class AdminNotification(database.Model):
-        __tablename__ = 'admin_notifications'
-        
-        id = database.Column(database.Integer, primary_key=True)
-        notification_type = database.Column(database.Enum(NotificationType), nullable=False)
-        title = database.Column(database.String(255), nullable=False)
-        message = database.Column(database.Text, nullable=False)
-        
-        admin_id = database.Column(database.Integer, database.ForeignKey('user.id'), nullable=True)
-        related_ticket_id = database.Column(database.Integer, nullable=True)
-        related_content_id = database.Column(database.Integer, database.ForeignKey('content.id'), nullable=True)
-        
-        is_read = database.Column(database.Boolean, default=False)
-        is_urgent = database.Column(database.Boolean, default=False)
-        action_required = database.Column(database.Boolean, default=False)
-        action_url = database.Column(database.String(500))
-        
-        notification_metadata = database.Column(database.JSON)
-        
-        created_at = database.Column(database.DateTime, default=datetime.utcnow)
-        read_at = database.Column(database.DateTime)
-    
-    class CannedResponse(database.Model):
-        __tablename__ = 'canned_responses'
-        
-        id = database.Column(database.Integer, primary_key=True)
-        title = database.Column(database.String(255), nullable=False)
-        content = database.Column(database.Text, nullable=False)
-        
-        category_id = database.Column(database.Integer, nullable=True)
-        tags = database.Column(database.JSON)
-        
-        is_active = database.Column(database.Boolean, default=True)
-        usage_count = database.Column(database.Integer, default=0)
-        
-        created_by = database.Column(database.Integer, database.ForeignKey('user.id'), nullable=False)
-        created_at = database.Column(database.DateTime, default=datetime.utcnow)
-        updated_at = database.Column(database.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
-    class SupportMetrics(database.Model):
-        __tablename__ = 'support_metrics'
-        
-        id = database.Column(database.Integer, primary_key=True)
-        date = database.Column(database.Date, nullable=False)
-        
-        tickets_created = database.Column(database.Integer, default=0)
-        tickets_resolved = database.Column(database.Integer, default=0)
-        tickets_closed = database.Column(database.Integer, default=0)
-        
-        avg_first_response_time = database.Column(database.Float)
-        avg_resolution_time = database.Column(database.Float)
-        
-        sla_breaches = database.Column(database.Integer, default=0)
-        escalations = database.Column(database.Integer, default=0)
-        
-        customer_satisfaction = database.Column(database.Float)
-        feedback_count = database.Column(database.Integer, default=0)
-        
-        created_at = database.Column(database.DateTime, default=datetime.utcnow)
-    
-    globals()['AdminNotification'] = AdminNotification
-    globals()['CannedResponse'] = CannedResponse
-    globals()['SupportMetrics'] = SupportMetrics
-    
-    try:
-        with app.app_context():
-            database.create_all()
-            logger.info("Admin models created successfully")
-    except Exception as e:
-        logger.error(f"Error creating admin models: {e}")
 
 @admin_bp.route('/api/admin/search', methods=['GET'])
 @require_admin
@@ -664,18 +192,10 @@ def save_external_content(current_user):
             return jsonify({'error': 'No content data provided'}), 400
         
         existing_content = None
-        
-        # Handle both string and numeric IDs properly
         if data.get('source') == 'anime' and data.get('id'):
-            mal_id = data['id']
-            if isinstance(mal_id, str) and mal_id.isdigit():
-                mal_id = int(mal_id)
-            existing_content = Content.query.filter_by(mal_id=mal_id).first()
+            existing_content = Content.query.filter_by(mal_id=data['id']).first()
         elif data.get('id'):
-            tmdb_id = data['id']
-            if isinstance(tmdb_id, str) and tmdb_id.isdigit():
-                tmdb_id = int(tmdb_id)
-            existing_content = Content.query.filter_by(tmdb_id=tmdb_id).first()
+            existing_content = Content.query.filter_by(tmdb_id=data['id']).first()
         
         if existing_content:
             return jsonify({
@@ -694,12 +214,8 @@ def save_external_content(current_user):
             youtube_trailer_id = ContentService.get_youtube_trailer(data.get('title'), data.get('content_type')) if ContentService else None
             
             if data.get('source') == 'anime':
-                mal_id = data.get('id')
-                if isinstance(mal_id, str) and mal_id.isdigit():
-                    mal_id = int(mal_id)
-                
                 content = Content(
-                    mal_id=mal_id,
+                    mal_id=data.get('id'),
                     title=data.get('title'),
                     original_title=data.get('original_title'),
                     content_type='anime',
@@ -713,12 +229,8 @@ def save_external_content(current_user):
                     youtube_trailer_id=youtube_trailer_id
                 )
             else:
-                tmdb_id = data.get('id')
-                if isinstance(tmdb_id, str) and tmdb_id.isdigit():
-                    tmdb_id = int(tmdb_id)
-                
                 content = Content(
-                    tmdb_id=tmdb_id,
+                    tmdb_id=data.get('id'),
                     title=data.get('title'),
                     original_title=data.get('original_title'),
                     content_type=data.get('content_type', 'movie'),
@@ -753,8 +265,7 @@ def save_external_content(current_user):
     except Exception as e:
         logger.error(f"Save content error: {e}")
         return jsonify({'error': 'Failed to process content'}), 500
-    
-    
+
 @admin_bp.route('/api/admin/recommendations', methods=['POST'])
 @require_admin
 def create_admin_recommendation(current_user):
@@ -783,16 +294,6 @@ def create_admin_recommendation(current_user):
         db.session.commit()
         
         telegram_success = TelegramService.send_admin_recommendation(content, current_user.username, data['description'])
-        
-        AdminNotificationService.create_notification(
-            NotificationType.NEW_TICKET,
-            f"New Admin Recommendation Created",
-            f"Admin {current_user.username} recommended '{content.title}'\n"
-            f"Type: {data['recommendation_type']}\n"
-            f"Description: {data['description'][:100]}...",
-            admin_id=current_user.id,
-            related_content_id=content.id
-        )
         
         return jsonify({
             'message': 'Admin recommendation created successfully',
@@ -846,412 +347,6 @@ def get_admin_recommendations(current_user):
         logger.error(f"Get admin recommendations error: {e}")
         return jsonify({'error': 'Failed to get recommendations'}), 500
 
-@admin_bp.route('/api/admin/support/dashboard', methods=['GET'])
-@require_admin
-def get_support_dashboard(current_user):
-    try:
-        if not SupportTicket:
-            return jsonify({'error': 'Support system not available'}), 503
-        
-        today = datetime.utcnow().date()
-        week_ago = today - timedelta(days=7)
-        month_ago = today - timedelta(days=30)
-        
-        total_tickets = SupportTicket.query.count()
-        
-        try:
-            from services.support import TicketStatus, TicketPriority
-            open_tickets = SupportTicket.query.filter(
-                SupportTicket.status.in_([TicketStatus.OPEN, TicketStatus.IN_PROGRESS, TicketStatus.WAITING_FOR_USER])
-            ).count()
-            
-            urgent_tickets = SupportTicket.query.filter(
-                and_(
-                    SupportTicket.priority == TicketPriority.URGENT,
-                    SupportTicket.status.in_([TicketStatus.OPEN, TicketStatus.IN_PROGRESS])
-                )
-            ).count()
-            
-            sla_breached = SupportTicket.query.filter(
-                and_(
-                    SupportTicket.sla_breached == True,
-                    SupportTicket.status.in_([TicketStatus.OPEN, TicketStatus.IN_PROGRESS])
-                )
-            ).count()
-            
-            priority_stats = db.session.query(
-                SupportTicket.priority,
-                func.count(SupportTicket.id).label('count')
-            ).filter(
-                SupportTicket.status.in_([TicketStatus.OPEN, TicketStatus.IN_PROGRESS])
-            ).group_by(SupportTicket.priority).all()
-        except:
-            open_tickets = 0
-            urgent_tickets = 0
-            sla_breached = 0
-            priority_stats = []
-        
-        today_tickets = SupportTicket.query.filter(
-            func.date(SupportTicket.created_at) == today
-        ).count()
-        
-        today_resolved = SupportTicket.query.filter(
-            func.date(SupportTicket.resolved_at) == today
-        ).count()
-        
-        avg_response_time = db.session.query(
-            func.avg(
-                func.extract('epoch', SupportTicket.first_response_at - SupportTicket.created_at) / 3600
-            )
-        ).filter(SupportTicket.first_response_at.isnot(None)).scalar() or 0
-        
-        category_stats = db.session.query(
-            SupportCategory.name,
-            func.count(SupportTicket.id).label('count')
-        ).join(SupportTicket).group_by(SupportCategory.name).all() if SupportCategory else []
-        
-        recent_tickets = SupportTicket.query.order_by(
-            SupportTicket.created_at.desc()
-        ).limit(10).all()
-        
-        recent_tickets_data = []
-        for ticket in recent_tickets:
-            recent_tickets_data.append({
-                'id': ticket.id,
-                'ticket_number': ticket.ticket_number,
-                'subject': ticket.subject,
-                'user_name': ticket.user_name,
-                'priority': ticket.priority.value if hasattr(ticket, 'priority') and ticket.priority else 'normal',
-                'status': ticket.status.value if hasattr(ticket, 'status') and ticket.status else 'open',
-                'category': ticket.category.name if hasattr(ticket, 'category') and ticket.category else 'Unknown',
-                'created_at': ticket.created_at.isoformat(),
-                'is_sla_breached': ticket.sla_breached
-            })
-        
-        total_feedback = Feedback.query.count() if Feedback else 0
-        unread_feedback = Feedback.query.filter_by(is_read=False).count() if Feedback else 0
-        
-        recent_feedback = []
-        if Feedback:
-            feedback_items = Feedback.query.order_by(Feedback.created_at.desc()).limit(5).all()
-            for feedback in feedback_items:
-                recent_feedback.append({
-                    'id': feedback.id,
-                    'subject': feedback.subject,
-                    'user_name': feedback.user_name,
-                    'feedback_type': feedback.feedback_type.value if hasattr(feedback, 'feedback_type') and feedback.feedback_type else 'general',
-                    'rating': feedback.rating,
-                    'is_read': feedback.is_read,
-                    'created_at': feedback.created_at.isoformat()
-                })
-        
-        return jsonify({
-            'ticket_stats': {
-                'total': total_tickets,
-                'open': open_tickets,
-                'urgent': urgent_tickets,
-                'sla_breached': sla_breached,
-                'today_created': today_tickets,
-                'today_resolved': today_resolved
-            },
-            'metrics': {
-                'avg_response_time_hours': round(avg_response_time, 2),
-                'resolution_rate': round((today_resolved / max(today_tickets, 1)) * 100, 1)
-            },
-            'category_breakdown': [
-                {'category': stat[0], 'count': stat[1]} 
-                for stat in category_stats
-            ],
-            'priority_breakdown': [
-                {'priority': stat[0].value if hasattr(stat[0], 'value') else str(stat[0]), 'count': stat[1]} 
-                for stat in priority_stats
-            ],
-            'recent_tickets': recent_tickets_data,
-            'feedback_stats': {
-                'total': total_feedback,
-                'unread': unread_feedback
-            },
-            'recent_feedback': recent_feedback,
-            'timestamp': datetime.utcnow().isoformat()
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"Support dashboard error: {e}")
-        return jsonify({'error': 'Failed to load support dashboard'}), 500
-
-@admin_bp.route('/api/admin/support/tickets', methods=['GET'])
-@require_admin
-def get_support_tickets(current_user):
-    try:
-        if not SupportTicket:
-            return jsonify({'error': 'Support system not available'}), 503
-        
-        page = int(request.args.get('page', 1))
-        per_page = min(int(request.args.get('per_page', 20)), 100)
-        status = request.args.get('status')
-        priority = request.args.get('priority')
-        category_id = request.args.get('category_id', type=int)
-        search = request.args.get('search', '').strip()
-        
-        query = SupportTicket.query
-        
-        try:
-            from services.support import TicketStatus, TicketPriority
-            
-            if status and status != 'all':
-                try:
-                    status_enum = TicketStatus(status)
-                    query = query.filter(SupportTicket.status == status_enum)
-                except ValueError:
-                    pass
-            
-            if priority and priority != 'all':
-                try:
-                    priority_enum = TicketPriority(priority)
-                    query = query.filter(SupportTicket.priority == priority_enum)
-                except ValueError:
-                    pass
-        except ImportError:
-            pass
-        
-        if category_id:
-            query = query.filter(SupportTicket.category_id == category_id)
-        
-        if search:
-            query = query.filter(
-                or_(
-                    SupportTicket.ticket_number.contains(search),
-                    SupportTicket.subject.contains(search),
-                    SupportTicket.user_name.contains(search),
-                    SupportTicket.user_email.contains(search)
-                )
-            )
-        
-        query = query.order_by(
-            SupportTicket.priority.desc(),
-            SupportTicket.created_at.desc()
-        )
-        
-        tickets = query.paginate(
-            page=page, per_page=per_page, error_out=False
-        )
-        
-        result = []
-        for ticket in tickets.items:
-            result.append({
-                'id': ticket.id,
-                'ticket_number': ticket.ticket_number,
-                'subject': ticket.subject,
-                'description': ticket.description[:200] + '...' if len(ticket.description) > 200 else ticket.description,
-                'user_name': ticket.user_name,
-                'user_email': ticket.user_email,
-                'user_id': ticket.user_id,
-                'category': {
-                    'id': ticket.category.id,
-                    'name': ticket.category.name,
-                    'icon': ticket.category.icon
-                } if hasattr(ticket, 'category') and ticket.category else None,
-                'ticket_type': ticket.ticket_type.value if hasattr(ticket, 'ticket_type') and ticket.ticket_type else 'contact',
-                'priority': ticket.priority.value if hasattr(ticket, 'priority') and ticket.priority else 'normal',
-                'status': ticket.status.value if hasattr(ticket, 'status') and ticket.status else 'open',
-                'created_at': ticket.created_at.isoformat(),
-                'first_response_at': ticket.first_response_at.isoformat() if ticket.first_response_at else None,
-                'resolved_at': ticket.resolved_at.isoformat() if ticket.resolved_at else None,
-                'sla_deadline': ticket.sla_deadline.isoformat() if ticket.sla_deadline else None,
-                'sla_breached': ticket.sla_breached,
-                'response_count': ticket.responses.count() if hasattr(ticket, 'responses') else 0,
-                'last_activity': ticket.activities.order_by(TicketActivity.created_at.desc()).first().created_at.isoformat() if hasattr(ticket, 'activities') and ticket.activities.first() else ticket.created_at.isoformat()
-            })
-        
-        return jsonify({
-            'tickets': result,
-            'pagination': {
-                'current_page': page,
-                'per_page': per_page,
-                'total': tickets.total,
-                'pages': tickets.pages,
-                'has_prev': tickets.has_prev,
-                'has_next': tickets.has_next
-            }
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"Get support tickets error: {e}")
-        return jsonify({'error': 'Failed to get support tickets'}), 500
-
-@admin_bp.route('/api/admin/support/feedback', methods=['GET'])
-@require_admin
-def get_feedback_list(current_user):
-    try:
-        if not Feedback:
-            return jsonify({'error': 'Feedback system not available'}), 503
-        
-        page = int(request.args.get('page', 1))
-        per_page = min(int(request.args.get('per_page', 20)), 100)
-        feedback_type = request.args.get('type')
-        is_read = request.args.get('is_read')
-        search = request.args.get('search', '').strip()
-        
-        query = Feedback.query
-        
-        try:
-            from services.support import FeedbackType
-            if feedback_type and feedback_type != 'all':
-                try:
-                    feedback_type_enum = FeedbackType(feedback_type)
-                    query = query.filter(Feedback.feedback_type == feedback_type_enum)
-                except ValueError:
-                    pass
-        except ImportError:
-            pass
-        
-        if is_read and is_read != 'all':
-            query = query.filter(Feedback.is_read == (is_read == 'true'))
-        
-        if search:
-            query = query.filter(
-                or_(
-                    Feedback.subject.contains(search),
-                    Feedback.user_name.contains(search),
-                    Feedback.user_email.contains(search)
-                )
-            )
-        
-        feedback_items = query.order_by(
-            Feedback.is_read.asc(),
-            Feedback.created_at.desc()
-        ).paginate(page=page, per_page=per_page, error_out=False)
-        
-        result = []
-        for feedback in feedback_items.items:
-            result.append({
-                'id': feedback.id,
-                'subject': feedback.subject,
-                'message': feedback.message[:200] + '...' if len(feedback.message) > 200 else feedback.message,
-                'user_name': feedback.user_name,
-                'user_email': feedback.user_email,
-                'user_id': feedback.user_id,
-                'feedback_type': feedback.feedback_type.value if hasattr(feedback, 'feedback_type') and feedback.feedback_type else 'general',
-                'rating': feedback.rating,
-                'page_url': feedback.page_url,
-                'is_read': feedback.is_read,
-                'created_at': feedback.created_at.isoformat(),
-                'admin_notes': feedback.admin_notes
-            })
-        
-        return jsonify({
-            'feedback': result,
-            'pagination': {
-                'current_page': page,
-                'per_page': per_page,
-                'total': feedback_items.total,
-                'pages': feedback_items.pages,
-                'has_prev': feedback_items.has_prev,
-                'has_next': feedback_items.has_next
-            }
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"Get feedback list error: {e}")
-        return jsonify({'error': 'Failed to get feedback list'}), 500
-
-@admin_bp.route('/api/admin/notifications', methods=['GET'])
-@require_admin
-def get_admin_notifications(current_user):
-    try:
-        page = int(request.args.get('page', 1))
-        per_page = min(int(request.args.get('per_page', 20)), 100)
-        unread_only = request.args.get('unread_only', 'false').lower() == 'true'
-        
-        recent_notifications = []
-        if redis_client:
-            try:
-                notifications_json = redis_client.lrange('admin_notifications', 0, 19)
-                for notif_json in notifications_json:
-                    recent_notifications.append(json.loads(notif_json))
-            except Exception as e:
-                logger.error(f"Redis notification retrieval error: {e}")
-        
-        db_notifications = []
-        if globals().get('AdminNotification'):
-            query = globals()['AdminNotification'].query
-            
-            if unread_only:
-                query = query.filter_by(is_read=False)
-            
-            notifications = query.order_by(
-                globals()['AdminNotification'].created_at.desc()
-            ).paginate(page=page, per_page=per_page, error_out=False)
-            
-            for notif in notifications.items:
-                related_ticket = None
-                if notif.related_ticket_id and SupportTicket:
-                    ticket = SupportTicket.query.get(notif.related_ticket_id)
-                    if ticket:
-                        related_ticket = {
-                            'id': ticket.id,
-                            'ticket_number': ticket.ticket_number,
-                            'subject': ticket.subject
-                        }
-                
-                db_notifications.append({
-                    'id': notif.id,
-                    'type': notif.notification_type.value,
-                    'title': notif.title,
-                    'message': notif.message,
-                    'is_read': notif.is_read,
-                    'is_urgent': notif.is_urgent,
-                    'action_required': notif.action_required,
-                    'action_url': notif.action_url,
-                    'related_ticket': related_ticket,
-                    'metadata': notif.notification_metadata,
-                    'created_at': notif.created_at.isoformat(),
-                    'read_at': notif.read_at.isoformat() if notif.read_at else None
-                })
-        else:
-            notifications = None
-        
-        return jsonify({
-            'recent_notifications': recent_notifications,
-            'notifications': db_notifications,
-            'pagination': {
-                'current_page': page,
-                'per_page': per_page,
-                'total': notifications.total if notifications else 0,
-                'pages': notifications.pages if notifications else 0,
-                'has_prev': notifications.has_prev if notifications else False,
-                'has_next': notifications.has_next if notifications else False
-            }
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"Get admin notifications error: {e}")
-        return jsonify({'error': 'Failed to get notifications'}), 500
-
-@admin_bp.route('/api/admin/notifications/mark-all-read', methods=['PUT'])
-@require_admin
-def mark_all_notifications_read(current_user):
-    try:
-        if not globals().get('AdminNotification'):
-            return jsonify({'error': 'Notification system not available'}), 503
-        
-        globals()['AdminNotification'].query.filter_by(is_read=False).update({
-            'is_read': True,
-            'read_at': datetime.utcnow()
-        })
-        
-        db.session.commit()
-        
-        return jsonify({
-            'success': True,
-            'message': 'All notifications marked as read'
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"Mark all notifications read error: {e}")
-        db.session.rollback()
-        return jsonify({'error': 'Failed to mark all notifications as read'}), 500
-
 @admin_bp.route('/api/admin/analytics', methods=['GET'])
 @require_admin
 def get_analytics(current_user):
@@ -1296,24 +391,6 @@ def get_analytics(current_user):
             User.created_at >= datetime.utcnow() - timedelta(days=30)
         ).count()
         
-        support_stats = {'total_tickets': 0, 'open_tickets': 0, 'resolved_today': 0, 'total_feedback': 0}
-        if SupportTicket:
-            try:
-                from services.support import TicketStatus
-                support_stats = {
-                    'total_tickets': SupportTicket.query.count(),
-                    'open_tickets': SupportTicket.query.filter(
-                        SupportTicket.status.in_([TicketStatus.OPEN, TicketStatus.IN_PROGRESS])
-                    ).count(),
-                    'resolved_today': SupportTicket.query.filter(
-                        func.date(SupportTicket.resolved_at) == datetime.utcnow().date()
-                    ).count(),
-                    'total_feedback': Feedback.query.count() if Feedback else 0
-                }
-            except Exception as e:
-                logger.error(f"Support stats error: {e}")
-                support_stats = {'total_tickets': 0, 'open_tickets': 0, 'resolved_today': 0, 'total_feedback': 0}
-        
         return jsonify({
             'total_users': total_users,
             'total_content': total_content,
@@ -1335,8 +412,7 @@ def get_analytics(current_user):
             'content_by_type': [
                 {'type': item.content_type, 'count': item.count}
                 for item in content_by_type
-            ],
-            'support_stats': support_stats
+            ]
         }), 200
         
     except Exception as e:
@@ -1531,34 +607,6 @@ def get_system_health(current_user):
             'jikan': 'configured' if JikanService else 'not_configured',
             'telegram': 'configured' if bot else 'not_configured'
         }
-        
-        try:
-            if SupportTicket:
-                from services.support import TicketStatus
-                health_data['components']['support_system'] = {
-                    'status': 'healthy',
-                    'total_tickets': SupportTicket.query.count(),
-                    'open_tickets': SupportTicket.query.filter(
-                        SupportTicket.status.in_([TicketStatus.OPEN, TicketStatus.IN_PROGRESS])
-                    ).count(),
-                    'total_feedback': Feedback.query.count() if Feedback else 0
-                }
-            else:
-                health_data['components']['support_system'] = {
-                    'status': 'not_available',
-                    'total_tickets': 0,
-                    'open_tickets': 0,
-                    'total_feedback': 0
-                }
-        except Exception as e:
-            logger.error(f"Support system health check error: {e}")
-            health_data['components']['support_system'] = {
-                'status': 'error',
-                'error': str(e),
-                'total_tickets': 0,
-                'open_tickets': 0,
-                'total_feedback': 0
-            }
         
         return jsonify(health_data), 200
         
