@@ -31,8 +31,8 @@ logger = logging.getLogger(__name__)
 auth_bp = Blueprint('auth', __name__)
 
 FRONTEND_URL = os.environ.get('FRONTEND_URL', 'https://cinebrain.vercel.app')
-BACKEND_URL = os.environ.get('BACKEND_URL', 'https://backend-app-970m.onrender.com')
-REDIS_URL = os.environ.get('REDIS_URL', 'redis://red-d2qlbuje5dus73c71qog:xp7inVzgblGCbo9I4taSGLdKUg0xY91I@red-d2qlbuje5dus73c71qog:6379')
+BACKEND_URL = os.environ.get('BACKEND_URL', 'https://cinebrain.onrender.com')
+REDIS_URL = os.environ.get('REDIS_URL', 'redis://red-d3cdplidbo4c73e352eg:Fin34Hk4Hq42PYejhV4Tufncmi4Ym4H6@red-d3cdplidbo4c73e352eg:6379')
 
 EMAIL_REGEX = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
 

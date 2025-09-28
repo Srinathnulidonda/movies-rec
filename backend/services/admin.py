@@ -33,7 +33,7 @@ TELEGRAM_CHANNEL_ID = os.environ.get('TELEGRAM_CHANNEL_ID', '-1002850793757')
 TELEGRAM_ADMIN_CHAT_ID = os.environ.get('TELEGRAM_ADMIN_CHAT_ID', '-1002850793757')
 GMAIL_USERNAME = os.environ.get('GMAIL_USERNAME', 'projects.srinath@gmail.com')
 GMAIL_APP_PASSWORD = os.environ.get('GMAIL_APP_PASSWORD', 'wuus nsow nbee xewv')
-REDIS_URL = os.environ.get('REDIS_URL', 'redis://red-d2qlbuje5dus73c71qog:xp7inVzgblGCbo9I4taSGLdKUg0xY91I@red-d2qlbuje5dus73c71qog:6379')
+REDIS_URL = os.environ.get('REDIS_URL', 'redis://red-d3cdplidbo4c73e352eg:Fin34Hk4Hq42PYejhV4Tufncmi4Ym4H6@red-d3cdplidbo4c73e352eg:6379')
 
 if TELEGRAM_BOT_TOKEN and TELEGRAM_BOT_TOKEN != 'your_telegram_bot_token':
     try:
