@@ -17,6 +17,7 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 import time
+import unicodedata
 
 logger = logging.getLogger(__name__)
 
@@ -194,7 +195,7 @@ class SlugManager:
             if not safe_slug:
                 type_prefix = {
                     'movie': 'movie',
-                    'tv': 'tv-show', 
+                    'tv': 'tv-show',
                     'anime': 'anime',
                     'person': 'person'
                 }.get(content_type, 'content')
@@ -308,6 +309,7 @@ class SlugManager:
                 'year': None,
                 'content_type': 'movie'
             }
+    
     @staticmethod
     def _slug_to_title(slug: str) -> str:
         try:
@@ -676,6 +678,28 @@ class ContentService:
         }
         return [genre_map.get(gid, 'Unknown') for gid in genre_ids if gid in genre_map]
 
+class TMDBService:
+    @staticmethod
+    def search_content(query, content_type='multi', page=1):
+        try:
+            if not TMDB_API_KEY:
+                return None
+            
+            url = f"{TMDB_BASE_URL}/search/{content_type}"
+            params = {
+                'api_key': TMDB_API_KEY,
+                'query': query,
+                'page': page
+            }
+            
+            response = requests.get(url, params=params, timeout=5)
+            if response.status_code == 200:
+                return response.json()
+            return None
+        except Exception as e:
+            logger.error(f"TMDB search error: {e}")
+            return None
+
 class DetailsService:
     
     def __init__(self, db, models, cache=None):
@@ -747,7 +771,7 @@ class DetailsService:
                     if self._should_fetch_from_external(slug, info['title'], info['year']):
                         logger.info(f"Content not found for slug: {slug}, consider implementing external API fetch")
                     else:
-                        logger.warning(f"Content not found for slug: {slug}")
+                        logger.debug(f"Content not found for slug: {slug}")
                     return None
             
             if not content.slug:
@@ -780,20 +804,26 @@ class DetailsService:
             year = info['year']
             content_type = info['content_type']
             
-            logger.info(f"Enhanced fuzzy search for slug '{slug}': title='{title}', year={year}, type={content_type}")
+            logger.debug(f"Fuzzy search for slug '{slug}': title='{title}', year={year}, type={content_type}")
+            
+            slug_results = self._search_by_slug_patterns(slug)
+            if slug_results:
+                logger.info(f"Found {len(slug_results)} results by slug pattern for '{slug}'")
+                return slug_results[0]
             
             title_variations = self._generate_comprehensive_title_variations(title)
-            
-            logger.info(f"Generated {len(title_variations)} title variations for '{title}'")
             
             results = []
             
             strategies = [
                 ('exact_match_with_year', lambda v: self._search_exact_with_year(v, content_type, year)),
                 ('flexible_year_match', lambda v: self._search_flexible_year(v, content_type, year)),
+                ('normalized_title_match', lambda v: self._search_normalized_title(v, content_type, year)),
                 ('content_type_match', lambda v: self._search_by_content_type(v, content_type)),
+                ('phonetic_match', lambda v: self._search_phonetic(v, content_type)),
                 ('contains_search', lambda v: self._search_contains(v, content_type)),
                 ('partial_word_match', lambda v: self._search_partial_words(v, content_type)),
+                ('fuzzy_distance_match', lambda v: self._search_fuzzy_distance(v, content_type)),
                 ('broad_search', lambda v: self._search_broad(v)),
                 ('super_fuzzy', lambda v: self._search_super_fuzzy(v, content_type, year))
             ]
@@ -802,7 +832,7 @@ class DetailsService:
                 if results and len(results) >= 5:
                     break
                     
-                logger.info(f"Trying strategy: {strategy_name}")
+                logger.debug(f"Trying strategy: {strategy_name}")
                 
                 for i, variation in enumerate(title_variations):
                     if results and len(results) >= 10:
@@ -812,13 +842,10 @@ class DetailsService:
                         strategy_results = search_func(variation)
                         if strategy_results:
                             results.extend(strategy_results)
-                            logger.info(f"Strategy '{strategy_name}' found {len(strategy_results)} results for variation '{variation}'")
+                            logger.debug(f"Strategy '{strategy_name}' found {len(strategy_results)} results")
                     except Exception as e:
-                        logger.warning(f"Error in strategy {strategy_name} for variation '{variation}': {e}")
+                        logger.debug(f"Strategy {strategy_name} error: {e}")
                         continue
-                
-                if results:
-                    logger.info(f"Strategy '{strategy_name}' completed with {len(results)} total results")
             
             seen_ids = set()
             unique_results = []
@@ -829,14 +856,161 @@ class DetailsService:
             
             if unique_results:
                 best_match = self._find_best_match(unique_results, title, year, content_type)
-                logger.info(f"Best fuzzy match for '{slug}': {best_match.title} (ID: {best_match.id}, slug: {best_match.slug})")
+                logger.info(f"Found fuzzy match for '{slug}': {best_match.title} (ID: {best_match.id})")
                 return best_match
             
-            logger.warning(f"No fuzzy match found for '{slug}' with title '{title}' and year {year}")
+            if self._should_fetch_from_external(slug, title, year):
+                logger.info(f"No local match for '{slug}'. Consider fetching from external API.")
+                external_content = self._try_fetch_from_external(title, year, content_type)
+                if external_content:
+                    return external_content
+            
+            logger.debug(f"No match found for '{slug}'")
             return None
             
         except Exception as e:
             logger.error(f"Error in fuzzy content search: {e}")
+            return None
+    
+    def _search_by_slug_patterns(self, slug: str) -> List[Any]:
+        try:
+            results = []
+            
+            direct = self.Content.query.filter_by(slug=slug).first()
+            if direct:
+                return [direct]
+            
+            slug_without_year = re.sub(r'-\d{4}$', '', slug)
+            if slug_without_year != slug:
+                results.extend(
+                    self.Content.query.filter(
+                        self.Content.slug.like(f"{slug_without_year}%")
+                    ).limit(5).all()
+                )
+            
+            if len(slug) > 5:
+                results.extend(
+                    self.Content.query.filter(
+                        self.Content.slug.contains(slug[:10])
+                    ).limit(5).all()
+                )
+            
+            return results
+            
+        except Exception as e:
+            logger.debug(f"Slug pattern search error: {e}")
+            return []
+    
+    def _search_normalized_title(self, variation: str, content_type: str, year: Optional[int]) -> List[Any]:
+        try:
+            normalized = self._normalize_title_for_search(variation)
+            
+            query = self.Content.query.filter(
+                func.lower(
+                    func.regexp_replace(
+                        self.Content.title, 
+                        '[^a-zA-Z0-9 ]', 
+                        '', 
+                        'g'
+                    )
+                ).like(f"%{normalized}%")
+            )
+            
+            if content_type:
+                query = query.filter(self.Content.content_type == content_type)
+            
+            if year:
+                query = query.filter(
+                    func.extract('year', self.Content.release_date).between(year - 2, year + 2)
+                )
+            
+            return query.order_by(self.Content.popularity.desc()).limit(10).all()
+            
+        except Exception as e:
+            logger.debug(f"Normalized search error: {e}")
+            return self._search_contains(variation, content_type)
+    
+    def _normalize_title_for_search(self, title: str) -> str:
+        normalized = unicodedata.normalize('NFKD', title)
+        normalized = normalized.encode('ascii', 'ignore').decode('ascii')
+        
+        normalized = re.sub(r'[^a-zA-Z0-9 ]', '', normalized)
+        normalized = re.sub(r'\s+', ' ', normalized).strip().lower()
+        
+        return normalized
+    
+    def _search_phonetic(self, variation: str, content_type: str) -> List[Any]:
+        try:
+            phonetic_map = {
+                'ph': 'f', 'ck': 'k', 'qu': 'kw', 'x': 'ks',
+                'tion': 'shun', 'sion': 'shun', 'ough': 'uf',
+                'augh': 'af', 'eigh': 'ay', 'igh': 'i'
+            }
+            
+            phonetic_var = variation.lower()
+            for old, new in phonetic_map.items():
+                phonetic_var = phonetic_var.replace(old, new)
+            
+            return self.Content.query.filter(
+                func.lower(self.Content.title).like(f"%{phonetic_var}%")
+            ).order_by(self.Content.popularity.desc()).limit(10).all()
+            
+        except Exception:
+            return []
+    
+    def _search_fuzzy_distance(self, variation: str, content_type: str) -> List[Any]:
+        try:
+            query = self.Content.query
+            if content_type:
+                query = query.filter(self.Content.content_type == content_type)
+            
+            candidates = query.limit(500).all()
+            
+            scored_results = []
+            for candidate in candidates:
+                if candidate.title:
+                    similarity = self._calculate_similarity(candidate.title.lower(), variation)
+                    if similarity > 0.6:
+                        scored_results.append((candidate, similarity))
+            
+            scored_results.sort(key=lambda x: x[1], reverse=True)
+            return [result[0] for result in scored_results[:10]]
+            
+        except Exception as e:
+            logger.debug(f"Fuzzy distance search error: {e}")
+            return []
+    
+    def _try_fetch_from_external(self, title: str, year: Optional[int], content_type: str) -> Optional[Any]:
+        try:
+            if not TMDB_API_KEY:
+                return None
+            
+            search_results = TMDBService.search_content(title, content_type, page=1)
+            if search_results and search_results.get('results'):
+                for result in search_results['results'][:3]:
+                    if year:
+                        result_date = result.get('release_date') or result.get('first_air_date')
+                        if result_date:
+                            try:
+                                result_year = int(result_date[:4])
+                                if abs(result_year - year) > 2:
+                                    continue
+                            except:
+                                pass
+                    
+                    saved_content = self.content_service.save_content_from_tmdb(
+                        result, 
+                        'movie' if 'title' in result else 'tv'
+                    )
+                    
+                    if saved_content:
+                        logger.info(f"Fetched and saved content from TMDB: {saved_content.title}")
+                        return saved_content
+            
+            return None
+            
+        except Exception as e:
+            logger.debug(f"External fetch error: {e}")
             return None
     
     def _generate_comprehensive_title_variations(self, title: str) -> List[str]:
@@ -849,111 +1023,61 @@ class DetailsService:
             
             variations.append(title_lower)
             
-            if len(title_lower) <= 5:
+            special_char_replacements = {
+                'œ': 'oe', 'æ': 'ae', 'ø': 'o', 'å': 'a',
+                'ö': 'o', 'ä': 'a', 'ü': 'u', 'ß': 'ss',
+                'ñ': 'n', 'ç': 'c', 'é': 'e', 'è': 'e',
+                'ê': 'e', 'ë': 'e', 'à': 'a', 'â': 'a',
+                'ô': 'o', 'û': 'u', 'ù': 'u', 'ï': 'i',
+                'î': 'i', 'á': 'a', 'í': 'i', 'ó': 'o',
+                'ú': 'u', 'ý': 'y'
+            }
+            
+            normalized = title_lower
+            for old, new in special_char_replacements.items():
+                if old in normalized:
+                    normalized = normalized.replace(old, new)
+                    variations.append(normalized)
+            
+            if 'dden' in title_lower:
                 variations.extend([
+                    title_lower.replace('dden', 'døden'),
+                    title_lower.replace('dden', 'doden'),
+                    title_lower.replace('dden', 'death')
+                ])
+            
+            patterns = [
+                (r'^the\s+', ''),
+                (r'\s*:\s*', ' '),
+                (r'\s*-\s*', ' '),
+                (r'\s+', ' '),
+                (r'[^\w\s]', ''),
+            ]
+            
+            for pattern, replacement in patterns:
+                modified = re.sub(pattern, replacement, title_lower).strip()
+                if modified and modified != title_lower:
+                    variations.append(modified)
+            
+            if len(title_lower) <= 10:
+                variations.extend([
+                    f"the {title_lower}",
                     f"{title_lower} movie",
                     f"{title_lower} film",
                     f"{title_lower} series",
-                    f"{title_lower} show",
-                    f"{title_lower}:",
-                    f"the {title_lower}",
-                    f"{title_lower} the",
-                    f"{title_lower} 2024",
-                    f"{title_lower} 2025",
-                    f"{title_lower} documentary",
-                    f"{title_lower} season",
-                ])
-                
-                for year in range(2020, 2026):
-                    variations.append(f"{title_lower} {year}")
-                    variations.append(f"{title_lower}-{year}")
-            
-            if title_lower in ['f1', 'f2']:
-                variations.extend([
-                    f"formula {title_lower[-1]}",
-                    f"formula one" if title_lower == 'f1' else f"formula two",
-                    f"{title_lower} racing",
-                    f"{title_lower} grand prix",
-                    f"{title_lower} championship"
+                    f"{title_lower} tv",
+                    f"{title_lower} show"
                 ])
             
-            for separator in [':', '–', '-', ' - ', ' – ']:
-                if separator in title:
-                    parts = title.split(separator)
-                    if len(parts) >= 2:
-                        main_part = parts[0].strip().lower()
-                        sub_part = parts[1].strip().lower()
-                        
-                        variations.extend([
-                            main_part,
-                            sub_part,
-                            f"{main_part}: {sub_part}",
-                            f"{main_part} - {sub_part}",
-                            f"{main_part} {sub_part}",
-                            f"{main_part}{sub_part}",
-                        ])
-            
-            variations.extend([
-                title.replace(':', '').lower(),
-                title.replace(':', ' -').lower(),
-                title.replace(':', ' –').lower(),
-                title.replace(':', ' ').lower(),
-                title.replace(' ', '').lower(),
-                title.replace('-', ' ').lower(),
-                title.replace('–', ' ').lower(),
-                title.replace('_', ' ').lower(),
-                title.replace('.', ' ').lower(),
-            ])
-            
-            if title_lower.startswith('the '):
-                variations.append(title_lower[4:])
-            else:
-                variations.append(f"the {title_lower}")
-            
-            if 'mission' in title_lower and 'impossible' in title_lower:
-                parts = title_lower.split()
-                mission_idx = next((i for i, part in enumerate(parts) if 'mission' in part), -1)
-                impossible_idx = next((i for i, part in enumerate(parts) if 'impossible' in part), -1)
-                
-                if mission_idx >= 0 and impossible_idx >= 0:
-                    after_impossible = ' '.join(parts[impossible_idx+1:]) if impossible_idx < len(parts) - 1 else ''
-                    
-                    variations.extend([
-                        f"mission: impossible {after_impossible}".strip(),
-                        f"mission: impossible – {after_impossible}".strip(),
-                        f"mission: impossible - {after_impossible}".strip(),
-                        f"mission impossible {after_impossible}".strip(),
-                        "mission: impossible",
-                        "mission impossible"
-                    ])
-            
-            words = [w.strip() for w in title_lower.split() if len(w.strip()) > 0]
+            words = title_lower.split()
             if len(words) > 1:
-                for i in range(len(words)):
-                    for j in range(i+1, min(i+4, len(words)+1)):
-                        phrase = ' '.join(words[i:j])
-                        if len(phrase) >= 2:
-                            variations.append(phrase)
+                variations.append(''.join(words))
+                variations.append('-'.join(words))
+                variations.append('_'.join(words))
                 
-                if len(words) >= 2:
-                    variations.append(' '.join(words[:2]))
-                    variations.append(' '.join(words[-2:]))
-            
-            abbreviations = {
-                'and': '&',
-                '&': 'and',
-                'versus': 'vs',
-                'vs': 'versus',
-                'vs.': 'vs',
-                'doctor': 'dr',
-                'dr': 'doctor',
-                'mister': 'mr',
-                'mr': 'mister'
-            }
-            
-            for old, new in abbreviations.items():
-                if old in title_lower:
-                    variations.append(title_lower.replace(old, new))
+                for i in range(1, len(words)):
+                    variations.append(' '.join(words[:i]))
+                    variations.append(' '.join(words[i:]))
             
             seen = set()
             unique_variations = []
@@ -963,7 +1087,7 @@ class DetailsService:
                     seen.add(clean_var)
                     unique_variations.append(clean_var)
             
-            return unique_variations[:50]
+            return unique_variations[:30]
             
         except Exception as e:
             logger.error(f"Error generating title variations: {e}")
@@ -1161,9 +1285,17 @@ class DetailsService:
     def _should_fetch_from_external(self, slug: str, title: str, year: Optional[int]) -> bool:
         try:
             current_year = datetime.now().year
-            if year and (current_year - 5 <= year <= current_year + 2):
-                logger.info(f"Content '{title}' ({year}) not found in database, could fetch from external APIs")
+            
+            if year and (current_year - 2 <= year <= current_year + 3):
                 return True
+            
+            if not year and any(str(y) in slug for y in range(current_year - 1, current_year + 3)):
+                return True
+            
+            upcoming_keywords = ['sequel', 'part', 'chapter', '2024', '2025', '2026']
+            if any(keyword in slug.lower() for keyword in upcoming_keywords):
+                return True
+            
             return False
         except:
             return False
