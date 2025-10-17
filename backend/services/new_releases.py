@@ -55,21 +55,13 @@ class CineBrainNewReleasesService:
         
         self.config = CineBrainNewReleasesConfig(
             language_priorities=['telugu', 'english', 'hindi', 'malayalam', 'kannada', 'tamil', 'other'],
-            date_range_days=45,  # Updated to 45 days
-            refresh_interval_minutes=35,  # More frequent refresh for Telugu content
+            date_range_days=45,  # STRICT 45-day limit
+            refresh_interval_minutes=35,
             cache_file_path='cache/cinebrain_new_releases.json',
-            max_items_per_category=80,  # Increased for better Telugu coverage
+            max_items_per_category=80,
             api_timeout_seconds=15,
             max_retries=3
         )
-        
-        # Telugu-specific configuration
-        self.telugu_focus_config = {
-            'telugu_quota_multiplier': 3,  # Give Telugu content 3x more quota
-            'telugu_regions': ['IN', 'US'],  # Check both Indian and US Telugu releases
-            'telugu_keywords': ['tollywood', 'telugu', 'andhra', 'hyderabad', 'telangana'],
-            'enhanced_telugu_search': True
-        }
         
         self._cache_lock = threading.RLock()
         self._refresh_thread = None
@@ -93,7 +85,7 @@ class CineBrainNewReleasesService:
         session.mount('http://', adapter)
         session.mount('https://', adapter)
         session.headers.update({
-            'User-Agent': 'CineBrain/2.0 Telugu Focus (https://cinebrain.vercel.app)',
+            'User-Agent': 'CineBrain/2.0 45-Day Releases (https://cinebrain.vercel.app)',
             'Accept': 'application/json',
             'Accept-Encoding': 'gzip, deflate'
         })
@@ -103,6 +95,32 @@ class CineBrainNewReleasesService:
         cache_dir = Path(self.config.cache_file_path).parent
         cache_dir.mkdir(parents=True, exist_ok=True)
         
+    def _get_strict_date_range(self) -> Tuple[datetime.date, datetime.date]:
+        """Get strict 45-day date range - NO content older than 45 days"""
+        end_date = datetime.now().date()
+        start_date = end_date - timedelta(days=self.config.date_range_days)
+        logger.info(f"CineBrain: STRICT date range - {start_date} to {end_date} (last 45 days ONLY)")
+        return start_date, end_date
+        
+    def _is_within_strict_date_range(self, release_date: str) -> bool:
+        """Strict validation - content MUST be within last 45 days"""
+        try:
+            if not release_date:
+                return False
+                
+            release = datetime.fromisoformat(release_date.replace('Z', '+00:00')).date()
+            start_date, end_date = self._get_strict_date_range()
+            
+            is_valid = start_date <= release <= end_date
+            if not is_valid:
+                days_ago = (end_date - release).days
+                logger.debug(f"CineBrain: Filtered out content from {release_date} ({days_ago} days ago)")
+            
+            return is_valid
+        except Exception as e:
+            logger.warning(f"CineBrain: Invalid date format {release_date}: {e}")
+            return False
+            
     def start_background_refresh(self):
         if self._refresh_thread and self._refresh_thread.is_alive():
             return
@@ -111,10 +129,10 @@ class CineBrainNewReleasesService:
         self._refresh_thread = threading.Thread(
             target=self._background_refresh_worker,
             daemon=True,
-            name='CineBrainTeluguNewReleasesRefresh'
+            name='CineBrain45DayNewReleases'
         )
         self._refresh_thread.start()
-        logger.info("CineBrain Telugu-focused new releases background refresh started")
+        logger.info("CineBrain 45-day new releases background refresh started")
         
     def stop_background_refresh(self):
         if self._refresh_thread:
@@ -123,12 +141,12 @@ class CineBrainNewReleasesService:
             logger.info("CineBrain new releases background refresh stopped")
             
     def _background_refresh_worker(self):
-        initial_delay = 45  # Shorter initial delay for quicker Telugu content
+        initial_delay = 45
         time.sleep(initial_delay)
         
         while not self._should_stop.is_set():
             try:
-                logger.info("CineBrain: Starting scheduled Telugu-focused new releases refresh")
+                logger.info("CineBrain: Starting scheduled 45-day new releases refresh")
                 self.refresh_new_releases()
                 
                 wait_time = self.config.refresh_interval_minutes * 60
@@ -138,13 +156,13 @@ class CineBrainNewReleasesService:
                         
             except Exception as e:
                 logger.error(f"CineBrain new releases background refresh error: {e}")
-                if self._should_stop.wait(180):  # Shorter retry delay
+                if self._should_stop.wait(180):
                     return
                     
     def get_new_releases(self, force_refresh: bool = False) -> Dict[str, Any]:
         with self._cache_lock:
             if force_refresh or self._should_refresh():
-                logger.info("CineBrain: Triggering Telugu-focused new releases refresh")
+                logger.info("CineBrain: Triggering 45-day new releases refresh")
                 self.refresh_new_releases()
                 
             return self._cache_data or self._get_empty_response()
@@ -158,24 +176,20 @@ class CineBrainNewReleasesService:
         
     def refresh_new_releases(self):
         try:
-            logger.info("CineBrain: Starting comprehensive Telugu-focused new releases data collection")
-            
-            end_date = datetime.now().date()
-            start_date = end_date - timedelta(days=self.config.date_range_days)
-            
-            logger.info(f"CineBrain: Fetching releases from {start_date} to {end_date} (45 days)")
+            start_date, end_date = self._get_strict_date_range()
+            logger.info(f"CineBrain: Fetching ONLY releases from {start_date} to {end_date} (last 45 days)")
             
             all_content = []
             
             with ThreadPoolExecutor(max_workers=8) as executor:
                 futures = []
                 
-                # Enhanced Telugu content fetching
+                # Enhanced Telugu content fetching with strict date filtering
                 futures.append(executor.submit(
                     self._fetch_enhanced_telugu_releases, start_date, end_date
                 ))
                 
-                # Standard TMDB releases
+                # Standard TMDB releases with strict date filtering
                 futures.append(executor.submit(
                     self._fetch_tmdb_releases, 'movie', start_date, end_date
                 ))
@@ -189,7 +203,7 @@ class CineBrainNewReleasesService:
                         self._fetch_enhanced_language_specific_releases, language_code, start_date, end_date
                     ))
                 
-                # Anime releases
+                # Anime releases with strict date filtering
                 futures.append(executor.submit(
                     self._fetch_anime_releases, start_date, end_date
                 ))
@@ -204,20 +218,37 @@ class CineBrainNewReleasesService:
                     try:
                         content_batch = future.result()
                         if content_batch:
-                            all_content.extend(content_batch)
-                            logger.info(f"CineBrain: Collected {len(content_batch)} items from batch")
+                            # STRICT DATE VALIDATION - Filter out any content older than 45 days
+                            valid_content = [
+                                content for content in content_batch 
+                                if self._is_within_strict_date_range(content.release_date)
+                            ]
+                            all_content.extend(valid_content)
+                            filtered_count = len(content_batch) - len(valid_content)
+                            if filtered_count > 0:
+                                logger.info(f"CineBrain: Filtered out {filtered_count} items older than 45 days")
+                            logger.info(f"CineBrain: Collected {len(valid_content)} valid items from batch")
                     except Exception as e:
                         logger.error(f"CineBrain: Content batch fetch error: {e}")
                         continue
                         
             if not all_content:
-                logger.warning("CineBrain: No new releases found, keeping existing cache")
+                logger.warning("CineBrain: No new releases found within last 45 days, keeping existing cache")
                 return
                 
-            unique_content = self._deduplicate_content(all_content)
-            logger.info(f"CineBrain: Collected {len(unique_content)} unique releases after deduplication")
+            # Additional date validation before processing
+            strictly_filtered_content = [
+                content for content in all_content 
+                if self._is_within_strict_date_range(content.release_date)
+            ]
             
-            # Enhanced processing with Telugu priority
+            if len(strictly_filtered_content) != len(all_content):
+                filtered_out = len(all_content) - len(strictly_filtered_content)
+                logger.info(f"CineBrain: Final filter removed {filtered_out} items older than 45 days")
+            
+            unique_content = self._deduplicate_content(strictly_filtered_content)
+            logger.info(f"CineBrain: Processing {len(unique_content)} unique releases from last 45 days")
+            
             processed_data = self._process_and_sort_content_with_telugu_priority(unique_content)
             
             with self._cache_lock:
@@ -226,13 +257,13 @@ class CineBrainNewReleasesService:
                 self._save_cache_to_disk()
                 
             telugu_count = sum(1 for item in unique_content if 'telugu' in [lang.lower() for lang in item.languages])
-            logger.info(f"CineBrain: Successfully refreshed {len(unique_content)} unique new releases ({telugu_count} Telugu)")
+            logger.info(f"CineBrain: Successfully refreshed {len(unique_content)} releases from last 45 days ({telugu_count} Telugu)")
             
         except Exception as e:
             logger.error(f"CineBrain: New releases refresh failed: {e}")
             
     def _fetch_enhanced_telugu_releases(self, start_date, end_date) -> List[CineBrainContent]:
-        """Enhanced Telugu content fetching with multiple strategies"""
+        """Enhanced Telugu content fetching with STRICT 45-day filtering"""
         if not self.tmdb_api_key:
             logger.warning("CineBrain: TMDB API key not available for Telugu search")
             return []
@@ -240,9 +271,9 @@ class CineBrainNewReleasesService:
         content_list = []
         
         try:
-            # Strategy 1: Direct Telugu language search
+            # Strategy 1: Direct Telugu language search with STRICT date range
             for content_type in ['movie', 'tv']:
-                for page in range(1, 6):  # More pages for Telugu
+                for page in range(1, 6):
                     url = f"https://api.themoviedb.org/3/discover/{content_type}"
                     params = {
                         'api_key': self.tmdb_api_key,
@@ -261,6 +292,11 @@ class CineBrainNewReleasesService:
                         
                     results = response.get('results', [])
                     for item in results:
+                        # STRICT date validation at source
+                        release_date = item.get('release_date') or item.get('first_air_date', '')
+                        if not self._is_within_strict_date_range(release_date):
+                            continue
+                            
                         content = self._convert_tmdb_to_cinebrain(item, content_type)
                         if content and self._is_telugu_content(content):
                             content_list.append(content)
@@ -270,16 +306,14 @@ class CineBrainNewReleasesService:
                         
                     time.sleep(0.3)
             
-            # Strategy 2: Search with Telugu keywords
-            telugu_keywords = ['tollywood', 'telugu cinema', 'andhra pradesh', 'telangana']
+            # Strategy 2: Search with Telugu keywords (with date filtering)
+            telugu_keywords = ['tollywood', 'telugu cinema']
             for keyword in telugu_keywords:
                 for content_type in ['movie', 'tv']:
                     url = f"https://api.themoviedb.org/3/search/{content_type}"
                     params = {
                         'api_key': self.tmdb_api_key,
                         'query': keyword,
-                        'primary_release_date.gte': start_date.isoformat(),
-                        'primary_release_date.lte': end_date.isoformat(),
                         'region': 'IN'
                     }
                     
@@ -287,68 +321,33 @@ class CineBrainNewReleasesService:
                     if response:
                         results = response.get('results', [])
                         for item in results:
+                            # STRICT date validation
+                            release_date = item.get('release_date') or item.get('first_air_date', '')
+                            if not self._is_within_strict_date_range(release_date):
+                                continue
+                                
                             content = self._convert_tmdb_to_cinebrain(item, content_type)
                             if content and self._is_telugu_content(content):
                                 content_list.append(content)
                     
                     time.sleep(0.5)
-            
-            # Strategy 3: Production company search for major Telugu studios
-            telugu_companies = [
-                'Mythri Movie Makers', 'Geetha Arts', 'Haarika & Hassine Creations',
-                'Sri Venkateswara Creations', 'UV Creations', 'GA2 Pictures'
-            ]
-            
-            for company in telugu_companies:
-                url = f"https://api.themoviedb.org/3/search/company"
-                params = {
-                    'api_key': self.tmdb_api_key,
-                    'query': company
-                }
-                
-                response = self._make_request(url, params)
-                if response:
-                    companies = response.get('results', [])
-                    for comp in companies[:2]:  # Limit to first 2 matches
-                        company_id = comp.get('id')
-                        if company_id:
-                            # Search movies by this company
-                            url = f"https://api.themoviedb.org/3/discover/movie"
-                            params = {
-                                'api_key': self.tmdb_api_key,
-                                'with_companies': company_id,
-                                'primary_release_date.gte': start_date.isoformat(),
-                                'primary_release_date.lte': end_date.isoformat(),
-                                'sort_by': 'primary_release_date.desc'
-                            }
-                            
-                            comp_response = self._make_request(url, params)
-                            if comp_response:
-                                results = comp_response.get('results', [])
-                                for item in results:
-                                    content = self._convert_tmdb_to_cinebrain(item, 'movie')
-                                    if content:
-                                        content_list.append(content)
-                
-                time.sleep(1.0)
                 
         except Exception as e:
             logger.error(f"CineBrain enhanced Telugu fetch error: {e}")
             
-        logger.info(f"CineBrain: Enhanced Telugu search found {len(content_list)} items")
+        logger.info(f"CineBrain: Enhanced Telugu search found {len(content_list)} items within 45 days")
         return content_list
         
     def _fetch_enhanced_language_specific_releases(self, language_code: str, start_date, end_date) -> List[CineBrainContent]:
-        """Enhanced language-specific fetching with better coverage"""
+        """Enhanced language-specific fetching with STRICT 45-day filtering"""
         if not self.tmdb_api_key:
             return []
             
         content_list = []
         
         try:
-            # Primary language search
             for content_type in ['movie', 'tv']:
-                pages_to_fetch = 6 if language_code == 'te' else 4  # More pages for Telugu
+                pages_to_fetch = 6 if language_code == 'te' else 4
                 
                 for page in range(1, pages_to_fetch + 1):
                     url = f"https://api.themoviedb.org/3/discover/{content_type}"
@@ -369,6 +368,11 @@ class CineBrainNewReleasesService:
                         
                     results = response.get('results', [])
                     for item in results:
+                        # STRICT date validation at source
+                        release_date = item.get('release_date') or item.get('first_air_date', '')
+                        if not self._is_within_strict_date_range(release_date):
+                            continue
+                            
                         content = self._convert_tmdb_to_cinebrain(item, content_type)
                         if content:
                             content_list.append(content)
@@ -377,29 +381,6 @@ class CineBrainNewReleasesService:
                         break
                         
                     time.sleep(0.3)
-            
-            # Secondary search by popularity for this language
-            for content_type in ['movie', 'tv']:
-                url = f"https://api.themoviedb.org/3/discover/{content_type}"
-                params = {
-                    'api_key': self.tmdb_api_key,
-                    'with_original_language': language_code,
-                    'primary_release_date.gte': start_date.isoformat(),
-                    'primary_release_date.lte': end_date.isoformat(),
-                    'sort_by': 'popularity.desc',
-                    'page': 1,
-                    'vote_count.gte': 5
-                }
-                
-                response = self._make_request(url, params)
-                if response:
-                    results = response.get('results', [])
-                    for item in results:
-                        content = self._convert_tmdb_to_cinebrain(item, content_type)
-                        if content:
-                            content_list.append(content)
-                
-                time.sleep(0.4)
                     
         except Exception as e:
             logger.error(f"CineBrain enhanced language-specific {language_code} fetch error: {e}")
@@ -407,7 +388,7 @@ class CineBrainNewReleasesService:
         return content_list
         
     def _fetch_regional_releases(self, region: str, start_date, end_date) -> List[CineBrainContent]:
-        """Fetch releases by region"""
+        """Fetch releases by region with STRICT 45-day filtering"""
         if not self.tmdb_api_key:
             return []
             
@@ -433,6 +414,11 @@ class CineBrainNewReleasesService:
                         
                     results = response.get('results', [])
                     for item in results:
+                        # STRICT date validation at source
+                        release_date = item.get('release_date') or item.get('first_air_date', '')
+                        if not self._is_within_strict_date_range(release_date):
+                            continue
+                            
                         content = self._convert_tmdb_to_cinebrain(item, content_type)
                         if content:
                             content_list.append(content)
@@ -453,7 +439,6 @@ class CineBrainNewReleasesService:
             if lang.lower() in ['telugu', 'te']:
                 return True
         
-        # Check title for Telugu indicators
         title_lower = content.title.lower()
         telugu_indicators = ['telugu', 'tollywood', 'andhra', 'telangana']
         return any(indicator in title_lower for indicator in telugu_indicators)
@@ -463,22 +448,23 @@ class CineBrainNewReleasesService:
         seen_ids = set()
         unique_content = []
         
-        # Sort to prioritize higher quality content
         content_list.sort(key=lambda x: (-x.popularity, -x.rating, -x.vote_count))
         
         for content in content_list:
-            # Create composite key for deduplication
+            # FINAL date validation during deduplication
+            if not self._is_within_strict_date_range(content.release_date):
+                continue
+                
             title_key = f"{content.title.lower().strip()}_{content.content_type}"
             id_key = f"{content.tmdb_id or content.mal_id or 0}_{content.content_type}"
             
-            # More flexible deduplication for Telugu content
             is_telugu = self._is_telugu_content(content)
             
             if title_key not in seen_titles and id_key not in seen_ids:
                 seen_titles.add(title_key)
                 seen_ids.add(id_key)
                 unique_content.append(content)
-            elif is_telugu and len(unique_content) < 100:  # Allow some duplicates for Telugu
+            elif is_telugu and len(unique_content) < 100:
                 unique_content.append(content)
                 
         return unique_content
@@ -491,7 +477,7 @@ class CineBrainNewReleasesService:
         content_list = []
         
         try:
-            for page in range(1, 10):  # More pages for comprehensive coverage
+            for page in range(1, 10):
                 url = f"https://api.themoviedb.org/3/discover/{content_type}"
                 params = {
                     'api_key': self.tmdb_api_key,
@@ -512,6 +498,11 @@ class CineBrainNewReleasesService:
                     break
                     
                 for item in results:
+                    # STRICT date validation at source
+                    release_date = item.get('release_date') or item.get('first_air_date', '')
+                    if not self._is_within_strict_date_range(release_date):
+                        continue
+                        
                     content = self._convert_tmdb_to_cinebrain(item, content_type)
                     if content:
                         content_list.append(content)
@@ -551,7 +542,7 @@ class CineBrainNewReleasesService:
                     
                 for item in results:
                     content = self._convert_anime_to_cinebrain(item)
-                    if content and self._is_within_date_range(content.release_date, start_date, end_date):
+                    if content and self._is_within_strict_date_range(content.release_date):
                         content_list.append(content)
                         
                 if len(content_list) >= self.config.max_items_per_category:
@@ -605,6 +596,10 @@ class CineBrainNewReleasesService:
             if not release_date:
                 return None
                 
+            # STRICT date validation during conversion
+            if not self._is_within_strict_date_range(release_date):
+                return None
+                
             slug = self._generate_slug(title, release_date)
             poster_path = item.get('poster_path')
             if poster_path and not poster_path.startswith('http'):
@@ -652,6 +647,10 @@ class CineBrainNewReleasesService:
                 release_date = aired['from'][:10]
                 
             if not release_date:
+                return None
+                
+            # STRICT date validation during anime conversion
+            if not self._is_within_strict_date_range(release_date):
                 return None
                 
             slug = self._generate_slug(title, release_date)
@@ -704,7 +703,7 @@ class CineBrainNewReleasesService:
         
     def _generate_slug(self, title: str, release_date: str) -> str:
         try:
-            year = datetime.fromisoformat(release_date).year
+            year = datetime.fromisoformat(release_date.replace('Z', '+00:00')).year
             slug = title.lower()
             slug = ''.join(c if c.isalnum() or c == ' ' else '' for c in slug)
             slug = '-'.join(slug.split())
@@ -716,22 +715,25 @@ class CineBrainNewReleasesService:
             slug = '-'.join(slug.split())
             return slug[:50] if len(slug) > 50 else slug
             
-    def _is_within_date_range(self, release_date: str, start_date, end_date) -> bool:
-        try:
-            release = datetime.fromisoformat(release_date).date()
-            return start_date <= release <= end_date
-        except:
-            return False
-            
     def _process_and_sort_content_with_telugu_priority(self, content_list: List[CineBrainContent]) -> Dict[str, Any]:
-        """Enhanced processing with Telugu priority and 45-day focus"""
+        """Enhanced processing with Telugu priority and STRICT 45-day validation"""
         all_content = {
             'movies': [],
             'tv_shows': [],
             'anime': []
         }
         
-        for content in content_list:
+        # FINAL validation - ensure ALL content is within 45 days
+        valid_content_list = [
+            content for content in content_list 
+            if self._is_within_strict_date_range(content.release_date)
+        ]
+        
+        filtered_out = len(content_list) - len(valid_content_list)
+        if filtered_out > 0:
+            logger.info(f"CineBrain: Final processing filtered out {filtered_out} items older than 45 days")
+        
+        for content in valid_content_list:
             content_dict = asdict(content)
             
             if content.content_type == 'movie':
@@ -747,17 +749,26 @@ class CineBrainNewReleasesService:
             
         priority_content = self._create_telugu_priority_content(all_content)
         
+        # Validate all priority content is within 45 days
+        valid_priority_content = [
+            item for item in priority_content 
+            if self._is_within_strict_date_range(item.get('release_date', ''))
+        ]
+        
         return {
-            'priority_content': priority_content,
+            'priority_content': valid_priority_content,
             'all_content': all_content,
             'metadata': {
                 'last_updated': datetime.now(timezone.utc).isoformat(),
                 'total_items': sum(len(items) for items in all_content.values()),
                 'language_priorities': self.config.language_priorities,
                 'date_range_days': self.config.date_range_days,
+                'strict_45_day_filter': True,
+                'date_range_start': self._get_strict_date_range()[0].isoformat(),
+                'date_range_end': self._get_strict_date_range()[1].isoformat(),
                 'refresh_interval_minutes': self.config.refresh_interval_minutes,
                 'telugu_focus': True,
-                'cache_version': '2.1',
+                'cache_version': '2.2',
                 'cinebrain_service': 'new_releases'
             }
         }
@@ -766,11 +777,13 @@ class CineBrainNewReleasesService:
         """Sort by Telugu priority first, then by release date (newest first)"""
         def sort_key(item):
             try:
-                # Calculate days since release (lower = more recent)
+                # VALIDATE date is within 45 days
+                if not self._is_within_strict_date_range(item.get('release_date', '')):
+                    return (999, 999, 0, 0)  # Push invalid dates to end
+                
                 release_date = datetime.fromisoformat(item['release_date'])
                 days_ago = (datetime.now().date() - release_date.date()).days
                 
-                # Language priority (lower = higher priority)
                 language_priority = 999
                 for lang in item.get('languages', []):
                     lang_lower = lang.lower()
@@ -778,22 +791,19 @@ class CineBrainNewReleasesService:
                         priority_index = self.config.language_priorities.index(lang_lower)
                         language_priority = min(language_priority, priority_index)
                     elif lang_lower not in ['telugu', 'english', 'hindi', 'malayalam', 'kannada', 'tamil']:
-                        # Assign to 'other' category
                         other_index = self.config.language_priorities.index('other') if 'other' in self.config.language_priorities else 6
                         language_priority = min(language_priority, other_index)
                 
-                # Quality scores (higher = better)
                 popularity_score = item.get('popularity', 0)
                 rating_score = item.get('rating', 0) * max(1, item.get('vote_count', 1))
                 
-                # Telugu gets extra boost
                 telugu_boost = -100 if any('telugu' in lang.lower() for lang in item.get('languages', [])) else 0
                 
                 return (
-                    language_priority + telugu_boost,  # Primary: Language priority with Telugu boost
-                    days_ago,                          # Secondary: Recency (newest first)
-                    -popularity_score,                 # Tertiary: Popularity (descending)
-                    -rating_score                      # Quaternary: Quality (descending)
+                    language_priority + telugu_boost,
+                    days_ago,
+                    -popularity_score,
+                    -rating_score
                 )
             except:
                 return (999, 999, 0, 0)
@@ -801,13 +811,12 @@ class CineBrainNewReleasesService:
         return sorted(content_list, key=sort_key)
         
     def _create_telugu_priority_content(self, all_content: Dict[str, List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
-        """Create priority content with strong Telugu preference"""
+        """Create priority content with strong Telugu preference and strict 45-day validation"""
         priority_items = []
         
-        # Enhanced quotas with Telugu focus
         language_quotas = {
-            'telugu': 15,     # Significantly increased Telugu quota
-            'english': 8,     # Reduced other quotas to prioritize Telugu
+            'telugu': 15,
+            'english': 8,
             'hindi': 6,
             'malayalam': 4,
             'kannada': 4,
@@ -818,10 +827,13 @@ class CineBrainNewReleasesService:
         for category in ['movies', 'tv_shows', 'anime']:
             category_items = all_content.get(category, [])
             
-            # Separate by language
             language_buckets = {lang: [] for lang in self.config.language_priorities}
             
             for item in category_items:
+                # STRICT validation for priority content
+                if not self._is_within_strict_date_range(item.get('release_date', '')):
+                    continue
+                    
                 categorized = False
                 for lang in item.get('languages', []):
                     lang_lower = lang.lower()
@@ -833,11 +845,9 @@ class CineBrainNewReleasesService:
                 if not categorized:
                     language_buckets['other'].append(item)
                     
-            # Add items according to quotas
             for lang in self.config.language_priorities:
                 quota = language_quotas.get(lang, 2)
                 
-                # Special handling for anime
                 if category == 'anime':
                     if lang == 'japanese':
                         quota = 8
@@ -846,10 +856,15 @@ class CineBrainNewReleasesService:
                 
                 priority_items.extend(language_buckets[lang][:quota])
                 
-        # Final sort to ensure Telugu content appears first
         final_priority = self._sort_by_telugu_priority_and_date(priority_items)
         
-        return final_priority[:50]  # Return top 50 items
+        # FINAL validation for all priority items
+        validated_priority = [
+            item for item in final_priority 
+            if self._is_within_strict_date_range(item.get('release_date', ''))
+        ]
+        
+        return validated_priority[:50]
         
     def _save_cache_to_disk(self):
         try:
@@ -858,7 +873,7 @@ class CineBrainNewReleasesService:
                 json.dump(self._cache_data, f, ensure_ascii=False, indent=2)
             
             os.replace(temp_file, self.config.cache_file_path)
-            logger.info("CineBrain: Telugu-focused cache saved successfully")
+            logger.info("CineBrain: 45-day strict cache saved successfully")
             
         except Exception as e:
             logger.error(f"CineBrain cache save error: {e}")
@@ -870,14 +885,62 @@ class CineBrainNewReleasesService:
                     data = json.load(f)
                     
                 if self._validate_cache_structure(data):
-                    self._cache_data = data
-                    self._last_update = datetime.now()
-                    logger.info("CineBrain: Loaded cached Telugu-focused new releases data successfully")
+                    # Validate cached data is still within 45 days
+                    valid_data = self._validate_cached_content_dates(data)
+                    if valid_data:
+                        self._cache_data = valid_data
+                        self._last_update = datetime.now()
+                        logger.info("CineBrain: Loaded cached 45-day new releases data successfully")
+                    else:
+                        logger.warning("CineBrain: Cached data too old, will refresh")
                 else:
                     logger.warning("CineBrain: Invalid cache structure, will refresh")
                     
         except Exception as e:
             logger.error(f"CineBrain cache load error: {e}")
+            
+    def _validate_cached_content_dates(self, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Validate all cached content is still within 45 days"""
+        try:
+            all_content = data.get('all_content', {})
+            priority_content = data.get('priority_content', [])
+            
+            # Validate priority content
+            valid_priority = [
+                item for item in priority_content 
+                if self._is_within_strict_date_range(item.get('release_date', ''))
+            ]
+            
+            # Validate all content categories
+            valid_all_content = {}
+            for category, items in all_content.items():
+                valid_items = [
+                    item for item in items 
+                    if self._is_within_strict_date_range(item.get('release_date', ''))
+                ]
+                valid_all_content[category] = valid_items
+                
+            # Check if we have enough valid content
+            total_valid = sum(len(items) for items in valid_all_content.values())
+            if total_valid < 10:  # Minimum threshold
+                logger.info("CineBrain: Cached content too sparse after date validation, will refresh")
+                return None
+                
+            # Update metadata
+            data['priority_content'] = valid_priority
+            data['all_content'] = valid_all_content
+            data['metadata']['total_items'] = total_valid
+            data['metadata']['cache_validated'] = datetime.now(timezone.utc).isoformat()
+            
+            filtered_out = len(priority_content) - len(valid_priority)
+            if filtered_out > 0:
+                logger.info(f"CineBrain: Filtered {filtered_out} outdated items from cache")
+                
+            return data
+            
+        except Exception as e:
+            logger.error(f"CineBrain cache validation error: {e}")
+            return None
             
     def _validate_cache_structure(self, data: Dict[str, Any]) -> bool:
         required_keys = ['priority_content', 'all_content', 'metadata']
@@ -892,6 +955,7 @@ class CineBrainNewReleasesService:
         return True
             
     def _get_empty_response(self) -> Dict[str, Any]:
+        start_date, end_date = self._get_strict_date_range()
         return {
             'priority_content': [],
             'all_content': {
@@ -904,10 +968,13 @@ class CineBrainNewReleasesService:
                 'total_items': 0,
                 'language_priorities': self.config.language_priorities,
                 'date_range_days': self.config.date_range_days,
+                'strict_45_day_filter': True,
+                'date_range_start': start_date.isoformat(),
+                'date_range_end': end_date.isoformat(),
                 'refresh_interval_minutes': self.config.refresh_interval_minutes,
                 'telugu_focus': True,
-                'cache_version': '2.1',
-                'error': 'No data available',
+                'cache_version': '2.2',
+                'error': 'No data available within last 45 days',
                 'cinebrain_service': 'new_releases'
             }
         }
@@ -925,13 +992,18 @@ class CineBrainNewReleasesService:
                 return {'status': 'no_data', 'cinebrain_service': 'new_releases'}
                 
             metadata = self._cache_data.get('metadata', {})
-            
-            # Calculate Telugu content stats
             telugu_stats = self._calculate_telugu_stats()
+            start_date, end_date = self._get_strict_date_range()
             
             return {
                 'status': 'active',
                 'cinebrain_service': 'new_releases',
+                'strict_45_day_filter': True,
+                'date_range': {
+                    'start': start_date.isoformat(),
+                    'end': end_date.isoformat(),
+                    'days': self.config.date_range_days
+                },
                 'telugu_focus': True,
                 'last_update': self._last_update.isoformat() if self._last_update else None,
                 'total_items': metadata.get('total_items', 0),
@@ -943,8 +1015,7 @@ class CineBrainNewReleasesService:
                 'background_refresh': self._refresh_thread.is_alive() if self._refresh_thread else False,
                 'cache_age_minutes': (datetime.now() - self._last_update).total_seconds() / 60 if self._last_update else None,
                 'language_priorities': self.config.language_priorities,
-                'refresh_interval': self.config.refresh_interval_minutes,
-                'date_range_days': self.config.date_range_days
+                'refresh_interval': self.config.refresh_interval_minutes
             }
             
     def _calculate_telugu_stats(self) -> Dict[str, int]:
@@ -954,13 +1025,11 @@ class CineBrainNewReleasesService:
             
         telugu_stats = {'total': 0, 'priority': 0, 'movies': 0, 'tv_shows': 0}
         
-        # Count in priority content
         priority_content = self._cache_data.get('priority_content', [])
         for item in priority_content:
             if any('telugu' in lang.lower() for lang in item.get('languages', [])):
                 telugu_stats['priority'] += 1
                 
-        # Count in all content
         all_content = self._cache_data.get('all_content', {})
         for category, items in all_content.items():
             for item in items:
@@ -984,7 +1053,7 @@ def init_cinebrain_new_releases_service(app, db, models, services):
                 app._cinebrain_new_releases_service.stop_background_refresh()
                 
         app._cinebrain_new_releases_service = service
-        logger.info("CineBrain Telugu-focused new releases service initialized successfully")
+        logger.info("CineBrain 45-day strict new releases service initialized successfully")
         return service
         
     except Exception as e:
