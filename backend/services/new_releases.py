@@ -1,31 +1,26 @@
-import os
-import json
-import asyncio
-import logging
-import signal
-import aiofiles
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any
+#backend/services/new_releases.py
+from typing import Dict, List, Optional, Any, Union, Tuple
 from dataclasses import dataclass, asdict
-import pytz
-import httpx
-import hashlib
-from collections import defaultdict
+from datetime import datetime, timedelta, timezone
+from flask import Blueprint, request, jsonify, current_app
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from threading import Lock, Event, Thread
 from pathlib import Path
+import json
 import time
+import logging
+import hashlib
+import asyncio
+import aiohttp
+import pytz
+import os
+import atexit
+from collections import defaultdict, OrderedDict
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('new_releases.log'),
-        logging.StreamHandler()
-    ]
-)
 logger = logging.getLogger(__name__)
 
 @dataclass
-class ReleaseItem:
+class NewReleaseItem:
     id: str
     title: str
     original_title: Optional[str]
@@ -39,461 +34,666 @@ class ReleaseItem:
     poster_path: Optional[str]
     backdrop_path: Optional[str]
     overview: Optional[str]
-    runtime: Optional[int]
-    tmdb_id: int
-    
+    runtime: Optional[int] = None
+    youtube_trailer_id: Optional[str] = None
+    tmdb_id: Optional[int] = None
+    mal_id: Optional[int] = None
     days_since_release: int = 0
-    hours_since_release: int = 0
-    is_today: bool = False
-    is_yesterday: bool = False
-    is_this_week: bool = False
-    
     language_priority: int = 999
-    language_name: str = "Other"
-    is_telugu: bool = False
-    
+    primary_language: str = "Other"
     freshness_score: float = 0.0
-    quality_score: float = 0.0
-    final_score: float = 0.0
+    combined_score: float = 0.0
 
-class ContinuousNewReleasesService:
-    def __init__(self):
-        self.tmdb_api_key = os.getenv('TMDB_API_KEY')
-        self.refresh_interval = int(os.getenv('REFRESH_INTERVAL_SECONDS', '300'))
-        self.output_file = os.getenv('OUTPUT_FILE', 'new_releases.json')
-        self.max_age_days = int(os.getenv('MAX_AGE_DAYS', '30'))
-        self.timezone = os.getenv('USER_TIMEZONE', 'Asia/Kolkata')
-        self.max_results = int(os.getenv('MAX_RESULTS', '100'))
-        self.rate_limit_delay = float(os.getenv('RATE_LIMIT_DELAY', '0.5'))
+    def __post_init__(self):
+        self._calculate_metrics()
+    
+    def _calculate_metrics(self):
+        now = datetime.now(timezone.utc)
+        if self.release_date.tzinfo is None:
+            release_dt = pytz.UTC.localize(self.release_date)
+        else:
+            release_dt = self.release_date
         
-        self.base_url = "https://api.themoviedb.org/3"
-        self.running = False
-        self.http_client = None
+        delta = now - release_dt
+        self.days_since_release = max(0, delta.days)
         
-        self.language_config = {
+        self._set_language_priority()
+        self._calculate_scores()
+    
+    def _set_language_priority(self):
+        language_map = {
             ('telugu', 'te'): (1, 'Telugu'),
-            ('english', 'en'): (2, 'English'), 
+            ('english', 'en'): (2, 'English'),
             ('hindi', 'hi'): (3, 'Hindi'),
             ('malayalam', 'ml'): (4, 'Malayalam'),
             ('kannada', 'kn'): (5, 'Kannada'),
             ('tamil', 'ta'): (6, 'Tamil')
         }
         
-        self.telugu_patterns = {
-            'languages': ['te', 'telugu'],
-            'keywords': [
-                'tollywood', 'telugu cinema', 'telugu movie', 'telugu film',
-                'andhra pradesh', 'telangana', 'hyderabad', 'vijayawada',
-                'visakhapatnam', 'warangal'
-            ],
-            'production_companies': [
-                'AVM Productions', 'Vyjayanthi Movies', 'Mythri Movie Makers',
-                'Geetha Arts', 'Sri Venkateswara Creations', 'Konidela Production',
-                'UV Creations', 'Haarika & Hassine Creations', 'Sithara Entertainments',
-                'DVV Entertainments', 'Suresh Productions', 'Bhavya Creations'
-            ]
-        }
+        for lang in self.languages:
+            lang_lower = lang.lower() if lang else ''
+            for lang_keys, (priority, name) in language_map.items():
+                if lang_lower in lang_keys:
+                    self.language_priority = priority
+                    self.primary_language = name
+                    return
+    
+    def _calculate_scores(self):
+        if self.days_since_release == 0:
+            self.freshness_score = 100.0
+        elif self.days_since_release == 1:
+            self.freshness_score = 80.0
+        elif self.days_since_release <= 3:
+            self.freshness_score = 70.0 - (self.days_since_release * 5)
+        elif self.days_since_release <= 7:
+            self.freshness_score = 50.0 - (self.days_since_release * 3)
+        else:
+            self.freshness_score = max(10, 40 - self.days_since_release)
         
-        self.genre_map = {
+        quality_score = (
+            (self.vote_average / 10) * 40 +
+            min(30, self.popularity / 10) +
+            min(30, self.vote_count / 100)
+        )
+        
+        language_multiplier = {1: 2.0, 2: 1.5, 3: 1.3, 4: 1.1, 5: 1.1, 6: 1.1}.get(
+            self.language_priority, 1.0
+        )
+        
+        self.combined_score = (self.freshness_score * 0.7 + quality_score * 0.3) * language_multiplier
+
+class NewReleasesConfig:
+    def __init__(self):
+        self.TMDB_API_KEY = os.environ.get('TMDB_API_KEY', '')
+        self.JIKAN_BASE_URL = 'https://api.jikan.moe/v4'
+        self.TMDB_BASE_URL = 'https://api.themoviedb.org/3'
+        self.REFRESH_INTERVAL_MINUTES = int(os.environ.get('NEW_RELEASES_REFRESH_MINUTES', '15'))
+        self.CACHE_FILE = Path(os.environ.get('NEW_RELEASES_CACHE_FILE', 'data/new_releases_cache.json'))
+        self.LANGUAGE_PRIORITIES = [
+            'Telugu', 'English', 'Hindi', 'Malayalam', 'Kannada', 'Tamil'
+        ]
+        self.DAYS_BACK = int(os.environ.get('NEW_RELEASES_DAYS_BACK', '30'))
+        self.MAX_ITEMS_PER_CATEGORY = int(os.environ.get('NEW_RELEASES_MAX_ITEMS', '50'))
+        self.REQUEST_TIMEOUT = int(os.environ.get('NEW_RELEASES_TIMEOUT', '10'))
+        self.MAX_RETRIES = int(os.environ.get('NEW_RELEASES_MAX_RETRIES', '3'))
+        self.CONCURRENT_REQUESTS = int(os.environ.get('NEW_RELEASES_CONCURRENT', '5'))
+
+class NewReleasesCache:
+    def __init__(self, cache_file: Path):
+        self.cache_file = cache_file
+        self.cache_file.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = Lock()
+        self._data = self._load_cache()
+    
+    def _load_cache(self) -> Dict[str, Any]:
+        try:
+            if self.cache_file.exists():
+                with open(self.cache_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    if self._is_cache_valid(data):
+                        return data
+        except Exception as e:
+            logger.error(f"Cache load error: {e}")
+        return self._empty_cache()
+    
+    def _is_cache_valid(self, data: Dict[str, Any]) -> bool:
+        try:
+            timestamp = data.get('metadata', {}).get('generated_at')
+            if not timestamp:
+                return False
+            
+            cache_time = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+            age_minutes = (datetime.now(timezone.utc) - cache_time).total_seconds() / 60
+            
+            return age_minutes < NewReleasesConfig().REFRESH_INTERVAL_MINUTES * 2
+        except Exception:
+            return False
+    
+    def _empty_cache(self) -> Dict[str, Any]:
+        return {
+            'priority_content': [],
+            'all_content': [],
+            'metadata': {
+                'generated_at': datetime.now(timezone.utc).isoformat(),
+                'total_items': 0,
+                'languages_found': [],
+                'content_types': [],
+                'is_stale': True
+            }
+        }
+    
+    def get(self) -> Dict[str, Any]:
+        with self._lock:
+            return self._data.copy()
+    
+    def set(self, data: Dict[str, Any]) -> bool:
+        try:
+            with self._lock:
+                self._data = data
+                with open(self.cache_file, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, indent=2, ensure_ascii=False, default=str)
+                return True
+        except Exception as e:
+            logger.error(f"Cache save error: {e}")
+            return False
+    
+    def is_stale(self) -> bool:
+        with self._lock:
+            return self._data.get('metadata', {}).get('is_stale', True)
+
+class NewReleasesAPIClient:
+    def __init__(self, config: NewReleasesConfig):
+        self.config = config
+        self._session_lock = Lock()
+        
+    async def _create_session(self) -> aiohttp.ClientSession:
+        timeout = aiohttp.ClientTimeout(total=self.config.REQUEST_TIMEOUT)
+        connector = aiohttp.TCPConnector(limit=self.config.CONCURRENT_REQUESTS)
+        return aiohttp.ClientSession(timeout=timeout, connector=connector)
+    
+    async def fetch_tmdb_content(self, content_type: str, language: Optional[str] = None) -> List[Dict[str, Any]]:
+        session = await self._create_session()
+        try:
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=self.config.DAYS_BACK)
+            
+            url = f"{self.config.TMDB_BASE_URL}/discover/{content_type}"
+            params = {
+                'api_key': self.config.TMDB_API_KEY,
+                'sort_by': 'release_date.desc' if content_type == 'movie' else 'first_air_date.desc',
+                'include_adult': False,
+                'page': 1
+            }
+            
+            if content_type == 'movie':
+                params.update({
+                    'primary_release_date.gte': start_date.strftime('%Y-%m-%d'),
+                    'primary_release_date.lte': end_date.strftime('%Y-%m-%d')
+                })
+            else:
+                params.update({
+                    'first_air_date.gte': start_date.strftime('%Y-%m-%d'),
+                    'first_air_date.lte': end_date.strftime('%Y-%m-%d')
+                })
+            
+            if language:
+                params['with_original_language'] = language
+            
+            all_results = []
+            max_pages = 3
+            
+            for page in range(1, max_pages + 1):
+                params['page'] = page
+                
+                for attempt in range(self.config.MAX_RETRIES):
+                    try:
+                        async with session.get(url, params=params) as response:
+                            if response.status == 200:
+                                data = await response.json()
+                                results = data.get('results', [])
+                                all_results.extend(results)
+                                
+                                if not results or page >= data.get('total_pages', 1):
+                                    return all_results
+                                break
+                            elif response.status == 429:
+                                await asyncio.sleep(2 ** attempt)
+                            else:
+                                logger.warning(f"TMDB API error {response.status} for {content_type}")
+                                break
+                    except Exception as e:
+                        logger.error(f"TMDB request error (attempt {attempt + 1}): {e}")
+                        if attempt == self.config.MAX_RETRIES - 1:
+                            break
+                        await asyncio.sleep(1)
+                
+                await asyncio.sleep(0.25)
+            
+            return all_results
+        finally:
+            await session.close()
+    
+    async def fetch_anime_content(self) -> List[Dict[str, Any]]:
+        session = await self._create_session()
+        try:
+            url = f"{self.config.JIKAN_BASE_URL}/seasons/now"
+            
+            for attempt in range(self.config.MAX_RETRIES):
+                try:
+                    async with session.get(url) as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            return data.get('data', [])[:self.config.MAX_ITEMS_PER_CATEGORY]
+                        elif response.status == 429:
+                            await asyncio.sleep(2 ** attempt)
+                        else:
+                            break
+                except Exception as e:
+                    logger.error(f"Jikan request error (attempt {attempt + 1}): {e}")
+                    if attempt < self.config.MAX_RETRIES - 1:
+                        await asyncio.sleep(1)
+            
+            return []
+        finally:
+            await session.close()
+
+class NewReleasesProcessor:
+    def __init__(self, config: NewReleasesConfig):
+        self.config = config
+        self.api_client = NewReleasesAPIClient(config)
+    
+    def _parse_tmdb_item(self, item: Dict[str, Any], content_type: str) -> NewReleaseItem:
+        release_date_key = 'release_date' if content_type == 'movie' else 'first_air_date'
+        title_key = 'title' if content_type == 'movie' else 'name'
+        original_title_key = 'original_title' if content_type == 'movie' else 'original_name'
+        
+        try:
+            release_date_str = item.get(release_date_key, '')
+            release_date = datetime.strptime(release_date_str, '%Y-%m-%d') if release_date_str else datetime.now()
+            release_date = pytz.UTC.localize(release_date)
+        except (ValueError, TypeError):
+            release_date = datetime.now(timezone.utc)
+        
+        languages = []
+        orig_lang = item.get('original_language', '')
+        if orig_lang:
+            lang_name_map = {
+                'te': 'Telugu', 'en': 'English', 'hi': 'Hindi',
+                'ml': 'Malayalam', 'kn': 'Kannada', 'ta': 'Tamil',
+                'ja': 'Japanese', 'ko': 'Korean', 'es': 'Spanish',
+                'fr': 'French', 'de': 'German', 'it': 'Italian'
+            }
+            languages.append(lang_name_map.get(orig_lang, orig_lang.upper()))
+        
+        genre_map = {
             28: "Action", 12: "Adventure", 16: "Animation", 35: "Comedy",
             80: "Crime", 99: "Documentary", 18: "Drama", 10751: "Family",
             14: "Fantasy", 36: "History", 27: "Horror", 10402: "Music",
             9648: "Mystery", 10749: "Romance", 878: "Science Fiction",
             10770: "TV Movie", 53: "Thriller", 10752: "War", 37: "Western"
         }
+        genres = [genre_map.get(gid, "Unknown") for gid in item.get('genre_ids', [])]
         
-        self.last_success_time = None
-        self.error_count = 0
-        self.total_processed = 0
-
-    async def start(self):
-        if not self.tmdb_api_key:
-            logger.error("TMDB_API_KEY environment variable not set")
-            return
-            
-        self.running = True
-        self.http_client = httpx.AsyncClient(
-            timeout=httpx.Timeout(15.0),
-            limits=httpx.Limits(max_keepalive_connections=5, max_connections=10)
+        poster_path = item.get('poster_path')
+        if poster_path and not poster_path.startswith('http'):
+            poster_path = f"https://image.tmdb.org/t/p/w500{poster_path}"
+        
+        backdrop_path = item.get('backdrop_path')
+        if backdrop_path and not backdrop_path.startswith('http'):
+            backdrop_path = f"https://image.tmdb.org/t/p/w1280{backdrop_path}"
+        
+        return NewReleaseItem(
+            id=f"tmdb_{content_type}_{item['id']}",
+            title=item.get(title_key, ''),
+            original_title=item.get(original_title_key),
+            content_type=content_type,
+            release_date=release_date,
+            languages=languages,
+            genres=genres,
+            popularity=item.get('popularity', 0),
+            vote_count=item.get('vote_count', 0),
+            vote_average=item.get('vote_average', 0),
+            poster_path=poster_path,
+            backdrop_path=backdrop_path,
+            overview=item.get('overview'),
+            tmdb_id=item.get('id')
         )
-        
-        signal.signal(signal.SIGINT, self._signal_handler)
-        signal.signal(signal.SIGTERM, self._signal_handler)
-        
-        logger.info(f"Starting continuous new releases service (refresh every {self.refresh_interval}s)")
-        
+    
+    def _parse_anime_item(self, item: Dict[str, Any]) -> NewReleaseItem:
         try:
-            while self.running:
-                start_time = time.time()
-                
-                try:
-                    await self._process_releases()
-                    self.last_success_time = datetime.now()
-                    self.error_count = 0
-                    
-                except Exception as e:
-                    self.error_count += 1
-                    logger.error(f"Processing error (count: {self.error_count}): {e}")
-                    
-                    if self.error_count >= 5:
-                        logger.critical("Too many consecutive errors, backing off")
-                        await asyncio.sleep(min(self.refresh_interval * 2, 1800))
-                
-                processing_time = time.time() - start_time
-                sleep_time = max(0, self.refresh_interval - processing_time)
-                
-                if sleep_time > 0:
-                    await asyncio.sleep(sleep_time)
-                    
-        except asyncio.CancelledError:
-            logger.info("Service cancelled")
-        finally:
-            await self._cleanup()
-
-    def _signal_handler(self, signum, frame):
-        logger.info(f"Received signal {signum}, shutting down gracefully")
-        self.running = False
-
-    async def _cleanup(self):
-        if self.http_client:
-            await self.http_client.aclose()
-        logger.info("Cleanup completed")
-
-    async def _process_releases(self):
-        logger.info("Processing new releases")
-        
-        all_releases = []
-        seen_ids = set()
-        
-        now = datetime.now(pytz.timezone(self.timezone))
-        cutoff_date = now - timedelta(days=self.max_age_days)
-        
-        languages = ['te', 'en', 'hi', 'ml', 'kn', 'ta']
-        content_types = ['movie', 'tv']
-        
-        for content_type in content_types:
-            for lang_code in languages:
-                try:
-                    releases = await self._fetch_language_releases(lang_code, content_type, cutoff_date)
-                    for item in releases:
-                        if item['id'] not in seen_ids:
-                            release_item = self._parse_release(item, content_type, lang_code, now)
-                            if release_item and release_item.days_since_release <= self.max_age_days:
-                                all_releases.append(release_item)
-                                seen_ids.add(item['id'])
-                    
-                    await asyncio.sleep(self.rate_limit_delay)
-                    
-                except Exception as e:
-                    logger.warning(f"Failed to fetch {lang_code} {content_type}: {e}")
-                    continue
-        
-        general_releases = await self._fetch_general_releases(cutoff_date)
-        for item in general_releases:
-            if item['id'] not in seen_ids:
-                release_item = self._parse_release(item, 'movie', None, now)
-                if release_item and release_item.days_since_release <= self.max_age_days:
-                    if self._is_telugu_content(item):
-                        release_item.is_telugu = True
-                        release_item.language_priority = 1
-                        release_item.language_name = "Telugu"
-                    all_releases.append(release_item)
-                    seen_ids.add(item['id'])
-        
-        self._calculate_scores(all_releases, now)
-        sorted_releases = self._sort_releases(all_releases)
-        
-        await self._write_output(sorted_releases[:self.max_results])
-        
-        self.total_processed = len(sorted_releases)
-        logger.info(f"Processed {len(sorted_releases)} releases, saved top {min(len(sorted_releases), self.max_results)}")
-
-    async def _fetch_language_releases(self, language_code: str, content_type: str, cutoff_date: datetime) -> List[Dict]:
-        end_date = datetime.now()
-        start_date = cutoff_date
-        
-        url = f"{self.base_url}/discover/{content_type}"
-        params = {
-            'api_key': self.tmdb_api_key,
-            'with_original_language': language_code,
-            'sort_by': 'release_date.desc' if content_type == 'movie' else 'first_air_date.desc',
-            'include_adult': False,
-            'vote_count.gte': 1
-        }
-        
-        if content_type == 'movie':
-            params['primary_release_date.gte'] = start_date.strftime('%Y-%m-%d')
-            params['primary_release_date.lte'] = end_date.strftime('%Y-%m-%d')
-        else:
-            params['first_air_date.gte'] = start_date.strftime('%Y-%m-%d')
-            params['first_air_date.lte'] = end_date.strftime('%Y-%m-%d')
-        
-        all_results = []
-        max_pages = 5
-        
-        for page in range(1, max_pages + 1):
-            params['page'] = page
+            aired = item.get('aired', {})
+            from_date = aired.get('from') if aired else None
             
-            try:
-                response = await self.http_client.get(url, params=params)
-                response.raise_for_status()
-                
-                data = response.json()
-                results = data.get('results', [])
-                all_results.extend(results)
-                
-                if not results or page >= data.get('total_pages', 1):
-                    break
-                    
-            except httpx.HTTPStatusError as e:
-                if e.response.status_code == 429:
-                    await asyncio.sleep(2)
-                    continue
-                logger.warning(f"HTTP error {e.response.status_code} for {language_code} {content_type}")
-                break
-            except Exception as e:
-                logger.warning(f"Request error for {language_code} {content_type}: {e}")
-                break
-        
-        return all_results
-
-    async def _fetch_general_releases(self, cutoff_date: datetime) -> List[Dict]:
-        end_date = datetime.now()
-        
-        url = f"{self.base_url}/discover/movie"
-        params = {
-            'api_key': self.tmdb_api_key,
-            'sort_by': 'popularity.desc',
-            'primary_release_date.gte': cutoff_date.strftime('%Y-%m-%d'),
-            'primary_release_date.lte': end_date.strftime('%Y-%m-%d'),
-            'include_adult': False,
-            'vote_count.gte': 10,
-            'page': 1
-        }
-        
-        try:
-            response = await self.http_client.get(url, params=params)
-            response.raise_for_status()
-            data = response.json()
-            return data.get('results', [])[:50]
-        except Exception as e:
-            logger.warning(f"Failed to fetch general releases: {e}")
-            return []
-
-    def _parse_release(self, item: Dict, content_type: str, detected_language: Optional[str], now: datetime) -> Optional[ReleaseItem]:
-        try:
-            if content_type == 'movie':
-                release_date_str = item.get('release_date', '')
+            if from_date:
+                release_date = datetime.fromisoformat(from_date.replace('Z', '+00:00'))
             else:
-                release_date_str = item.get('first_air_date', '')
+                release_date = datetime.now(timezone.utc)
+        except (ValueError, TypeError):
+            release_date = datetime.now(timezone.utc)
+        
+        genres = [g.get('name', 'Unknown') for g in item.get('genres', [])]
+        
+        return NewReleaseItem(
+            id=f"mal_anime_{item.get('mal_id', 0)}",
+            title=item.get('title', ''),
+            original_title=item.get('title_japanese'),
+            content_type='anime',
+            release_date=release_date,
+            languages=['Japanese'],
+            genres=genres,
+            popularity=item.get('popularity', 0),
+            vote_count=item.get('scored_by', 0),
+            vote_average=item.get('score', 0),
+            poster_path=item.get('images', {}).get('jpg', {}).get('large_image_url'),
+            backdrop_path=item.get('images', {}).get('jpg', {}).get('large_image_url'),
+            overview=item.get('synopsis'),
+            mal_id=item.get('mal_id')
+        )
+    
+    async def fetch_all_content(self) -> List[NewReleaseItem]:
+        all_items = []
+        
+        language_codes = {
+            'Telugu': 'te', 'English': 'en', 'Hindi': 'hi',
+            'Malayalam': 'ml', 'Kannada': 'kn', 'Tamil': 'ta'
+        }
+        
+        tasks = []
+        
+        for content_type in ['movie', 'tv']:
+            tasks.append(self.api_client.fetch_tmdb_content(content_type))
             
-            if not release_date_str:
-                return None
+            for lang_name, lang_code in language_codes.items():
+                tasks.append(self.api_client.fetch_tmdb_content(content_type, lang_code))
+        
+        tasks.append(self.api_client.fetch_anime_content())
+        
+        try:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            task_index = 0
+            
+            for content_type in ['movie', 'tv']:
+                general_result = results[task_index]
+                task_index += 1
                 
+                if isinstance(general_result, list):
+                    for item in general_result:
+                        try:
+                            parsed_item = self._parse_tmdb_item(item, content_type)
+                            all_items.append(parsed_item)
+                        except Exception as e:
+                            logger.error(f"Error parsing {content_type} item: {e}")
+                
+                for lang_name in language_codes.keys():
+                    lang_result = results[task_index]
+                    task_index += 1
+                    
+                    if isinstance(lang_result, list):
+                        for item in lang_result:
+                            try:
+                                parsed_item = self._parse_tmdb_item(item, content_type)
+                                all_items.append(parsed_item)
+                            except Exception as e:
+                                logger.error(f"Error parsing {lang_name} {content_type} item: {e}")
+            
+            anime_result = results[task_index]
+            if isinstance(anime_result, list):
+                for item in anime_result:
+                    try:
+                        parsed_item = self._parse_anime_item(item)
+                        all_items.append(parsed_item)
+                    except Exception as e:
+                        logger.error(f"Error parsing anime item: {e}")
+        
+        except Exception as e:
+            logger.error(f"Error in fetch_all_content: {e}")
+        
+        seen_ids = set()
+        unique_items = []
+        for item in all_items:
+            if item.id not in seen_ids:
+                seen_ids.add(item.id)
+                unique_items.append(item)
+        
+        return unique_items
+    
+    def process_content(self, items: List[NewReleaseItem]) -> Dict[str, Any]:
+        all_content = sorted(items, key=lambda x: (x.days_since_release, -x.combined_score))
+        
+        priority_content = []
+        priority_seen = set()
+        
+        for priority in range(1, 7):
+            priority_items = [
+                item for item in all_content 
+                if item.language_priority == priority and item.id not in priority_seen
+            ]
+            
+            priority_items = sorted(priority_items, key=lambda x: (x.days_since_release, -x.combined_score))
+            
+            limit = self.config.MAX_ITEMS_PER_CATEGORY if priority == 1 else self.config.MAX_ITEMS_PER_CATEGORY // 2
+            
+            for item in priority_items[:limit]:
+                priority_content.append(item)
+                priority_seen.add(item.id)
+        
+        other_items = [
+            item for item in all_content[:self.config.MAX_ITEMS_PER_CATEGORY] 
+            if item.id not in priority_seen
+        ]
+        priority_content.extend(other_items)
+        
+        priority_content = priority_content[:self.config.MAX_ITEMS_PER_CATEGORY]
+        
+        languages_found = list(set(item.primary_language for item in all_content))
+        content_types = list(set(item.content_type for item in all_content))
+        
+        return {
+            'priority_content': [asdict(item) for item in priority_content],
+            'all_content': [asdict(item) for item in all_content],
+            'metadata': {
+                'generated_at': datetime.now(timezone.utc).isoformat(),
+                'total_items': len(all_content),
+                'priority_items': len(priority_content),
+                'languages_found': sorted(languages_found),
+                'content_types': sorted(content_types),
+                'language_priorities': self.config.LANGUAGE_PRIORITIES,
+                'days_back': self.config.DAYS_BACK,
+                'is_stale': False,
+                'next_refresh': (datetime.now(timezone.utc) + 
+                               timedelta(minutes=self.config.REFRESH_INTERVAL_MINUTES)).isoformat()
+            }
+        }
+
+class NewReleasesService:
+    def __init__(self, config: NewReleasesConfig):
+        self.config = config
+        self.cache = NewReleasesCache(config.CACHE_FILE)
+        self.processor = NewReleasesProcessor(config)
+        self._refresh_lock = Lock()
+        self._shutdown_event = Event()
+        self._background_thread = None
+        self._is_refreshing = False
+        
+        atexit.register(self.shutdown)
+    
+    def start_background_refresh(self):
+        if self._background_thread is None or not self._background_thread.is_alive():
+            self._shutdown_event.clear()
+            self._background_thread = Thread(target=self._background_refresh_loop, daemon=True)
+            self._background_thread.start()
+            logger.info("Background refresh thread started")
+    
+    def _background_refresh_loop(self):
+        while not self._shutdown_event.is_set():
             try:
-                release_date = datetime.strptime(release_date_str, '%Y-%m-%d')
-                release_date = pytz.timezone(self.timezone).localize(release_date)
-            except:
-                return None
+                if self.cache.is_stale():
+                    logger.info("Cache is stale, triggering refresh")
+                    asyncio.run(self._refresh_content())
+                
+                self._shutdown_event.wait(timeout=self.config.REFRESH_INTERVAL_MINUTES * 60)
+            except Exception as e:
+                logger.error(f"Background refresh error: {e}")
+                self._shutdown_event.wait(timeout=300)
+    
+    async def _refresh_content(self) -> bool:
+        if self._is_refreshing:
+            return False
+        
+        try:
+            with self._refresh_lock:
+                if self._is_refreshing:
+                    return False
+                self._is_refreshing = True
             
-            delta = now - release_date
-            days_since = max(0, delta.days)
-            hours_since = max(0, int(delta.total_seconds() / 3600))
+            logger.info("Starting content refresh")
+            start_time = time.time()
             
-            if days_since > self.max_age_days:
-                return None
+            items = await self.processor.fetch_all_content()
+            processed_data = self.processor.process_content(items)
             
-            orig_lang = item.get('original_language', '')
-            languages = [orig_lang] if orig_lang else []
+            success = self.cache.set(processed_data)
             
-            language_priority = 999
-            language_name = "Other"
-            is_telugu = False
+            duration = time.time() - start_time
+            logger.info(f"Content refresh completed in {duration:.2f}s, success: {success}")
             
-            if detected_language:
-                lang_code_map = {
-                    'telugu': 'te', 'english': 'en', 'hindi': 'hi',
-                    'malayalam': 'ml', 'kannada': 'kn', 'tamil': 'ta'
-                }
-                lang_code = lang_code_map.get(detected_language, orig_lang)
-                if lang_code not in languages:
-                    languages.append(lang_code)
-            
-            for lang in languages:
-                for lang_keys, (priority, name) in self.language_config.items():
-                    if lang.lower() in lang_keys:
-                        if priority < language_priority:
-                            language_priority = priority
-                            language_name = name
-                            is_telugu = (priority == 1)
-                        break
-            
-            if self._is_telugu_content(item):
-                is_telugu = True
-                language_priority = 1
-                language_name = "Telugu"
-                if 'te' not in languages:
-                    languages.insert(0, 'te')
-            
-            poster_path = item.get('poster_path')
-            if poster_path and not poster_path.startswith('http'):
-                poster_path = f"https://image.tmdb.org/t/p/w500{poster_path}"
-            
-            backdrop_path = item.get('backdrop_path')
-            if backdrop_path and not backdrop_path.startswith('http'):
-                backdrop_path = f"https://image.tmdb.org/t/p/w1280{backdrop_path}"
-            
-            genres = [self.genre_map.get(gid, "Unknown") for gid in item.get('genre_ids', [])]
-            
-            today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-            yesterday_start = today_start - timedelta(days=1)
-            
-            return ReleaseItem(
-                id=f"tmdb_{content_type}_{item['id']}",
-                title=item.get('title') or item.get('name', ''),
-                original_title=item.get('original_title') or item.get('original_name'),
-                content_type=content_type,
-                release_date=release_date,
-                languages=languages,
-                genres=genres,
-                popularity=item.get('popularity', 0),
-                vote_count=item.get('vote_count', 0),
-                vote_average=item.get('vote_average', 0),
-                poster_path=poster_path,
-                backdrop_path=backdrop_path,
-                overview=item.get('overview'),
-                runtime=item.get('runtime'),
-                tmdb_id=item['id'],
-                days_since_release=days_since,
-                hours_since_release=hours_since,
-                is_today=today_start <= release_date < today_start + timedelta(days=1),
-                is_yesterday=yesterday_start <= release_date < today_start,
-                is_this_week=days_since <= 7,
-                language_priority=language_priority,
-                language_name=language_name,
-                is_telugu=is_telugu
-            )
+            return success
             
         except Exception as e:
-            logger.warning(f"Error parsing release item: {e}")
-            return None
+            logger.error(f"Content refresh failed: {e}")
+            return False
+        finally:
+            self._is_refreshing = False
+    
+    def get_content(self, force_refresh: bool = False) -> Dict[str, Any]:
+        if force_refresh or self.cache.is_stale():
+            try:
+                asyncio.run(self._refresh_content())
+            except Exception as e:
+                logger.error(f"Forced refresh failed: {e}")
+        
+        return self.cache.get()
+    
+    def shutdown(self):
+        if self._shutdown_event:
+            self._shutdown_event.set()
+        if self._background_thread and self._background_thread.is_alive():
+            self._background_thread.join(timeout=5)
+            logger.info("Background refresh thread stopped")
 
-    def _is_telugu_content(self, item: Dict) -> bool:
-        if item.get('original_language', '').lower() in self.telugu_patterns['languages']:
-            return True
+config = NewReleasesConfig()
+new_releases_service = NewReleasesService(config)
+
+new_releases_bp = Blueprint('new_releases', __name__)
+
+@new_releases_bp.route('/api/new-releases', methods=['GET'])
+def get_new_releases():
+    try:
+        force_refresh = request.args.get('force_refresh', 'false').lower() == 'true'
+        content_type_filter = request.args.get('type')
+        language_filter = request.args.get('language')
+        limit = request.args.get('limit', type=int)
         
-        text_fields = [
-            item.get('title', ''),
-            item.get('original_title', ''),
-            item.get('overview', '')
-        ]
-        text_to_check = ' '.join(text_fields).lower()
+        data = new_releases_service.get_content(force_refresh=force_refresh)
         
-        for keyword in self.telugu_patterns['keywords']:
-            if keyword in text_to_check:
-                return True
+        if content_type_filter:
+            data['priority_content'] = [
+                item for item in data['priority_content'] 
+                if item.get('content_type') == content_type_filter
+            ]
+            data['all_content'] = [
+                item for item in data['all_content'] 
+                if item.get('content_type') == content_type_filter
+            ]
         
+        if language_filter:
+            data['priority_content'] = [
+                item for item in data['priority_content'] 
+                if language_filter.lower() in [lang.lower() for lang in item.get('languages', [])]
+            ]
+            data['all_content'] = [
+                item for item in data['all_content'] 
+                if language_filter.lower() in [lang.lower() for lang in item.get('languages', [])]
+            ]
+        
+        if limit:
+            data['priority_content'] = data['priority_content'][:limit]
+            data['all_content'] = data['all_content'][:limit]
+        
+        data['metadata']['filtered'] = bool(content_type_filter or language_filter or limit)
+        data['metadata']['api_endpoint'] = '/api/new-releases'
+        data['metadata']['cache_status'] = 'fresh' if not new_releases_service.cache.is_stale() else 'stale'
+        
+        return jsonify(data), 200
+        
+    except Exception as e:
+        logger.error(f"New releases endpoint error: {e}")
+        
+        fallback_data = {
+            'priority_content': [],
+            'all_content': [],
+            'metadata': {
+                'generated_at': datetime.now(timezone.utc).isoformat(),
+                'total_items': 0,
+                'error': 'Service temporarily unavailable',
+                'is_stale': True,
+                'cache_status': 'error'
+            }
+        }
+        
+        return jsonify(fallback_data), 200
+
+@new_releases_bp.route('/api/new-releases/health', methods=['GET'])
+def new_releases_health():
+    try:
+        cache_data = new_releases_service.cache.get()
+        metadata = cache_data.get('metadata', {})
+        
+        health_info = {
+            'status': 'healthy',
+            'service': 'new_releases',
+            'cache_status': 'fresh' if not new_releases_service.cache.is_stale() else 'stale',
+            'last_generated': metadata.get('generated_at'),
+            'total_items': metadata.get('total_items', 0),
+            'priority_items': metadata.get('priority_items', 0),
+            'languages_available': metadata.get('languages_found', []),
+            'content_types': metadata.get('content_types', []),
+            'background_refresh_active': new_releases_service._background_thread and new_releases_service._background_thread.is_alive(),
+            'is_refreshing': new_releases_service._is_refreshing,
+            'config': {
+                'refresh_interval_minutes': config.REFRESH_INTERVAL_MINUTES,
+                'days_back': config.DAYS_BACK,
+                'max_items_per_category': config.MAX_ITEMS_PER_CATEGORY
+            }
+        }
+        
+        return jsonify(health_info), 200
+        
+    except Exception as e:
+        logger.error(f"Health check error: {e}")
+        return jsonify({
+            'status': 'error',
+            'service': 'new_releases',
+            'error': str(e)
+        }), 500
+
+@new_releases_bp.route('/api/new-releases/refresh', methods=['POST'])
+def trigger_refresh():
+    try:
+        force = request.json.get('force', False) if request.is_json else False
+        
+        if force or new_releases_service.cache.is_stale():
+            success = asyncio.run(new_releases_service._refresh_content())
+            
+            return jsonify({
+                'success': success,
+                'message': 'Refresh completed' if success else 'Refresh failed',
+                'timestamp': datetime.now(timezone.utc).isoformat()
+            }), 200 if success else 500
+        else:
+            return jsonify({
+                'success': False,
+                'message': 'Cache is fresh, refresh not needed',
+                'timestamp': datetime.now(timezone.utc).isoformat()
+            }), 200
+            
+    except Exception as e:
+        logger.error(f"Manual refresh error: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'timestamp': datetime.now(timezone.utc).isoformat()
+        }), 500
+
+def init_new_releases_service():
+    try:
+        new_releases_service.start_background_refresh()
+        logger.info("New releases service initialized successfully")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to initialize new releases service: {e}")
         return False
 
-    def _calculate_scores(self, releases: List[ReleaseItem], now: datetime):
-        for release in releases:
-            if release.is_today:
-                release.freshness_score = 100.0
-            elif release.is_yesterday:
-                release.freshness_score = 85.0
-            elif release.days_since_release <= 3:
-                release.freshness_score = 70.0 - (release.days_since_release * 5)
-            elif release.is_this_week:
-                release.freshness_score = 50.0 - (release.days_since_release * 3)
-            else:
-                release.freshness_score = max(10, 40 - (release.days_since_release * 1))
-            
-            rating_score = (release.vote_average / 10) * 40 if release.vote_average > 0 else 20
-            popularity_score = min(30, release.popularity / 10) if release.popularity > 0 else 10
-            vote_score = min(30, release.vote_count / 100) if release.vote_count > 0 else 10
-            release.quality_score = rating_score + popularity_score + vote_score
-            
-            base_score = (release.freshness_score * 0.7) + (release.quality_score * 0.3)
-            
-            if release.is_telugu:
-                base_score *= 3.0
-            elif release.language_priority == 2:
-                base_score *= 2.0
-            elif release.language_priority == 3:
-                base_score *= 1.5
-            elif release.language_priority <= 6:
-                base_score *= 1.2
-            
-            if release.is_today:
-                base_score += 50
-            elif release.is_yesterday:
-                base_score += 25
-            elif release.days_since_release <= 3:
-                base_score += 15
-            
-            release.final_score = base_score
-
-    def _sort_releases(self, releases: List[ReleaseItem]) -> List[ReleaseItem]:
-        def sort_key(release):
-            return (
-                not release.is_today,
-                not release.is_yesterday,
-                release.days_since_release,
-                release.language_priority,
-                -release.final_score,
-                -release.popularity
-            )
-        
-        return sorted(releases, key=sort_key)
-
-    async def _write_output(self, releases: List[ReleaseItem]):
-        output_data = {
-            'last_updated': datetime.now(pytz.timezone(self.timezone)).isoformat(),
-            'total_count': len(releases),
-            'telugu_count': len([r for r in releases if r.is_telugu]),
-            'today_count': len([r for r in releases if r.is_today]),
-            'yesterday_count': len([r for r in releases if r.is_yesterday]),
-            'this_week_count': len([r for r in releases if r.is_this_week]),
-            'metadata': {
-                'timezone': self.timezone,
-                'max_age_days': self.max_age_days,
-                'refresh_interval_seconds': self.refresh_interval,
-                'language_priority': ['Telugu', 'English', 'Hindi', 'Malayalam', 'Kannada', 'Tamil']
-            },
-            'releases': [asdict(release) for release in releases]
-        }
-        
-        temp_file = f"{self.output_file}.tmp"
-        
-        try:
-            async with aiofiles.open(temp_file, 'w', encoding='utf-8') as f:
-                await f.write(json.dumps(output_data, default=str, ensure_ascii=False, separators=(',', ':')))
-            
-            if os.path.exists(self.output_file):
-                os.remove(self.output_file)
-            os.rename(temp_file, self.output_file)
-            
-            logger.info(f"Successfully wrote {len(releases)} releases to {self.output_file}")
-            
-        except Exception as e:
-            logger.error(f"Failed to write output file: {e}")
-            if os.path.exists(temp_file):
-                os.remove(temp_file)
-            raise
-
-    async def health_check(self) -> Dict[str, Any]:
-        return {
-            'status': 'running' if self.running else 'stopped',
-            'last_success': self.last_success_time.isoformat() if self.last_success_time else None,
-            'error_count': self.error_count,
-            'total_processed': self.total_processed,
-            'output_file_exists': os.path.exists(self.output_file),
-            'output_file_size': os.path.getsize(self.output_file) if os.path.exists(self.output_file) else 0
-        }
-
-async def main():
-    service = ContinuousNewReleasesService()
-    await service.start()
-
-if __name__ == "__main__":
-    asyncio.run(main())
+if __name__ == '__main__':
+    init_new_releases_service()
