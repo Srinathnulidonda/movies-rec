@@ -102,23 +102,23 @@ class NewReleaseItem:
         
         self.combined_score = (self.freshness_score * 0.7 + quality_score * 0.3) * language_multiplier
 
-class NewReleasesConfig:
+class CineBrainNewReleasesConfig:
     def __init__(self):
         self.TMDB_API_KEY = os.environ.get('TMDB_API_KEY', '')
         self.JIKAN_BASE_URL = 'https://api.jikan.moe/v4'
         self.TMDB_BASE_URL = 'https://api.themoviedb.org/3'
-        self.REFRESH_INTERVAL_MINUTES = int(os.environ.get('NEW_RELEASES_REFRESH_MINUTES', '15'))
-        self.CACHE_FILE = Path(os.environ.get('NEW_RELEASES_CACHE_FILE', 'data/new_releases_cache.json'))
+        self.REFRESH_INTERVAL_MINUTES = int(os.environ.get('CINEBRAIN_NEW_RELEASES_REFRESH_MINUTES', '15'))
+        self.CACHE_FILE = Path(os.environ.get('CINEBRAIN_NEW_RELEASES_CACHE_FILE', 'data/cinebrain_new_releases_cache.json'))
         self.LANGUAGE_PRIORITIES = [
             'Telugu', 'English', 'Hindi', 'Malayalam', 'Kannada', 'Tamil'
         ]
-        self.DAYS_BACK = int(os.environ.get('NEW_RELEASES_DAYS_BACK', '30'))
-        self.MAX_ITEMS_PER_CATEGORY = int(os.environ.get('NEW_RELEASES_MAX_ITEMS', '50'))
-        self.REQUEST_TIMEOUT = int(os.environ.get('NEW_RELEASES_TIMEOUT', '10'))
-        self.MAX_RETRIES = int(os.environ.get('NEW_RELEASES_MAX_RETRIES', '3'))
-        self.CONCURRENT_REQUESTS = int(os.environ.get('NEW_RELEASES_CONCURRENT', '5'))
+        self.DAYS_BACK = int(os.environ.get('CINEBRAIN_NEW_RELEASES_DAYS_BACK', '30'))
+        self.MAX_ITEMS_PER_CATEGORY = int(os.environ.get('CINEBRAIN_NEW_RELEASES_MAX_ITEMS', '50'))
+        self.REQUEST_TIMEOUT = int(os.environ.get('CINEBRAIN_NEW_RELEASES_TIMEOUT', '10'))
+        self.MAX_RETRIES = int(os.environ.get('CINEBRAIN_NEW_RELEASES_MAX_RETRIES', '3'))
+        self.CONCURRENT_REQUESTS = int(os.environ.get('CINEBRAIN_NEW_RELEASES_CONCURRENT', '5'))
 
-class NewReleasesCache:
+class CineBrainNewReleasesCache:
     def __init__(self, cache_file: Path):
         self.cache_file = cache_file
         self.cache_file.parent.mkdir(parents=True, exist_ok=True)
@@ -133,7 +133,7 @@ class NewReleasesCache:
                     if self._is_cache_valid(data):
                         return data
         except Exception as e:
-            logger.error(f"Cache load error: {e}")
+            logger.error(f"CineBrain cache load error: {e}")
         return self._empty_cache()
     
     def _is_cache_valid(self, data: Dict[str, Any]) -> bool:
@@ -145,7 +145,7 @@ class NewReleasesCache:
             cache_time = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
             age_minutes = (datetime.now(timezone.utc) - cache_time).total_seconds() / 60
             
-            return age_minutes < NewReleasesConfig().REFRESH_INTERVAL_MINUTES * 2
+            return age_minutes < CineBrainNewReleasesConfig().REFRESH_INTERVAL_MINUTES * 2
         except Exception:
             return False
     
@@ -158,7 +158,8 @@ class NewReleasesCache:
                 'total_items': 0,
                 'languages_found': [],
                 'content_types': [],
-                'is_stale': True
+                'is_stale': True,
+                'platform': 'CineBrain'
             }
         }
     
@@ -174,15 +175,15 @@ class NewReleasesCache:
                     json.dump(data, f, indent=2, ensure_ascii=False, default=str)
                 return True
         except Exception as e:
-            logger.error(f"Cache save error: {e}")
+            logger.error(f"CineBrain cache save error: {e}")
             return False
     
     def is_stale(self) -> bool:
         with self._lock:
             return self._data.get('metadata', {}).get('is_stale', True)
 
-class NewReleasesAPIClient:
-    def __init__(self, config: NewReleasesConfig):
+class CineBrainNewReleasesAPIClient:
+    def __init__(self, config: CineBrainNewReleasesConfig):
         self.config = config
         self._session_lock = Lock()
         
@@ -201,8 +202,8 @@ class NewReleasesAPIClient:
             params = {
                 'api_key': self.config.TMDB_API_KEY,
                 'sort_by': 'release_date.desc' if content_type == 'movie' else 'first_air_date.desc',
-                'include_adult': False,
-                'page': 1
+                'include_adult': 'false',
+                'page': '1'
             }
             
             if content_type == 'movie':
@@ -217,13 +218,13 @@ class NewReleasesAPIClient:
                 })
             
             if language:
-                params['with_original_language'] = language
+                params['with_original_language'] = str(language)
             
             all_results = []
             max_pages = 3
             
             for page in range(1, max_pages + 1):
-                params['page'] = page
+                params['page'] = str(page)
                 
                 for attempt in range(self.config.MAX_RETRIES):
                     try:
@@ -239,10 +240,10 @@ class NewReleasesAPIClient:
                             elif response.status == 429:
                                 await asyncio.sleep(2 ** attempt)
                             else:
-                                logger.warning(f"TMDB API error {response.status} for {content_type}")
+                                logger.warning(f"CineBrain TMDB API error {response.status} for {content_type}")
                                 break
                     except Exception as e:
-                        logger.error(f"TMDB request error (attempt {attempt + 1}): {e}")
+                        logger.error(f"CineBrain TMDB request error (attempt {attempt + 1}): {e}")
                         if attempt == self.config.MAX_RETRIES - 1:
                             break
                         await asyncio.sleep(1)
@@ -269,7 +270,7 @@ class NewReleasesAPIClient:
                         else:
                             break
                 except Exception as e:
-                    logger.error(f"Jikan request error (attempt {attempt + 1}): {e}")
+                    logger.error(f"CineBrain Jikan request error (attempt {attempt + 1}): {e}")
                     if attempt < self.config.MAX_RETRIES - 1:
                         await asyncio.sleep(1)
             
@@ -277,10 +278,10 @@ class NewReleasesAPIClient:
         finally:
             await session.close()
 
-class NewReleasesProcessor:
-    def __init__(self, config: NewReleasesConfig):
+class CineBrainNewReleasesProcessor:
+    def __init__(self, config: CineBrainNewReleasesConfig):
         self.config = config
-        self.api_client = NewReleasesAPIClient(config)
+        self.api_client = CineBrainNewReleasesAPIClient(config)
     
     def _parse_tmdb_item(self, item: Dict[str, Any], content_type: str) -> NewReleaseItem:
         release_date_key = 'release_date' if content_type == 'movie' else 'first_air_date'
@@ -323,16 +324,16 @@ class NewReleasesProcessor:
             backdrop_path = f"https://image.tmdb.org/t/p/w1280{backdrop_path}"
         
         return NewReleaseItem(
-            id=f"tmdb_{content_type}_{item['id']}",
+            id=f"cinebrain_tmdb_{content_type}_{item['id']}",
             title=item.get(title_key, ''),
             original_title=item.get(original_title_key),
             content_type=content_type,
             release_date=release_date,
             languages=languages,
             genres=genres,
-            popularity=item.get('popularity', 0),
-            vote_count=item.get('vote_count', 0),
-            vote_average=item.get('vote_average', 0),
+            popularity=float(item.get('popularity', 0)),
+            vote_count=int(item.get('vote_count', 0)),
+            vote_average=float(item.get('vote_average', 0)),
             poster_path=poster_path,
             backdrop_path=backdrop_path,
             overview=item.get('overview'),
@@ -353,17 +354,39 @@ class NewReleasesProcessor:
         
         genres = [g.get('name', 'Unknown') for g in item.get('genres', [])]
         
+        popularity = 0.0
+        vote_count = 0
+        vote_average = 0.0
+        
+        try:
+            if item.get('popularity') is not None:
+                popularity = float(item.get('popularity', 0))
+        except (ValueError, TypeError):
+            popularity = 0.0
+            
+        try:
+            if item.get('scored_by') is not None:
+                vote_count = int(item.get('scored_by', 0))
+        except (ValueError, TypeError):
+            vote_count = 0
+            
+        try:
+            if item.get('score') is not None:
+                vote_average = float(item.get('score', 0))
+        except (ValueError, TypeError):
+            vote_average = 0.0
+        
         return NewReleaseItem(
-            id=f"mal_anime_{item.get('mal_id', 0)}",
+            id=f"cinebrain_mal_anime_{item.get('mal_id', 0)}",
             title=item.get('title', ''),
             original_title=item.get('title_japanese'),
             content_type='anime',
             release_date=release_date,
             languages=['Japanese'],
             genres=genres,
-            popularity=item.get('popularity', 0),
-            vote_count=item.get('scored_by', 0),
-            vote_average=item.get('score', 0),
+            popularity=popularity,
+            vote_count=vote_count,
+            vote_average=vote_average,
             poster_path=item.get('images', {}).get('jpg', {}).get('large_image_url'),
             backdrop_path=item.get('images', {}).get('jpg', {}).get('large_image_url'),
             overview=item.get('synopsis'),
@@ -403,7 +426,7 @@ class NewReleasesProcessor:
                             parsed_item = self._parse_tmdb_item(item, content_type)
                             all_items.append(parsed_item)
                         except Exception as e:
-                            logger.error(f"Error parsing {content_type} item: {e}")
+                            logger.error(f"Error parsing CineBrain {content_type} item: {e}")
                 
                 for lang_name in language_codes.keys():
                     lang_result = results[task_index]
@@ -415,7 +438,7 @@ class NewReleasesProcessor:
                                 parsed_item = self._parse_tmdb_item(item, content_type)
                                 all_items.append(parsed_item)
                             except Exception as e:
-                                logger.error(f"Error parsing {lang_name} {content_type} item: {e}")
+                                logger.error(f"Error parsing CineBrain {lang_name} {content_type} item: {e}")
             
             anime_result = results[task_index]
             if isinstance(anime_result, list):
@@ -424,10 +447,10 @@ class NewReleasesProcessor:
                         parsed_item = self._parse_anime_item(item)
                         all_items.append(parsed_item)
                     except Exception as e:
-                        logger.error(f"Error parsing anime item: {e}")
+                        logger.error(f"Error parsing CineBrain anime item: {e}")
         
         except Exception as e:
-            logger.error(f"Error in fetch_all_content: {e}")
+            logger.error(f"Error in CineBrain fetch_all_content: {e}")
         
         seen_ids = set()
         unique_items = []
@@ -481,16 +504,17 @@ class NewReleasesProcessor:
                 'language_priorities': self.config.LANGUAGE_PRIORITIES,
                 'days_back': self.config.DAYS_BACK,
                 'is_stale': False,
+                'platform': 'CineBrain',
                 'next_refresh': (datetime.now(timezone.utc) + 
                                timedelta(minutes=self.config.REFRESH_INTERVAL_MINUTES)).isoformat()
             }
         }
 
-class NewReleasesService:
-    def __init__(self, config: NewReleasesConfig):
+class CineBrainNewReleasesService:
+    def __init__(self, config: CineBrainNewReleasesConfig):
         self.config = config
-        self.cache = NewReleasesCache(config.CACHE_FILE)
-        self.processor = NewReleasesProcessor(config)
+        self.cache = CineBrainNewReleasesCache(config.CACHE_FILE)
+        self.processor = CineBrainNewReleasesProcessor(config)
         self._refresh_lock = Lock()
         self._shutdown_event = Event()
         self._background_thread = None
@@ -503,18 +527,18 @@ class NewReleasesService:
             self._shutdown_event.clear()
             self._background_thread = Thread(target=self._background_refresh_loop, daemon=True)
             self._background_thread.start()
-            logger.info("Background refresh thread started")
+            logger.info("CineBrain background refresh thread started")
     
     def _background_refresh_loop(self):
         while not self._shutdown_event.is_set():
             try:
                 if self.cache.is_stale():
-                    logger.info("Cache is stale, triggering refresh")
+                    logger.info("CineBrain cache is stale, triggering refresh")
                     asyncio.run(self._refresh_content())
                 
                 self._shutdown_event.wait(timeout=self.config.REFRESH_INTERVAL_MINUTES * 60)
             except Exception as e:
-                logger.error(f"Background refresh error: {e}")
+                logger.error(f"CineBrain background refresh error: {e}")
                 self._shutdown_event.wait(timeout=300)
     
     async def _refresh_content(self) -> bool:
@@ -527,7 +551,7 @@ class NewReleasesService:
                     return False
                 self._is_refreshing = True
             
-            logger.info("Starting content refresh")
+            logger.info("Starting CineBrain content refresh")
             start_time = time.time()
             
             items = await self.processor.fetch_all_content()
@@ -536,12 +560,12 @@ class NewReleasesService:
             success = self.cache.set(processed_data)
             
             duration = time.time() - start_time
-            logger.info(f"Content refresh completed in {duration:.2f}s, success: {success}")
+            logger.info(f"CineBrain content refresh completed in {duration:.2f}s, success: {success}")
             
             return success
             
         except Exception as e:
-            logger.error(f"Content refresh failed: {e}")
+            logger.error(f"CineBrain content refresh failed: {e}")
             return False
         finally:
             self._is_refreshing = False
@@ -551,7 +575,7 @@ class NewReleasesService:
             try:
                 asyncio.run(self._refresh_content())
             except Exception as e:
-                logger.error(f"Forced refresh failed: {e}")
+                logger.error(f"CineBrain forced refresh failed: {e}")
         
         return self.cache.get()
     
@@ -560,10 +584,10 @@ class NewReleasesService:
             self._shutdown_event.set()
         if self._background_thread and self._background_thread.is_alive():
             self._background_thread.join(timeout=5)
-            logger.info("Background refresh thread stopped")
+            logger.info("CineBrain background refresh thread stopped")
 
-config = NewReleasesConfig()
-new_releases_service = NewReleasesService(config)
+config = CineBrainNewReleasesConfig()
+cinebrain_new_releases_service = CineBrainNewReleasesService(config)
 
 new_releases_bp = Blueprint('new_releases', __name__)
 
@@ -575,7 +599,7 @@ def get_new_releases():
         language_filter = request.args.get('language')
         limit = request.args.get('limit', type=int)
         
-        data = new_releases_service.get_content(force_refresh=force_refresh)
+        data = cinebrain_new_releases_service.get_content(force_refresh=force_refresh)
         
         if content_type_filter:
             data['priority_content'] = [
@@ -603,12 +627,13 @@ def get_new_releases():
         
         data['metadata']['filtered'] = bool(content_type_filter or language_filter or limit)
         data['metadata']['api_endpoint'] = '/api/new-releases'
-        data['metadata']['cache_status'] = 'fresh' if not new_releases_service.cache.is_stale() else 'stale'
+        data['metadata']['cache_status'] = 'fresh' if not cinebrain_new_releases_service.cache.is_stale() else 'stale'
+        data['metadata']['platform'] = 'CineBrain'
         
         return jsonify(data), 200
         
     except Exception as e:
-        logger.error(f"New releases endpoint error: {e}")
+        logger.error(f"CineBrain new releases endpoint error: {e}")
         
         fallback_data = {
             'priority_content': [],
@@ -616,9 +641,10 @@ def get_new_releases():
             'metadata': {
                 'generated_at': datetime.now(timezone.utc).isoformat(),
                 'total_items': 0,
-                'error': 'Service temporarily unavailable',
+                'error': 'CineBrain service temporarily unavailable',
                 'is_stale': True,
-                'cache_status': 'error'
+                'cache_status': 'error',
+                'platform': 'CineBrain'
             }
         }
         
@@ -627,20 +653,21 @@ def get_new_releases():
 @new_releases_bp.route('/api/new-releases/health', methods=['GET'])
 def new_releases_health():
     try:
-        cache_data = new_releases_service.cache.get()
+        cache_data = cinebrain_new_releases_service.cache.get()
         metadata = cache_data.get('metadata', {})
         
         health_info = {
             'status': 'healthy',
-            'service': 'new_releases',
-            'cache_status': 'fresh' if not new_releases_service.cache.is_stale() else 'stale',
+            'service': 'cinebrain_new_releases',
+            'platform': 'CineBrain',
+            'cache_status': 'fresh' if not cinebrain_new_releases_service.cache.is_stale() else 'stale',
             'last_generated': metadata.get('generated_at'),
             'total_items': metadata.get('total_items', 0),
             'priority_items': metadata.get('priority_items', 0),
             'languages_available': metadata.get('languages_found', []),
             'content_types': metadata.get('content_types', []),
-            'background_refresh_active': new_releases_service._background_thread and new_releases_service._background_thread.is_alive(),
-            'is_refreshing': new_releases_service._is_refreshing,
+            'background_refresh_active': cinebrain_new_releases_service._background_thread and cinebrain_new_releases_service._background_thread.is_alive(),
+            'is_refreshing': cinebrain_new_releases_service._is_refreshing,
             'config': {
                 'refresh_interval_minutes': config.REFRESH_INTERVAL_MINUTES,
                 'days_back': config.DAYS_BACK,
@@ -651,10 +678,11 @@ def new_releases_health():
         return jsonify(health_info), 200
         
     except Exception as e:
-        logger.error(f"Health check error: {e}")
+        logger.error(f"CineBrain health check error: {e}")
         return jsonify({
             'status': 'error',
-            'service': 'new_releases',
+            'service': 'cinebrain_new_releases',
+            'platform': 'CineBrain',
             'error': str(e)
         }), 500
 
@@ -663,36 +691,39 @@ def trigger_refresh():
     try:
         force = request.json.get('force', False) if request.is_json else False
         
-        if force or new_releases_service.cache.is_stale():
-            success = asyncio.run(new_releases_service._refresh_content())
+        if force or cinebrain_new_releases_service.cache.is_stale():
+            success = asyncio.run(cinebrain_new_releases_service._refresh_content())
             
             return jsonify({
                 'success': success,
-                'message': 'Refresh completed' if success else 'Refresh failed',
+                'message': 'CineBrain refresh completed' if success else 'CineBrain refresh failed',
+                'platform': 'CineBrain',
                 'timestamp': datetime.now(timezone.utc).isoformat()
             }), 200 if success else 500
         else:
             return jsonify({
                 'success': False,
-                'message': 'Cache is fresh, refresh not needed',
+                'message': 'CineBrain cache is fresh, refresh not needed',
+                'platform': 'CineBrain',
                 'timestamp': datetime.now(timezone.utc).isoformat()
             }), 200
             
     except Exception as e:
-        logger.error(f"Manual refresh error: {e}")
+        logger.error(f"CineBrain manual refresh error: {e}")
         return jsonify({
             'success': False,
             'error': str(e),
+            'platform': 'CineBrain',
             'timestamp': datetime.now(timezone.utc).isoformat()
         }), 500
 
 def init_new_releases_service():
     try:
-        new_releases_service.start_background_refresh()
-        logger.info("New releases service initialized successfully")
+        cinebrain_new_releases_service.start_background_refresh()
+        logger.info("CineBrain new releases service initialized successfully")
         return True
     except Exception as e:
-        logger.error(f"Failed to initialize new releases service: {e}")
+        logger.error(f"Failed to initialize CineBrain new releases service: {e}")
         return False
 
 if __name__ == '__main__':
