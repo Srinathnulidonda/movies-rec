@@ -1,3 +1,4 @@
+#backend/app.py
 from typing import Optional
 from flask import Flask, request, jsonify, session, render_template
 from flask_sqlalchemy import SQLAlchemy
@@ -44,7 +45,6 @@ from services.algorithms import (
 )
 from services.personalized import init_personalized
 from services.details import init_details_service, SlugManager, ContentService
-from services.new_releases import new_releases_bp, init_new_releases_service
 import re
 
 app = Flask(__name__)
@@ -427,6 +427,32 @@ class TMDBService:
     
     @staticmethod
     @cache.memoize(timeout=3600)
+    def get_new_releases(content_type='movie', region=None, page=1):
+        end_date = datetime.now().strftime('%Y-%m-%d')
+        start_date = (datetime.now() - timedelta(days=60)).strftime('%Y-%m-%d')
+        
+        url = f"{TMDBService.BASE_URL}/discover/{content_type}"
+        params = {
+            'api_key': TMDB_API_KEY,
+            'primary_release_date.gte': start_date,
+            'primary_release_date.lte': end_date,
+            'sort_by': 'release_date.desc',
+            'page': page
+        }
+        
+        if region:
+            params['region'] = region
+        
+        try:
+            response = http_session.get(url, params=params, timeout=5)
+            if response.status_code == 200:
+                return response.json()
+        except Exception as e:
+            logger.error(f"TMDB new releases error: {e}")
+        return None
+    
+    @staticmethod
+    @cache.memoize(timeout=3600)
     def get_critics_choice(content_type='movie', page=1):
         url = f"{TMDBService.BASE_URL}/discover/{content_type}"
         params = {
@@ -681,9 +707,9 @@ try:
     with app.app_context():
         details_service = init_details_service(app, db, models, cache)
         content_service = ContentService(db, models)
-        logger.info("CineBrain details and content services initialized successfully")
+        logger.info("Details and Content services initialized successfully")
 except Exception as e:
-    logger.error(f"Failed to initialize CineBrain details/content services: {e}")
+    logger.error(f"Failed to initialize details/content services: {e}")
 
 services = {
     'TMDBService': TMDBService,
@@ -696,46 +722,40 @@ services = {
 try:
     init_support(app, db, models, services)
     app.register_blueprint(support_bp)
-    logger.info("CineBrain support service initialized successfully")
+    logger.info("Support service initialized successfully")
 except Exception as e:
-    logger.error(f"Failed to initialize CineBrain support service: {e}")
+    logger.error(f"Failed to initialize support service: {e}")
 
 try:
     personalized_engine = init_personalized(app, db, models, services, cache)
     if personalized_engine:
-        logger.info("CineBrain personalized recommendation system initialized successfully")
+        logger.info("Netflix-level personalized recommendation system initialized successfully")
         services['personalized_engine'] = personalized_engine
     else:
-        logger.warning("CineBrain personalized recommendation system failed to initialize")
+        logger.warning("Personalized recommendation system failed to initialize")
 except Exception as e:
-    logger.error(f"Failed to initialize CineBrain personalized recommendation system: {e}")
+    logger.error(f"Failed to initialize personalized recommendation system: {e}")
 
 try:
     init_auth(app, db, User)
     app.register_blueprint(auth_bp)
-    logger.info("CineBrain authentication service initialized successfully")
+    logger.info("Enhanced authentication service initialized successfully")
 except Exception as e:
-    logger.error(f"Failed to initialize CineBrain authentication service: {e}")
+    logger.error(f"Failed to initialize authentication service: {e}")
 
 try:
     init_admin(app, db, models, services)
     app.register_blueprint(admin_bp)
-    logger.info("CineBrain admin service initialized successfully")
+    logger.info("Admin service initialized successfully")
 except Exception as e:
-    logger.error(f"Failed to initialize CineBrain admin service: {e}")
+    logger.error(f"Failed to initialize admin service: {e}")
 
 try:
     init_users(app, db, models, {**services, 'cache': cache})
     app.register_blueprint(users_bp)
-    logger.info("CineBrain users service with personalized recommendations initialized successfully")
+    logger.info("Users service with personalized recommendations initialized successfully")
 except Exception as e:
-    logger.error(f"Failed to initialize CineBrain users service: {e}")
-
-try:
-    app.register_blueprint(new_releases_bp)
-    logger.info("CineBrain new releases service registered successfully")
-except Exception as e:
-    logger.error(f"Failed to register CineBrain new releases service: {e}")
+    logger.error(f"Failed to initialize users service: {e}")
 
 def setup_support_monitoring():
     def support_monitor():
@@ -776,38 +796,38 @@ def setup_support_monitoring():
                             for ticket in urgent_tickets:
                                 AdminNotificationService.create_notification(
                                     'urgent_ticket',
-                                    f"Urgent CineBrain Ticket Needs Attention",
+                                    f"Urgent Ticket Needs Attention",
                                     f"Ticket #{ticket.ticket_number} has been open for over 1 hour without response",
                                     related_ticket_id=ticket.id,
                                     is_urgent=True,
                                     action_required=True
                                 )
                     except Exception as e:
-                        logger.error(f"CineBrain support monitoring inner error: {e}")
+                        logger.error(f"Support monitoring inner error: {e}")
                 
                 time.sleep(300)
                 
             except Exception as e:
-                logger.error(f"CineBrain support monitoring error: {e}")
+                logger.error(f"Support monitoring error: {e}")
                 time.sleep(300)
     
     monitor_thread = threading.Thread(target=support_monitor, daemon=True)
     monitor_thread.start()
-    logger.info("CineBrain support monitoring thread started")
+    logger.info("Support monitoring thread started")
 
 def on_new_support_ticket(ticket):
     try:
         from services.admin import AdminNotificationService
         AdminNotificationService.notify_new_ticket(ticket)
     except Exception as e:
-        logger.error(f"Error handling new CineBrain ticket notification: {e}")
+        logger.error(f"Error handling new ticket notification: {e}")
 
 def on_new_feedback(feedback):
     try:
         from services.admin import AdminNotificationService
         AdminNotificationService.notify_feedback_received(feedback)
     except Exception as e:
-        logger.error(f"Error handling new CineBrain feedback notification: {e}")
+        logger.error(f"Error handling new feedback notification: {e}")
 
 @app.route('/api/webhooks/support/ticket-created', methods=['POST'])
 def webhook_ticket_created():
@@ -822,8 +842,8 @@ def webhook_ticket_created():
         
         return jsonify({'success': True}), 200
     except Exception as e:
-        logger.error(f"CineBrain webhook error: {e}")
-        return jsonify({'error': 'CineBrain webhook processing failed'}), 500
+        logger.error(f"Webhook error: {e}")
+        return jsonify({'error': 'Webhook processing failed'}), 500
 
 @app.route('/api/webhooks/support/feedback-created', methods=['POST'])
 def webhook_feedback_created():
@@ -838,8 +858,8 @@ def webhook_feedback_created():
         
         return jsonify({'success': True}), 200
     except Exception as e:
-        logger.error(f"CineBrain feedback webhook error: {e}")
-        return jsonify({'error': 'CineBrain webhook processing failed'}), 500
+        logger.error(f"Feedback webhook error: {e}")
+        return jsonify({'error': 'Webhook processing failed'}), 500
 
 @app.route('/api/details/<slug>', methods=['GET'])
 def get_content_details_by_slug(slug):
@@ -857,17 +877,17 @@ def get_content_details_by_slug(slug):
         if details_service:
             details = details_service.get_details_by_slug(slug, user_id)
         else:
-            logger.error("CineBrain details service not available")
-            return jsonify({'error': 'CineBrain service unavailable'}), 503
+            logger.error("Details service not available")
+            return jsonify({'error': 'Service unavailable'}), 503
         
         if not details:
-            return jsonify({'error': 'CineBrain content not found'}), 404
+            return jsonify({'error': 'Content not found'}), 404
         
         return jsonify(details), 200
         
     except Exception as e:
-        logger.error(f"Error getting CineBrain details for slug {slug}: {e}")
-        return jsonify({'error': 'Failed to get CineBrain content details'}), 500
+        logger.error(f"Error getting details for slug {slug}: {e}")
+        return jsonify({'error': 'Failed to get content details'}), 500
 
 @app.route('/api/search', methods=['GET'])
 @cache.cached(timeout=300, key_prefix=make_cache_key)
@@ -895,13 +915,13 @@ def search_content():
         try:
             tmdb_results = futures[0].result(timeout=5)
         except Exception as e:
-            logger.warning(f"CineBrain TMDB search timeout/error: {e}")
+            logger.warning(f"TMDB search timeout/error: {e}")
         
         if len(futures) > 1:
             try:
                 anime_results = futures[1].result(timeout=5)
             except Exception as e:
-                logger.warning(f"CineBrain anime search timeout/error: {e}")
+                logger.warning(f"Anime search timeout/error: {e}")
         
         results = []
         
@@ -919,7 +939,7 @@ def search_content():
                         )
                         db.session.add(interaction)
                     except Exception as e:
-                        logger.warning(f"Failed to record CineBrain interaction: {e}")
+                        logger.warning(f"Failed to record interaction: {e}")
                     
                     youtube_url = None
                     if content.youtube_trailer_id:
@@ -965,7 +985,7 @@ def search_content():
         try:
             db.session.commit()
         except Exception as e:
-            logger.warning(f"Failed to commit CineBrain search interactions: {e}")
+            logger.warning(f"Failed to commit search interactions: {e}")
             db.session.rollback()
         
         return jsonify({
@@ -976,8 +996,8 @@ def search_content():
         }), 200
         
     except Exception as e:
-        logger.error(f"CineBrain search error: {e}")
-        return jsonify({'error': 'CineBrain search failed'}), 500
+        logger.error(f"Search error: {e}")
+        return jsonify({'error': 'Search failed'}), 500
 
 @app.route('/api/content/<int:content_id>', methods=['GET'])
 def get_content_details(content_id):
@@ -996,7 +1016,7 @@ def get_content_details(content_id):
                 content.ensure_slug()
                 db.session.commit()
             except Exception as e:
-                logger.warning(f"Failed to ensure CineBrain slug: {e}")
+                logger.warning(f"Failed to ensure slug: {e}")
         
         try:
             session_id = get_session_id()
@@ -1008,7 +1028,7 @@ def get_content_details(content_id):
             )
             db.session.add(interaction)
         except Exception as e:
-            logger.warning(f"Failed to record CineBrain view interaction: {e}")
+            logger.warning(f"Failed to record view interaction: {e}")
         
         additional_details = None
         cast = []
@@ -1029,7 +1049,7 @@ def get_content_details(content_id):
                     cast = additional_details.get('credits', {}).get('cast', [])[:10]
                     crew = additional_details.get('credits', {}).get('crew', [])[:5]
         except Exception as e:
-            logger.warning(f"Failed to get CineBrain additional details: {e}")
+            logger.warning(f"Failed to get additional details: {e}")
         
         similar_content = []
         try:
@@ -1069,12 +1089,12 @@ def get_content_details(content_id):
                         'match_type': 'genre_based'
                     })
         except Exception as e:
-            logger.warning(f"Failed to get CineBrain similar content: {e}")
+            logger.warning(f"Failed to get similar content: {e}")
         
         try:
             db.session.commit()
         except Exception as e:
-            logger.warning(f"Failed to commit CineBrain view interaction: {e}")
+            logger.warning(f"Failed to commit view interaction: {e}")
             db.session.rollback()
         
         youtube_trailer_url = None
@@ -1113,8 +1133,8 @@ def get_content_details(content_id):
         return jsonify(response_data), 200
         
     except Exception as e:
-        logger.error(f"CineBrain content details error: {e}")
-        return jsonify({'error': 'Failed to get CineBrain content details'}), 500
+        logger.error(f"Content details error: {e}")
+        return jsonify({'error': 'Failed to get content details'}), 500
 
 @app.route('/api/recommendations/trending', methods=['GET'])
 @cache.cached(timeout=300, key_prefix=make_cache_key)
@@ -1142,7 +1162,7 @@ def get_trending():
                     if content:
                         all_content.append(content)
         except Exception as e:
-            logger.error(f"CineBrain TMDB fetch error: {e}")
+            logger.error(f"TMDB fetch error: {e}")
         
         try:
             top_anime = JikanService.get_top_anime()
@@ -1152,7 +1172,7 @@ def get_trending():
                     if content:
                         all_content.append(content)
         except Exception as e:
-            logger.error(f"CineBrain Jikan fetch error: {e}")
+            logger.error(f"Jikan fetch error: {e}")
         
         db_trending = Content.query.filter_by(is_trending=True).limit(50).all()
         all_content.extend(db_trending)
@@ -1166,7 +1186,7 @@ def get_trending():
                     try:
                         content.ensure_slug()
                     except Exception as e:
-                        logger.warning(f"Failed to ensure CineBrain slug for content {content.id}: {e}")
+                        logger.warning(f"Failed to ensure slug for content {content.id}: {e}")
                         content.slug = f"content-{content.id}"
                 unique_content.append(content)
         
@@ -1184,7 +1204,7 @@ def get_trending():
                     'total_content_analyzed': len(unique_content),
                     'region': region,
                     'language_priority_applied': apply_language_priority,
-                    'algorithm': 'cinebrain_multi_level_ranking',
+                    'algorithm': 'multi_level_ranking',
                     'timestamp': datetime.utcnow().isoformat()
                 }
             }
@@ -1206,7 +1226,7 @@ def get_trending():
                     'total_content_analyzed': len(unique_content),
                     'region': region,
                     'language_priority_applied': apply_language_priority,
-                    'algorithm': 'cinebrain_multi_level_ranking',
+                    'algorithm': 'multi_level_ranking',
                     'timestamp': datetime.utcnow().isoformat()
                 }
             }
@@ -1231,20 +1251,169 @@ def get_trending():
                             ), 5) if Content.query.count() > 0 else 0
                         }
             except Exception as metric_error:
-                logger.warning(f"CineBrain metrics calculation error: {metric_error}")
+                logger.warning(f"Metrics calculation error: {metric_error}")
         
         try:
             db.session.commit()
         except Exception as e:
-            logger.warning(f"Failed to commit CineBrain trending updates: {e}")
+            logger.warning(f"Failed to commit trending updates: {e}")
             db.session.rollback()
         
         return jsonify(response), 200
         
     except Exception as e:
-        logger.error(f"CineBrain trending recommendations error: {e}")
+        logger.error(f"Trending recommendations error: {e}")
         logger.exception(e)
-        return jsonify({'error': 'Failed to get CineBrain trending recommendations'}), 500
+        return jsonify({'error': 'Failed to get trending recommendations'}), 500
+
+@app.route('/api/recommendations/new-releases', methods=['GET'])
+@cache.cached(timeout=300, key_prefix=make_cache_key)
+def get_new_releases():
+    try:
+        content_type = request.args.get('type', 'movie')
+        limit = int(request.args.get('limit', 20))
+        
+        all_new_releases = []
+        priority_languages = ['telugu', 'english', 'hindi', 'malayalam', 'kannada', 'tamil']
+        
+        for language in priority_languages:
+            lang_code = LANGUAGE_PRIORITY['codes'].get(language)
+            
+            try:
+                if language == 'english':
+                    releases = TMDBService.get_new_releases(content_type)
+                else:
+                    releases = TMDBService.get_language_specific(lang_code, content_type)
+                
+                if releases:
+                    for item in releases.get('results', [])[:10]:
+                        content = content_service.save_content_from_tmdb(item, content_type)
+                        if content and content.release_date:
+                            days_old = (datetime.now().date() - content.release_date).days
+                            if days_old <= 60:
+                                all_new_releases.append(content)
+            except Exception as e:
+                logger.error(f"Error fetching {language} releases: {e}")
+        
+        db_new_releases = Content.query.filter(
+            Content.is_new_release == True,
+            Content.content_type == content_type
+        ).limit(50).all()
+        all_new_releases.extend(db_new_releases)
+        
+        seen_ids = set()
+        unique_releases = []
+        for content in all_new_releases:
+            if content.id not in seen_ids:
+                seen_ids.add(content.id)
+                if not content.slug:
+                    try:
+                        content.ensure_slug()
+                    except Exception as e:
+                        logger.warning(f"Failed to ensure slug for content {content.id}: {e}")
+                        content.slug = f"content-{content.id}"
+                unique_releases.append(content)
+        
+        recommendations = recommendation_orchestrator.get_new_releases_with_algorithms(
+            unique_releases,
+            limit=limit
+        )
+        
+        language_groups = {
+            'telugu': [],
+            'english': [],
+            'hindi': [],
+            'malayalam': [],
+            'kannada': [],
+            'tamil': [],
+            'others': []
+        }
+        
+        for rec in recommendations:
+            languages = rec.get('languages', [])
+            grouped = False
+            
+            for lang in languages:
+                lang_lower = lang.lower() if isinstance(lang, str) else ''
+                if 'telugu' in lang_lower or lang_lower == 'te':
+                    language_groups['telugu'].append(rec)
+                    grouped = True
+                    break
+                elif 'english' in lang_lower or lang_lower == 'en':
+                    language_groups['english'].append(rec)
+                    grouped = True
+                    break
+                elif 'hindi' in lang_lower or lang_lower == 'hi':
+                    language_groups['hindi'].append(rec)
+                    grouped = True
+                    break
+                elif 'malayalam' in lang_lower or lang_lower == 'ml':
+                    language_groups['malayalam'].append(rec)
+                    grouped = True
+                    break
+                elif 'kannada' in lang_lower or lang_lower == 'kn':
+                    language_groups['kannada'].append(rec)
+                    grouped = True
+                    break
+                elif 'tamil' in lang_lower or lang_lower == 'ta':
+                    language_groups['tamil'].append(rec)
+                    grouped = True
+                    break
+            
+            if not grouped:
+                language_groups['others'].append(rec)
+        
+        response = {
+            'recommendations': recommendations,
+            'grouped_by_language': language_groups,
+            'metadata': {
+                'total_analyzed': len(unique_releases),
+                'language_priority': {
+                    'main': 'telugu',
+                    'secondary': ['english', 'hindi'],
+                    'tertiary': ['malayalam', 'kannada', 'tamil']
+                },
+                'algorithm': 'multi_level_ranking_with_telugu_priority',
+                'scoring_weights': {
+                    'telugu_content': {
+                        'freshness': 0.2,
+                        'popularity': 0.2,
+                        'language': 0.4,
+                        'quality': 0.2
+                    },
+                    'other_content': {
+                        'freshness': 0.3,
+                        'popularity': 0.3,
+                        'language': 0.2,
+                        'quality': 0.2
+                    }
+                },
+                'timestamp': datetime.utcnow().isoformat()
+            }
+        }
+        
+        if recommendations:
+            content_ids = [r['id'] for r in recommendations]
+            contents = Content.query.filter(Content.id.in_(content_ids)).all()
+            
+            response['metadata']['metrics'] = {
+                'diversity_score': round(EvaluationMetrics.diversity_score(contents), 3),
+                'telugu_content_percentage': round(
+                    len(language_groups['telugu']) / len(recommendations) * 100, 1
+                ) if recommendations else 0
+            }
+        
+        try:
+            db.session.commit()
+        except Exception as e:
+            logger.warning(f"Failed to commit new releases updates: {e}")
+            db.session.rollback()
+        
+        return jsonify(response), 200
+        
+    except Exception as e:
+        logger.error(f"New releases error: {e}")
+        return jsonify({'error': 'Failed to get new releases'}), 500
 
 @app.route('/api/upcoming', methods=['GET'])
 async def get_upcoming_releases():
@@ -1278,14 +1447,14 @@ async def get_upcoming_releases():
             return jsonify({
                 'success': True,
                 'data': results,
-                'cinebrain_priority': True
+                'telugu_priority': True
             }), 200
             
         finally:
             await service.close()
     
     except Exception as e:
-        logger.error(f"CineBrain upcoming releases error: {e}")
+        logger.error(f"Upcoming releases error: {e}")
         return jsonify({
             'success': False,
             'error': str(e)
@@ -1330,14 +1499,14 @@ def get_upcoming_releases_sync():
             return jsonify({
                 'success': True,
                 'data': results,
-                'cinebrain_priority': True
+                'telugu_priority': True
             }), 200
             
         finally:
             loop.close()
     
     except Exception as e:
-        logger.error(f"CineBrain upcoming sync error: {e}")
+        logger.error(f"Upcoming sync error: {e}")
         return jsonify({
             'success': False,
             'error': str(e)
@@ -1378,8 +1547,8 @@ def get_critics_choice():
         return jsonify({'recommendations': recommendations}), 200
         
     except Exception as e:
-        logger.error(f"CineBrain critics choice error: {e}")
-        return jsonify({'error': 'Failed to get CineBrain critics choice'}), 500
+        logger.error(f"Critics choice error: {e}")
+        return jsonify({'error': 'Failed to get critics choice'}), 500
 
 @app.route('/api/recommendations/genre/<genre>', methods=['GET'])
 @cache.cached(timeout=600, key_prefix=make_cache_key)
@@ -1425,8 +1594,8 @@ def get_genre_recommendations(genre):
         return jsonify({'recommendations': recommendations}), 200
         
     except Exception as e:
-        logger.error(f"CineBrain genre recommendations error: {e}")
-        return jsonify({'error': 'Failed to get CineBrain genre recommendations'}), 500
+        logger.error(f"Genre recommendations error: {e}")
+        return jsonify({'error': 'Failed to get genre recommendations'}), 500
 
 @app.route('/api/recommendations/regional/<language>', methods=['GET'])
 @cache.cached(timeout=600, key_prefix=make_cache_key)
@@ -1463,8 +1632,8 @@ def get_regional(language):
         return jsonify({'recommendations': recommendations}), 200
         
     except Exception as e:
-        logger.error(f"CineBrain regional recommendations error: {e}")
-        return jsonify({'error': 'Failed to get CineBrain regional recommendations'}), 500
+        logger.error(f"Regional recommendations error: {e}")
+        return jsonify({'error': 'Failed to get regional recommendations'}), 500
 
 @app.route('/api/recommendations/anime', methods=['GET'])
 @cache.cached(timeout=600, key_prefix=make_cache_key)
@@ -1533,8 +1702,8 @@ def get_anime():
         return jsonify({'recommendations': recommendations[:limit]}), 200
         
     except Exception as e:
-        logger.error(f"CineBrain anime recommendations error: {e}")
-        return jsonify({'error': 'Failed to get CineBrain anime recommendations'}), 500
+        logger.error(f"Anime recommendations error: {e}")
+        return jsonify({'error': 'Failed to get anime recommendations'}), 500
 
 @app.route('/api/recommendations/similar/<int:content_id>', methods=['GET'])
 def get_similar_recommendations(content_id):
@@ -1543,25 +1712,25 @@ def get_similar_recommendations(content_id):
         strict_mode = request.args.get('strict_mode', 'false').lower() == 'true'
         min_similarity = float(request.args.get('min_similarity', 0.3))
         
-        cache_key = f"cinebrain_similar:{content_id}:{limit}:{strict_mode}:{min_similarity}"
+        cache_key = f"similar:{content_id}:{limit}:{strict_mode}:{min_similarity}"
         if cache:
             try:
                 cached_result = cache.get(cache_key)
                 if cached_result:
                     return jsonify(cached_result), 200
             except Exception as e:
-                logger.warning(f"CineBrain cache get error: {e}")
+                logger.warning(f"Cache get error: {e}")
         
         base_content = Content.query.get(content_id)
         if not base_content:
-            return jsonify({'error': 'CineBrain content not found'}), 404
+            return jsonify({'error': 'Content not found'}), 404
         
         if not base_content.slug:
             try:
                 base_content.ensure_slug()
                 db.session.commit()
             except Exception as e:
-                logger.warning(f"CineBrain slug generation failed for base content: {e}")
+                logger.warning(f"Slug generation failed for base content: {e}")
                 base_content.slug = f"content-{base_content.id}"
         
         similar_content = []
@@ -1602,14 +1771,14 @@ def get_similar_recommendations(content_id):
                             'content_type': item.content_type,
                             'genres': item_genres,
                             'similarity_score': 0.8,
-                            'match_type': 'cinebrain_genre_based'
+                            'match_type': 'genre_based'
                         })
                         
                         if len(similar_content) >= limit:
                             break
                             
                     except Exception as e:
-                        logger.warning(f"Error processing CineBrain similar item {item.id}: {e}")
+                        logger.warning(f"Error processing similar item {item.id}: {e}")
                         continue
             
             if not similar_content:
@@ -1632,11 +1801,11 @@ def get_similar_recommendations(content_id):
                         'rating': item.rating,
                         'content_type': item.content_type,
                         'similarity_score': 0.5,
-                        'match_type': 'cinebrain_popularity_fallback'
+                        'match_type': 'popularity_fallback'
                     })
         
         except Exception as e:
-            logger.error(f"Error in CineBrain similarity calculation: {e}")
+            logger.error(f"Error in similarity calculation: {e}")
             similar_content = []
         
         try:
@@ -1650,7 +1819,7 @@ def get_similar_recommendations(content_id):
             db.session.add(interaction)
             db.session.commit()
         except Exception as e:
-            logger.warning(f"CineBrain interaction tracking failed: {e}")
+            logger.warning(f"Interaction tracking failed: {e}")
         
         response = {
             'base_content': {
@@ -1662,7 +1831,7 @@ def get_similar_recommendations(content_id):
             },
             'similar_content': similar_content,
             'metadata': {
-                'algorithm': 'cinebrain_optimized_genre_based',
+                'algorithm': 'optimized_genre_based',
                 'total_results': len(similar_content),
                 'similarity_threshold': min_similarity,
                 'timestamp': datetime.utcnow().isoformat()
@@ -1673,14 +1842,14 @@ def get_similar_recommendations(content_id):
             try:
                 cache.set(cache_key, response, timeout=900)
             except Exception as e:
-                logger.warning(f"CineBrain caching failed: {e}")
+                logger.warning(f"Caching failed: {e}")
         
         return jsonify(response), 200
         
     except Exception as e:
-        logger.error(f"CineBrain similar recommendations error: {e}")
+        logger.error(f"Similar recommendations error: {e}")
         return jsonify({
-            'error': 'Failed to get CineBrain similar recommendations',
+            'error': 'Failed to get similar recommendations',
             'similar_content': [],
             'metadata': {'error': str(e)}
         }), 500
@@ -1716,8 +1885,8 @@ def get_anonymous_recommendations():
         return jsonify({'recommendations': result}), 200
         
     except Exception as e:
-        logger.error(f"CineBrain anonymous recommendations error: {e}")
-        return jsonify({'error': 'Failed to get CineBrain recommendations'}), 500
+        logger.error(f"Anonymous recommendations error: {e}")
+        return jsonify({'error': 'Failed to get recommendations'}), 500
 
 @app.route('/api/recommendations/admin-choice', methods=['GET'])
 @cache.cached(timeout=600, key_prefix=make_cache_key)
@@ -1741,7 +1910,7 @@ def get_public_admin_recommendations():
                     try:
                         content.ensure_slug()
                     except Exception as e:
-                        logger.warning(f"Failed to ensure CineBrain slug for admin rec content: {e}")
+                        logger.warning(f"Failed to ensure slug for admin rec content: {e}")
                         content.slug = f"content-{content.id}"
                 
                 youtube_url = None
@@ -1759,15 +1928,15 @@ def get_public_admin_recommendations():
                     'overview': content.overview[:150] + '...' if content.overview else '',
                     'youtube_trailer': youtube_url,
                     'admin_description': rec.description,
-                    'admin_name': admin.username if admin else 'CineBrain Admin',
+                    'admin_name': admin.username if admin else 'Admin',
                     'recommended_at': rec.created_at.isoformat()
                 })
         
         return jsonify({'recommendations': result}), 200
         
     except Exception as e:
-        logger.error(f"CineBrain public admin recommendations error: {e}")
-        return jsonify({'error': 'Failed to get CineBrain admin recommendations'}), 500
+        logger.error(f"Public admin recommendations error: {e}")
+        return jsonify({'error': 'Failed to get admin recommendations'}), 500
 
 @app.route('/api/person/<slug>', methods=['GET'])
 def get_person_details(slug):
@@ -1785,17 +1954,17 @@ def get_person_details(slug):
         if details_service:
             person_details = details_service.get_person_details(slug)
         else:
-            logger.error("CineBrain details service not available")
-            return jsonify({'error': 'CineBrain service unavailable'}), 503
+            logger.error("Details service not available")
+            return jsonify({'error': 'Service unavailable'}), 503
         
         if not person_details:
-            return jsonify({'error': 'CineBrain person not found'}), 404
+            return jsonify({'error': 'Person not found'}), 404
         
         return jsonify(person_details), 200
         
     except Exception as e:
-        logger.error(f"Error getting CineBrain person details for slug {slug}: {e}")
-        return jsonify({'error': 'Failed to get CineBrain person details'}), 500
+        logger.error(f"Error getting person details for slug {slug}: {e}")
+        return jsonify({'error': 'Failed to get person details'}), 500
 
 @app.route('/api/details/<slug>/reviews', methods=['POST'])
 @auth_required
@@ -1803,7 +1972,7 @@ def add_review(slug):
     try:
         content = Content.query.filter_by(slug=slug).first()
         if not content:
-            return jsonify({'error': 'CineBrain content not found'}), 404
+            return jsonify({'error': 'Content not found'}), 404
         
         user_id = request.user_id
         review_data = request.json
@@ -1811,7 +1980,7 @@ def add_review(slug):
         if details_service:
             result = details_service.add_review(content.id, user_id, review_data)
         else:
-            return jsonify({'error': 'CineBrain service unavailable'}), 503
+            return jsonify({'error': 'Service unavailable'}), 503
         
         if result['success']:
             return jsonify(result), 201
@@ -1819,8 +1988,8 @@ def add_review(slug):
             return jsonify(result), 400
             
     except Exception as e:
-        logger.error(f"Error adding CineBrain review: {e}")
-        return jsonify({'error': 'Failed to add CineBrain review'}), 500
+        logger.error(f"Error adding review: {e}")
+        return jsonify({'error': 'Failed to add review'}), 500
 
 @app.route('/api/reviews/<int:review_id>/helpful', methods=['POST'])
 @auth_required
@@ -1832,16 +2001,16 @@ def vote_review_helpful(review_id):
         if details_service:
             success = details_service.vote_review_helpful(review_id, user_id, is_helpful)
         else:
-            return jsonify({'error': 'CineBrain service unavailable'}), 503
+            return jsonify({'error': 'Service unavailable'}), 503
         
         if success:
             return jsonify({'success': True}), 200
         else:
-            return jsonify({'error': 'Failed to vote on CineBrain review'}), 400
+            return jsonify({'error': 'Failed to vote'}), 400
             
     except Exception as e:
-        logger.error(f"Error voting on CineBrain review: {e}")
-        return jsonify({'error': 'Failed to vote on CineBrain review'}), 500
+        logger.error(f"Error voting on review: {e}")
+        return jsonify({'error': 'Failed to vote'}), 500
 
 @app.route('/api/admin/slugs/migrate', methods=['POST'])
 @auth_required
@@ -1849,7 +2018,7 @@ def migrate_all_slugs():
     try:
         user = User.query.get(request.user_id)
         if not user or not user.is_admin:
-            return jsonify({'error': 'CineBrain admin access required'}), 403
+            return jsonify({'error': 'Admin access required'}), 403
         
         if details_service:
             batch_size = int(request.json.get('batch_size', 50))
@@ -1859,11 +2028,11 @@ def migrate_all_slugs():
                 'migration_stats': stats
             }), 200
         else:
-            return jsonify({'error': 'CineBrain service unavailable'}), 503
+            return jsonify({'error': 'Service unavailable'}), 503
             
     except Exception as e:
-        logger.error(f"Error migrating CineBrain slugs: {e}")
-        return jsonify({'error': 'Failed to migrate CineBrain slugs'}), 500
+        logger.error(f"Error migrating slugs: {e}")
+        return jsonify({'error': 'Failed to migrate slugs'}), 500
 
 @app.route('/api/admin/content/<int:content_id>/slug', methods=['PUT'])
 @auth_required
@@ -1871,7 +2040,7 @@ def update_content_slug(content_id):
     try:
         user = User.query.get(request.user_id)
         if not user or not user.is_admin:
-            return jsonify({'error': 'CineBrain admin access required'}), 403
+            return jsonify({'error': 'Admin access required'}), 403
         
         if details_service:
             force_update = request.json.get('force_update', False)
@@ -1883,13 +2052,13 @@ def update_content_slug(content_id):
                     'new_slug': new_slug
                 }), 200
             else:
-                return jsonify({'error': 'CineBrain content not found or update failed'}), 404
+                return jsonify({'error': 'Content not found or update failed'}), 404
         else:
-            return jsonify({'error': 'CineBrain service unavailable'}), 503
+            return jsonify({'error': 'Service unavailable'}), 503
             
     except Exception as e:
-        logger.error(f"Error updating CineBrain content slug: {e}")
-        return jsonify({'error': 'Failed to update CineBrain slug'}), 500
+        logger.error(f"Error updating content slug: {e}")
+        return jsonify({'error': 'Failed to update slug'}), 500
 
 @app.route('/api/content/<int:content_id>/refresh-cast-crew', methods=['POST'])
 def refresh_cast_crew(content_id):
@@ -1897,7 +2066,7 @@ def refresh_cast_crew(content_id):
         content = Content.query.get_or_404(content_id)
         
         if not content.tmdb_id:
-            return jsonify({'error': 'No TMDB ID available for CineBrain content'}), 400
+            return jsonify({'error': 'No TMDB ID available'}), 400
         
         if details_service:
             cast_crew = details_service._fetch_and_save_all_cast_crew(content)
@@ -1907,11 +2076,11 @@ def refresh_cast_crew(content_id):
                 'crew_count': sum(len(crew_list) for crew_list in cast_crew['crew'].values())
             })
         else:
-            return jsonify({'error': 'CineBrain details service not available'}), 503
+            return jsonify({'error': 'Details service not available'}), 503
             
     except Exception as e:
-        logger.error(f"Error refreshing CineBrain cast/crew: {e}")
-        return jsonify({'error': 'Failed to refresh CineBrain cast/crew data'}), 500
+        logger.error(f"Error refreshing cast/crew: {e}")
+        return jsonify({'error': 'Failed to refresh cast/crew data'}), 500
 
 @app.route('/api/admin/populate-cast-crew', methods=['POST'])
 @auth_required
@@ -1919,7 +2088,7 @@ def populate_all_cast_crew():
     try:
         user = User.query.get(request.user_id)
         if not user or not user.is_admin:
-            return jsonify({'error': 'CineBrain admin access required'}), 403
+            return jsonify({'error': 'Admin access required'}), 403
         
         batch_size = int(request.json.get('batch_size', 10))
         
@@ -1938,9 +2107,9 @@ def populate_all_cast_crew():
                 if details_service:
                     cast_crew = details_service._fetch_and_save_all_cast_crew(content)
                     processed += 1
-                    logger.info(f"Populated CineBrain cast/crew for {content.title}")
+                    logger.info(f"Populated cast/crew for {content.title}")
             except Exception as e:
-                logger.error(f"Error processing CineBrain content {content.title}: {e}")
+                logger.error(f"Error processing {content.title}: {e}")
                 errors += 1
         
         return jsonify({
@@ -1948,12 +2117,12 @@ def populate_all_cast_crew():
             'processed': processed,
             'errors': errors,
             'total_available': len(content_items),
-            'message': f"Successfully populated CineBrain cast/crew for {processed} content items"
+            'message': f"Successfully populated cast/crew for {processed} content items"
         }), 200
         
     except Exception as e:
-        logger.error(f"Error in CineBrain bulk cast/crew population: {e}")
-        return jsonify({'error': 'Failed to populate CineBrain cast/crew'}), 500
+        logger.error(f"Error in bulk cast/crew population: {e}")
+        return jsonify({'error': 'Failed to populate cast/crew'}), 500
 
 @app.route('/api/performance', methods=['GET'])
 def performance_check():
@@ -1965,7 +2134,6 @@ def performance_check():
         
         stats = {
             'status': 'healthy',
-            'platform': 'CineBrain',
             'timestamp': datetime.utcnow().isoformat(),
             'database': {
                 'total_content': total_content,
@@ -1976,25 +2144,22 @@ def performance_check():
             'cache_type': app.config.get('CACHE_TYPE', 'unknown'),
             'services': {
                 'details_service': 'enabled' if details_service else 'disabled',
-                'content_service': 'enabled' if content_service else 'disabled',
-                'new_releases_service': 'enabled'
+                'content_service': 'enabled' if content_service else 'disabled'
             },
             'performance': {
                 'thread_pool_workers': 3,
                 'api_timeouts': '5s',
                 'cache_timeout': '15min-30min',
-                'optimization_level': 'high',
-                'platform_brand': 'CineBrain'
+                'optimization_level': 'high'
             }
         }
         
         return jsonify(stats), 200
         
     except Exception as e:
-        logger.error(f"CineBrain performance check error: {e}")
+        logger.error(f"Performance check error: {e}")
         return jsonify({
             'status': 'error',
-            'platform': 'CineBrain',
             'error': str(e),
             'timestamp': datetime.utcnow().isoformat()
         }), 500
@@ -2004,7 +2169,6 @@ def health_check():
     try:
         health_info = {
             'status': 'healthy',
-            'platform': 'CineBrain',
             'timestamp': datetime.utcnow().isoformat(),
             'version': '5.3.0',
             'python_version': '3.13.4'
@@ -2018,8 +2182,8 @@ def health_check():
             health_info['status'] = 'degraded'
         
         try:
-            cache.set('cinebrain_health_check', 'ok', timeout=10)
-            if cache.get('cinebrain_health_check') == 'ok':
+            cache.set('health_check', 'ok', timeout=10)
+            if cache.get('health_check') == 'ok':
                 health_info['cache'] = 'connected'
             else:
                 health_info['cache'] = 'error'
@@ -2032,17 +2196,16 @@ def health_check():
             'tmdb': bool(TMDB_API_KEY),
             'omdb': bool(OMDB_API_KEY),
             'youtube': bool(YOUTUBE_API_KEY),
-            'algorithms': 'cinebrain_optimized_enabled',
-            'slug_support': 'cinebrain_comprehensive_enabled',
+            'algorithms': 'optimized_enabled',
+            'slug_support': 'comprehensive_enabled',
             'details_service': 'enabled' if details_service else 'disabled',
             'content_service': 'enabled' if content_service else 'disabled',
-            'cast_crew': 'cinebrain_fully_enabled',
+            'cast_crew': 'fully_enabled',
             'support_service': 'enabled' if 'support_bp' in app.blueprints else 'disabled',
-            'admin_notifications': 'cinebrain_enabled',
-            'monitoring': 'cinebrain_active',
+            'admin_notifications': 'enabled',
+            'monitoring': 'active',
             'auth_service': 'enabled' if 'auth_bp' in app.blueprints else 'disabled',
-            'users_service': 'enabled' if 'users_bp' in app.blueprints else 'disabled',
-            'new_releases_service': 'enabled' if 'new_releases' in app.blueprints else 'disabled'
+            'users_service': 'enabled' if 'users_bp' in app.blueprints else 'disabled'
         }
         
         try:
@@ -2086,22 +2249,21 @@ def health_check():
         
         health_info['performance'] = {
             'optimizations_applied': [
-                'cinebrain_python_3.13_compatibility',
-                'cinebrain_reduced_api_timeouts',
-                'cinebrain_optimized_thread_pools',
-                'cinebrain_enhanced_caching',
-                'cinebrain_error_handling_improvements',
-                'cinebrain_cast_crew_optimization',
-                'cinebrain_support_service_integration',
-                'cinebrain_admin_notification_system',
-                'cinebrain_real_time_monitoring',
-                'cinebrain_auth_service_enhanced',
-                'cinebrain_users_service_personalized',
-                'cinebrain_new_releases_service'
+                'python_3.13_compatibility',
+                'reduced_api_timeouts', 
+                'optimized_thread_pools',
+                'enhanced_caching',
+                'error_handling_improvements',
+                'cast_crew_optimization',
+                'support_service_integration',
+                'admin_notification_system',
+                'real_time_monitoring',
+                'auth_service_enhanced',
+                'users_service_personalized'
             ],
-            'memory_optimizations': 'cinebrain_enabled',
-            'unicode_fixes': 'cinebrain_applied',
-            'monitoring': 'cinebrain_background_threads_active'
+            'memory_optimizations': 'enabled',
+            'unicode_fixes': 'applied',
+            'monitoring': 'background_threads_active'
         }
         
         return jsonify(health_info), 200
@@ -2109,7 +2271,6 @@ def health_check():
     except Exception as e:
         return jsonify({
             'status': 'unhealthy',
-            'platform': 'CineBrain',
             'error': str(e),
             'timestamp': datetime.utcnow().isoformat()
         }), 500
@@ -2117,15 +2278,15 @@ def health_check():
 @app.cli.command('generate-slugs')
 def generate_slugs():
     try:
-        print("Starting comprehensive CineBrain slug generation...")
+        print("Starting comprehensive slug generation...")
         
         if not details_service:
-            print("Error: CineBrain details service not available")
+            print("Error: Details service not available")
             return
         
         stats = details_service.migrate_all_slugs(batch_size=50)
         
-        print("CineBrain slug migration completed successfully!")
+        print("Slug migration completed successfully!")
         print(f"Content updated: {stats['content_updated']}")
         print(f"Persons updated: {stats['persons_updated']}")
         print(f"Total processed: {stats['total_processed']}")
@@ -2142,24 +2303,24 @@ def generate_slugs():
                 and_(Person.slug != None, Person.slug != '')
             ).count()
             
-            print(f"\nCineBrain Verification Results:")
+            print(f"\nVerification Results:")
             print(f"Content: {content_with_slugs}/{total_content} ({round(content_with_slugs/total_content*100, 1)}% coverage)")
             print(f"Persons: {persons_with_slugs}/{total_persons} ({round(persons_with_slugs/total_persons*100, 1)}% coverage)")
             
         except Exception as e:
-            print(f"Error during CineBrain verification: {e}")
+            print(f"Error during verification: {e}")
         
     except Exception as e:
-        print(f"Failed to generate CineBrain slugs: {e}")
-        logger.error(f"CLI CineBrain slug generation error: {e}")
+        print(f"Failed to generate slugs: {e}")
+        logger.error(f"CLI slug generation error: {e}")
 
 @app.cli.command('populate-cast-crew')
 def populate_cast_crew_cli():
     try:
-        print("Starting CineBrain cast/crew population...")
+        print("Starting cast/crew population...")
         
         if not details_service:
-            print("Error: CineBrain details service not available")
+            print("Error: Details service not available")
             return
         
         content_items = Content.query.filter(
@@ -2169,7 +2330,7 @@ def populate_cast_crew_cli():
             )
         ).all()
         
-        print(f"Found {len(content_items)} CineBrain content items without cast/crew")
+        print(f"Found {len(content_items)} content items without cast/crew")
         
         processed = 0
         errors = 0
@@ -2179,25 +2340,18 @@ def populate_cast_crew_cli():
                 print(f"Processing {i+1}/{len(content_items)}: {content.title}")
                 cast_crew = details_service._fetch_and_save_all_cast_crew(content)
                 processed += 1
-                print(f"  Added {len(cast_crew['cast'])} cast members and crew to CineBrain")
+                print(f"  Added {len(cast_crew['cast'])} cast members and crew")
             except Exception as e:
                 print(f"  Error: {e}")
                 errors += 1
         
-        print(f"\nCineBrain cast/crew population completed!")
+        print(f"\nCast/crew population completed!")
         print(f"Processed: {processed}")
         print(f"Errors: {errors}")
         
     except Exception as e:
-        print(f"Failed to populate CineBrain cast/crew: {e}")
-        logger.error(f"CLI CineBrain cast/crew population error: {e}")
-
-def initialize_services():
-    try:
-        init_new_releases_service()
-        logger.info("CineBrain new releases service initialized successfully")
-    except Exception as e:
-        logger.error(f"Failed to initialize CineBrain new releases service: {e}")
+        print(f"Failed to populate cast/crew: {e}")
+        logger.error(f"CLI cast/crew population error: {e}")
 
 def create_tables():
     try:
@@ -2214,57 +2368,54 @@ def create_tables():
                 )
                 db.session.add(admin)
                 db.session.commit()
-                logger.info("CineBrain admin user created with username: admin, password: admin123")
+                logger.info("Admin user created with username: admin, password: admin123")
             
             setup_support_monitoring()
             
-            logger.info("CineBrain database tables created successfully including support tables with monitoring")
+            logger.info("Database tables created successfully including support tables with monitoring")
     except Exception as e:
-        logger.error(f"CineBrain database initialization error: {e}")
+        logger.error(f"Database initialization error: {e}")
 
 create_tables()
-initialize_services()
 
 if __name__ == '__main__':
-    print("=== Running CineBrain Flask in development mode with Full Support Management ===")
+    print("=== Running Flask in development mode with Full Support Management ===")
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('FLASK_ENV') == 'development'
     app.run(host='0.0.0.0', port=port, debug=debug)
 else:
-    print("=== CineBrain Flask app imported by Gunicorn - COMPREHENSIVE ADMIN & SUPPORT VERSION ===")
+    print("=== Flask app imported by Gunicorn - COMPREHENSIVE ADMIN & SUPPORT VERSION ===")
     print(f"App name: {app.name}")
     print(f"Python version: 3.13.4")
     print(f"Database URI configured: {'Yes' if app.config.get('SQLALCHEMY_DATABASE_URI') else 'No'}")
     print(f"Cache type: {app.config.get('CACHE_TYPE', 'Not configured')}")
-    print(f"CineBrain details service status: {'Initialized' if details_service else 'Failed to initialize'}")
-    print(f"CineBrain content service status: {'Initialized' if content_service else 'Failed to initialize'}")
-    print(f"CineBrain support service status: {'Integrated' if 'support_bp' in app.blueprints else 'Not integrated'}")
-    print(f"CineBrain auth service status: {'Integrated' if 'auth_bp' in app.blueprints else 'Not integrated'}")
-    print(f"CineBrain users service status: {'Integrated' if 'users_bp' in app.blueprints else 'Not integrated'}")
-    print(f"CineBrain new releases service status: {'Integrated' if 'new_releases' in app.blueprints else 'Not integrated'}")
-    print(f"CineBrain admin support management: Fully enabled")
-    print(f"CineBrain real-time notifications: Enabled")
-    print(f"CineBrain email notifications: Enabled")
-    print(f"CineBrain telegram integration: Enabled")
-    print(f"CineBrain background monitoring: Active")
-    print(f"CineBrain performance optimizations: Applied")
+    print(f"Details service status: {'Initialized' if details_service else 'Failed to initialize'}")
+    print(f"Content service status: {'Initialized' if content_service else 'Failed to initialize'}")
+    print(f"Support service status: {'Integrated' if 'support_bp' in app.blueprints else 'Not integrated'}")
+    print(f"Auth service status: {'Integrated' if 'auth_bp' in app.blueprints else 'Not integrated'}")
+    print(f"Users service status: {'Integrated' if 'users_bp' in app.blueprints else 'Not integrated'}")
+    print(f"Admin support management: Fully enabled")
+    print(f"Real-time notifications: Enabled")
+    print(f"Email notifications: Enabled")
+    print(f"Telegram integration: Enabled")
+    print(f"Background monitoring: Active")
+    print(f"Performance optimizations: Applied")
     
-    print("\n=== CineBrain Support Management Features ===")
-    print("✅ Complete CineBrain support ticket management")
-    print("✅ Real-time CineBrain admin notifications")
-    print("✅ Email alerts for urgent CineBrain issues")
-    print("✅ Telegram channel integration for CineBrain")
-    print("✅ CineBrain FAQ management system")
-    print("✅ Feedback collection and review for CineBrain")
+    print("\n=== Support Management Features ===")
+    print("✅ Complete support ticket management")
+    print("✅ Real-time admin notifications")
+    print("✅ Email alerts for urgent issues")
+    print("✅ Telegram channel integration")
+    print("✅ FAQ management system")
+    print("✅ Feedback collection and review")
     print("✅ SLA monitoring and breach alerts")
-    print("✅ Comprehensive CineBrain analytics dashboard")
-    print("✅ Automated CineBrain background monitoring")
-    print("✅ Webhook support for CineBrain integrations")
-    print("✅ Enhanced CineBrain authentication with email")
-    print("✅ Personalized CineBrain user recommendations")
-    print("✅ Real-time CineBrain new releases service")
+    print("✅ Comprehensive analytics dashboard")
+    print("✅ Automated background monitoring")
+    print("✅ Webhook support for integrations")
+    print("✅ Enhanced authentication with email")
+    print("✅ Personalized user recommendations")
     
-    print("\n=== CineBrain Registered Routes ===")
+    print("\n=== Registered Routes ===")
     for rule in app.url_map.iter_rules():
         print(f"{rule.endpoint}: {rule.rule} [{', '.join(rule.methods)}]")
-    print("=== End of CineBrain Routes ===\n")
+    print("=== End of Routes ===\n")
