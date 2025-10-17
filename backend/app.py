@@ -1267,153 +1267,215 @@ def get_trending():
         return jsonify({'error': 'Failed to get trending recommendations'}), 500
 
 @app.route('/api/recommendations/new-releases', methods=['GET'])
-@cache.cached(timeout=300, key_prefix=make_cache_key)
-def get_new_releases():
+def get_new_releases_optimized():
     try:
         content_type = request.args.get('type', 'movie')
-        limit = int(request.args.get('limit', 20))
+        limit = min(int(request.args.get('limit', 20)), 100)
+        language_filter = request.args.get('language', '').lower()
+        days_filter = int(request.args.get('days', 30))
+        include_metadata = request.args.get('metadata', 'true').lower() == 'true'
         
-        all_new_releases = []
+        output_file = os.environ.get('NEW_RELEASES_FILE', 'new_releases.json')
+        
+        try:
+            with open(output_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                
+            if not data or 'releases' not in data:
+                raise FileNotFoundError("Invalid data structure")
+                
+            releases = data['releases']
+            
+            filtered_releases = []
+            for release in releases:
+                if content_type != 'all' and release.get('content_type') != content_type:
+                    continue
+                    
+                if language_filter and language_filter not in [lang.lower() for lang in release.get('languages', [])]:
+                    continue
+                    
+                if release.get('days_since_release', 0) > days_filter:
+                    continue
+                    
+                filtered_releases.append(release)
+            
+            limited_releases = filtered_releases[:limit]
+            
+            for release in limited_releases:
+                if not release.get('slug'):
+                    release['slug'] = generate_slug_from_release(release)
+                
+                if release.get('poster_path') and not release['poster_path'].startswith('http'):
+                    release['poster_path'] = f"https://image.tmdb.org/t/p/w500{release['poster_path']}"
+                
+                if release.get('release_date') and isinstance(release['release_date'], str):
+                    try:
+                        release_dt = datetime.fromisoformat(release['release_date'].replace('Z', '+00:00'))
+                        release['release_date'] = release_dt.isoformat()
+                    except:
+                        pass
+            
+            response_data = {
+                'recommendations': limited_releases,
+                'metadata': {
+                    'source': 'continuous_service',
+                    'total_available': len(filtered_releases),
+                    'returned_count': len(limited_releases),
+                    'last_updated': data.get('last_updated'),
+                    'content_type_filter': content_type,
+                    'language_filter': language_filter or 'all',
+                    'days_filter': days_filter,
+                    'language_priority_applied': True,
+                    'telugu_first': True,
+                    'algorithm': 'continuous_realtime_updates'
+                }
+            }
+            
+            if include_metadata and 'metadata' in data:
+                response_data['service_metadata'] = data['metadata']
+                response_data['statistics'] = {
+                    'total_count': data.get('total_count', 0),
+                    'telugu_count': data.get('telugu_count', 0),
+                    'today_count': data.get('today_count', 0),
+                    'yesterday_count': data.get('yesterday_count', 0),
+                    'this_week_count': data.get('this_week_count', 0)
+                }
+            
+            cache_headers = {
+                'Cache-Control': 'public, max-age=60',
+                'ETag': hashlib.md5(json.dumps(limited_releases, sort_keys=True).encode()).hexdigest()[:16]
+            }
+            
+            response = jsonify(response_data)
+            for key, value in cache_headers.items():
+                response.headers[key] = value
+                
+            return response, 200
+            
+        except (FileNotFoundError, json.JSONDecodeError, KeyError) as e:
+            logger.warning(f"Continuous service data unavailable: {e}, falling back to API")
+            return get_new_releases_fallback(content_type, limit, language_filter, days_filter)
+            
+    except Exception as e:
+        logger.error(f"New releases error: {e}")
+        return jsonify({'error': 'Failed to get new releases'}), 500
+
+def get_new_releases_fallback(content_type, limit, language_filter, days_filter):
+    try:
         priority_languages = ['telugu', 'english', 'hindi', 'malayalam', 'kannada', 'tamil']
         
+        all_releases = []
+        session_id = get_session_id()
+        current_date = datetime.now().date()
+        
         for language in priority_languages:
+            if language_filter and language != language_filter:
+                continue
+                
             lang_code = LANGUAGE_PRIORITY['codes'].get(language)
-            
+            if not lang_code:
+                continue
+                
             try:
                 if language == 'english':
                     releases = TMDBService.get_new_releases(content_type)
                 else:
                     releases = TMDBService.get_language_specific(lang_code, content_type)
                 
-                if releases:
-                    for item in releases.get('results', [])[:10]:
+                if releases and 'results' in releases:
+                    for item in releases['results'][:20]:
                         content = content_service.save_content_from_tmdb(item, content_type)
                         if content and content.release_date:
-                            days_old = (datetime.now().date() - content.release_date).days
-                            if days_old <= 60:
-                                all_new_releases.append(content)
+                            days_old = (current_date - content.release_date).days
+                            if 0 <= days_old <= days_filter:
+                                try:
+                                    interaction = AnonymousInteraction(
+                                        session_id=session_id,
+                                        content_id=content.id,
+                                        interaction_type='new_release_view',
+                                        ip_address=request.remote_addr
+                                    )
+                                    db.session.add(interaction)
+                                except:
+                                    pass
+                                
+                                youtube_url = None
+                                if content.youtube_trailer_id:
+                                    youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
+                                
+                                all_releases.append({
+                                    'id': content.id,
+                                    'slug': content.slug or f"content-{content.id}",
+                                    'title': content.title,
+                                    'content_type': content.content_type,
+                                    'genres': json.loads(content.genres or '[]'),
+                                    'languages': json.loads(content.languages or '[]'),
+                                    'rating': content.rating,
+                                    'release_date': content.release_date.isoformat(),
+                                    'poster_path': f"https://image.tmdb.org/t/p/w500{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
+                                    'overview': content.overview[:150] + '...' if content.overview else '',
+                                    'days_since_release': days_old,
+                                    'is_today': days_old == 0,
+                                    'is_yesterday': days_old == 1,
+                                    'is_this_week': days_old <= 7,
+                                    'language_priority': priority_languages.index(language) + 1,
+                                    'language_name': language.title(),
+                                    'youtube_trailer': youtube_url,
+                                    'freshness_indicator': 'Just Released' if days_old <= 1 else 'New This Week' if days_old <= 7 else 'Recent Release'
+                                })
+                                
             except Exception as e:
-                logger.error(f"Error fetching {language} releases: {e}")
-        
-        db_new_releases = Content.query.filter(
-            Content.is_new_release == True,
-            Content.content_type == content_type
-        ).limit(50).all()
-        all_new_releases.extend(db_new_releases)
-        
-        seen_ids = set()
-        unique_releases = []
-        for content in all_new_releases:
-            if content.id not in seen_ids:
-                seen_ids.add(content.id)
-                if not content.slug:
-                    try:
-                        content.ensure_slug()
-                    except Exception as e:
-                        logger.warning(f"Failed to ensure slug for content {content.id}: {e}")
-                        content.slug = f"content-{content.id}"
-                unique_releases.append(content)
-        
-        recommendations = recommendation_orchestrator.get_new_releases_with_algorithms(
-            unique_releases,
-            limit=limit
-        )
-        
-        language_groups = {
-            'telugu': [],
-            'english': [],
-            'hindi': [],
-            'malayalam': [],
-            'kannada': [],
-            'tamil': [],
-            'others': []
-        }
-        
-        for rec in recommendations:
-            languages = rec.get('languages', [])
-            grouped = False
-            
-            for lang in languages:
-                lang_lower = lang.lower() if isinstance(lang, str) else ''
-                if 'telugu' in lang_lower or lang_lower == 'te':
-                    language_groups['telugu'].append(rec)
-                    grouped = True
-                    break
-                elif 'english' in lang_lower or lang_lower == 'en':
-                    language_groups['english'].append(rec)
-                    grouped = True
-                    break
-                elif 'hindi' in lang_lower or lang_lower == 'hi':
-                    language_groups['hindi'].append(rec)
-                    grouped = True
-                    break
-                elif 'malayalam' in lang_lower or lang_lower == 'ml':
-                    language_groups['malayalam'].append(rec)
-                    grouped = True
-                    break
-                elif 'kannada' in lang_lower or lang_lower == 'kn':
-                    language_groups['kannada'].append(rec)
-                    grouped = True
-                    break
-                elif 'tamil' in lang_lower or lang_lower == 'ta':
-                    language_groups['tamil'].append(rec)
-                    grouped = True
-                    break
-            
-            if not grouped:
-                language_groups['others'].append(rec)
-        
-        response = {
-            'recommendations': recommendations,
-            'grouped_by_language': language_groups,
-            'metadata': {
-                'total_analyzed': len(unique_releases),
-                'language_priority': {
-                    'main': 'telugu',
-                    'secondary': ['english', 'hindi'],
-                    'tertiary': ['malayalam', 'kannada', 'tamil']
-                },
-                'algorithm': 'multi_level_ranking_with_telugu_priority',
-                'scoring_weights': {
-                    'telugu_content': {
-                        'freshness': 0.2,
-                        'popularity': 0.2,
-                        'language': 0.4,
-                        'quality': 0.2
-                    },
-                    'other_content': {
-                        'freshness': 0.3,
-                        'popularity': 0.3,
-                        'language': 0.2,
-                        'quality': 0.2
-                    }
-                },
-                'timestamp': datetime.utcnow().isoformat()
-            }
-        }
-        
-        if recommendations:
-            content_ids = [r['id'] for r in recommendations]
-            contents = Content.query.filter(Content.id.in_(content_ids)).all()
-            
-            response['metadata']['metrics'] = {
-                'diversity_score': round(EvaluationMetrics.diversity_score(contents), 3),
-                'telugu_content_percentage': round(
-                    len(language_groups['telugu']) / len(recommendations) * 100, 1
-                ) if recommendations else 0
-            }
+                logger.warning(f"Error fetching {language} releases: {e}")
+                continue
         
         try:
             db.session.commit()
-        except Exception as e:
-            logger.warning(f"Failed to commit new releases updates: {e}")
+        except:
             db.session.rollback()
         
-        return jsonify(response), 200
+        all_releases.sort(key=lambda x: (
+            not x['is_today'],
+            not x['is_yesterday'], 
+            x['days_since_release'],
+            x['language_priority'],
+            -x.get('rating', 0)
+        ))
+        
+        return jsonify({
+            'recommendations': all_releases[:limit],
+            'metadata': {
+                'source': 'fallback_api',
+                'total_available': len(all_releases),
+                'returned_count': min(len(all_releases), limit),
+                'last_updated': datetime.utcnow().isoformat(),
+                'language_priority_applied': True,
+                'telugu_first': True,
+                'algorithm': 'fallback_tmdb_api'
+            }
+        }), 200
         
     except Exception as e:
-        logger.error(f"New releases error: {e}")
+        logger.error(f"Fallback new releases error: {e}")
         return jsonify({'error': 'Failed to get new releases'}), 500
+
+def generate_slug_from_release(release):
+    title = release.get('title', '')
+    if not title:
+        return f"release-{release.get('id', 'unknown')}"
+    
+    slug = title.lower().replace(' ', '-').replace('&', 'and')
+    slug = ''.join(c for c in slug if c.isalnum() or c == '-')
+    slug = '-'.join(filter(None, slug.split('-')))
+    
+    if release.get('release_date'):
+        try:
+            year = release['release_date'][:4]
+            slug += f"-{year}"
+        except:
+            pass
+    
+    return slug[:100]
+
 
 @app.route('/api/upcoming', methods=['GET'])
 async def get_upcoming_releases():
