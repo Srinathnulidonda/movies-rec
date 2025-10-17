@@ -98,7 +98,6 @@ class CineBrainNewReleasesService:
     def _get_strict_date_range(self) -> Tuple[datetime.date, datetime.date]:
         end_date = datetime.now().date()
         start_date = end_date - timedelta(days=self.config.date_range_days)
-        logger.info(f"CineBrain: STRICT date range - {start_date} to {end_date} (last 45 days ONLY)")
         return start_date, end_date
         
     def _is_within_strict_date_range(self, release_date: str) -> bool:
@@ -175,6 +174,7 @@ class CineBrainNewReleasesService:
     def refresh_new_releases(self):
         try:
             start_date, end_date = self._get_strict_date_range()
+            logger.info(f"CineBrain: STRICT date range - {start_date} to {end_date} (last 45 days ONLY)")
             logger.info(f"CineBrain: Fetching ONLY releases from {start_date} to {end_date} (last 45 days)")
             logger.info(f"CineBrain: Using language priority order: {self.config.language_priorities}")
             
