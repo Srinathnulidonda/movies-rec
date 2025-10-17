@@ -104,7 +104,7 @@ class NewReleaseItem:
 
 class CineBrainNewReleasesConfig:
     def __init__(self):
-        self.TMDB_API_KEY = os.environ.get('TMDB_API_KEY', '')
+        self.TMDB_API_KEY = os.environ.get('TMDB_API_KEY', '1cf86635f20bb2aff8e70940e7c3ddd5')
         self.JIKAN_BASE_URL = 'https://api.jikan.moe/v4'
         self.TMDB_BASE_URL = 'https://api.themoviedb.org/3'
         self.REFRESH_INTERVAL_MINUTES = int(os.environ.get('CINEBRAIN_NEW_RELEASES_REFRESH_MINUTES', '15'))
