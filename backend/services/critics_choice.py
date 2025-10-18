@@ -1,4 +1,3 @@
-#backend/services/critics_choice.py
 import math
 import time
 import json
@@ -628,7 +627,7 @@ class CineBrainCriticsChoiceEngine:
                     break
                     
                 title_key = rec.get('title', '').lower().strip()
-                if title_key in seen_titles:
+                if title_key in seen_titles or not title_key:
                     continue
                     
                 rec_genres = rec.get('genres', [])
@@ -650,7 +649,7 @@ class CineBrainCriticsChoiceEngine:
                     
                 if should_add:
                     final_rec = self._format_recommendation(rec)
-                    if final_rec:
+                    if final_rec and final_rec.get('id'):
                         final_recs.append(final_rec)
                         seen_titles.add(title_key)
                         
@@ -666,23 +665,31 @@ class CineBrainCriticsChoiceEngine:
                     if len(final_recs) >= limit:
                         break
                     title_key = rec.get('title', '').lower().strip()
-                    if title_key not in seen_titles:
+                    if title_key not in seen_titles and title_key:
                         final_rec = self._format_recommendation(rec)
-                        if final_rec:
+                        if final_rec and final_rec.get('id'):
                             final_recs.append(final_rec)
                             seen_titles.add(title_key)
                             
+            logger.info(f"CineBrain: Successfully formatted {len(final_recs)} critics choice recommendations")
             return final_recs
             
         except Exception as e:
             logger.error(f"CineBrain diversity ranking error: {e}")
-            return recommendations[:limit]
+            fallback_recs = []
+            for rec in recommendations[:limit]:
+                try:
+                    final_rec = self._format_recommendation(rec)
+                    if final_rec and final_rec.get('id'):
+                        fallback_recs.append(final_rec)
+                except:
+                    continue
+            return fallback_recs
 
     def _format_recommendation(self, rec):
         try:
             content_id = rec.get('tmdb_id') or rec.get('mal_id')
             
-            # Generate slug without content service if it fails
             slug = self._generate_slug(rec.get('title', ''))
             if content_id:
                 slug = f"{slug}-{content_id}"
@@ -728,6 +735,7 @@ class CineBrainCriticsChoiceEngine:
         except Exception as e:
             logger.error(f"CineBrain format recommendation error: {e}")
             return None
+
     def _get_language_bonus(self, language):
         try:
             if language in ['te']:
