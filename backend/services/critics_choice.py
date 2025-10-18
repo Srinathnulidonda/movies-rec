@@ -618,9 +618,10 @@ class CineBrainCriticsChoiceEngine:
             language_counts = defaultdict(int)
             year_counts = defaultdict(int)
             
-            max_per_genre = max(2, limit // 8)
-            max_per_language = max(3, limit // 6)
-            max_per_year = max(2, limit // 10)
+            # More lenient diversity controls for larger limits
+            max_per_genre = max(4, limit // 4) if limit > 12 else max(2, limit // 8)
+            max_per_language = max(6, limit // 3) if limit > 12 else max(3, limit // 6)
+            max_per_year = max(4, limit // 5) if limit > 12 else max(2, limit // 10)
             
             for rec in sorted_recs:
                 if len(final_recs) >= limit:
@@ -636,17 +637,19 @@ class CineBrainCriticsChoiceEngine:
                 
                 should_add = True
                 
-                if rec_genres:
-                    main_genre = rec_genres[0] if rec_genres else 'unknown'
-                    if genre_counts[main_genre] >= max_per_genre:
+                # Apply diversity only if we have enough items
+                if len(final_recs) > limit // 2:
+                    if rec_genres:
+                        main_genre = rec_genres[0] if rec_genres else 'unknown'
+                        if genre_counts[main_genre] >= max_per_genre:
+                            should_add = False
+                            
+                    if language_counts[rec_language] >= max_per_language:
                         should_add = False
                         
-                if language_counts[rec_language] >= max_per_language:
-                    should_add = False
-                    
-                if rec_year and year_counts[rec_year] >= max_per_year:
-                    should_add = False
-                    
+                    if rec_year and year_counts[rec_year] >= max_per_year:
+                        should_add = False
+                        
                 if should_add:
                     final_rec = self._format_recommendation(rec)
                     if final_rec and final_rec.get('id'):
@@ -685,7 +688,6 @@ class CineBrainCriticsChoiceEngine:
                 except:
                     continue
             return fallback_recs
-
     def _format_recommendation(self, rec):
         try:
             content_id = rec.get('tmdb_id') or rec.get('mal_id')
@@ -1054,7 +1056,7 @@ cinebrain_critics_engine = None
 def get_enhanced_critics_choice():
     try:
         content_type = request.args.get('type', 'all')
-        limit = min(int(request.args.get('limit', 8)), 12)
+        limit = int(request.args.get('limit', 20))  # Removed the cap
         genre = request.args.get('genre')
         language = request.args.get('language')
         time_period = request.args.get('time_period', 'all')
