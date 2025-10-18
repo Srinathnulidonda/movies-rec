@@ -40,6 +40,10 @@ class CineBrainCriticsChoiceEngine:
             'tv': {'min_rating': 7.5, 'min_votes': 500, 'metacritic_min': 75},
             'anime': {'min_rating': 7.8, 'min_votes': 10000, 'mal_min': 8.0}
         }
+        
+        self.omdb_failures = 0
+        self.omdb_circuit_open = False
+        self.last_failure_time = None
 
     def get_enhanced_critics_choice(self, content_type='all', limit=20, genre=None, 
                                   language=None, time_period='all', region='global'):
@@ -56,30 +60,31 @@ class CineBrainCriticsChoiceEngine:
                     logger.warning(f"CineBrain cache get error: {e}")
 
             all_recommendations = []
+            max_items = min(limit * 2, 30)
             
-            with ThreadPoolExecutor(max_workers=6) as executor:
+            with ThreadPoolExecutor(max_workers=2) as executor:
                 futures = []
                 
                 if content_type in ['all', 'movie']:
                     futures.append(executor.submit(
-                        self._get_movie_critics_choice, limit, genre, language, time_period, region
+                        self._get_movie_critics_choice, max_items//2, genre, language, time_period, region
                     ))
                     
                 if content_type in ['all', 'tv']:
                     futures.append(executor.submit(
-                        self._get_tv_critics_choice, limit, genre, language, time_period, region
+                        self._get_tv_critics_choice, max_items//3, genre, language, time_period, region
                     ))
                     
                 if content_type in ['all', 'anime']:
                     futures.append(executor.submit(
-                        self._get_anime_critics_choice, limit, genre, language, time_period
+                        self._get_anime_critics_choice, max_items//3, genre, language, time_period
                     ))
                 
-                for future in as_completed(futures, timeout=60):
+                for future in as_completed(futures, timeout=15):
                     try:
                         batch_results = future.result()
                         if batch_results:
-                            all_recommendations.extend(batch_results)
+                            all_recommendations.extend(batch_results[:15])
                             logger.info(f"CineBrain: Collected {len(batch_results)} critics choice items from batch")
                     except Exception as e:
                         logger.error(f"CineBrain critics choice batch error: {e}")
@@ -89,7 +94,12 @@ class CineBrainCriticsChoiceEngine:
                 logger.warning("CineBrain: No critics choice recommendations found")
                 return {'items': [], 'metadata': {'error': 'No recommendations found'}}
 
-            enhanced_recommendations = self._enhance_with_critics_data(all_recommendations)
+            if len(all_recommendations) > 15 or self._should_skip_omdb():
+                logger.info("CineBrain: Skipping OMDb enhancement to prevent timeout")
+                enhanced_recommendations = all_recommendations
+            else:
+                enhanced_recommendations = self._enhance_with_critics_data(all_recommendations)
+                
             scored_recommendations = self._calculate_critics_score(enhanced_recommendations)
             final_recommendations = self._apply_diversity_and_ranking(
                 scored_recommendations, limit, content_type, language, region
@@ -104,7 +114,7 @@ class CineBrainCriticsChoiceEngine:
             
             if self.cache:
                 try:
-                    self.cache.set(cache_key, result, timeout=1800)
+                    self.cache.set(cache_key, result, timeout=900)
                 except Exception as e:
                     logger.warning(f"CineBrain cache set error: {e}")
             
@@ -113,6 +123,23 @@ class CineBrainCriticsChoiceEngine:
         except Exception as e:
             logger.error(f"CineBrain critics choice engine error: {e}")
             return {'items': [], 'metadata': {'error': str(e)}}
+
+    def _should_skip_omdb(self):
+        if self.omdb_circuit_open:
+            if self.last_failure_time and (time.time() - self.last_failure_time) > 300:
+                self.omdb_circuit_open = False
+                self.omdb_failures = 0
+                return False
+            return True
+        return False
+        
+    def _record_omdb_failure(self):
+        self.omdb_failures += 1
+        self.last_failure_time = time.time()
+        
+        if self.omdb_failures >= 3:
+            self.omdb_circuit_open = True
+            logger.warning("CineBrain OMDb circuit breaker opened")
 
     def _get_movie_critics_choice(self, limit, genre, language, time_period, region):
         recommendations = []
@@ -127,16 +154,14 @@ class CineBrainCriticsChoiceEngine:
                 {
                     'vote_average.gte': 7.5,
                     'vote_count.gte': 2000,
-                    'sort_by': 'vote_count.desc'
-                },
-                {
-                    'vote_average.gte': 7.0,
-                    'vote_count.gte': 1000,
                     'sort_by': 'popularity.desc'
                 }
             ]
             
             for config in discovery_configs:
+                if len(recommendations) >= limit:
+                    break
+                    
                 params = {
                     'api_key': self.tmdb_api_key,
                     **config,
@@ -161,8 +186,8 @@ class CineBrainCriticsChoiceEngine:
                 if region != 'global':
                     params['region'] = region
                     
-                for page in range(1, 5):
-                    if len(recommendations) >= limit * 3:
+                for page in range(1, 3):
+                    if len(recommendations) >= limit:
                         break
                         
                     params['page'] = page
@@ -174,7 +199,7 @@ class CineBrainCriticsChoiceEngine:
                     
                     if response and response.get('results'):
                         for item in response['results']:
-                            if len(recommendations) >= limit * 3:
+                            if len(recommendations) >= limit:
                                 break
                                 
                             enhanced_item = self._enhance_movie_data(item)
@@ -182,9 +207,6 @@ class CineBrainCriticsChoiceEngine:
                                 recommendations.append(enhanced_item)
                                 
                     time.sleep(0.2)
-            
-            award_winners = self._get_award_winning_movies(limit // 4, genre, language, time_period)
-            recommendations.extend(award_winners)
             
         except Exception as e:
             logger.error(f"CineBrain movie critics choice error: {e}")
@@ -205,15 +227,13 @@ class CineBrainCriticsChoiceEngine:
                     'vote_average.gte': 7.8,
                     'vote_count.gte': 500,
                     'sort_by': 'popularity.desc'
-                },
-                {
-                    'first_air_date.gte': '2020-01-01',
-                    'vote_average.gte': 7.5,
-                    'sort_by': 'vote_count.desc'
                 }
             ]
             
             for config in discovery_configs:
+                if len(recommendations) >= limit:
+                    break
+                    
                 params = {
                     'api_key': self.tmdb_api_key,
                     **config
@@ -234,8 +254,8 @@ class CineBrainCriticsChoiceEngine:
                     if date_range:
                         params.update(date_range)
                         
-                for page in range(1, 4):
-                    if len(recommendations) >= limit * 2:
+                for page in range(1, 2):
+                    if len(recommendations) >= limit:
                         break
                         
                     params['page'] = page
@@ -247,7 +267,7 @@ class CineBrainCriticsChoiceEngine:
                     
                     if response and response.get('results'):
                         for item in response['results']:
-                            if len(recommendations) >= limit * 2:
+                            if len(recommendations) >= limit:
                                 break
                                 
                             enhanced_item = self._enhance_tv_data(item)
@@ -271,21 +291,13 @@ class CineBrainCriticsChoiceEngine:
                     'sort': 'desc',
                     'min_score': 8.5,
                     'status': 'complete'
-                },
-                {
-                    'order_by': 'scored_by',
-                    'sort': 'desc',
-                    'min_score': 8.0,
-                    'status': 'complete'
-                },
-                {
-                    'order_by': 'popularity',
-                    'sort': 'asc',
-                    'min_score': 8.2
                 }
             ]
             
             for config in anime_configs:
+                if len(recommendations) >= limit:
+                    break
+                    
                 params = config.copy()
                 
                 if genre:
@@ -298,8 +310,8 @@ class CineBrainCriticsChoiceEngine:
                     if year_range:
                         params.update(year_range)
                         
-                for page in range(1, 4):
-                    if len(recommendations) >= limit * 2:
+                for page in range(1, 2):
+                    if len(recommendations) >= limit:
                         break
                         
                     params['page'] = page
@@ -312,7 +324,7 @@ class CineBrainCriticsChoiceEngine:
                     
                     if response and response.get('data'):
                         for item in response['data']:
-                            if len(recommendations) >= limit * 2:
+                            if len(recommendations) >= limit:
                                 break
                                 
                             enhanced_item = self._enhance_anime_data(item)
@@ -356,17 +368,6 @@ class CineBrainCriticsChoiceEngine:
                         'genres': [g.get('name') for g in detailed_data.get('genres', [])],
                         'imdb_id': detailed_data.get('imdb_id')
                     })
-                    
-                    if detailed_data.get('imdb_id') and self.omdb_api_key:
-                        omdb_data = self._get_omdb_data(detailed_data['imdb_id'])
-                        if omdb_data:
-                            enhanced.update({
-                                'metacritic_score': self._parse_score(omdb_data.get('Metascore')),
-                                'imdb_rating': self._parse_score(omdb_data.get('imdbRating')),
-                                'rotten_tomatoes': self._extract_rt_score(omdb_data.get('Ratings', [])),
-                                'awards': omdb_data.get('Awards', ''),
-                                'critics_consensus': omdb_data.get('Plot', '')
-                            })
                             
             return enhanced
             
@@ -450,18 +451,27 @@ class CineBrainCriticsChoiceEngine:
 
     def _enhance_with_critics_data(self, recommendations):
         enhanced = []
+        batch_size = 5
+        max_enhancements = 8
         
-        for rec in recommendations:
+        for i, rec in enumerate(recommendations[:max_enhancements]):
             try:
-                if rec.get('imdb_id') and self.omdb_api_key:
-                    omdb_data = self._get_omdb_data(rec['imdb_id'])
-                    if omdb_data:
-                        rec.update({
-                            'metacritic_score': self._parse_score(omdb_data.get('Metascore')),
-                            'imdb_rating': self._parse_score(omdb_data.get('imdbRating')),
-                            'rotten_tomatoes': self._extract_rt_score(omdb_data.get('Ratings', [])),
-                            'awards': omdb_data.get('Awards', '')
-                        })
+                if i >= batch_size:
+                    break
+                    
+                if rec.get('imdb_id') and self.omdb_api_key and not self._should_skip_omdb():
+                    try:
+                        omdb_data = self._get_omdb_data_with_fallback(rec['imdb_id'])
+                        if omdb_data:
+                            rec.update({
+                                'metacritic_score': self._parse_score(omdb_data.get('Metascore')),
+                                'imdb_rating': self._parse_score(omdb_data.get('imdbRating')),
+                                'rotten_tomatoes': self._extract_rt_score(omdb_data.get('Ratings', [])),
+                                'awards': omdb_data.get('Awards', '')
+                            })
+                    except Exception as e:
+                        logger.warning(f"CineBrain OMDb enhancement failed for {rec.get('title')}: {e}")
+                        self._record_omdb_failure()
                         
                 enhanced.append(rec)
                 
@@ -469,7 +479,42 @@ class CineBrainCriticsChoiceEngine:
                 logger.warning(f"CineBrain enhancement error for {rec.get('title', 'Unknown')}: {e}")
                 enhanced.append(rec)
                 
+        enhanced.extend(recommendations[len(enhanced):])
         return enhanced
+
+    def _get_omdb_data_with_fallback(self, imdb_id):
+        try:
+            cache_key = f"cinebrain:omdb:{imdb_id}"
+            if self.cache:
+                cached = self.cache.get(cache_key)
+                if cached:
+                    return cached
+            
+            params = {'apikey': self.omdb_api_key, 'i': imdb_id}
+            
+            if self.http_session:
+                response = self.http_session.get(
+                    'http://www.omdbapi.com/', 
+                    params=params, 
+                    timeout=3
+                )
+            else:
+                response = requests.get(
+                    'http://www.omdbapi.com/', 
+                    params=params, 
+                    timeout=3
+                )
+                
+            if response.status_code == 200:
+                data = response.json()
+                if self.cache:
+                    self.cache.set(cache_key, data, timeout=86400)
+                return data
+                
+        except Exception as e:
+            logger.warning(f"CineBrain OMDb API error for {imdb_id}: {e}")
+            
+        return None
 
     def _meets_critics_criteria(self, item, content_type):
         try:
@@ -682,7 +727,6 @@ class CineBrainCriticsChoiceEngine:
             logger.error(f"CineBrain format recommendation error: {e}")
             return None
 
-    # Helper methods
     def _get_language_bonus(self, language):
         try:
             if language in ['te']:
@@ -828,13 +872,12 @@ class CineBrainCriticsChoiceEngine:
             logger.error(f"CineBrain metadata generation error: {e}")
             return {'error': str(e)}
 
-    # API and utility methods
     def _make_api_request(self, url, params):
         try:
             if self.http_session:
-                response = self.http_session.get(url, params=params, timeout=10)
+                response = self.http_session.get(url, params=params, timeout=5)
             else:
-                response = requests.get(url, params=params, timeout=10)
+                response = requests.get(url, params=params, timeout=5)
                 
             if response.status_code == 200:
                 return response.json()
@@ -856,14 +899,6 @@ class CineBrainCriticsChoiceEngine:
         return self._make_api_request(
             f'https://api.themoviedb.org/3/tv/{tmdb_id}',
             {'api_key': self.tmdb_api_key}
-        )
-
-    def _get_omdb_data(self, imdb_id):
-        if not imdb_id or not self.omdb_api_key:
-            return None
-        return self._make_api_request(
-            'http://www.omdbapi.com/',
-            {'apikey': self.omdb_api_key, 'i': imdb_id}
         )
 
     def _parse_score(self, score_str):
@@ -968,9 +1003,6 @@ class CineBrainCriticsChoiceEngine:
                 rec.get('first_air_date') or 
                 rec.get('aired_from', ''))
 
-    def _get_award_winning_movies(self, limit, genre, language, time_period):
-        return []
-
     def _get_anime_genre(self, genre):
         anime_genre_map = {
             'action': 'Action',
@@ -1007,14 +1039,13 @@ class CineBrainCriticsChoiceEngine:
         except:
             return f"content-{int(time.time())}"
 
-# Global engine instance
 cinebrain_critics_engine = None
 
 @critics_choice_bp.route('/api/recommendations/critics-choice', methods=['GET'])
 def get_enhanced_critics_choice():
     try:
         content_type = request.args.get('type', 'all')
-        limit = int(request.args.get('limit', 20))
+        limit = min(int(request.args.get('limit', 8)), 12)
         genre = request.args.get('genre')
         language = request.args.get('language')
         time_period = request.args.get('time_period', 'all')
@@ -1023,6 +1054,7 @@ def get_enhanced_critics_choice():
         if not cinebrain_critics_engine:
             return jsonify({
                 'error': 'CineBrain Critics Choice service not available',
+                'recommendations': [],
                 'cinebrain_service': 'enhanced_critics_choice'
             }), 503
         
@@ -1045,6 +1077,7 @@ def get_enhanced_critics_choice():
         logger.error(f"CineBrain enhanced critics choice endpoint error: {e}")
         return jsonify({
             'error': 'Failed to get CineBrain critics choice',
+            'recommendations': [],
             'cinebrain_service': 'enhanced_critics_choice'
         }), 500
 
@@ -1058,4 +1091,4 @@ def init_critics_choice_service(app, db, models, services, cache):
         
     except Exception as e:
         logger.error(f"CineBrain Critics Choice service initialization error: {e}")
-        return None 
+        return None
