@@ -2,6 +2,7 @@ import math
 import time
 import json
 import logging
+import threading
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
 from collections import defaultdict, Counter
@@ -43,6 +44,156 @@ class CineBrainCriticsChoiceEngine:
         self.omdb_failures = 0
         self.omdb_circuit_open = False
         self.last_failure_time = None
+        
+        self.refresh_interval_hours = 12
+        self.last_refresh_time = None
+        self.refresh_thread = None
+        self.is_refreshing = False
+        self.stop_refresh = False
+        
+        self.start_background_refresh()
+
+    def start_background_refresh(self):
+        if self.refresh_thread is None or not self.refresh_thread.is_alive():
+            self.stop_refresh = False
+            self.refresh_thread = threading.Thread(
+                target=self._background_refresh_loop,
+                daemon=True,
+                name="CineBrainCriticsRefresh"
+            )
+            self.refresh_thread.start()
+            logger.info("CineBrain Critics Choice background refresh started")
+
+    def stop_background_refresh(self):
+        self.stop_refresh = True
+        logger.info("CineBrain Critics Choice background refresh stopped")
+
+    def _background_refresh_loop(self):
+        while not self.stop_refresh:
+            try:
+                if self._should_refresh():
+                    logger.info("CineBrain: Starting scheduled Critics Choice refresh")
+                    self._refresh_all_critics_content()
+                
+                time.sleep(300)
+                
+            except Exception as e:
+                logger.error(f"CineBrain Critics Choice refresh loop error: {e}")
+                time.sleep(600)
+
+    def _should_refresh(self):
+        if self.is_refreshing:
+            return False
+            
+        if self.last_refresh_time is None:
+            return True
+            
+        time_since_refresh = datetime.utcnow() - self.last_refresh_time
+        return time_since_refresh > timedelta(hours=self.refresh_interval_hours)
+
+    def _refresh_all_critics_content(self):
+        if self.is_refreshing:
+            logger.info("CineBrain: Critics refresh already in progress")
+            return
+            
+        self.is_refreshing = True
+        refresh_start = datetime.utcnow()
+        
+        try:
+            logger.info(f"CineBrain: Refreshing all Critics Choice content at {refresh_start}")
+            
+            refresh_configs = [
+                {'type': 'movie', 'limit': 50, 'cache_key': 'cinebrain:critics:movie:20:None:None:all:global'},
+                {'type': 'tv', 'limit': 30, 'cache_key': 'cinebrain:critics:tv:20:None:None:all:global'},
+                {'type': 'anime', 'limit': 30, 'cache_key': 'cinebrain:critics:anime:20:None:None:all:global'},
+                {'type': 'all', 'limit': 50, 'cache_key': 'cinebrain:critics:all:20:None:None:all:global'}
+            ]
+            
+            for config in refresh_configs:
+                try:
+                    logger.info(f"CineBrain: Refreshing {config['type']} critics choice")
+                    
+                    recommendations = self._get_fresh_critics_choice(
+                        content_type=config['type'],
+                        limit=config['limit']
+                    )
+                    
+                    if recommendations and self.cache:
+                        cache_data = {
+                            'items': recommendations,
+                            'metadata': self._generate_metadata(recommendations, config['type'], None, None),
+                            'refreshed_at': refresh_start.isoformat(),
+                            'next_refresh': (refresh_start + timedelta(hours=self.refresh_interval_hours)).isoformat()
+                        }
+                        
+                        self.cache.set(config['cache_key'], cache_data, timeout=86400)
+                        logger.info(f"CineBrain: Cached {len(recommendations)} {config['type']} critics items")
+                        
+                except Exception as e:
+                    logger.error(f"CineBrain: Error refreshing {config['type']} critics: {e}")
+                    continue
+            
+            self.last_refresh_time = refresh_start
+            
+            if self.cache:
+                refresh_info = {
+                    'last_refresh': refresh_start.isoformat(),
+                    'next_refresh': (refresh_start + timedelta(hours=self.refresh_interval_hours)).isoformat(),
+                    'refresh_interval_hours': self.refresh_interval_hours,
+                    'status': 'success'
+                }
+                self.cache.set('cinebrain:critics:refresh_info', refresh_info, timeout=86400)
+            
+            logger.info(f"CineBrain: Critics Choice refresh completed in {(datetime.utcnow() - refresh_start).total_seconds():.2f} seconds")
+            
+        except Exception as e:
+            logger.error(f"CineBrain: Critics refresh error: {e}")
+        finally:
+            self.is_refreshing = False
+
+    def _get_fresh_critics_choice(self, content_type='all', limit=50):
+        all_recommendations = []
+        
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            futures = []
+            
+            if content_type in ['all', 'movie']:
+                futures.append(executor.submit(
+                    self._get_movie_critics_choice, limit if content_type == 'movie' else limit//2, 
+                    None, None, 'all', 'global'
+                ))
+                
+            if content_type in ['all', 'tv']:
+                futures.append(executor.submit(
+                    self._get_tv_critics_choice, limit if content_type == 'tv' else limit//3, 
+                    None, None, 'all', 'global'
+                ))
+                
+            if content_type in ['all', 'anime']:
+                futures.append(executor.submit(
+                    self._get_anime_critics_choice, limit if content_type == 'anime' else limit//3, 
+                    None, None, 'all'
+                ))
+            
+            for future in as_completed(futures, timeout=30):
+                try:
+                    batch_results = future.result()
+                    if batch_results:
+                        all_recommendations.extend(batch_results)
+                except Exception as e:
+                    logger.error(f"CineBrain fresh critics batch error: {e}")
+                    continue
+
+        if not all_recommendations:
+            return []
+
+        enhanced_recommendations = self._enhance_with_critics_data(all_recommendations[:limit//2])
+        scored_recommendations = self._calculate_critics_score(enhanced_recommendations)
+        final_recommendations = self._apply_diversity_and_ranking(
+            scored_recommendations, limit, content_type, None, 'global'
+        )
+        
+        return final_recommendations
 
     def get_enhanced_critics_choice(self, content_type='all', limit=20, genre=None, 
                                   language=None, time_period='all', region='global'):
@@ -53,8 +204,9 @@ class CineBrainCriticsChoiceEngine:
                 try:
                     cached_result = self.cache.get(cache_key)
                     if cached_result:
-                        logger.info("CineBrain: Returning cached critics choice results")
-                        return cached_result
+                        if isinstance(cached_result, dict) and 'items' in cached_result:
+                            logger.info("CineBrain: Returning cached critics choice results")
+                            return cached_result
                 except Exception as e:
                     logger.warning(f"CineBrain cache get error: {e}")
 
@@ -106,6 +258,9 @@ class CineBrainCriticsChoiceEngine:
             
             metadata = self._generate_metadata(final_recommendations, content_type, genre, language)
             
+            refresh_info = self.get_refresh_info()
+            metadata['refresh_info'] = refresh_info
+            
             result = {
                 'items': final_recommendations,
                 'metadata': metadata
@@ -122,6 +277,51 @@ class CineBrainCriticsChoiceEngine:
         except Exception as e:
             logger.error(f"CineBrain critics choice engine error: {e}")
             return {'items': [], 'metadata': {'error': str(e)}}
+
+    def get_refresh_info(self):
+        if self.cache:
+            try:
+                cached_info = self.cache.get('cinebrain:critics:refresh_info')
+                if cached_info:
+                    return cached_info
+            except:
+                pass
+        
+        if self.last_refresh_time:
+            next_refresh = self.last_refresh_time + timedelta(hours=self.refresh_interval_hours)
+            return {
+                'last_refresh': self.last_refresh_time.isoformat(),
+                'next_refresh': next_refresh.isoformat(),
+                'refresh_interval_hours': self.refresh_interval_hours,
+                'is_refreshing': self.is_refreshing
+            }
+        
+        return {
+            'last_refresh': None,
+            'next_refresh': (datetime.utcnow() + timedelta(hours=self.refresh_interval_hours)).isoformat(),
+            'refresh_interval_hours': self.refresh_interval_hours,
+            'is_refreshing': self.is_refreshing
+        }
+
+    def trigger_manual_refresh(self):
+        if self.is_refreshing:
+            return {
+                'success': False,
+                'message': 'Refresh already in progress',
+                'is_refreshing': True
+            }
+        
+        threading.Thread(
+            target=self._refresh_all_critics_content,
+            daemon=True,
+            name=f"CineBrainManualRefresh_{int(time.time())}"
+        ).start()
+        
+        return {
+            'success': True,
+            'message': 'Critics Choice refresh triggered',
+            'is_refreshing': True
+        }
 
     def _should_skip_omdb(self):
         if self.omdb_circuit_open:
@@ -618,7 +818,6 @@ class CineBrainCriticsChoiceEngine:
             language_counts = defaultdict(int)
             year_counts = defaultdict(int)
             
-            # More lenient diversity controls for larger limits
             max_per_genre = max(4, limit // 4) if limit > 12 else max(2, limit // 8)
             max_per_language = max(6, limit // 3) if limit > 12 else max(3, limit // 6)
             max_per_year = max(4, limit // 5) if limit > 12 else max(2, limit // 10)
@@ -637,7 +836,6 @@ class CineBrainCriticsChoiceEngine:
                 
                 should_add = True
                 
-                # Apply diversity only if we have enough items
                 if len(final_recs) > limit // 2:
                     if rec_genres:
                         main_genre = rec_genres[0] if rec_genres else 'unknown'
@@ -688,6 +886,7 @@ class CineBrainCriticsChoiceEngine:
                 except:
                     continue
             return fallback_recs
+
     def _format_recommendation(self, rec):
         try:
             content_id = rec.get('tmdb_id') or rec.get('mal_id')
@@ -1056,7 +1255,7 @@ cinebrain_critics_engine = None
 def get_enhanced_critics_choice():
     try:
         content_type = request.args.get('type', 'all')
-        limit = int(request.args.get('limit', 20))  # Removed the cap
+        limit = int(request.args.get('limit', 50))
         genre = request.args.get('genre')
         language = request.args.get('language')
         time_period = request.args.get('time_period', 'all')
@@ -1092,12 +1291,46 @@ def get_enhanced_critics_choice():
             'cinebrain_service': 'enhanced_critics_choice'
         }), 500
 
+@critics_choice_bp.route('/api/admin/critics-choice/refresh', methods=['POST'])
+def trigger_critics_refresh():
+    try:
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({'error': 'Authorization required'}), 401
+            
+        if not cinebrain_critics_engine:
+            return jsonify({'error': 'Critics Choice service not available'}), 503
+            
+        result = cinebrain_critics_engine.trigger_manual_refresh()
+        return jsonify(result), 200
+        
+    except Exception as e:
+        logger.error(f"CineBrain critics refresh trigger error: {e}")
+        return jsonify({'error': 'Failed to trigger refresh'}), 500
+
+@critics_choice_bp.route('/api/admin/critics-choice/status', methods=['GET'])
+def get_critics_status():
+    try:
+        if not cinebrain_critics_engine:
+            return jsonify({'error': 'Critics Choice service not available'}), 503
+            
+        refresh_info = cinebrain_critics_engine.get_refresh_info()
+        return jsonify({
+            'success': True,
+            'refresh_info': refresh_info,
+            'cinebrain_service': 'critics_choice_status'
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"CineBrain critics status error: {e}")
+        return jsonify({'error': 'Failed to get status'}), 500
+
 def init_critics_choice_service(app, db, models, services, cache):
     try:
         global cinebrain_critics_engine
         cinebrain_critics_engine = CineBrainCriticsChoiceEngine(app, db, models, services, cache)
         
-        logger.info("CineBrain Critics Choice service initialized successfully")
+        logger.info("CineBrain Critics Choice service initialized successfully with auto-refresh")
         return cinebrain_critics_engine
         
     except Exception as e:
