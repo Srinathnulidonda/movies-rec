@@ -680,11 +680,13 @@ class CineBrainCriticsChoiceEngine:
 
     def _format_recommendation(self, rec):
         try:
-            if self.content_service:
-                content = self.content_service.save_content_from_tmdb(rec, rec.get('content_type', 'movie'))
-                if content and not content.slug:
-                    content.ensure_slug()
-                    
+            content_id = rec.get('tmdb_id') or rec.get('mal_id')
+            
+            # Generate slug without content service if it fails
+            slug = self._generate_slug(rec.get('title', ''))
+            if content_id:
+                slug = f"{slug}-{content_id}"
+                
             youtube_url = None
             if rec.get('youtube_trailer_id'):
                 youtube_url = f"https://www.youtube.com/watch?v={rec['youtube_trailer_id']}"
@@ -698,8 +700,8 @@ class CineBrainCriticsChoiceEngine:
                 backdrop_path = f"https://image.tmdb.org/t/p/w1280{backdrop_path}"
                 
             return {
-                'id': content.id if 'content' in locals() else rec.get('tmdb_id') or rec.get('mal_id'),
-                'slug': content.slug if 'content' in locals() and content else self._generate_slug(rec.get('title', '')),
+                'id': content_id,
+                'slug': slug,
                 'title': rec.get('title', ''),
                 'original_title': rec.get('original_title'),
                 'content_type': rec.get('content_type'),
@@ -726,7 +728,6 @@ class CineBrainCriticsChoiceEngine:
         except Exception as e:
             logger.error(f"CineBrain format recommendation error: {e}")
             return None
-
     def _get_language_bonus(self, language):
         try:
             if language in ['te']:
