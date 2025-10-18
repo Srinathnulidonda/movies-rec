@@ -1,4 +1,3 @@
-#backend/app.py
 from typing import Optional
 from flask import Flask, request, jsonify, session, render_template
 from flask_sqlalchemy import SQLAlchemy
