@@ -7,6 +7,7 @@ import logging
 import jwt
 from functools import wraps
 from collections import defaultdict, Counter
+from sqlalchemy import or_
 
 users_bp = Blueprint('users', __name__)
 
@@ -35,9 +36,9 @@ def init_users(flask_app, database, models, services):
     try:
         from services.personalized import get_recommendation_engine
         recommendation_engine = get_recommendation_engine()
-        logger.info("✅ Personalized recommendation engine connected to users service")
+        logger.info("✅ CineBrain personalized recommendation engine connected to users service")
     except Exception as e:
-        logger.warning(f"Could not connect to recommendation engine: {e}")
+        logger.warning(f"Could not connect to CineBrain recommendation engine: {e}")
 
 def require_auth(f):
     @wraps(f)
@@ -47,29 +48,29 @@ def require_auth(f):
             
         token = request.headers.get('Authorization')
         if not token:
-            return jsonify({'error': 'No token provided'}), 401
+            return jsonify({'error': 'No CineBrain token provided'}), 401
         
         try:
             token = token.replace('Bearer ', '')
             data = jwt.decode(token, app.secret_key, algorithms=['HS256'])
             current_user = User.query.get(data['user_id'])
             if not current_user:
-                return jsonify({'error': 'Invalid token'}), 401
+                return jsonify({'error': 'Invalid CineBrain token'}), 401
             
             current_user.last_active = datetime.utcnow()
             try:
                 db.session.commit()
             except Exception as e:
-                logger.warning(f"Failed to update last_active: {e}")
+                logger.warning(f"Failed to update CineBrain user last_active: {e}")
                 db.session.rollback()
                 
         except jwt.ExpiredSignatureError:
-            return jsonify({'error': 'Token expired'}), 401
+            return jsonify({'error': 'CineBrain token expired'}), 401
         except jwt.InvalidTokenError:
-            return jsonify({'error': 'Invalid token'}), 401
+            return jsonify({'error': 'Invalid CineBrain token'}), 401
         except Exception as e:
-            logger.error(f"Authentication error: {e}")
-            return jsonify({'error': 'Authentication failed'}), 401
+            logger.error(f"CineBrain authentication error: {e}")
+            return jsonify({'error': 'CineBrain authentication failed'}), 401
         
         return f(current_user, *args, **kwargs)
     return decorated_function
@@ -80,10 +81,10 @@ def get_enhanced_user_stats(user_id):
             from services.auth import EnhancedUserAnalytics
             return EnhancedUserAnalytics.get_comprehensive_user_stats(user_id)
         except ImportError:
-            logger.warning("Enhanced analytics not available, using basic stats")
+            logger.warning("CineBrain enhanced analytics not available, using basic stats")
             return get_basic_user_stats(user_id)
     except Exception as e:
-        logger.error(f"Error getting user stats: {e}")
+        logger.error(f"Error getting CineBrain user stats: {e}")
         return {}
 
 def get_basic_user_stats(user_id):
@@ -115,7 +116,7 @@ def get_basic_user_stats(user_id):
         return stats
         
     except Exception as e:
-        logger.error(f"Error calculating basic stats: {e}")
+        logger.error(f"Error calculating CineBrain basic stats: {e}")
         return {}
 
 @users_bp.route('/api/register', methods=['POST', 'OPTIONS'])
@@ -127,13 +128,13 @@ def register():
         data = request.get_json()
         
         if not data.get('username') or not data.get('email') or not data.get('password'):
-            return jsonify({'error': 'Missing required fields'}), 400
+            return jsonify({'error': 'Missing required fields for CineBrain account'}), 400
         
         if User.query.filter_by(username=data['username']).first():
-            return jsonify({'error': 'Username already exists'}), 400
+            return jsonify({'error': 'CineBrain username already exists'}), 400
         
         if User.query.filter_by(email=data['email']).first():
-            return jsonify({'error': 'Email already exists'}), 400
+            return jsonify({'error': 'CineBrain email already exists'}), 400
         
         user = User(
             username=data['username'],
@@ -156,7 +157,7 @@ def register():
         stats = get_enhanced_user_stats(user.id)
         
         return jsonify({
-            'message': 'User registered successfully',
+            'message': 'CineBrain user registered successfully',
             'token': token,
             'user': {
                 'id': user.id,
@@ -173,9 +174,9 @@ def register():
         }), 201
         
     except Exception as e:
-        logger.error(f"Registration error: {e}")
+        logger.error(f"CineBrain registration error: {e}")
         db.session.rollback()
-        return jsonify({'error': 'Registration failed'}), 500
+        return jsonify({'error': 'CineBrain registration failed'}), 500
 
 @users_bp.route('/api/login', methods=['POST', 'OPTIONS'])
 def login():
@@ -199,19 +200,32 @@ def login():
             print("CineBrain Login error: Missing username or password")
             return jsonify({'error': 'Missing username or password'}), 400
         
-        # Find user (case-insensitive)
-        user = User.query.filter(User.username.ilike(username)).first()
+        user = None
+        
+        if '@' in username:
+            user = User.query.filter(User.email.ilike(username)).first()
+            print(f"CineBrain Login: Searching by email for '{username}'")
+        else:
+            user = User.query.filter(User.username.ilike(username)).first()
+            print(f"CineBrain Login: Searching by username for '{username}'")
+        
+        if not user:
+            user = User.query.filter(
+                or_(
+                    User.username.ilike(username),
+                    User.email.ilike(username)
+                )
+            ).first()
+            print(f"CineBrain Login: Fallback search for '{username}'")
         
         if not user:
             print(f"CineBrain Login error: User '{username}' not found")
-            # List all users for debugging (remove in production)
             all_users = User.query.all()
-            print(f"Available users: {[u.username for u in all_users]}")
+            print(f"Available CineBrain users: {[u.username for u in all_users]}")
             return jsonify({'error': 'Invalid credentials'}), 401
         
         print(f"CineBrain Login: Found user {user.username} (ID: {user.id})")
         
-        # Check password
         password_valid = check_password_hash(user.password_hash, password)
         print(f"CineBrain Login: Password check result: {password_valid}")
         
@@ -219,7 +233,6 @@ def login():
             print(f"CineBrain Login error: Invalid password for user '{username}'")
             return jsonify({'error': 'Invalid credentials'}), 401
         
-        # Success
         user.last_active = datetime.utcnow()
         db.session.commit()
         
@@ -235,7 +248,7 @@ def login():
             if recommendation_engine:
                 rec_effectiveness = recommendation_engine.get_user_recommendation_metrics(user.id)
         except Exception as e:
-            logger.warning(f"Could not get recommendation effectiveness: {e}")
+            logger.warning(f"Could not get CineBrain recommendation effectiveness: {e}")
         
         print(f"CineBrain Login successful for user: {user.username}")
         
@@ -294,14 +307,14 @@ def get_user_profile(current_user):
                         } if content else None
                     })
             except Exception as e:
-                logger.warning(f"Could not get recent activity: {e}")
+                logger.warning(f"Could not get CineBrain recent activity: {e}")
         
         rec_effectiveness = {}
         try:
             if recommendation_engine:
                 rec_effectiveness = recommendation_engine.get_user_recommendation_metrics(current_user.id)
         except Exception as e:
-            logger.warning(f"Could not get recommendation effectiveness: {e}")
+            logger.warning(f"Could not get CineBrain recommendation effectiveness: {e}")
         
         profile_fields = {
             'preferred_languages': current_user.preferred_languages,
@@ -334,10 +347,10 @@ def get_user_profile(current_user):
                 'score': completion_score,
                 'missing_fields': missing_fields,
                 'suggestions': [
-                    'Add preferred languages to get better recommendations',
-                    'Select favorite genres to improve content discovery',
-                    'Add your location for regional content suggestions',
-                    'Upload an avatar to personalize your profile'
+                    'Add preferred languages to get better CineBrain recommendations',
+                    'Select favorite genres to improve CineBrain content discovery',
+                    'Add your location for regional CineBrain content suggestions',
+                    'Upload an avatar to personalize your CineBrain profile'
                 ][:len(missing_fields)]
             }
         }
@@ -345,8 +358,8 @@ def get_user_profile(current_user):
         return jsonify(profile_data), 200
         
     except Exception as e:
-        logger.error(f"Profile error: {e}")
-        return jsonify({'error': 'Failed to get user profile'}), 500
+        logger.error(f"CineBrain profile error: {e}")
+        return jsonify({'error': 'Failed to get CineBrain user profile'}), 500
 
 @users_bp.route('/api/users/profile', methods=['PUT', 'OPTIONS'])
 @require_auth
@@ -389,13 +402,13 @@ def update_user_profile(current_user):
                         }
                     }
                 )
-                logger.info(f"Updated recommendation engine for user {current_user.id}")
+                logger.info(f"Updated CineBrain recommendation engine for user {current_user.id}")
             except Exception as e:
-                logger.warning(f"Failed to update recommendation engine: {e}")
+                logger.warning(f"Failed to update CineBrain recommendation engine: {e}")
         
         return jsonify({
             'success': True,
-            'message': f'Profile updated successfully. Updated: {", ".join(updated_fields)}',
+            'message': f'CineBrain profile updated successfully. Updated: {", ".join(updated_fields)}',
             'updated_fields': updated_fields,
             'user': {
                 'id': current_user.id,
@@ -409,9 +422,9 @@ def update_user_profile(current_user):
         }), 200
         
     except Exception as e:
-        logger.error(f"Profile update error: {e}")
+        logger.error(f"CineBrain profile update error: {e}")
         db.session.rollback()
-        return jsonify({'error': 'Failed to update profile'}), 500
+        return jsonify({'error': 'Failed to update CineBrain profile'}), 500
 
 @users_bp.route('/api/users/analytics', methods=['GET', 'OPTIONS'])
 @require_auth
@@ -438,17 +451,17 @@ def get_user_analytics(current_user):
         
         if analytics.get('total_interactions', 0) < 10:
             insights['recommendations']['improvement_tips'].append(
-                "Interact with more content (like, favorite, rate) to improve recommendations"
+                "Interact with more CineBrain content (like, favorite, rate) to improve recommendations"
             )
         
         if analytics.get('ratings_given', 0) < 5:
             insights['recommendations']['improvement_tips'].append(
-                "Rate content to help our AI understand your preferences better"
+                "Rate CineBrain content to help our AI understand your preferences better"
             )
         
         if analytics.get('content_diversity', {}).get('genre_diversity_count', 0) < 5:
             insights['recommendations']['improvement_tips'].append(
-                "Explore different genres to discover new content you might love"
+                "Explore different genres on CineBrain to discover new content you might love"
             )
         
         return jsonify({
@@ -459,8 +472,8 @@ def get_user_analytics(current_user):
         }), 200
         
     except Exception as e:
-        logger.error(f"Analytics error: {e}")
-        return jsonify({'error': 'Failed to get analytics'}), 500
+        logger.error(f"CineBrain analytics error: {e}")
+        return jsonify({'error': 'Failed to get CineBrain analytics'}), 500
 
 @users_bp.route('/api/interactions', methods=['POST', 'OPTIONS'])
 @require_auth
@@ -473,7 +486,7 @@ def record_interaction(current_user):
         
         required_fields = ['content_id', 'interaction_type']
         if not all(field in data for field in required_fields):
-            return jsonify({'error': 'Missing required fields'}), 400
+            return jsonify({'error': 'Missing required fields for CineBrain interaction'}), 400
         
         if data['interaction_type'] == 'remove_watchlist':
             interaction = UserInteraction.query.filter_by(
@@ -497,16 +510,16 @@ def record_interaction(current_user):
                             }
                         )
                     except Exception as e:
-                        logger.warning(f"Failed to update real-time preferences: {e}")
+                        logger.warning(f"Failed to update CineBrain real-time preferences: {e}")
                 
                 return jsonify({
                     'success': True,
-                    'message': 'Removed from watchlist'
+                    'message': 'Removed from CineBrain watchlist'
                 }), 200
             else:
                 return jsonify({
                     'success': False,
-                    'message': 'Content not in watchlist'
+                    'message': 'Content not in CineBrain watchlist'
                 }), 404
         
         if data['interaction_type'] == 'watchlist':
@@ -519,7 +532,7 @@ def record_interaction(current_user):
             if existing:
                 return jsonify({
                     'success': True,
-                    'message': 'Already in watchlist'
+                    'message': 'Already in CineBrain watchlist'
                 }), 200
         
         interaction = UserInteraction(
@@ -545,18 +558,18 @@ def record_interaction(current_user):
                     }
                 )
             except Exception as e:
-                logger.warning(f"Failed to update real-time preferences: {e}")
+                logger.warning(f"Failed to update CineBrain real-time preferences: {e}")
         
         return jsonify({
             'success': True,
-            'message': 'Interaction recorded successfully',
+            'message': 'CineBrain interaction recorded successfully',
             'interaction_id': interaction.id
         }), 201
         
     except Exception as e:
-        logger.error(f"Interaction recording error: {e}")
+        logger.error(f"CineBrain interaction recording error: {e}")
         db.session.rollback()
-        return jsonify({'error': 'Failed to record interaction'}), 500
+        return jsonify({'error': 'Failed to record CineBrain interaction'}), 500
 
 @users_bp.route('/api/personalized/', methods=['GET', 'OPTIONS'])
 @require_auth
@@ -567,7 +580,7 @@ def get_personalized_recommendations(current_user):
     try:
         if not recommendation_engine:
             return jsonify({
-                'error': 'Recommendation engine not available',
+                'error': 'CineBrain recommendation engine not available',
                 'recommendations': {},
                 'fallback': True
             }), 503
@@ -593,7 +606,7 @@ def get_personalized_recommendations(current_user):
         return jsonify({
             'success': True,
             'data': recommendations,
-            'message': 'Personalized recommendations generated successfully',
+            'message': 'CineBrain personalized recommendations generated successfully',
             'user': {
                 'id': current_user.id,
                 'username': current_user.username
@@ -606,9 +619,9 @@ def get_personalized_recommendations(current_user):
         }), 200
         
     except Exception as e:
-        logger.error(f"Personalized recommendations error for user {current_user.id}: {e}")
+        logger.error(f"CineBrain personalized recommendations error for user {current_user.id}: {e}")
         return jsonify({
-            'error': 'Failed to generate personalized recommendations',
+            'error': 'Failed to generate CineBrain personalized recommendations',
             'success': False,
             'data': {}
         }), 500
@@ -621,7 +634,7 @@ def get_for_you_recommendations(current_user):
     
     try:
         if not recommendation_engine:
-            return jsonify({'error': 'Recommendation engine not available'}), 503
+            return jsonify({'error': 'CineBrain recommendation engine not available'}), 503
         
         limit = min(int(request.args.get('limit', 30)), 50)
         
@@ -643,8 +656,8 @@ def get_for_you_recommendations(current_user):
         }), 200
         
     except Exception as e:
-        logger.error(f"For You recommendations error: {e}")
-        return jsonify({'error': 'Failed to get For You recommendations'}), 500
+        logger.error(f"CineBrain For You recommendations error: {e}")
+        return jsonify({'error': 'Failed to get CineBrain For You recommendations'}), 500
 
 @users_bp.route('/api/personalized/because-you-watched', methods=['GET', 'OPTIONS'])
 @require_auth
@@ -654,7 +667,7 @@ def get_because_you_watched(current_user):
     
     try:
         if not recommendation_engine:
-            return jsonify({'error': 'Recommendation engine not available'}), 503
+            return jsonify({'error': 'CineBrain recommendation engine not available'}), 503
         
         limit = min(int(request.args.get('limit', 20)), 30)
         
@@ -670,13 +683,13 @@ def get_because_you_watched(current_user):
             'success': True,
             'recommendations': because_recs,
             'total_count': len(because_recs),
-            'explanation': 'Based on your recently watched content',
+            'explanation': 'Based on your recently watched CineBrain content',
             'algorithm': 'content_similarity_and_collaborative_filtering'
         }), 200
         
     except Exception as e:
-        logger.error(f"Because you watched recommendations error: {e}")
-        return jsonify({'error': 'Failed to get because you watched recommendations'}), 500
+        logger.error(f"CineBrain Because you watched recommendations error: {e}")
+        return jsonify({'error': 'Failed to get CineBrain because you watched recommendations'}), 500
 
 @users_bp.route('/api/personalized/trending-for-you', methods=['GET', 'OPTIONS'])
 @require_auth
@@ -686,7 +699,7 @@ def get_trending_for_you(current_user):
     
     try:
         if not recommendation_engine:
-            return jsonify({'error': 'Recommendation engine not available'}), 503
+            return jsonify({'error': 'CineBrain recommendation engine not available'}), 503
         
         limit = min(int(request.args.get('limit', 25)), 40)
         
@@ -702,13 +715,13 @@ def get_trending_for_you(current_user):
             'success': True,
             'recommendations': trending_recs,
             'total_count': len(trending_recs),
-            'explanation': 'Trending content personalized for your taste',
+            'explanation': 'Trending CineBrain content personalized for your taste',
             'algorithm': 'hybrid_trending_personalization'
         }), 200
         
     except Exception as e:
-        logger.error(f"Trending for you recommendations error: {e}")
-        return jsonify({'error': 'Failed to get trending recommendations'}), 500
+        logger.error(f"CineBrain Trending for you recommendations error: {e}")
+        return jsonify({'error': 'Failed to get CineBrain trending recommendations'}), 500
 
 @users_bp.route('/api/personalized/your-language', methods=['GET', 'OPTIONS'])
 @require_auth
@@ -718,7 +731,7 @@ def get_your_language_recommendations(current_user):
     
     try:
         if not recommendation_engine:
-            return jsonify({'error': 'Recommendation engine not available'}), 503
+            return jsonify({'error': 'CineBrain recommendation engine not available'}), 503
         
         limit = min(int(request.args.get('limit', 25)), 40)
         
@@ -736,14 +749,14 @@ def get_your_language_recommendations(current_user):
             'success': True,
             'recommendations': language_recs,
             'total_count': len(language_recs),
-            'explanation': 'Content in your preferred languages',
+            'explanation': 'CineBrain content in your preferred languages',
             'preferred_languages': preferred_languages,
             'algorithm': 'language_preference_filtering'
         }), 200
         
     except Exception as e:
-        logger.error(f"Language recommendations error: {e}")
-        return jsonify({'error': 'Failed to get language recommendations'}), 500
+        logger.error(f"CineBrain Language recommendations error: {e}")
+        return jsonify({'error': 'Failed to get CineBrain language recommendations'}), 500
 
 @users_bp.route('/api/personalized/hidden-gems', methods=['GET', 'OPTIONS'])
 @require_auth
@@ -753,7 +766,7 @@ def get_hidden_gems(current_user):
     
     try:
         if not recommendation_engine:
-            return jsonify({'error': 'Recommendation engine not available'}), 503
+            return jsonify({'error': 'CineBrain recommendation engine not available'}), 503
         
         limit = min(int(request.args.get('limit', 15)), 25)
         
@@ -769,13 +782,13 @@ def get_hidden_gems(current_user):
             'success': True,
             'recommendations': gems_recs,
             'total_count': len(gems_recs),
-            'explanation': 'High-quality content you might have missed',
+            'explanation': 'High-quality CineBrain content you might have missed',
             'algorithm': 'hidden_gem_discovery'
         }), 200
         
     except Exception as e:
-        logger.error(f"Hidden gems recommendations error: {e}")
-        return jsonify({'error': 'Failed to get hidden gems recommendations'}), 500
+        logger.error(f"CineBrain Hidden gems recommendations error: {e}")
+        return jsonify({'error': 'Failed to get CineBrain hidden gems recommendations'}), 500
 
 @users_bp.route('/api/personalized/profile-insights', methods=['GET', 'OPTIONS'])
 @require_auth
@@ -785,15 +798,15 @@ def get_profile_insights(current_user):
     
     try:
         if not recommendation_engine:
-            return jsonify({'error': 'Recommendation engine not available'}), 503
+            return jsonify({'error': 'CineBrain recommendation engine not available'}), 503
         
         user_profile = recommendation_engine.user_profiler.build_comprehensive_user_profile(current_user.id)
         
         if not user_profile:
             return jsonify({
                 'success': False,
-                'message': 'Could not build user profile - insufficient interaction data',
-                'suggestion': 'Interact with more content to build your profile'
+                'message': 'Could not build CineBrain user profile - insufficient interaction data',
+                'suggestion': 'Interact with more CineBrain content to build your profile'
             }), 404
         
         insights = {
@@ -832,8 +845,8 @@ def get_profile_insights(current_user):
         }), 200
         
     except Exception as e:
-        logger.error(f"Profile insights error: {e}")
-        return jsonify({'error': 'Failed to get profile insights'}), 500
+        logger.error(f"CineBrain Profile insights error: {e}")
+        return jsonify({'error': 'Failed to get CineBrain profile insights'}), 500
 
 def _get_improvement_suggestion(user_profile):
     completeness = user_profile.get('profile_completeness', 0)
@@ -841,13 +854,13 @@ def _get_improvement_suggestion(user_profile):
     ratings_count = user_profile.get('explicit_preferences', {}).get('ratings_count', 0)
     
     if completeness < 0.3:
-        return 'Interact with more content (like, favorite, add to watchlist) to improve accuracy'
+        return 'Interact with more CineBrain content (like, favorite, add to watchlist) to improve accuracy'
     elif ratings_count < 5:
-        return 'Rate more content to help our AI understand your taste better'
+        return 'Rate more CineBrain content to help our AI understand your taste better'
     elif completeness < 0.8:
-        return 'Explore different genres to get more diverse recommendations'
+        return 'Explore different genres on CineBrain to get more diverse recommendations'
     else:
-        return 'Your recommendations are highly accurate! Keep discovering new content'
+        return 'Your CineBrain recommendations are highly accurate! Keep discovering new content'
 
 @users_bp.route('/api/personalized/update-preferences', methods=['POST', 'OPTIONS'])
 @require_auth
@@ -879,13 +892,13 @@ def update_user_preferences(current_user):
                         }
                     }
                 )
-                logger.info(f"Successfully updated preferences for user {current_user.id}")
+                logger.info(f"Successfully updated CineBrain preferences for user {current_user.id}")
             except Exception as e:
-                logger.warning(f"Failed to update recommendation engine: {e}")
+                logger.warning(f"Failed to update CineBrain recommendation engine: {e}")
         
         return jsonify({
             'success': True,
-            'message': 'Preferences updated successfully',
+            'message': 'CineBrain preferences updated successfully',
             'user': {
                 'preferred_languages': json.loads(current_user.preferred_languages or '[]'),
                 'preferred_genres': json.loads(current_user.preferred_genres or '[]')
@@ -894,9 +907,9 @@ def update_user_preferences(current_user):
         }), 200
         
     except Exception as e:
-        logger.error(f"Update preferences error: {e}")
+        logger.error(f"Update CineBrain preferences error: {e}")
         db.session.rollback()
-        return jsonify({'error': 'Failed to update preferences'}), 500
+        return jsonify({'error': 'Failed to update CineBrain preferences'}), 500
 
 @users_bp.route('/api/user/watchlist', methods=['GET', 'OPTIONS'])
 @require_auth
@@ -944,8 +957,8 @@ def get_watchlist(current_user):
         }), 200
         
     except Exception as e:
-        logger.error(f"Watchlist error: {e}")
-        return jsonify({'error': 'Failed to get watchlist'}), 500
+        logger.error(f"CineBrain watchlist error: {e}")
+        return jsonify({'error': 'Failed to get CineBrain watchlist'}), 500
 
 @users_bp.route('/api/user/watchlist/<int:content_id>', methods=['DELETE', 'OPTIONS'])
 @require_auth
@@ -974,22 +987,22 @@ def remove_from_watchlist(current_user, content_id):
                         }
                     )
                 except Exception as e:
-                    logger.warning(f"Failed to update recommendations: {e}")
+                    logger.warning(f"Failed to update CineBrain recommendations: {e}")
             
             return jsonify({
                 'success': True,
-                'message': 'Removed from watchlist'
+                'message': 'Removed from CineBrain watchlist'
             }), 200
         else:
             return jsonify({
                 'success': False,
-                'message': 'Content not in watchlist'
+                'message': 'Content not in CineBrain watchlist'
             }), 404
             
     except Exception as e:
-        logger.error(f"Remove from watchlist error: {e}")
+        logger.error(f"Remove from CineBrain watchlist error: {e}")
         db.session.rollback()
-        return jsonify({'error': 'Failed to remove from watchlist'}), 500
+        return jsonify({'error': 'Failed to remove from CineBrain watchlist'}), 500
 
 @users_bp.route('/api/user/watchlist/<int:content_id>', methods=['GET', 'OPTIONS'])
 @require_auth
@@ -1010,8 +1023,8 @@ def check_watchlist_status(current_user, content_id):
         }), 200
         
     except Exception as e:
-        logger.error(f"Check watchlist status error: {e}")
-        return jsonify({'error': 'Failed to check watchlist status'}), 500
+        logger.error(f"Check CineBrain watchlist status error: {e}")
+        return jsonify({'error': 'Failed to check CineBrain watchlist status'}), 500
 
 @users_bp.route('/api/user/favorites', methods=['GET', 'OPTIONS'])
 @require_auth
@@ -1058,8 +1071,8 @@ def get_favorites(current_user):
         }), 200
         
     except Exception as e:
-        logger.error(f"Favorites error: {e}")
-        return jsonify({'error': 'Failed to get favorites'}), 500
+        logger.error(f"CineBrain favorites error: {e}")
+        return jsonify({'error': 'Failed to get CineBrain favorites'}), 500
 
 @users_bp.route('/api/user/ratings', methods=['GET', 'OPTIONS'])
 @require_auth
@@ -1109,8 +1122,8 @@ def get_user_ratings(current_user):
         }), 200
         
     except Exception as e:
-        logger.error(f"User ratings error: {e}")
-        return jsonify({'error': 'Failed to get user ratings'}), 500
+        logger.error(f"CineBrain user ratings error: {e}")
+        return jsonify({'error': 'Failed to get CineBrain user ratings'}), 500
 
 @users_bp.after_request
 def after_request(response):
@@ -1136,7 +1149,7 @@ def users_health():
     try:
         health_info = {
             'status': 'healthy',
-            'service': 'users',
+            'service': 'cinebrain_users',
             'timestamp': datetime.utcnow().isoformat(),
             'version': '3.0.0'
         }
@@ -1169,7 +1182,8 @@ def users_health():
             'user_analytics': True,
             'profile_management': True,
             'watchlist_favorites': True,
-            'real_time_updates': True
+            'real_time_updates': True,
+            'email_username_login': True
         }
         
         return jsonify(health_info), 200
@@ -1177,7 +1191,7 @@ def users_health():
     except Exception as e:
         return jsonify({
             'status': 'unhealthy',
-            'service': 'users',
+            'service': 'cinebrain_users',
             'error': str(e),
             'timestamp': datetime.utcnow().isoformat()
         }), 500
