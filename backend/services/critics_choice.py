@@ -1,3 +1,4 @@
+#backend/services/critics_choice.py
 import math
 import time
 import json
@@ -1255,7 +1256,7 @@ cinebrain_critics_engine = None
 def get_enhanced_critics_choice():
     try:
         content_type = request.args.get('type', 'all')
-        limit = int(request.args.get('limit', 50))
+        limit = int(request.args.get('limit', 20))
         genre = request.args.get('genre')
         language = request.args.get('language')
         time_period = request.args.get('time_period', 'all')

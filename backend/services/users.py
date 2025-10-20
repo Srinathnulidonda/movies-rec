@@ -184,15 +184,42 @@ def login():
     
     try:
         data = request.get_json()
+        print(f"CineBrain Login attempt - Raw data: {data}")
         
-        if not data.get('username') or not data.get('password'):
+        if not data:
+            print("CineBrain Login error: No JSON data received")
+            return jsonify({'error': 'No data provided'}), 400
+        
+        username = data.get('username', '').strip()
+        password = data.get('password', '')
+        
+        print(f"CineBrain Login attempt - Username: '{username}', Password length: {len(password) if password else 0}")
+        
+        if not username or not password:
+            print("CineBrain Login error: Missing username or password")
             return jsonify({'error': 'Missing username or password'}), 400
         
-        user = User.query.filter_by(username=data['username']).first()
+        # Find user (case-insensitive)
+        user = User.query.filter(User.username.ilike(username)).first()
         
-        if not user or not check_password_hash(user.password_hash, data['password']):
+        if not user:
+            print(f"CineBrain Login error: User '{username}' not found")
+            # List all users for debugging (remove in production)
+            all_users = User.query.all()
+            print(f"Available users: {[u.username for u in all_users]}")
             return jsonify({'error': 'Invalid credentials'}), 401
         
+        print(f"CineBrain Login: Found user {user.username} (ID: {user.id})")
+        
+        # Check password
+        password_valid = check_password_hash(user.password_hash, password)
+        print(f"CineBrain Login: Password check result: {password_valid}")
+        
+        if not password_valid:
+            print(f"CineBrain Login error: Invalid password for user '{username}'")
+            return jsonify({'error': 'Invalid credentials'}), 401
+        
+        # Success
         user.last_active = datetime.utcnow()
         db.session.commit()
         
@@ -210,8 +237,10 @@ def login():
         except Exception as e:
             logger.warning(f"Could not get recommendation effectiveness: {e}")
         
+        print(f"CineBrain Login successful for user: {user.username}")
+        
         return jsonify({
-            'message': 'Login successful',
+            'message': 'CineBrain login successful',
             'token': token,
             'user': {
                 'id': user.id,
@@ -229,9 +258,10 @@ def login():
         }), 200
         
     except Exception as e:
-        logger.error(f"Login error: {e}")
-        return jsonify({'error': 'Login failed'}), 500
-
+        print(f"CineBrain Login exception: {e}")
+        logger.error(f"CineBrain Login error: {e}")
+        return jsonify({'error': 'CineBrain login failed'}), 500
+    
 @users_bp.route('/api/users/profile', methods=['GET', 'OPTIONS'])
 @require_auth
 def get_user_profile(current_user):

@@ -717,7 +717,7 @@ except Exception as e:
 try:
     personalized_engine = init_personalized(app, db, models, services, cache)
     if personalized_engine:
-        logger.info("CineBrain Netflix-level personalized recommendation system initialized successfully")
+        logger.info("CineBrain personalized recommendation system initialized successfully")
         services['personalized_engine'] = personalized_engine
     else:
         logger.warning("CineBrain personalized recommendation system failed to initialize")
@@ -2382,8 +2382,10 @@ def create_tables():
         with app.app_context():
             db.create_all()
             
+            # Check if admin exists
             admin = User.query.filter_by(username='admin').first()
             if not admin:
+                print("Creating CineBrain admin user...")
                 admin = User(
                     username='admin',
                     email='srinathnulidonda.dev@gmail.com',
@@ -2392,11 +2394,23 @@ def create_tables():
                 )
                 db.session.add(admin)
                 db.session.commit()
-                logger.info("CineBrain admin user created with username: admin, password: admin123")
+                print("CineBrain admin user created successfully")
+                print(f"Admin username: admin")
+                print(f"Admin password: admin123")
+            else:
+                print("CineBrain admin user already exists")
+                print(f"Admin ID: {admin.id}")
+                print(f"Admin username: {admin.username}")
+                print(f"Admin email: {admin.email}")
+                print(f"Password hash exists: {bool(admin.password_hash)}")
+            
+            # Test password verification
+            test_check = check_password_hash(admin.password_hash, 'admin123')
+            print(f"Password verification test: {test_check}")
             
             setup_support_monitoring()
             
-            logger.info("CineBrain database tables created successfully including support tables with monitoring")
+            logger.info("CineBrain database tables created successfully")
     except Exception as e:
         logger.error(f"CineBrain database initialization error: {e}")
 
