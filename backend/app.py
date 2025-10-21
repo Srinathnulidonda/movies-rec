@@ -26,7 +26,7 @@ import redis
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from flask_mail import Mail
-from services.upcoming import CineBrainUpcomingContentService
+from services.upcoming import UpcomingContentService, ContentType, LanguagePriority
 import asyncio
 from services.auth import auth_bp, init_auth
 from services.admin import admin_bp, init_admin
@@ -1412,9 +1412,8 @@ def update_cinebrain_new_releases_config():
         logger.error(f"CineBrain config update error: {e}")
         return jsonify({'error': 'Failed to update CineBrain configuration'}), 500
 
-@app.route('/api/cinebrain/upcoming', methods=['GET'])
-@cache.cached(timeout=1800, key_prefix=make_cache_key)
-def get_cinebrain_upcoming_releases():
+@app.route('/api/upcoming', methods=['GET'])
+async def get_upcoming_releases():
     try:
         region = request.args.get('region', 'IN')
         timezone_name = request.args.get('timezone', 'Asia/Kolkata')
@@ -1422,41 +1421,63 @@ def get_cinebrain_upcoming_releases():
         use_cache = request.args.get('use_cache', 'true').lower() == 'true'
         include_analytics = request.args.get('include_analytics', 'true').lower() == 'true'
         
-        specific_month = request.args.get('month')
-        if specific_month:
-            try:
-                specific_month = int(specific_month)
-                if not 1 <= specific_month <= 12:
-                    return jsonify({'error': 'CineBrain: Invalid month. Must be 1-12'}), 400
-            except ValueError:
-                return jsonify({'error': 'CineBrain: Month must be a number'}), 400
-        
-        language_filter = request.args.get('language')
-        genre_filter = request.args.get('genre')
-        content_type_filter = request.args.get('type')
-        specific_date = request.args.get('date')
-        
-        if specific_date:
-            try:
-                datetime.strptime(specific_date, '%Y-%m-%d')
-            except ValueError:
-                return jsonify({'error': 'CineBrain: Date must be in YYYY-MM-DD format'}), 400
-        
         categories = [cat.strip() for cat in categories_param.split(',')]
-        valid_categories = ['movies', 'tv', 'anime']
-        categories = [cat for cat in categories if cat in valid_categories]
-        
-        if not categories:
-            return jsonify({'error': 'CineBrain: No valid categories specified'}), 400
         
         if len(region) != 2:
-            return jsonify({'error': 'CineBrain: Invalid region code'}), 400
+            return jsonify({'error': 'Invalid region code for CineBrain'}), 400
+        
+        service = UpcomingContentService(
+            tmdb_api_key=TMDB_API_KEY,
+            cache_backend=cache,
+            enable_analytics=include_analytics
+        )
+        
+        try:
+            results = await service.get_upcoming_releases(
+                region=region.upper(),
+                timezone_name=timezone_name,
+                categories=categories,
+                use_cache=use_cache,
+                include_analytics=include_analytics
+            )
+            
+            return jsonify({
+                'success': True,
+                'data': results,
+                'cinebrain_telugu_priority': True,
+                'cinebrain_service': 'upcoming'
+            }), 200
+            
+        finally:
+            await service.close()
+    
+    except Exception as e:
+        logger.error(f"CineBrain upcoming releases error: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'cinebrain_service': 'upcoming'
+        }), 500
+
+@app.route('/api/upcoming-sync', methods=['GET'])
+def get_upcoming_releases_sync():
+    try:
+        region = request.args.get('region', 'IN')
+        timezone_name = request.args.get('timezone', 'Asia/Kolkata')
+        categories_param = request.args.get('categories', 'movies,tv,anime')
+        use_cache = request.args.get('use_cache', 'true').lower() == 'true'
+        include_analytics = request.args.get('include_analytics', 'true').lower() == 'true'
+        
+        categories = [cat.strip() for cat in categories_param.split(',')]
+        
+        if len(region) != 2:
+            return jsonify({'error': 'Invalid region code for CineBrain'}), 400
         
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         
         try:
-            service = CineBrainUpcomingContentService(
+            service = UpcomingContentService(
                 tmdb_api_key=TMDB_API_KEY,
                 cache_backend=cache,
                 enable_analytics=include_analytics
@@ -1467,11 +1488,6 @@ def get_cinebrain_upcoming_releases():
                     region=region.upper(),
                     timezone_name=timezone_name,
                     categories=categories,
-                    specific_month=specific_month,
-                    language_filter=language_filter,
-                    genre_filter=genre_filter,
-                    content_type_filter=content_type_filter,
-                    specific_date=specific_date,
                     use_cache=use_cache,
                     include_analytics=include_analytics
                 )
@@ -1483,20 +1499,18 @@ def get_cinebrain_upcoming_releases():
                 'success': True,
                 'data': results,
                 'cinebrain_telugu_priority': True,
-                'cinebrain_service': 'upcoming_releases',
-                'cinebrain_brand': 'CineBrain Entertainment Platform'
+                'cinebrain_service': 'upcoming'
             }), 200
             
         finally:
             loop.close()
     
     except Exception as e:
-        logger.error(f"CineBrain upcoming releases endpoint error: {e}")
+        logger.error(f"CineBrain upcoming sync error: {e}")
         return jsonify({
             'success': False,
             'error': str(e),
-            'cinebrain_service': 'upcoming_releases',
-            'cinebrain_brand': 'CineBrain Entertainment Platform'
+            'cinebrain_service': 'upcoming'
         }), 500
 
 @app.route('/api/recommendations/genre/<genre>', methods=['GET'])
@@ -2185,8 +2199,7 @@ def health_check():
             'admin_notifications': 'cinebrain_enabled',
             'monitoring': 'cinebrain_active',
             'auth_service': 'enabled' if 'auth_bp' in app.blueprints else 'disabled',
-            'users_service': 'enabled' if 'users_bp' in app.blueprints else 'disabled',
-            'upcoming_service': 'cinebrain_enhanced_enabled'
+            'users_service': 'enabled' if 'users_bp' in app.blueprints else 'disabled'
         }
         
         try:
@@ -2245,8 +2258,7 @@ def health_check():
                 'cinebrain_auth_service_enhanced',
                 'cinebrain_users_service_personalized',
                 'cinebrain_new_releases_service',
-                'cinebrain_enhanced_critics_choice_service',
-                'cinebrain_upcoming_content_service_with_telugu_priority'
+                'cinebrain_enhanced_critics_choice_service'
             ],
             'memory_optimizations': 'cinebrain_enabled',
             'unicode_fixes': 'cinebrain_applied',
@@ -2370,6 +2382,7 @@ def create_tables():
         with app.app_context():
             db.create_all()
             
+            # Check if admin exists
             admin = User.query.filter_by(username='admin').first()
             if not admin:
                 print("Creating CineBrain admin user...")
@@ -2391,6 +2404,7 @@ def create_tables():
                 print(f"Admin email: {admin.email}")
                 print(f"Password hash exists: {bool(admin.password_hash)}")
             
+            # Test password verification
             test_check = check_password_hash(admin.password_hash, 'admin123')
             print(f"Password verification test: {test_check}")
             
@@ -2403,12 +2417,12 @@ def create_tables():
 create_tables()
 
 if __name__ == '__main__':
-    print("=== Running CineBrain Flask in development mode with Enhanced Upcoming Content Service ===")
+    print("=== Running CineBrain Flask in development mode with Enhanced Critics Choice ===")
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('FLASK_ENV') == 'development'
     app.run(host='0.0.0', port=port, debug=debug)
 else:
-    print("=== CineBrain Flask app imported by Gunicorn - ENHANCED UPCOMING CONTENT VERSION ===")
+    print("=== CineBrain Flask app imported by Gunicorn - ENHANCED CRITICS CHOICE VERSION ===")
     print(f"App name: {app.name}")
     print(f"Python version: 3.13.4")
     print(f"CineBrain brand: CineBrain Entertainment Platform")
@@ -2421,19 +2435,18 @@ else:
     print(f"CineBrain support service status: {'Integrated' if 'support_bp' in app.blueprints else 'Not integrated'}")
     print(f"CineBrain auth service status: {'Integrated' if 'auth_bp' in app.blueprints else 'Not integrated'}")
     print(f"CineBrain users service status: {'Integrated' if 'users_bp' in app.blueprints else 'Not integrated'}")
-    print(f"CineBrain upcoming service status: {'Enhanced Integrated' if True else 'Not integrated'}")
     
-    print("\n=== CineBrain Enhanced Upcoming Content Features ===")
-    print("✅ Telugu-first priority system with enhanced detection")
-    print("✅ 3-month upcoming window (current + next 2 months)")
-    print("✅ Single comprehensive endpoint with advanced filtering")
-    print("✅ Release date primary sorting with language priority")
-    print("✅ Month, date, genre, language, type filtering")
-    print("✅ CineBrain scoring algorithm for anticipation")
-    print("✅ Buzz level classification (viral, high, normal, low)")
-    print("✅ Multi-source content aggregation (TMDB, AniList)")
-    print("✅ Intelligent caching with filter-based cache keys")
-    print("✅ Production-grade async operations and error handling")
+    print("\n=== CineBrain Enhanced Critics Choice Features ===")
+    print("✅ Multi-source critics aggregation (TMDB, OMDb, Jikan)")
+    print("✅ Advanced scoring algorithm with weighted factors")
+    print("✅ Support for movies, TV shows, and anime")
+    print("✅ Genre, language, and time period filtering")
+    print("✅ Telugu content prioritization")
+    print("✅ Diversity enforcement for balanced recommendations")
+    print("✅ Metacritic, IMDB, and Rotten Tomatoes integration")
+    print("✅ Award recognition and bonus scoring")
+    print("✅ Comprehensive metadata and analytics")
+    print("✅ Performance caching and error handling")
     
     print(f"\n=== CineBrain Registered Routes ===")
     for rule in app.url_map.iter_rules():
