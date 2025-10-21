@@ -1,7 +1,7 @@
-#backend/service/upcoming.py
+#backend/services/upcoming.py
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional, Tuple, Any, Set, Union
+from typing import Dict, List, Optional, Tuple, Any, Set
 from dataclasses import dataclass, field, asdict
 from enum import Enum
 import pytz
@@ -12,27 +12,24 @@ import hashlib
 import json
 import asyncio
 from collections import defaultdict, Counter
-import re
-import unicodedata
 
 logger = logging.getLogger(__name__)
 
 
-class ContentType(Enum):
+class CineBrainContentType(Enum):
     MOVIE = "movie"
     TV_SERIES = "tv"
     ANIME = "anime"
-    ALL = "all"
 
 
-class LanguagePriority(Enum):
+class CineBrainLanguagePriority(Enum):
     TELUGU = ("telugu", "te", 1)
-    ENGLISH = ("english", "en", 2) 
+    ENGLISH = ("english", "en", 2)
     HINDI = ("hindi", "hi", 3)
     MALAYALAM = ("malayalam", "ml", 4)
     KANNADA = ("kannada", "kn", 5)
     TAMIL = ("tamil", "ta", 6)
-    OTHER = ("other", "xx", 7)
+    OTHER = ("other", "unknown", 7)
     
     def __init__(self, name: str, iso_code: str, priority: int):
         self.language_name = name
@@ -40,47 +37,32 @@ class LanguagePriority(Enum):
         self.priority = priority
     
     @classmethod
-    def get_by_iso(cls, iso_code: str) -> Optional['LanguagePriority']:
-        iso_lower = iso_code.lower()
+    def get_by_iso(cls, iso_code: str) -> Optional['CineBrainLanguagePriority']:
         for lang in cls:
-            if lang.iso_code == iso_lower:
+            if lang.iso_code == iso_code:
                 return lang
         return cls.OTHER
     
     @classmethod
-    def get_by_name(cls, name: str) -> Optional['LanguagePriority']:
-        name_lower = name.lower()
-        for lang in cls:
-            if lang.language_name == name_lower:
-                return lang
-        return cls.OTHER
-    
-    @classmethod
-    def get_priority_order(cls) -> List['LanguagePriority']:
-        return sorted([lang for lang in cls if lang != cls.OTHER], key=lambda x: x.priority)
+    def get_priority_order(cls) -> List['CineBrainLanguagePriority']:
+        return sorted(cls, key=lambda x: x.priority)
 
 
 @dataclass
-class ReleaseWindow:
+class CineBrainReleaseWindow:
     start_date: datetime
     end_date: datetime
     month_label: str
-    month_number: int
     priority: int
     is_current: bool = False
-    total_days: int = 0
-    
-    def __post_init__(self):
-        self.total_days = (self.end_date - self.start_date).days
 
 
 @dataclass
-class CinebrainUpcomingRelease:
+class CineBrainUpcomingRelease:
     id: str
-    slug: str
     title: str
     original_title: Optional[str]
-    content_type: ContentType
+    content_type: CineBrainContentType
     release_date: datetime
     languages: List[str]
     genres: List[str]
@@ -94,242 +76,175 @@ class CinebrainUpcomingRelease:
     source: str = ""
     language_priority: int = 999
     
-    tmdb_id: Optional[int] = None
-    imdb_id: Optional[str] = None
-    mal_id: Optional[int] = None
-    runtime: Optional[int] = None
-    certification: Optional[str] = None
-    production_companies: List[str] = field(default_factory=list)
-    production_countries: List[str] = field(default_factory=list)
-    spoken_languages: List[str] = field(default_factory=list)
-    
-    days_until_release: int = 0
-    weeks_until_release: int = 0
-    months_until_release: int = 0
-    release_status: str = "announced"
-    release_type: str = "theatrical"
-    
-    is_telugu_content: bool = False
-    is_telugu_priority: bool = False
-    telugu_confidence_score: float = 0.0
-    
-    cinebrain_anticipation_score: float = 0.0
-    cinebrain_buzz_level: str = "normal"
-    cinebrain_trending_score: float = 0.0
-    
+    cinebrain_score: float = 0.0
+    buzz_level: str = "normal"
+    pre_release_rating: Optional[float] = None
+    trailer_views: int = 0
+    social_mentions: int = 0
+    is_franchise: bool = False
+    franchise_name: Optional[str] = None
     director: Optional[str] = None
     cast: List[str] = field(default_factory=list)
-    trailer_url: Optional[str] = None
-    official_site: Optional[str] = None
+    studio: Optional[str] = None
+    budget: Optional[float] = None
+    expected_revenue: Optional[float] = None
+    marketing_level: str = "standard"
+    release_strategy: str = "wide"
+    days_until_release: int = 0
+    is_telugu_priority: bool = False
     
     def __post_init__(self):
         self._set_language_priority()
-        self._calculate_time_until_release()
-        self._determine_telugu_status()
-        self._generate_cinebrain_slug()
-        self._calculate_cinebrain_scores()
+        self._calculate_days_until_release()
+        self._determine_telugu_priority()
     
     def _set_language_priority(self):
-        min_priority = 999
         for lang in self.languages:
-            lang_enum = LanguagePriority.get_by_iso(lang) or LanguagePriority.get_by_name(lang)
-            if lang_enum:
-                min_priority = min(min_priority, lang_enum.priority)
-        self.language_priority = min_priority
+            for lang_enum in CineBrainLanguagePriority:
+                if lang.lower() in [lang_enum.iso_code, lang_enum.language_name]:
+                    self.language_priority = min(self.language_priority, lang_enum.priority)
+                    break
     
-    def _calculate_time_until_release(self):
+    def _calculate_days_until_release(self):
         if self.release_date:
-            now = datetime.now()
-            delta = self.release_date - now
-            self.days_until_release = max(0, delta.days)
-            self.weeks_until_release = max(0, delta.days // 7)
-            self.months_until_release = max(0, delta.days // 30)
+            delta = self.release_date - datetime.now()
+            self.days_until_release = delta.days
     
-    def _determine_telugu_status(self):
-        telugu_indicators = ['te', 'telugu', 'tollywood']
-        
+    def _determine_telugu_priority(self):
+        telugu_identifiers = ['te', 'telugu', 'tollywood']
         for lang in self.languages:
-            if lang.lower() in telugu_indicators:
-                self.is_telugu_content = True
+            if lang.lower() in telugu_identifiers:
                 self.is_telugu_priority = True
-                self.telugu_confidence_score = 1.0
-                return
-        
-        if self.title or self.original_title:
-            combined_title = f"{self.title or ''} {self.original_title or ''}".lower()
-            telugu_keywords = ['tollywood', 'telugu', 'andhra', 'telangana', 'hyderabad']
-            
-            matches = sum(1 for keyword in telugu_keywords if keyword in combined_title)
-            if matches > 0:
-                self.telugu_confidence_score = min(1.0, matches * 0.3)
-                if self.telugu_confidence_score >= 0.5:
-                    self.is_telugu_content = True
-                    self.is_telugu_priority = True
-        
-        cinebrain_telugu_studios = [
-            'geetha arts', 'mythri movie makers', 'avm productions',
-            'vyjayanthi movies', 'sri venkateswara creations', 
-            'konidela production company', 'uv creations',
-            'haarika hassine creations', 'dil raju productions'
-        ]
-        
-        for company in self.production_companies:
-            if any(studio in company.lower() for studio in cinebrain_telugu_studios):
-                self.is_telugu_content = True
-                self.is_telugu_priority = True
-                self.telugu_confidence_score = max(self.telugu_confidence_score, 0.8)
                 break
-    
-    def _generate_cinebrain_slug(self):
-        if not self.slug and self.title:
-            clean_title = re.sub(r'[^\w\s-]', '', self.title.lower())
-            clean_title = re.sub(r'[-\s]+', '-', clean_title)
-            
-            year = ""
-            if self.release_date:
-                year = f"-{self.release_date.year}"
-            
-            type_suffix = f"-{self.content_type.value}"
-            
-            self.slug = f"cinebrain-{clean_title}{year}{type_suffix}".strip('-')
-    
-    def _calculate_cinebrain_scores(self):
-        score = 0.0
-        
-        if self.popularity > 0:
-            score += min(30, self.popularity / 10)
-        
-        if self.vote_average > 0:
-            score += (self.vote_average / 10) * 20
-        
-        if self.language_priority == 1:
-            score += 25
-        elif self.language_priority == 2:
-            score += 20
-        elif self.language_priority == 3:
-            score += 15
-        elif self.language_priority <= 6:
-            score += 10
-        
-        if 0 <= self.days_until_release <= 7:
-            score += 15
-        elif 8 <= self.days_until_release <= 30:
-            score += 10
-        elif 31 <= self.days_until_release <= 60:
-            score += 5
-        
-        self.cinebrain_anticipation_score = min(100, score)
-        
-        if self.cinebrain_anticipation_score >= 80:
-            self.cinebrain_buzz_level = "viral"
-        elif self.cinebrain_anticipation_score >= 60:
-            self.cinebrain_buzz_level = "high"
-        elif self.cinebrain_anticipation_score >= 30:
-            self.cinebrain_buzz_level = "normal"
-        else:
-            self.cinebrain_buzz_level = "low"
     
     def to_dict(self) -> Dict[str, Any]:
         data = asdict(self)
-        
         if self.release_date:
             data['release_date'] = self.release_date.isoformat()
-        
         data['content_type'] = self.content_type.value
-        data['cinebrain_service'] = 'upcoming'
-        
         return data
 
 
-class CinebrainTeluguContentDetector:
-    CINEBRAIN_TELUGU_PATTERNS = {
-        'languages': ['te', 'telugu'],
-        'keywords': [
-            'tollywood', 'telugu cinema', 'andhra pradesh', 'telangana',
-            'hyderabad', 'vijayawada', 'vishakhapatnam', 'warangal'
-        ],
-        'studios': [
-            'geetha arts', 'mythri movie makers', 'avm productions',
-            'vyjayanthi movies', 'sri venkateswara creations',
-            'konidela production company', 'uv creations',
-            'haarika hassine creations', 'dil raju productions',
-            'sitara entertainments', '14 reels plus', 'suresh productions'
-        ]
-    }
+class CineBrainAnticipationAnalyzer:
     
-    @classmethod
-    def detect_cinebrain_telugu_content(cls, item: Dict[str, Any]) -> Tuple[bool, float]:
-        confidence = 0.0
+    @staticmethod
+    def calculate_cinebrain_score(release: CineBrainUpcomingRelease) -> float:
+        score = 0.0
         
-        original_lang = item.get('original_language', '').lower()
-        if original_lang in cls.CINEBRAIN_TELUGU_PATTERNS['languages']:
-            return True, 1.0
+        if release.popularity > 0:
+            score += min(30, release.popularity / 10)
         
-        title_text = f"{item.get('title', '')} {item.get('original_title', '')} {item.get('name', '')} {item.get('original_name', '')}".lower()
+        if release.vote_average > 0:
+            score += (release.vote_average / 10) * 20
         
-        for keyword in cls.CINEBRAIN_TELUGU_PATTERNS['keywords']:
-            if keyword in title_text:
-                confidence += 0.3
+        if release.language_priority == 1:
+            score += 25
+        elif release.language_priority == 2:
+            score += 15
+        elif release.language_priority == 3:
+            score += 10
+        elif release.language_priority <= 6:
+            score += 5
         
-        is_telugu = confidence >= 0.3
-        return is_telugu, min(1.0, confidence)
+        if release.is_franchise:
+            score += 10
+        
+        if 0 <= release.days_until_release <= 7:
+            score += 10
+        elif 8 <= release.days_until_release <= 30:
+            score += 7
+        elif 31 <= release.days_until_release <= 60:
+            score += 5
+        
+        marketing_scores = {
+            "blockbuster": 10,
+            "heavy": 7,
+            "standard": 3,
+            "minimal": 1
+        }
+        score += marketing_scores.get(release.marketing_level, 3)
+        
+        return min(100, score)
+    
+    @staticmethod
+    def determine_buzz_level(release: CineBrainUpcomingRelease) -> str:
+        if release.cinebrain_score >= 80:
+            return "viral"
+        elif release.cinebrain_score >= 60:
+            return "high"
+        elif release.cinebrain_score >= 30:
+            return "normal"
+        else:
+            return "low"
 
 
-class CinebrainTMDbClient:
+class CineBrainTMDbClient:
+    
     BASE_URL = "https://api.themoviedb.org/3"
     
     def __init__(self, api_key: str, http_client: Optional[httpx.AsyncClient] = None):
         self.api_key = api_key
-        self.http_client = http_client or httpx.AsyncClient(timeout=5.0, limits=httpx.Limits(max_connections=10))
+        self.http_client = http_client or httpx.AsyncClient(timeout=15.0)
     
-    async def discover_cinebrain_upcoming_movies(
+    async def discover_movies(
         self,
         region: str,
         start_date: datetime,
         end_date: datetime,
         language: Optional[str] = None,
         with_genres: Optional[List[int]] = None,
-        sort_by: str = "primary_release_date.asc,popularity.desc",
+        sort_by: str = "primary_release_date.desc,popularity.desc",
         page: int = 1
-    ) -> Dict[str, Any]:
+    ) -> List[Dict[str, Any]]:
         params = {
             "api_key": self.api_key,
             "region": region,
             "primary_release_date.gte": start_date.strftime("%Y-%m-%d"),
             "primary_release_date.lte": end_date.strftime("%Y-%m-%d"),
-            "with_release_type": "2|3",
+            "with_release_type": "2|3|4|5",
             "sort_by": sort_by,
             "include_adult": False,
             "page": page
         }
         
-        if language and language != 'all':
+        if language:
             params["with_original_language"] = language
         
         if with_genres:
             params["with_genres"] = ",".join(map(str, with_genres))
         
+        all_results = []
+        
         try:
-            response = await self.http_client.get(
-                f"{self.BASE_URL}/discover/movie",
-                params=params
-            )
-            response.raise_for_status()
-            return response.json()
+            for page_num in range(1, 6):
+                params["page"] = page_num
+                response = await self.http_client.get(
+                    f"{self.BASE_URL}/discover/movie",
+                    params=params
+                )
+                response.raise_for_status()
+                data = response.json()
+                results = data.get("results", [])
+                all_results.extend(results)
+                
+                if not results or page_num >= data.get("total_pages", 1):
+                    break
+            
+            return all_results
         except Exception as e:
             logger.error(f"CineBrain TMDb movie discovery error: {e}")
-            return {"results": [], "total_pages": 0, "total_results": 0}
+            return []
     
-    async def discover_cinebrain_upcoming_tv(
+    async def discover_tv(
         self,
         region: str,
         start_date: datetime,
         end_date: datetime,
         language: Optional[str] = None,
         with_genres: Optional[List[int]] = None,
-        sort_by: str = "first_air_date.asc,popularity.desc",
+        sort_by: str = "first_air_date.desc,popularity.desc",
         page: int = 1
-    ) -> Dict[str, Any]:
+    ) -> List[Dict[str, Any]]:
         params = {
             "api_key": self.api_key,
             "watch_region": region,
@@ -340,34 +255,46 @@ class CinebrainTMDbClient:
             "page": page
         }
         
-        if language and language != 'all':
+        if language:
             params["with_original_language"] = language
         
         if with_genres:
             params["with_genres"] = ",".join(map(str, with_genres))
         
+        all_results = []
+        
         try:
-            response = await self.http_client.get(
-                f"{self.BASE_URL}/discover/tv",
-                params=params
-            )
-            response.raise_for_status()
-            return response.json()
+            for page_num in range(1, 4):
+                params["page"] = page_num
+                response = await self.http_client.get(
+                    f"{self.BASE_URL}/discover/tv",
+                    params=params
+                )
+                response.raise_for_status()
+                data = response.json()
+                results = data.get("results", [])
+                all_results.extend(results)
+                
+                if not results or page_num >= data.get("total_pages", 1):
+                    break
+            
+            return all_results
         except Exception as e:
             logger.error(f"CineBrain TMDb TV discovery error: {e}")
-            return {"results": [], "total_pages": 0, "total_results": 0}
+            return []
 
 
-class CinebrainAniListClient:
+class CineBrainAniListClient:
+    
     BASE_URL = "https://graphql.anilist.co"
     
     def __init__(self, http_client: Optional[httpx.AsyncClient] = None):
-        self.http_client = http_client or httpx.AsyncClient(timeout=5.0)
+        self.http_client = http_client or httpx.AsyncClient(timeout=15.0)
     
-    def _build_cinebrain_upcoming_query(self) -> str:
+    def _build_upcoming_query(self) -> str:
         return """
-        query ($season: MediaSeason, $seasonYear: Int, $page: Int, $sort: [MediaSort]) {
-            Page(page: $page, perPage: 25) {
+        query ($startDate: Int, $endDate: Int, $year: Int, $page: Int, $sort: [MediaSort]) {
+            Page(page: $page, perPage: 50) {
                 pageInfo {
                     total
                     currentPage
@@ -377,8 +304,9 @@ class CinebrainAniListClient:
                 media(
                     type: ANIME
                     format_in: [TV, TV_SHORT, ONA, OVA, MOVIE, SPECIAL]
-                    season: $season
-                    seasonYear: $seasonYear
+                    startDate_greater: $startDate
+                    startDate_lesser: $endDate
+                    seasonYear: $year
                     sort: $sort
                     isAdult: false
                     status_in: [NOT_YET_RELEASED, RELEASING]
@@ -389,7 +317,6 @@ class CinebrainAniListClient:
                         romaji
                         english
                         native
-                        userPreferred
                     }
                     startDate {
                         year
@@ -416,49 +343,57 @@ class CinebrainAniListClient:
                     description(asHtml: false)
                     countryOfOrigin
                     source
-                    siteUrl
+                    hashtag
                     trailer {
                         id
                         site
+                        thumbnail
                     }
                     studios {
                         nodes {
                             name
+                            isAnimationStudio
                         }
+                    }
+                    staff {
+                        edges {
+                            role
+                            node {
+                                name {
+                                    full
+                                }
+                            }
+                        }
+                    }
+                    nextAiringEpisode {
+                        airingAt
+                        timeUntilAiring
+                        episode
                     }
                 }
             }
         }
         """
     
-    async def get_cinebrain_upcoming_anime(
+    async def get_upcoming_anime(
         self,
         start_date: datetime,
         end_date: datetime,
-        page: int = 1,
         sort: List[str] = None
     ) -> List[Dict[str, Any]]:
         if sort is None:
-            sort = ["POPULARITY_DESC", "START_DATE_DESC"]
+            sort = ["START_DATE_DESC", "POPULARITY_DESC"]
         
-        month = start_date.month
-        year = start_date.year
+        start_int = int(start_date.strftime("%Y%m%d"))
+        end_int = int(end_date.strftime("%Y%m%d"))
         
-        if month in [1, 2, 3]:
-            season = "WINTER"
-        elif month in [4, 5, 6]:
-            season = "SPRING"
-        elif month in [7, 8, 9]:
-            season = "SUMMER"
-        else:
-            season = "FALL"
-        
-        all_results = []
-        
-        seasons_to_check = [
-            (season, year),
-            (self._get_next_season(season), year if season != "FALL" else year + 1)
-        ]
+        variables = {
+            "startDate": start_int,
+            "endDate": end_int,
+            "year": start_date.year,
+            "page": 1,
+            "sort": sort
+        }
         
         try:
             headers = {
@@ -466,151 +401,129 @@ class CinebrainAniListClient:
                 "Accept": "application/json",
             }
             
-            for check_season, check_year in seasons_to_check[:1]:  # Only check current season for performance
-                variables = {
-                    "season": check_season,
-                    "seasonYear": check_year,
-                    "page": page,
-                    "sort": sort
-                }
+            all_results = []
+            
+            for page in range(1, 4):
+                variables["page"] = page
                 
                 response = await self.http_client.post(
                     self.BASE_URL,
                     json={
-                        "query": self._build_cinebrain_upcoming_query(),
+                        "query": self._build_upcoming_query(),
                         "variables": variables
                     },
                     headers=headers
                 )
+                response.raise_for_status()
+                data = response.json()
                 
-                if response.status_code == 200:
-                    data = response.json()
-                    
-                    if "errors" in data:
-                        logger.error(f"CineBrain AniList GraphQL errors: {data['errors']}")
-                        continue
-                    
-                    results = data.get("data", {}).get("Page", {}).get("media", [])
-                    
-                    for anime in results:
-                        start_date_info = anime.get("startDate", {})
-                        if start_date_info and start_date_info.get("year"):
-                            try:
-                                anime_date = datetime(
-                                    start_date_info.get("year"),
-                                    start_date_info.get("month", 1),
-                                    start_date_info.get("day", 1)
-                                )
-                                if start_date <= anime_date <= end_date:
-                                    all_results.append(anime)
-                            except:
-                                pass
+                if "errors" in data:
+                    logger.error(f"CineBrain AniList GraphQL errors: {data['errors']}")
+                    break
+                
+                results = data.get("data", {}).get("Page", {}).get("media", [])
+                all_results.extend(results)
+                
+                page_info = data.get("data", {}).get("Page", {}).get("pageInfo", {})
+                if not page_info.get("hasNextPage", False):
+                    break
             
             return all_results
             
         except Exception as e:
             logger.error(f"CineBrain AniList upcoming query error: {e}")
             return []
-    
-    def _get_next_season(self, current_season: str) -> str:
-        seasons = ["WINTER", "SPRING", "SUMMER", "FALL"]
-        current_idx = seasons.index(current_season)
-        return seasons[(current_idx + 1) % 4]
 
 
-class CinebrainUpcomingContentService:
-    CINEBRAIN_TMDB_GENRES = {
-        28: "Action", 12: "Adventure", 16: "Animation", 35: "Comedy",
-        80: "Crime", 99: "Documentary", 18: "Drama", 10751: "Family",
-        14: "Fantasy", 36: "History", 27: "Horror", 10402: "Music",
-        9648: "Mystery", 10749: "Romance", 878: "Science Fiction",
-        10770: "TV Movie", 53: "Thriller", 10752: "War", 37: "Western",
-        10759: "Action & Adventure", 10762: "Kids", 10763: "News",
-        10764: "Reality", 10765: "Sci-Fi & Fantasy", 10766: "Soap",
-        10767: "Talk", 10768: "War & Politics"
-    }
+class CineBrainUpcomingContentService:
     
     def __init__(
         self,
         tmdb_api_key: str,
         cache_backend: Optional[Any] = None,
         http_client: Optional[httpx.AsyncClient] = None,
-        enable_detailed_info: bool = False
+        enable_analytics: bool = True
     ):
-        self.tmdb_client = CinebrainTMDbClient(tmdb_api_key, http_client)
-        self.anilist_client = CinebrainAniListClient(http_client)
+        self.tmdb_client = CineBrainTMDbClient(tmdb_api_key, http_client)
+        self.anilist_client = CineBrainAniListClient(http_client)
         self.cache = cache_backend
-        self.http_client = http_client or httpx.AsyncClient(timeout=5.0)
-        self.detector = CinebrainTeluguContentDetector()
-        self.enable_detailed_info = enable_detailed_info
-        self._all_releases_cache = {}
+        self.http_client = http_client or httpx.AsyncClient(timeout=15.0)
+        self.cinebrain_analyzer = CineBrainAnticipationAnalyzer()
+        self.enable_analytics = enable_analytics
+        
+        self.telugu_patterns = {
+            'languages': ['te', 'telugu'],
+            'keywords': ['tollywood', 'telugu cinema', 'andhra', 'telangana', 'hyderabad'],
+            'studios': ['AVM Productions', 'Vyjayanthi Movies', 'Mythri Movie Makers', 
+                       'Geetha Arts', 'Sri Venkateswara Creations', 'Konidela Production Company',
+                       'UV Creations', 'Dil Raju Productions', 'Allu Arjun Entertainment']
+        }
+        
+        self.language_priorities = ['telugu', 'english', 'hindi', 'malayalam', 'kannada', 'tamil', 'other']
     
-    def _get_cinebrain_flexible_release_windows(
-        self, 
-        user_timezone: str, 
-        months: int = 3
-    ) -> List[ReleaseWindow]:
+    def _get_release_windows(self, user_timezone: str, specific_month: Optional[int] = None) -> List[CineBrainReleaseWindow]:
         try:
             tz = pytz.timezone(user_timezone)
         except pytz.UnknownTimeZoneError:
-            logger.warning(f"CineBrain unknown timezone {user_timezone}, using UTC")
+            logger.warning(f"CineBrain: Unknown timezone {user_timezone}, using UTC")
             tz = pytz.UTC
         
         now = datetime.now(tz)
         windows = []
         
-        for month_offset in range(months):
-            if month_offset == 0:
-                start_date = now.replace(hour=0, minute=0, second=0, microsecond=0)
-                end_date = (start_date + timedelta(days=32)).replace(day=1) - timedelta(seconds=1)
-                label = "current"
-                is_current = True
-            else:
-                month_start = (now.replace(day=1) + timedelta(days=32 * month_offset)).replace(day=1)
-                start_date = month_start.replace(hour=0, minute=0, second=0, microsecond=0)
-                end_date = (start_date + timedelta(days=32)).replace(day=1) - timedelta(seconds=1)
-                label = f"month_{month_offset + 1}"
-                is_current = False
-            
-            windows.append(ReleaseWindow(
-                start_date=start_date,
-                end_date=end_date,
-                month_label=label,
-                month_number=month_offset + 1,
-                priority=month_offset + 1,
-                is_current=is_current
+        if specific_month:
+            month_start = now.replace(month=specific_month, day=1, hour=0, minute=0, second=0, microsecond=0)
+            month_end = (month_start + timedelta(days=32)).replace(day=1) - timedelta(seconds=1)
+            windows.append(CineBrainReleaseWindow(
+                start_date=month_start,
+                end_date=month_end,
+                month_label=f"month_{specific_month}",
+                priority=1,
+                is_current=specific_month == now.month
             ))
+        else:
+            current_month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            
+            for i in range(3):
+                month_start = (current_month_start + timedelta(days=32 * i)).replace(day=1)
+                month_end = (month_start + timedelta(days=32)).replace(day=1) - timedelta(seconds=1)
+                
+                windows.append(CineBrainReleaseWindow(
+                    start_date=month_start,
+                    end_date=month_end,
+                    month_label=f"month_{month_start.month}",
+                    priority=i + 1,
+                    is_current=i == 0
+                ))
         
         return windows
     
-    def _get_cinebrain_genre_names(self, genre_ids: List[int]) -> List[str]:
-        return [self.CINEBRAIN_TMDB_GENRES.get(gid, "Unknown") for gid in genre_ids if gid in self.CINEBRAIN_TMDB_GENRES]
+    def _is_telugu_content(self, item: Dict[str, Any]) -> bool:
+        original_language = item.get("original_language", "").lower()
+        if original_language in self.telugu_patterns['languages']:
+            return True
+        
+        title = (item.get("title", "") + " " + item.get("original_title", "") + " " + item.get("name", "") + " " + item.get("original_name", "")).lower()
+        for keyword in self.telugu_patterns['keywords']:
+            if keyword in title:
+                return True
+        
+        return False
     
-    def _filter_cinebrain_by_genre(self, genre_filter: str) -> Optional[List[int]]:
-        if not genre_filter or genre_filter.lower() == 'all':
-            return None
-        
-        genre_map = {name.lower(): gid for gid, name in self.CINEBRAIN_TMDB_GENRES.items()}
-        
-        if genre_filter.lower() in genre_map:
-            return [genre_map[genre_filter.lower()]]
-        
-        return None
-    
-    async def _parse_cinebrain_tmdb_movie(self, item: Dict[str, Any], region: str) -> CinebrainUpcomingRelease:
+    def _parse_tmdb_movie(self, item: Dict[str, Any], region: str) -> CineBrainUpcomingRelease:
         release_date_str = item.get("release_date", "")
         try:
             release_date = datetime.strptime(release_date_str, "%Y-%m-%d")
         except (ValueError, TypeError):
             release_date = datetime.now() + timedelta(days=30)
         
-        is_telugu, confidence = self.detector.detect_cinebrain_telugu_content(item)
-        
         original_lang = item.get("original_language", "")
-        languages = [original_lang] if original_lang else []
         
-        if is_telugu and 'te' not in languages:
-            languages.insert(0, 'te')
+        is_telugu = self._is_telugu_content(item)
+        if is_telugu:
+            languages = ["te", original_lang] if original_lang != "te" else ["te"]
+        else:
+            languages = [original_lang] if original_lang else []
         
         poster_path = item.get("poster_path")
         if poster_path and not poster_path.startswith("http"):
@@ -620,15 +533,22 @@ class CinebrainUpcomingContentService:
         if backdrop_path and not backdrop_path.startswith("http"):
             backdrop_path = f"https://image.tmdb.org/t/p/w1280{backdrop_path}"
         
-        release = CinebrainUpcomingRelease(
+        marketing_level = "minimal"
+        if item.get("popularity", 0) > 100:
+            marketing_level = "blockbuster"
+        elif item.get("popularity", 0) > 50:
+            marketing_level = "heavy"
+        elif item.get("popularity", 0) > 20:
+            marketing_level = "standard"
+        
+        release = CineBrainUpcomingRelease(
             id=f"cinebrain_movie_{item['id']}",
-            slug="",
             title=item.get("title", ""),
             original_title=item.get("original_title"),
-            content_type=ContentType.MOVIE,
+            content_type=CineBrainContentType.MOVIE,
             release_date=release_date,
             languages=languages,
-            genres=self._get_cinebrain_genre_names(item.get("genre_ids", [])),
+            genres=self._get_genre_names(item.get("genre_ids", [])),
             popularity=item.get("popularity", 0),
             vote_count=item.get("vote_count", 0),
             vote_average=item.get("vote_average", 0),
@@ -637,29 +557,29 @@ class CinebrainUpcomingContentService:
             overview=item.get("overview"),
             region=region,
             source="cinebrain_tmdb",
-            tmdb_id=item.get('id'),
-            spoken_languages=languages,
-            release_type="theatrical",
-            is_telugu_content=is_telugu,
-            telugu_confidence_score=confidence
+            marketing_level=marketing_level
         )
+        
+        if self.enable_analytics:
+            release.cinebrain_score = self.cinebrain_analyzer.calculate_cinebrain_score(release)
+            release.buzz_level = self.cinebrain_analyzer.determine_buzz_level(release)
         
         return release
     
-    async def _parse_cinebrain_tmdb_tv(self, item: Dict[str, Any], region: str) -> CinebrainUpcomingRelease:
+    def _parse_tmdb_tv(self, item: Dict[str, Any], region: str) -> CineBrainUpcomingRelease:
         air_date_str = item.get("first_air_date", "")
         try:
             air_date = datetime.strptime(air_date_str, "%Y-%m-%d")
         except (ValueError, TypeError):
             air_date = datetime.now() + timedelta(days=30)
         
-        is_telugu, confidence = self.detector.detect_cinebrain_telugu_content(item)
-        
         original_lang = item.get("original_language", "")
-        languages = [original_lang] if original_lang else []
         
-        if is_telugu and 'te' not in languages:
-            languages.insert(0, 'te')
+        is_telugu = self._is_telugu_content(item)
+        if is_telugu:
+            languages = ["te", original_lang] if original_lang != "te" else ["te"]
+        else:
+            languages = [original_lang] if original_lang else []
         
         poster_path = item.get("poster_path")
         if poster_path and not poster_path.startswith("http"):
@@ -669,15 +589,14 @@ class CinebrainUpcomingContentService:
         if backdrop_path and not backdrop_path.startswith("http"):
             backdrop_path = f"https://image.tmdb.org/t/p/w1280{backdrop_path}"
         
-        release = CinebrainUpcomingRelease(
+        release = CineBrainUpcomingRelease(
             id=f"cinebrain_tv_{item['id']}",
-            slug="",
             title=item.get("name", ""),
             original_title=item.get("original_name"),
-            content_type=ContentType.TV_SERIES,
+            content_type=CineBrainContentType.TV_SERIES,
             release_date=air_date,
             languages=languages,
-            genres=self._get_cinebrain_genre_names(item.get("genre_ids", [])),
+            genres=self._get_genre_names(item.get("genre_ids", [])),
             popularity=item.get("popularity", 0),
             vote_count=item.get("vote_count", 0),
             vote_average=item.get("vote_average", 0),
@@ -686,16 +605,16 @@ class CinebrainUpcomingContentService:
             overview=item.get("overview"),
             region=region,
             source="cinebrain_tmdb",
-            tmdb_id=item.get('id'),
-            spoken_languages=languages,
-            release_type="tv",
-            is_telugu_content=is_telugu,
-            telugu_confidence_score=confidence
+            release_strategy="streaming" if item.get("popularity", 0) < 20 else "wide"
         )
+        
+        if self.enable_analytics:
+            release.cinebrain_score = self.cinebrain_analyzer.calculate_cinebrain_score(release)
+            release.buzz_level = self.cinebrain_analyzer.determine_buzz_level(release)
         
         return release
     
-    async def _parse_cinebrain_anilist_anime(self, item: Dict[str, Any]) -> Optional[CinebrainUpcomingRelease]:
+    def _parse_anilist_anime(self, item: Dict[str, Any]) -> Optional[CineBrainUpcomingRelease]:
         start_date_info = item.get("startDate", {})
         if not start_date_info:
             return None
@@ -713,24 +632,29 @@ class CinebrainUpcomingContentService:
             return None
         
         title_info = item.get("title", {})
-        title = (title_info.get("english") or 
-                title_info.get("userPreferred") or 
-                title_info.get("romaji", ""))
+        title = title_info.get("english") or title_info.get("romaji", "")
         
         if not title:
             return None
         
         cover_image = item.get("coverImage", {})
-        poster_url = (cover_image.get("extraLarge") or 
-                     cover_image.get("large") or 
-                     cover_image.get("medium"))
+        poster_url = cover_image.get("extraLarge") or cover_image.get("large") or cover_image.get("medium")
         
-        release = CinebrainUpcomingRelease(
+        studios = item.get("studios", {}).get("nodes", [])
+        studio_name = studios[0].get("name") if studios else None
+        
+        director = None
+        staff = item.get("staff", {}).get("edges", [])
+        for staff_member in staff:
+            if staff_member.get("role", "").lower() == "director":
+                director = staff_member.get("node", {}).get("name", {}).get("full")
+                break
+        
+        release = CineBrainUpcomingRelease(
             id=f"cinebrain_anime_{item['id']}",
-            slug="",
             title=title,
             original_title=title_info.get("native"),
-            content_type=ContentType.ANIME,
+            content_type=CineBrainContentType.ANIME,
             release_date=release_date,
             languages=["ja"],
             genres=item.get("genres", []),
@@ -741,385 +665,443 @@ class CinebrainUpcomingContentService:
             backdrop_path=item.get("bannerImage"),
             overview=item.get("description"),
             source="cinebrain_anilist",
-            mal_id=item.get("idMal"),
-            runtime=item.get("duration"),
-            official_site=item.get("siteUrl"),
-            release_type="streaming",
-            cinebrain_trending_score=item.get("trending", 0)
+            studio=studio_name,
+            director=director,
+            is_franchise=bool(item.get("hashtag")),
+            franchise_name=item.get("hashtag"),
+            marketing_level="heavy" if item.get("trending", 0) > 10 else "standard"
         )
+        
+        if self.enable_analytics:
+            release.cinebrain_score = self.cinebrain_analyzer.calculate_cinebrain_score(release)
+            release.buzz_level = self.cinebrain_analyzer.determine_buzz_level(release)
         
         return release
     
-    async def _fetch_initial_data(
-        self,
-        windows: List[ReleaseWindow],
-        region: str,
-        genre_ids: Optional[List[int]] = None
-    ) -> Dict[str, List[CinebrainUpcomingRelease]]:
-        """Fetch initial data for all content types with all languages"""
-        all_releases = {
-            "movies": [],
-            "tv_series": [],
-            "anime": []
+    def _get_genre_names(self, genre_ids: List[int]) -> List[str]:
+        genre_map = {
+            28: "Action", 12: "Adventure", 16: "Animation", 35: "Comedy",
+            80: "Crime", 99: "Documentary", 18: "Drama", 10751: "Family",
+            14: "Fantasy", 36: "History", 27: "Horror", 10402: "Music",
+            9648: "Mystery", 10749: "Romance", 878: "Science Fiction",
+            10770: "TV Movie", 53: "Thriller", 10752: "War", 37: "Western"
         }
+        return [genre_map.get(gid, "Unknown") for gid in genre_ids if gid in genre_map]
+    
+    def _get_genre_id_by_name(self, genre_name: str) -> Optional[int]:
+        genre_name_map = {
+            "action": 28, "adventure": 12, "animation": 16, "comedy": 35,
+            "crime": 80, "documentary": 99, "drama": 18, "family": 10751,
+            "fantasy": 14, "history": 36, "horror": 27, "music": 10402,
+            "mystery": 9648, "romance": 10749, "science fiction": 878,
+            "tv movie": 10770, "thriller": 53, "war": 10752, "western": 37
+        }
+        return genre_name_map.get(genre_name.lower())
+    
+    async def _fetch_movies_for_window(
+        self,
+        window: CineBrainReleaseWindow,
+        region: str,
+        languages: List[CineBrainLanguagePriority],
+        genre_filter: Optional[str] = None
+    ) -> List[CineBrainUpcomingRelease]:
+        releases = []
+        seen_ids = set()
         
-        # Only fetch first window for initial load
-        first_window = windows[0]
+        genre_ids = None
+        if genre_filter:
+            genre_id = self._get_genre_id_by_name(genre_filter)
+            if genre_id:
+                genre_ids = [genre_id]
         
-        # Fetch all languages in parallel for initial display
-        async def fetch_movies():
-            tasks = []
-            # Fetch movies without language filter to get all languages
-            data = await self.tmdb_client.discover_cinebrain_upcoming_movies(
-                region=region,
-                start_date=first_window.start_date,
-                end_date=first_window.end_date,
-                language=None,  # No language filter to get all
-                with_genres=genre_ids,
-                page=1
-            )
-            
-            releases = []
-            for item in data.get("results", [])[:20]:
-                release = await self._parse_cinebrain_tmdb_movie(item, region)
-                releases.append(release)
-            
-            return releases
-        
-        async def fetch_tv():
-            data = await self.tmdb_client.discover_cinebrain_upcoming_tv(
-                region=region,
-                start_date=first_window.start_date,
-                end_date=first_window.end_date,
-                language=None,  # No language filter to get all
-                with_genres=genre_ids,
-                page=1
-            )
-            
-            releases = []
-            for item in data.get("results", [])[:20]:
-                release = await self._parse_cinebrain_tmdb_tv(item, region)
-                releases.append(release)
-            
-            return releases
-        
-        async def fetch_anime():
-            items = await self.anilist_client.get_cinebrain_upcoming_anime(
-                start_date=first_window.start_date,
-                end_date=first_window.end_date,
-                page=1
-            )
-            
-            releases = []
-            for item in items[:20]:
-                release = await self._parse_cinebrain_anilist_anime(item)
-                if release:
-                    releases.append(release)
-            
-            return releases
-        
-        # Execute all fetches in parallel
-        movies, tv_series, anime = await asyncio.gather(
-            fetch_movies(),
-            fetch_tv(),
-            fetch_anime()
+        telugu_lang = languages[0]
+        telugu_items = await self.tmdb_client.discover_movies(
+            region=region,
+            start_date=window.start_date,
+            end_date=window.end_date,
+            language=telugu_lang.iso_code,
+            with_genres=genre_ids,
+            sort_by="primary_release_date.desc,popularity.desc"
         )
         
-        all_releases["movies"] = movies
-        all_releases["tv_series"] = tv_series
-        all_releases["anime"] = anime
+        for item in telugu_items:
+            movie_id = f"cinebrain_movie_{item['id']}"
+            if movie_id not in seen_ids:
+                release = self._parse_tmdb_movie(item, region)
+                release.is_telugu_priority = True
+                releases.append(release)
+                seen_ids.add(movie_id)
         
-        return all_releases
+        for lang in languages[1:]:
+            items = await self.tmdb_client.discover_movies(
+                region=region,
+                start_date=window.start_date,
+                end_date=window.end_date,
+                language=lang.iso_code,
+                with_genres=genre_ids
+            )
+            
+            for item in items[:25]:
+                movie_id = f"cinebrain_movie_{item['id']}"
+                if movie_id not in seen_ids:
+                    release = self._parse_tmdb_movie(item, region)
+                    releases.append(release)
+                    seen_ids.add(movie_id)
+        
+        general_items = await self.tmdb_client.discover_movies(
+            region=region,
+            start_date=window.start_date,
+            end_date=window.end_date,
+            with_genres=genre_ids,
+            sort_by="primary_release_date.desc,popularity.desc"
+        )
+        
+        for item in general_items[:40]:
+            movie_id = f"cinebrain_movie_{item['id']}"
+            if movie_id not in seen_ids:
+                release = self._parse_tmdb_movie(item, region)
+                if self._is_telugu_content(item):
+                    release.is_telugu_priority = True
+                releases.append(release)
+                seen_ids.add(movie_id)
+        
+        return releases
     
-    def _sort_cinebrain_releases_telugu_first(self, releases: List[CinebrainUpcomingRelease]) -> List[CinebrainUpcomingRelease]:
-        return sorted(releases, key=lambda r: (
-            not r.is_telugu_priority,
-            r.language_priority,
-            r.release_date,
-            -r.popularity,
-            -r.vote_average
-        ))
-    
-    def _filter_cinebrain_releases(
+    async def _fetch_tv_for_window(
         self,
-        releases: List[CinebrainUpcomingRelease],
+        window: CineBrainReleaseWindow,
+        region: str,
+        languages: List[CineBrainLanguagePriority],
+        genre_filter: Optional[str] = None
+    ) -> List[CineBrainUpcomingRelease]:
+        releases = []
+        seen_ids = set()
+        
+        genre_ids = None
+        if genre_filter:
+            genre_id = self._get_genre_id_by_name(genre_filter)
+            if genre_id:
+                genre_ids = [genre_id]
+        
+        telugu_lang = languages[0]
+        telugu_items = await self.tmdb_client.discover_tv(
+            region=region,
+            start_date=window.start_date,
+            end_date=window.end_date,
+            language=telugu_lang.iso_code,
+            with_genres=genre_ids,
+            sort_by="first_air_date.desc,popularity.desc"
+        )
+        
+        for item in telugu_items:
+            tv_id = f"cinebrain_tv_{item['id']}"
+            if tv_id not in seen_ids:
+                release = self._parse_tmdb_tv(item, region)
+                release.is_telugu_priority = True
+                releases.append(release)
+                seen_ids.add(tv_id)
+        
+        for lang in languages[1:]:
+            items = await self.tmdb_client.discover_tv(
+                region=region,
+                start_date=window.start_date,
+                end_date=window.end_date,
+                language=lang.iso_code,
+                with_genres=genre_ids
+            )
+            
+            for item in items[:20]:
+                tv_id = f"cinebrain_tv_{item['id']}"
+                if tv_id not in seen_ids:
+                    release = self._parse_tmdb_tv(item, region)
+                    releases.append(release)
+                    seen_ids.add(tv_id)
+        
+        return releases
+    
+    async def _fetch_anime_for_window(
+        self,
+        window: CineBrainReleaseWindow
+    ) -> List[CineBrainUpcomingRelease]:
+        releases = []
+        
+        items = await self.anilist_client.get_upcoming_anime(
+            start_date=window.start_date,
+            end_date=window.end_date,
+            sort=["START_DATE_DESC", "POPULARITY_DESC"]
+        )
+        
+        for item in items:
+            release = self._parse_anilist_anime(item)
+            if release:
+                releases.append(release)
+        
+        return releases
+    
+    def _sort_releases_by_date_and_priority(self, releases: List[CineBrainUpcomingRelease]) -> List[CineBrainUpcomingRelease]:
+        telugu_releases = [r for r in releases if r.is_telugu_priority or r.language_priority == 1]
+        other_releases = [r for r in releases if not (r.is_telugu_priority or r.language_priority == 1)]
+        
+        telugu_sorted = sorted(
+            telugu_releases,
+            key=lambda r: (
+                r.release_date,
+                -r.cinebrain_score,
+                -r.popularity
+            )
+        )
+        
+        other_sorted = sorted(
+            other_releases,
+            key=lambda r: (
+                r.release_date,
+                r.language_priority,
+                -r.cinebrain_score,
+                -r.popularity
+            )
+        )
+        
+        return telugu_sorted + other_sorted
+    
+    def _filter_releases(
+        self,
+        releases: List[CineBrainUpcomingRelease],
         language_filter: Optional[str] = None,
         genre_filter: Optional[str] = None,
-        months_filter: Optional[int] = None
-    ) -> List[CinebrainUpcomingRelease]:
+        content_type_filter: Optional[str] = None,
+        specific_date: Optional[str] = None
+    ) -> List[CineBrainUpcomingRelease]:
         filtered = releases
         
-        if language_filter and language_filter.lower() != 'all':
-            if language_filter.lower() == 'telugu':
-                filtered = [r for r in filtered if r.is_telugu_content]
-            else:
-                lang_enum = LanguagePriority.get_by_name(language_filter)
-                if lang_enum:
-                    filtered = [r for r in filtered if lang_enum.iso_code in r.languages]
+        if language_filter:
+            filtered = [r for r in filtered if language_filter.lower() in [lang.lower() for lang in r.languages]]
         
-        if genre_filter and genre_filter.lower() not in ['all', 'any']:
-            filtered = [r for r in filtered if genre_filter.lower() in [g.lower() for g in r.genres]]
+        if genre_filter:
+            filtered = [r for r in filtered if genre_filter.lower() in [genre.lower() for genre in r.genres]]
         
-        if months_filter:
-            cutoff_date = datetime.now() + timedelta(days=months_filter * 30)
-            filtered = [r for r in filtered if r.release_date <= cutoff_date]
+        if content_type_filter:
+            filtered = [r for r in filtered if r.content_type.value == content_type_filter.lower()]
+        
+        if specific_date:
+            try:
+                target_date = datetime.strptime(specific_date, "%Y-%m-%d").date()
+                filtered = [r for r in filtered if r.release_date.date() == target_date]
+            except ValueError:
+                pass
         
         return filtered
     
-    def _generate_cinebrain_cache_key(
+    def _generate_cache_key(
         self,
         region: str,
         timezone_name: str,
-        content_type: str,
-        language: str,
-        genre: str,
-        months: int,
-        page: int,
-        limit: int
+        categories: List[str],
+        specific_month: Optional[int] = None,
+        language_filter: Optional[str] = None,
+        genre_filter: Optional[str] = None,
+        content_type_filter: Optional[str] = None,
+        specific_date: Optional[str] = None
     ) -> str:
         components = [
-            "cinebrain_upcoming_lazy_v1",
+            "cinebrain_upcoming",
             region,
             timezone_name,
-            content_type,
-            language,
-            genre,
-            str(months),
-            str(page),
-            str(limit),
+            "_".join(sorted(categories)),
+            str(specific_month) if specific_month else "all_months",
+            language_filter or "all_langs",
+            genre_filter or "all_genres",
+            content_type_filter or "all_types",
+            specific_date or "all_dates",
             datetime.now().strftime("%Y%m%d%H")
         ]
         key_string = ":".join(components)
         return hashlib.md5(key_string.encode()).hexdigest()
     
-    async def get_cinebrain_upcoming_releases_lazy(
+    async def get_upcoming_releases(
         self,
         region: str = "IN",
         timezone_name: str = "Asia/Kolkata",
-        content_type: str = "all",
-        language: str = "all",
-        genre: str = "all",
-        months: int = 3,
-        page: int = 1,
-        limit: int = 20,
-        use_cache: bool = True
+        categories: Optional[List[str]] = None,
+        specific_month: Optional[int] = None,
+        language_filter: Optional[str] = None,
+        genre_filter: Optional[str] = None,
+        content_type_filter: Optional[str] = None,
+        specific_date: Optional[str] = None,
+        use_cache: bool = True,
+        include_analytics: bool = True
     ) -> Dict[str, Any]:
-        months = max(1, min(3, months))
+        
+        if categories is None:
+            categories = ["movies", "tv", "anime"]
+        
+        self.enable_analytics = include_analytics
         
         if use_cache and self.cache:
-            cache_key = self._generate_cinebrain_cache_key(
-                region, timezone_name, content_type, language, genre, months, page, limit
+            cache_key = self._generate_cache_key(
+                region, timezone_name, categories, specific_month,
+                language_filter, genre_filter, content_type_filter, specific_date
             )
-            cached_data = await self._get_cinebrain_from_cache(cache_key)
+            cached_data = await self._get_from_cache(cache_key)
             if cached_data:
                 logger.info(f"CineBrain cache hit for upcoming releases: {cache_key}")
                 return cached_data
         
-        windows = self._get_cinebrain_flexible_release_windows(timezone_name, months)
-        genre_ids = self._filter_cinebrain_by_genre(genre)
-        priority_languages = LanguagePriority.get_priority_order()
+        windows = self._get_release_windows(timezone_name, specific_month)
+        if not windows:
+            return {"error": "CineBrain: No valid release windows"}
         
-        # For first page, fetch initial data
-        if page == 1:
-            all_releases = await self._fetch_initial_data(windows, region, genre_ids)
-        else:
-            # For subsequent pages, load from cache or fetch more
-            all_releases = await self._fetch_additional_data(
-                windows, region, genre_ids, page, content_type
-            )
+        priority_languages = CineBrainLanguagePriority.get_priority_order()
         
-        # Sort all releases with Telugu priority
-        for key in all_releases:
-            all_releases[key] = self._sort_cinebrain_releases_telugu_first(all_releases[key])
-        
-        # Apply filters
-        for key in all_releases:
-            all_releases[key] = self._filter_cinebrain_releases(
-                all_releases[key], language, genre, months
-            )
-        
-        # Paginate results
-        start_idx = (page - 1) * limit
-        end_idx = start_idx + limit
-        
-        paginated_releases = {
-            "movies": all_releases["movies"][start_idx:end_idx],
-            "tv_series": all_releases["tv_series"][start_idx:end_idx],
-            "anime": all_releases["anime"][start_idx:end_idx]
-        }
-        
-        # Calculate totals
-        total_movies = len(all_releases["movies"])
-        total_tv = len(all_releases["tv_series"])
-        total_anime = len(all_releases["anime"])
-        
-        total_content = total_movies + total_tv + total_anime
-        telugu_content = sum(
-            1 for releases in all_releases.values() 
-            for release in releases 
-            if release.is_telugu_content
-        )
-        
-        response = {
-            "movies": [r.to_dict() for r in paginated_releases["movies"]],
-            "tv_series": [r.to_dict() for r in paginated_releases["tv_series"]],
-            "anime": [r.to_dict() for r in paginated_releases["anime"]],
-            "pagination": {
-                "current_page": page,
-                "per_page": limit,
-                "total_movies": total_movies,
-                "total_tv_series": total_tv,
-                "total_anime": total_anime,
-                "total_items": total_content,
-                "has_more_movies": end_idx < total_movies,
-                "has_more_tv": end_idx < total_tv,
-                "has_more_anime": end_idx < total_anime,
-                "has_more": end_idx < total_content
-            },
+        results = {
+            "movies": [],
+            "tv_series": [],
+            "anime": [],
             "metadata": {
-                "cinebrain_service": "upcoming",
-                "cinebrain_brand": "CineBrain Entertainment Platform",
                 "region": region,
                 "timezone": timezone_name,
-                "content_type": content_type,
-                "language_filter": language,
-                "genre_filter": genre,
-                "months_ahead": months,
                 "windows": [
                     {
                         "label": w.month_label,
-                        "month_number": w.month_number,
                         "start": w.start_date.isoformat(),
                         "end": w.end_date.isoformat(),
-                        "is_current": w.is_current,
-                        "total_days": w.total_days
+                        "is_current": w.is_current
                     }
                     for w in windows
                 ],
-                "cinebrain_language_priority_order": [lang.language_name for lang in priority_languages],
-                "cinebrain_telugu_priority_enabled": True,
-                "generated_at": datetime.now(pytz.timezone(timezone_name)).isoformat()
-            },
-            "statistics": {
-                "total_movies": total_movies,
-                "total_tv_series": total_tv, 
-                "total_anime": total_anime,
-                "total_content": total_content,
-                "cinebrain_telugu_content_count": telugu_content,
-                "cinebrain_telugu_percentage": round((telugu_content / max(1, total_content)) * 100, 1),
-                "cache_used": False,
-                "cinebrain_fetch_time": datetime.now().isoformat()
-            },
-            "filters_applied": {
-                "content_type": content_type,
-                "language": language,
-                "genre": genre,
-                "months": months,
-                "region": region
-            },
-            "cinebrain_success": True
+                "language_priority": self.language_priorities,
+                "telugu_priority_enabled": True,
+                "cinebrain_service": "upcoming_releases",
+                "fetched_at": datetime.now(pytz.timezone(timezone_name)).isoformat(),
+                "filters_applied": {
+                    "specific_month": specific_month,
+                    "language": language_filter,
+                    "genre": genre_filter,
+                    "content_type": content_type_filter,
+                    "specific_date": specific_date
+                }
+            }
         }
+        
+        for window in windows:
+            tasks = []
+            
+            if "movies" in categories:
+                tasks.append(("movies", self._fetch_movies_for_window(
+                    window, region, priority_languages, genre_filter
+                )))
+            
+            if "tv" in categories:
+                tasks.append(("tv_series", self._fetch_tv_for_window(
+                    window, region, priority_languages, genre_filter
+                )))
+            
+            if "anime" in categories:
+                tasks.append(("anime", self._fetch_anime_for_window(window)))
+            
+            for category, task in tasks:
+                try:
+                    releases = await task
+                    results[category].extend(releases)
+                except Exception as e:
+                    logger.error(f"CineBrain error fetching {category}: {e}")
+        
+        results["movies"] = self._filter_releases(
+            results["movies"], language_filter, genre_filter, content_type_filter, specific_date
+        )
+        results["tv_series"] = self._filter_releases(
+            results["tv_series"], language_filter, genre_filter, content_type_filter, specific_date
+        )
+        results["anime"] = self._filter_releases(
+            results["anime"], language_filter, genre_filter, content_type_filter, specific_date
+        )
+        
+        results["movies"] = self._sort_releases_by_date_and_priority(results["movies"])
+        results["tv_series"] = self._sort_releases_by_date_and_priority(results["tv_series"])
+        results["anime"] = self._sort_releases_by_date_and_priority(results["anime"])
+        
+        telugu_movies = sum(1 for r in results["movies"] if r.is_telugu_priority)
+        telugu_tv = sum(1 for r in results["tv_series"] if r.is_telugu_priority)
+        
+        results["metadata"]["statistics"] = {
+            "total_movies": len(results["movies"]),
+            "total_tv_series": len(results["tv_series"]),
+            "total_anime": len(results["anime"]),
+            "telugu_movies": telugu_movies,
+            "telugu_tv_series": telugu_tv,
+            "telugu_percentage": round(
+                (telugu_movies + telugu_tv) / max(1, len(results["movies"]) + len(results["tv_series"])) * 100, 1
+            ),
+            "high_cinebrain_score_count": sum(
+                1 for r in results["movies"] + results["tv_series"] + results["anime"] 
+                if r.cinebrain_score >= 70
+            ),
+            "viral_buzz_count": sum(
+                1 for r in results["movies"] + results["tv_series"] + results["anime"] 
+                if r.buzz_level == "viral"
+            ),
+            "cache_used": False
+        }
+        
+        results["movies"] = [r.to_dict() for r in results["movies"]]
+        results["tv_series"] = [r.to_dict() for r in results["tv_series"]]
+        results["anime"] = [r.to_dict() for r in results["anime"]]
         
         if use_cache and self.cache:
-            cache_key = self._generate_cinebrain_cache_key(
-                region, timezone_name, content_type, language, genre, months, page, limit
+            cache_key = self._generate_cache_key(
+                region, timezone_name, categories, specific_month,
+                language_filter, genre_filter, content_type_filter, specific_date
             )
-            await self._save_cinebrain_to_cache(cache_key, response, ttl=900)  # 15 min cache
+            await self._save_to_cache(cache_key, results, ttl=3600)
         
-        return response
+        return results
     
-    async def _fetch_additional_data(
-        self,
-        windows: List[ReleaseWindow],
-        region: str,
-        genre_ids: Optional[List[int]],
-        page: int,
-        content_type: str
-    ) -> Dict[str, List[CinebrainUpcomingRelease]]:
-        """Fetch additional data for pagination"""
-        all_releases = {
-            "movies": [],
-            "tv_series": [],
-            "anime": []
-        }
-        
-        # Calculate which TMDB page to fetch based on our page
-        tmdb_page = ((page - 1) // 2) + 1
-        
-        window = windows[0]  # Use first window for now
-        
-        if content_type in ['all', 'movies']:
-            data = await self.tmdb_client.discover_cinebrain_upcoming_movies(
-                region=region,
-                start_date=window.start_date,
-                end_date=window.end_date,
-                language=None,
-                with_genres=genre_ids,
-                page=tmdb_page
-            )
-            
-            for item in data.get("results", []):
-                release = await self._parse_cinebrain_tmdb_movie(item, region)
-                all_releases["movies"].append(release)
-        
-        if content_type in ['all', 'tv']:
-            data = await self.tmdb_client.discover_cinebrain_upcoming_tv(
-                region=region,
-                start_date=window.start_date,
-                end_date=window.end_date,
-                language=None,
-                with_genres=genre_ids,
-                page=tmdb_page
-            )
-            
-            for item in data.get("results", []):
-                release = await self._parse_cinebrain_tmdb_tv(item, region)
-                all_releases["tv_series"].append(release)
-        
-        if content_type in ['all', 'anime'] and tmdb_page <= 2:
-            items = await self.anilist_client.get_cinebrain_upcoming_anime(
-                start_date=window.start_date,
-                end_date=window.end_date,
-                page=tmdb_page
-            )
-            
-            for item in items:
-                release = await self._parse_cinebrain_anilist_anime(item)
-                if release:
-                    all_releases["anime"].append(release)
-        
-        return all_releases
-    
-    async def _get_cinebrain_from_cache(self, key: str) -> Optional[Dict[str, Any]]:
+    async def _get_from_cache(self, key: str) -> Optional[Dict[str, Any]]:
         if not self.cache:
             return None
         
         try:
-            cached = self.cache.get(f"cinebrain_upcoming_lazy:{key}")
+            cached = self.cache.get(f"cinebrain_upcoming:{key}")
             if cached:
                 data = json.loads(cached) if isinstance(cached, str) else cached
-                if data and "statistics" in data:
-                    data["statistics"]["cache_used"] = True
+                if data and "metadata" in data:
+                    data["metadata"]["statistics"]["cache_used"] = True
                 return data
         except Exception as e:
             logger.error(f"CineBrain cache retrieval error: {e}")
         
         return None
     
-    async def _save_cinebrain_to_cache(self, key: str, data: Dict[str, Any], ttl: int = 900):
+    async def _save_to_cache(self, key: str, data: Dict[str, Any], ttl: int = 3600):
         if not self.cache:
             return
         
         try:
             self.cache.set(
-                f"cinebrain_upcoming_lazy:{key}",
+                f"cinebrain_upcoming:{key}",
                 json.dumps(data, default=str),
                 timeout=ttl
             )
-            logger.info(f"CineBrain cached upcoming releases: cinebrain_upcoming_lazy:{key}")
+            logger.info(f"CineBrain cached upcoming releases: cinebrain_upcoming:{key}")
         except Exception as e:
             logger.error(f"CineBrain cache save error: {e}")
     
     async def close(self):
         if self.http_client:
             await self.http_client.aclose()
+
+
+def init_cinebrain_upcoming_service(app, cache_backend, tmdb_api_key):
+    try:
+        service = CineBrainUpcomingContentService(
+            tmdb_api_key=tmdb_api_key,
+            cache_backend=cache_backend,
+            enable_analytics=True
+        )
+        
+        app._cinebrain_upcoming_service = service
+        logger.info("CineBrain upcoming content service initialized successfully")
+        return service
+        
+    except Exception as e:
+        logger.error(f"CineBrain upcoming service initialization error: {e}")
+        return None

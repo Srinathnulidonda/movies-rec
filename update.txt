@@ -6,4 +6,5 @@ make sure that the upcoming 3 months releasing content should be shown when the 
 
 edit the endpoint so that it can perform all the several things through only single endpoint 
 like 1 month data, 2 months, 3 months, genre, language, type and other all things 
-use the slug
+
+provide me without comments instead of other names use my brand name cinebrain
