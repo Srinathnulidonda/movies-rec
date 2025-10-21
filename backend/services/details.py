@@ -2836,41 +2836,175 @@ class DetailsService:
             logger.error(f"Error getting trailer: {e}")
             return None
     
-    def _build_synopsis(self, content: Any, tmdb_data: Dict, omdb_data: Dict) -> Dict:
+    def _get_trailer(self, title: str, content_type: str) -> Optional[Dict]:
         try:
-            synopsis = {
-                'overview': content.overview or tmdb_data.get('overview', ''),
-                'plot': omdb_data.get('Plot', content.overview or ''),
-                'tagline': tmdb_data.get('tagline', ''),
-                'content_warnings': [],
-                'themes': [],
-                'keywords': []
+            if not YOUTUBE_API_KEY:
+                return None
+            
+            search_query = f"{title} official trailer"
+            if content_type == 'anime':
+                search_query = f"{title} anime trailer PV"
+            
+            url = f"{YOUTUBE_BASE_URL}/search"
+            params = {
+                'key': YOUTUBE_API_KEY,
+                'q': search_query,
+                'part': 'snippet',
+                'type': 'video',
+                'maxResults': 5,
+                'order': 'relevance'
             }
             
-            if tmdb_data.get('content_ratings'):
-                ratings = tmdb_data['content_ratings'].get('results', [])
-                us_rating = next((r for r in ratings if r['iso_3166_1'] == 'US'), None)
-                if us_rating:
-                    synopsis['content_warnings'].append({
-                        'rating': us_rating.get('rating'),
-                        'descriptors': us_rating.get('descriptors', [])
-                    })
+            response = self.session.get(url, params=params, timeout=8)
             
-            if tmdb_data.get('keywords'):
-                keywords = tmdb_data['keywords'].get('keywords', []) or tmdb_data['keywords'].get('results', [])
-                synopsis['keywords'] = [kw['name'] for kw in keywords[:15]]
+            if response.status_code == 200:
+                data = response.json()
+                if data.get('items'):
+                    video = data['items'][0]
+                    return {
+                        'youtube_id': video['id']['videoId'],
+                        'title': video['snippet']['title'],
+                        'thumbnail': video['snippet']['thumbnails']['high']['url'],
+                        'embed_url': f"https://www.youtube.com/embed/{video['id']['videoId']}",
+                        'watch_url': f"https://www.youtube.com/watch?v={video['id']['videoId']}"
+                    }
             
-            return synopsis
+            return None
+            
         except Exception as e:
-            logger.error(f"Error building synopsis: {e}")
-            return {
-                'overview': getattr(content, 'overview', ''),
-                'plot': '',
-                'tagline': '',
-                'content_warnings': [],
-                'themes': [],
-                'keywords': []
+            logger.error(f"Error getting trailer: {e}")
+            return None
+    def _get_trailer_enhanced(self, content: Any) -> Optional[Dict]:
+        """Enhanced trailer fetching with multiple fallback strategies"""
+        try:
+            # Strategy 1: Check if content already has trailer info
+            if content.youtube_trailer_id:
+                return {
+                    'youtube_id': content.youtube_trailer_id,
+                    'title': f"{content.title} - Trailer",
+                    'embed_url': f"https://www.youtube.com/embed/{content.youtube_trailer_id}",
+                    'watch_url': f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
+                }
+            
+            # Strategy 2: Check TMDB for trailer videos
+            if content.tmdb_id and TMDB_API_KEY:
+                tmdb_trailers = self._fetch_tmdb_trailers(content.tmdb_id, content.content_type)
+                if tmdb_trailers:
+                    return tmdb_trailers
+            
+            # Strategy 3: YouTube search with multiple query variations
+            title = content.title
+            year = content.release_date.year if content.release_date else None
+            
+            search_queries = [
+                f"{title} official trailer",
+                f"{title} trailer {year}" if year else f"{title} trailer",
+                f"{title} movie trailer" if content.content_type == 'movie' else f"{title} tv trailer",
+                f"{title} {year} trailer" if year else title
+            ]
+            
+            if content.content_type == 'anime':
+                search_queries.extend([
+                    f"{title} anime trailer",
+                    f"{title} PV",
+                    f"{title} promotional video"
+                ])
+            
+            for query in search_queries:
+                trailer = self._search_youtube_trailer(query)
+                if trailer:
+                    # Save the trailer ID to content for future use
+                    try:
+                        content.youtube_trailer_id = trailer['youtube_id']
+                        self.db.session.commit()
+                    except Exception as e:
+                        logger.warning(f"Failed to save trailer ID: {e}")
+                    
+                    return trailer
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error getting enhanced trailer: {e}")
+            return None
+
+    def _fetch_tmdb_trailers(self, tmdb_id: int, content_type: str) -> Optional[Dict]:
+        """Fetch trailers from TMDB videos endpoint"""
+        try:
+            endpoint = 'movie' if content_type == 'movie' else 'tv'
+            url = f"{TMDB_BASE_URL}/{endpoint}/{tmdb_id}/videos"
+            
+            params = {
+                'api_key': TMDB_API_KEY
             }
+            
+            response = self.session.get(url, params=params, timeout=8)
+            
+            if response.status_code == 200:
+                data = response.json()
+                
+                # Look for official trailers
+                for video in data.get('results', []):
+                    if (video.get('site') == 'YouTube' and 
+                        video.get('type') in ['Trailer', 'Teaser'] and
+                        video.get('official', False)):
+                        
+                        return {
+                            'youtube_id': video['key'],
+                            'title': video['name'],
+                            'embed_url': f"https://www.youtube.com/embed/{video['key']}",
+                            'watch_url': f"https://www.youtube.com/watch?v={video['key']}"
+                        }
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error fetching TMDB trailers: {e}")
+            return None
+
+    def _search_youtube_trailer(self, query: str) -> Optional[Dict]:
+        """Search YouTube for trailers with better filtering"""
+        try:
+            if not YOUTUBE_API_KEY:
+                return None
+            
+            url = f"{YOUTUBE_BASE_URL}/search"
+            params = {
+                'key': YOUTUBE_API_KEY,
+                'q': query,
+                'part': 'snippet',
+                'type': 'video',
+                'maxResults': 10,  # Get more results for better filtering
+                'order': 'relevance',
+                'videoDuration': 'medium',  # Filter out very short/long videos
+                'videoDefinition': 'any'
+            }
+            
+            response = self.session.get(url, params=params, timeout=8)
+            
+            if response.status_code == 200:
+                data = response.json()
+                
+                # Filter results for actual trailers
+                for video in data.get('items', []):
+                    title = video['snippet']['title'].lower()
+                    
+                    # Look for trailer keywords
+                    trailer_keywords = ['trailer', 'official trailer', 'teaser', 'official teaser']
+                    if any(keyword in title for keyword in trailer_keywords):
+                        return {
+                            'youtube_id': video['id']['videoId'],
+                            'title': video['snippet']['title'],
+                            'thumbnail': video['snippet']['thumbnails'].get('high', {}).get('url'),
+                            'embed_url': f"https://www.youtube.com/embed/{video['id']['videoId']}",
+                            'watch_url': f"https://www.youtube.com/watch?v={video['id']['videoId']}"
+                        }
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error searching YouTube trailer: {e}")
+            return None
     
     def _build_ratings(self, content: Any, tmdb_data: Dict, omdb_data: Dict) -> Dict:
         try:
