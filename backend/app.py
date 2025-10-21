@@ -26,7 +26,7 @@ import redis
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from flask_mail import Mail
-from services.upcoming import CineBrainUpcomingContentService, ContentType, CineBrainLanguagePriority
+from services.upcoming import UpcomingContentService, ContentType, LanguagePriority
 import asyncio
 from services.auth import auth_bp, init_auth
 from services.admin import admin_bp, init_admin
@@ -1426,7 +1426,7 @@ async def get_upcoming_releases():
         if len(region) != 2:
             return jsonify({'error': 'Invalid region code for CineBrain'}), 400
         
-        service = CineBrainUpcomingContentService(
+        service = UpcomingContentService(
             tmdb_api_key=TMDB_API_KEY,
             cache_backend=cache,
             enable_analytics=include_analytics
@@ -1477,7 +1477,7 @@ def get_upcoming_releases_sync():
         asyncio.set_event_loop(loop)
         
         try:
-            service = CineBrainUpcomingContentService(
+            service = UpcomingContentService(
                 tmdb_api_key=TMDB_API_KEY,
                 cache_backend=cache,
                 enable_analytics=include_analytics
@@ -2199,8 +2199,7 @@ def health_check():
             'admin_notifications': 'cinebrain_enabled',
             'monitoring': 'cinebrain_active',
             'auth_service': 'enabled' if 'auth_bp' in app.blueprints else 'disabled',
-            'users_service': 'enabled' if 'users_bp' in app.blueprints else 'disabled',
-            'upcoming_service': 'cinebrain_enabled'
+            'users_service': 'enabled' if 'users_bp' in app.blueprints else 'disabled'
         }
         
         try:
@@ -2259,8 +2258,7 @@ def health_check():
                 'cinebrain_auth_service_enhanced',
                 'cinebrain_users_service_personalized',
                 'cinebrain_new_releases_service',
-                'cinebrain_enhanced_critics_choice_service',
-                'cinebrain_upcoming_releases_service'
+                'cinebrain_enhanced_critics_choice_service'
             ],
             'memory_optimizations': 'cinebrain_enabled',
             'unicode_fixes': 'cinebrain_applied',
@@ -2384,6 +2382,7 @@ def create_tables():
         with app.app_context():
             db.create_all()
             
+            # Check if admin exists
             admin = User.query.filter_by(username='admin').first()
             if not admin:
                 print("Creating CineBrain admin user...")
@@ -2405,6 +2404,7 @@ def create_tables():
                 print(f"Admin email: {admin.email}")
                 print(f"Password hash exists: {bool(admin.password_hash)}")
             
+            # Test password verification
             test_check = check_password_hash(admin.password_hash, 'admin123')
             print(f"Password verification test: {test_check}")
             
@@ -2417,12 +2417,12 @@ def create_tables():
 create_tables()
 
 if __name__ == '__main__':
-    print("=== Running CineBrain Flask in development mode with Enhanced Upcoming Releases ===")
+    print("=== Running CineBrain Flask in development mode with Enhanced Critics Choice ===")
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('FLASK_ENV') == 'development'
     app.run(host='0.0.0', port=port, debug=debug)
 else:
-    print("=== CineBrain Flask app imported by Gunicorn - ENHANCED UPCOMING RELEASES VERSION ===")
+    print("=== CineBrain Flask app imported by Gunicorn - ENHANCED CRITICS CHOICE VERSION ===")
     print(f"App name: {app.name}")
     print(f"Python version: 3.13.4")
     print(f"CineBrain brand: CineBrain Entertainment Platform")
@@ -2435,19 +2435,18 @@ else:
     print(f"CineBrain support service status: {'Integrated' if 'support_bp' in app.blueprints else 'Not integrated'}")
     print(f"CineBrain auth service status: {'Integrated' if 'auth_bp' in app.blueprints else 'Not integrated'}")
     print(f"CineBrain users service status: {'Integrated' if 'users_bp' in app.blueprints else 'Not integrated'}")
-    print(f"CineBrain upcoming releases service status: {'Enhanced and Integrated' if CineBrainUpcomingContentService else 'Not integrated'}")
     
-    print("\n=== CineBrain Enhanced Upcoming Releases Features ===")
-    print("✅ Telugu-first priority system with enhanced detection")
-    print("✅ 3-month accurate upcoming content window")
-    print("✅ Multi-source integration (TMDb, AniList)")
-    print("✅ Release date based sorting and filtering")
-    print("✅ Advanced anticipation scoring algorithm")
-    print("✅ Region and timezone aware content fetching")
-    print("✅ Language priority: Telugu → English → Hindi → Malayalam → Kannada → Tamil")
-    print("✅ Comprehensive caching with hourly refresh")
-    print("✅ Analytics and buzz level detection")
-    print("✅ Async/await performance optimization")
+    print("\n=== CineBrain Enhanced Critics Choice Features ===")
+    print("✅ Multi-source critics aggregation (TMDB, OMDb, Jikan)")
+    print("✅ Advanced scoring algorithm with weighted factors")
+    print("✅ Support for movies, TV shows, and anime")
+    print("✅ Genre, language, and time period filtering")
+    print("✅ Telugu content prioritization")
+    print("✅ Diversity enforcement for balanced recommendations")
+    print("✅ Metacritic, IMDB, and Rotten Tomatoes integration")
+    print("✅ Award recognition and bonus scoring")
+    print("✅ Comprehensive metadata and analytics")
+    print("✅ Performance caching and error handling")
     
     print(f"\n=== CineBrain Registered Routes ===")
     for rule in app.url_map.iter_rules():
