@@ -87,7 +87,7 @@ class UpcomingRelease:
     
     # Enhanced accuracy fields
     confirmed_release_date: bool = False
-    release_status: str = "upcoming"  # upcoming, delayed, cancelled, released
+    release_status: str = "upcoming"
     exact_release_time: Optional[str] = None
     cinema_release: bool = False
     ott_release: bool = False
@@ -116,7 +116,7 @@ class UpcomingRelease:
     release_quarter: str = ""
     
     # Accuracy metrics
-    data_confidence: float = 0.0  # 0.0 to 1.0
+    data_confidence: float = 0.0
     last_updated: datetime = field(default_factory=datetime.now)
     
     def __post_init__(self):
@@ -201,11 +201,18 @@ class UpcomingRelease:
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization with accuracy info"""
         data = asdict(self)
-        # Convert datetime to ISO format
+        # Convert datetime to ISO format - ensure naive datetime
         if self.release_date:
-            data['release_date'] = self.release_date.isoformat()
+            if self.release_date.tzinfo is not None:
+                # Convert to naive datetime
+                data['release_date'] = self.release_date.replace(tzinfo=None).isoformat()
+            else:
+                data['release_date'] = self.release_date.isoformat()
         if self.last_updated:
-            data['last_updated'] = self.last_updated.isoformat()
+            if self.last_updated.tzinfo is not None:
+                data['last_updated'] = self.last_updated.replace(tzinfo=None).isoformat()
+            else:
+                data['last_updated'] = self.last_updated.isoformat()
         # Convert enum to string
         data['content_type'] = self.content_type.value
         return data
@@ -275,235 +282,163 @@ class AccurateTeluguDetector:
         return is_telugu, confidence_factors
 
 
-class AccurateTMDbClient:
-    """Enhanced TMDb API client with 100% accuracy focus"""
+class OptimizedTMDbClient:
+    """Optimized TMDb API client with better timeout handling"""
     
     BASE_URL = "https://api.themoviedb.org/3"
     
     def __init__(self, api_key: str, http_client: Optional[httpx.AsyncClient] = None):
         self.api_key = api_key
-        self.http_client = http_client or httpx.AsyncClient(timeout=15.0)
+        self.http_client = http_client or httpx.AsyncClient(timeout=8.0)
         self.telugu_detector = AccurateTeluguDetector()
     
-    async def get_upcoming_movies_accurate(
+    async def get_upcoming_movies_optimized(
         self,
         region: str,
         start_date: datetime,
         end_date: datetime,
-        language: Optional[str] = None
+        max_results: int = 60
     ) -> List[Dict[str, Any]]:
-        """Get upcoming movies with 100% accuracy"""
+        """Get upcoming movies with optimized API calls"""
         all_results = []
         
-        # Multiple discovery methods for maximum accuracy
-        discovery_methods = [
-            {
-                "endpoint": "discover/movie",
-                "params": {
-                    "primary_release_date.gte": start_date.strftime("%Y-%m-%d"),
-                    "primary_release_date.lte": end_date.strftime("%Y-%m-%d"),
-                    "region": region,
-                    "sort_by": "primary_release_date.asc",
-                    "with_release_type": "2|3",  # Theatrical and limited
-                }
-            },
-            {
-                "endpoint": "movie/upcoming",
-                "params": {
-                    "region": region,
-                }
-            }
-        ]
+        # Convert to naive datetime strings for API
+        start_str = start_date.strftime("%Y-%m-%d")
+        end_str = end_date.strftime("%Y-%m-%d")
         
-        if language and language != 'xx':
-            discovery_methods[0]["params"]["with_original_language"] = language
+        # Single optimized discovery call
+        params = {
+            "api_key": self.api_key,
+            "primary_release_date.gte": start_str,
+            "primary_release_date.lte": end_str,
+            "region": region,
+            "sort_by": "primary_release_date.asc,popularity.desc",
+            "with_release_type": "2|3|4|5",
+            "include_adult": False,
+            "page": 1
+        }
         
-        for method in discovery_methods:
-            try:
-                # Fetch multiple pages for completeness
-                for page in range(1, 6):  # Up to 5 pages for accuracy
-                    params = {
-                        "api_key": self.api_key,
-                        "page": page,
-                        **method["params"]
-                    }
-                    
-                    response = await self.http_client.get(
-                        f"{self.BASE_URL}/{method['endpoint']}",
-                        params=params
-                    )
-                    
-                    if response.status_code == 200:
-                        data = response.json()
-                        results = data.get("results", [])
-                        
-                        # Filter by date range for accuracy
-                        filtered_results = []
-                        for movie in results:
-                            release_date_str = movie.get("release_date", "")
-                            if release_date_str:
-                                try:
-                                    release_date = datetime.strptime(release_date_str, "%Y-%m-%d")
-                                    if start_date <= release_date <= end_date:
-                                        filtered_results.append(movie)
-                                except ValueError:
-                                    continue
-                        
-                        all_results.extend(filtered_results)
-                        
-                        # Stop if no more pages
-                        if not results or page >= data.get("total_pages", 1):
-                            break
-                    else:
-                        logger.warning(f"TMDb API error: {response.status_code}")
-                        
-            except Exception as e:
-                logger.error(f"TMDb movie fetch error: {e}")
-                continue
-        
-        # Remove duplicates based on ID
-        seen_ids = set()
-        unique_results = []
-        for movie in all_results:
-            movie_id = movie.get("id")
-            if movie_id and movie_id not in seen_ids:
-                seen_ids.add(movie_id)
-                unique_results.append(movie)
-        
-        return unique_results
-    
-    async def get_upcoming_tv_accurate(
-        self,
-        region: str,
-        start_date: datetime,
-        end_date: datetime,
-        language: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
-        """Get upcoming TV shows with 100% accuracy"""
-        all_results = []
-        
-        discovery_methods = [
-            {
-                "endpoint": "discover/tv",
-                "params": {
-                    "first_air_date.gte": start_date.strftime("%Y-%m-%d"),
-                    "first_air_date.lte": end_date.strftime("%Y-%m-%d"),
-                    "watch_region": region,
-                    "sort_by": "first_air_date.asc",
-                }
-            },
-            {
-                "endpoint": "tv/airing_today",
-                "params": {}
-            },
-            {
-                "endpoint": "tv/on_the_air",
-                "params": {}
-            }
-        ]
-        
-        if language and language != 'xx':
-            discovery_methods[0]["params"]["with_original_language"] = language
-        
-        for method in discovery_methods:
-            try:
-                for page in range(1, 4):  # Up to 3 pages
-                    params = {
-                        "api_key": self.api_key,
-                        "page": page,
-                        **method["params"]
-                    }
-                    
-                    response = await self.http_client.get(
-                        f"{self.BASE_URL}/{method['endpoint']}",
-                        params=params
-                    )
-                    
-                    if response.status_code == 200:
-                        data = response.json()
-                        results = data.get("results", [])
-                        
-                        # Filter by date range
-                        filtered_results = []
-                        for show in results:
-                            air_date_str = show.get("first_air_date", "")
-                            if air_date_str:
-                                try:
-                                    air_date = datetime.strptime(air_date_str, "%Y-%m-%d")
-                                    if start_date <= air_date <= end_date:
-                                        filtered_results.append(show)
-                                except ValueError:
-                                    continue
-                        
-                        all_results.extend(filtered_results)
-                        
-                        if not results or page >= data.get("total_pages", 1):
-                            break
-                            
-            except Exception as e:
-                logger.error(f"TMDb TV fetch error: {e}")
-                continue
-        
-        # Remove duplicates
-        seen_ids = set()
-        unique_results = []
-        for show in all_results:
-            show_id = show.get("id")
-            if show_id and show_id not in seen_ids:
-                seen_ids.add(show_id)
-                unique_results.append(show)
-        
-        return unique_results
-    
-    async def get_detailed_info(self, content_id: int, content_type: str) -> Dict[str, Any]:
-        """Get detailed information for enhanced accuracy"""
         try:
+            # Fetch first 2 pages only for performance
+            for page in range(1, 3):
+                params["page"] = page
+                
+                response = await self.http_client.get(
+                    f"{self.BASE_URL}/discover/movie",
+                    params=params
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    results = data.get("results", [])
+                    
+                    # Filter by exact date range (all datetimes are naive now)
+                    filtered_results = []
+                    for movie in results:
+                        release_date_str = movie.get("release_date", "")
+                        if release_date_str:
+                            try:
+                                # Parse as naive datetime
+                                release_date = datetime.strptime(release_date_str, "%Y-%m-%d")
+                                # Compare naive datetimes
+                                if start_date.replace(tzinfo=None) <= release_date <= end_date.replace(tzinfo=None):
+                                    filtered_results.append(movie)
+                            except ValueError:
+                                continue
+                    
+                    all_results.extend(filtered_results)
+                    
+                    if len(all_results) >= max_results:
+                        break
+                        
+                    if not results or page >= data.get("total_pages", 1):
+                        break
+                else:
+                    logger.warning(f"TMDb API error: {response.status_code}")
+                    
+        except Exception as e:
+            logger.error(f"TMDb movie fetch error: {e}")
+        
+        return all_results[:max_results]
+    
+    async def get_upcoming_tv_optimized(
+        self,
+        region: str,
+        start_date: datetime,
+        end_date: datetime,
+        max_results: int = 40
+    ) -> List[Dict[str, Any]]:
+        """Get upcoming TV shows with optimized API calls"""
+        all_results = []
+        
+        # Convert to naive datetime strings
+        start_str = start_date.strftime("%Y-%m-%d")
+        end_str = end_date.strftime("%Y-%m-%d")
+        
+        params = {
+            "api_key": self.api_key,
+            "first_air_date.gte": start_str,
+            "first_air_date.lte": end_str,
+            "watch_region": region,
+            "sort_by": "first_air_date.asc,popularity.desc",
+            "include_adult": False,
+            "page": 1
+        }
+        
+        try:
+            # Single page for TV shows
             response = await self.http_client.get(
-                f"{self.BASE_URL}/{content_type}/{content_id}",
-                params={
-                    "api_key": self.api_key,
-                    "append_to_response": "credits,videos,release_dates,content_ratings,production_companies"
-                }
+                f"{self.BASE_URL}/discover/tv",
+                params=params
             )
             
             if response.status_code == 200:
-                return response.json()
+                data = response.json()
+                results = data.get("results", [])
+                
+                # Filter by date range
+                for show in results:
+                    air_date_str = show.get("first_air_date", "")
+                    if air_date_str:
+                        try:
+                            air_date = datetime.strptime(air_date_str, "%Y-%m-%d")
+                            if start_date.replace(tzinfo=None) <= air_date <= end_date.replace(tzinfo=None):
+                                all_results.append(show)
+                        except ValueError:
+                            continue
+                            
         except Exception as e:
-            logger.error(f"TMDb detailed info error: {e}")
+            logger.error(f"TMDb TV fetch error: {e}")
         
-        return {}
+        return all_results[:max_results]
 
 
-class AccurateAniListClient:
-    """Enhanced AniList client for accurate anime data"""
+class OptimizedAniListClient:
+    """Optimized AniList client for better performance"""
     
     BASE_URL = "https://graphql.anilist.co"
     
     def __init__(self, http_client: Optional[httpx.AsyncClient] = None):
-        self.http_client = http_client or httpx.AsyncClient(timeout=15.0)
+        self.http_client = http_client or httpx.AsyncClient(timeout=8.0)
     
-    def _build_accurate_upcoming_query(self) -> str:
-        """Build accurate GraphQL query for upcoming anime"""
+    def _build_optimized_query(self) -> str:
+        """Build optimized GraphQL query"""
         return """
-        query ($startDate: Int, $endDate: Int, $page: Int, $sort: [MediaSort]) {
-            Page(page: $page, perPage: 50) {
+        query ($startDate: Int, $endDate: Int, $page: Int) {
+            Page(page: $page, perPage: 30) {
                 pageInfo {
-                    total
-                    currentPage
-                    lastPage
                     hasNextPage
                 }
                 media(
                     type: ANIME
-                    format_in: [TV, TV_SHORT, ONA, OVA, MOVIE, SPECIAL]
+                    format_in: [TV, TV_SHORT, ONA, OVA, MOVIE]
                     startDate_greater: $startDate
                     startDate_lesser: $endDate
-                    sort: $sort
+                    sort: [START_DATE_DESC, POPULARITY_DESC]
                     isAdult: false
                     status_in: [NOT_YET_RELEASED, RELEASING]
                 ) {
                     id
-                    idMal
                     title {
                         romaji
                         english
@@ -514,44 +449,23 @@ class AccurateAniListClient:
                         month
                         day
                     }
-                    endDate {
-                        year
-                        month
-                        day
-                    }
-                    episodes
-                    duration
-                    status
-                    season
-                    seasonYear
                     format
                     genres
                     popularity
                     averageScore
                     favourites
-                    trending
                     coverImage {
                         large
-                        medium
-                        extraLarge
                     }
                     bannerImage
                     description(asHtml: false)
-                    countryOfOrigin
-                    source
-                    hashtag
-                    trailer {
-                        id
-                        site
-                        thumbnail
-                    }
                     studios {
                         nodes {
                             name
                             isAnimationStudio
                         }
                     }
-                    staff {
+                    staff(sort: [ROLE, RELEVANCE]) {
                         edges {
                             role
                             node {
@@ -561,114 +475,78 @@ class AccurateAniListClient:
                             }
                         }
                     }
-                    nextAiringEpisode {
-                        airingAt
-                        timeUntilAiring
-                        episode
-                    }
-                    streamingEpisodes {
-                        title
-                        thumbnail
-                        url
-                        site
-                    }
                 }
             }
         }
         """
     
-    async def get_upcoming_anime_accurate(
+    async def get_upcoming_anime_optimized(
         self,
         start_date: datetime,
-        end_date: datetime
+        end_date: datetime,
+        max_results: int = 30
     ) -> List[Dict[str, Any]]:
-        """Get upcoming anime with enhanced accuracy"""
+        """Get upcoming anime with optimized query"""
         # Convert to AniList date format
         start_int = int(start_date.strftime("%Y%m%d"))
         end_int = int(end_date.strftime("%Y%m%d"))
         
-        all_results = []
+        variables = {
+            "startDate": start_int,
+            "endDate": end_int,
+            "page": 1
+        }
         
-        # Multiple sort orders for comprehensive coverage
-        sort_orders = [
-            ["START_DATE_DESC", "POPULARITY_DESC"],
-            ["POPULARITY_DESC", "START_DATE_DESC"],
-            ["TRENDING_DESC", "START_DATE_DESC"]
-        ]
-        
-        for sort_order in sort_orders:
-            try:
-                variables = {
-                    "startDate": start_int,
-                    "endDate": end_int,
-                    "page": 1,
-                    "sort": sort_order
+        try:
+            response = await self.http_client.post(
+                self.BASE_URL,
+                json={
+                    "query": self._build_optimized_query(),
+                    "variables": variables
+                },
+                headers={
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
                 }
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
                 
-                # Fetch multiple pages
-                for page in range(1, 4):
-                    variables["page"] = page
-                    
-                    response = await self.http_client.post(
-                        self.BASE_URL,
-                        json={
-                            "query": self._build_accurate_upcoming_query(),
-                            "variables": variables
-                        },
-                        headers={
-                            "Content-Type": "application/json",
-                            "Accept": "application/json",
-                        }
-                    )
-                    
-                    if response.status_code == 200:
-                        data = response.json()
-                        
-                        if "errors" in data:
-                            logger.error(f"AniList GraphQL errors: {data['errors']}")
-                            break
-                        
-                        results = data.get("data", {}).get("Page", {}).get("media", [])
-                        all_results.extend(results)
-                        
-                        page_info = data.get("data", {}).get("Page", {}).get("pageInfo", {})
-                        if not page_info.get("hasNextPage", False):
-                            break
+                if "errors" in data:
+                    logger.error(f"AniList GraphQL errors: {data['errors']}")
+                    return []
                 
-            except Exception as e:
-                logger.error(f"AniList fetch error with sort {sort_order}: {e}")
-                continue
+                results = data.get("data", {}).get("Page", {}).get("media", [])
+                
+                # Validate dates
+                valid_results = []
+                for anime in results:
+                    start_date_info = anime.get("startDate", {})
+                    if start_date_info and start_date_info.get("year"):
+                        try:
+                            anime_start = datetime(
+                                start_date_info.get("year"),
+                                start_date_info.get("month", 1),
+                                start_date_info.get("day", 1)
+                            )
+                            
+                            if start_date.replace(tzinfo=None) <= anime_start <= end_date.replace(tzinfo=None):
+                                valid_results.append(anime)
+                        except ValueError:
+                            continue
+                
+                return valid_results[:max_results]
+                
+        except Exception as e:
+            logger.error(f"AniList fetch error: {e}")
         
-        # Remove duplicates and validate date ranges
-        seen_ids = set()
-        valid_results = []
-        
-        for anime in all_results:
-            anime_id = anime.get("id")
-            if anime_id and anime_id not in seen_ids:
-                # Validate start date
-                start_date_info = anime.get("startDate", {})
-                if start_date_info and start_date_info.get("year"):
-                    try:
-                        anime_start = datetime(
-                            start_date_info.get("year"),
-                            start_date_info.get("month", 1),
-                            start_date_info.get("day", 1)
-                        )
-                        
-                        if start_date <= anime_start <= end_date:
-                            seen_ids.add(anime_id)
-                            valid_results.append(anime)
-                    except ValueError:
-                        continue
-        
-        return valid_results
+        return []
 
 
-class AccurateUpcomingContentService:
+class OptimizedUpcomingContentService:
     """
-    Production-grade service for 100% accurate upcoming releases
-    with strict Telugu priority and 3-month window
+    Optimized service for fast upcoming releases with Telugu priority
     """
     
     def __init__(
@@ -678,30 +556,27 @@ class AccurateUpcomingContentService:
         http_client: Optional[httpx.AsyncClient] = None,
         enable_analytics: bool = True
     ):
-        self.tmdb_client = AccurateTMDbClient(tmdb_api_key, http_client)
-        self.anilist_client = AccurateAniListClient(http_client)
+        self.tmdb_client = OptimizedTMDbClient(tmdb_api_key, http_client)
+        self.anilist_client = OptimizedAniListClient(http_client)
         self.cache = cache_backend
-        self.http_client = http_client or httpx.AsyncClient(timeout=15.0)
+        self.http_client = http_client or httpx.AsyncClient(timeout=8.0)
         self.enable_analytics = enable_analytics
         self.telugu_detector = AccurateTeluguDetector()
     
     def _get_accurate_release_windows(self, user_timezone: str) -> List[ReleaseWindow]:
-        """
-        Get accurate 3-month release windows from current date
-        """
+        """Get accurate 3-month release windows"""
         try:
             tz = pytz.timezone(user_timezone)
         except pytz.UnknownTimeZoneError:
             logger.warning(f"Unknown timezone {user_timezone}, using UTC")
             tz = pytz.UTC
         
-        now = datetime.now(tz)
+        # Get current time in timezone and convert to naive
+        now = datetime.now(tz).replace(tzinfo=None)
         
-        # Start from current date, go for next 3 months
         windows = []
         
         for month_offset in range(3):
-            # Calculate start and end of month
             if month_offset == 0:
                 # Current month: from today
                 month_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -729,9 +604,9 @@ class AccurateUpcomingContentService:
         
         return windows
     
-    def _parse_accurate_movie(self, item: Dict[str, Any], region: str, detailed_info: Dict[str, Any] = None) -> UpcomingRelease:
-        """Parse movie data with 100% accuracy"""
-        # Enhanced release date parsing
+    def _parse_movie_optimized(self, item: Dict[str, Any], region: str) -> UpcomingRelease:
+        """Parse movie data with optimized processing"""
+        # Parse release date
         release_date_str = item.get("release_date", "")
         confirmed_date = False
         
@@ -739,12 +614,11 @@ class AccurateUpcomingContentService:
             release_date = datetime.strptime(release_date_str, "%Y-%m-%d")
             confirmed_date = True
         except (ValueError, TypeError):
-            # Fallback to estimated date
             release_date = datetime.now() + timedelta(days=30)
             confirmed_date = False
         
-        # Enhanced Telugu detection
-        is_telugu, telugu_confidence = self.telugu_detector.is_telugu_content(item)
+        # Telugu detection
+        is_telugu, _ = self.telugu_detector.is_telugu_content(item)
         
         # Language determination
         original_lang = item.get("original_language", "")
@@ -757,7 +631,7 @@ class AccurateUpcomingContentService:
         else:
             languages = [original_lang] if original_lang else ["en"]
         
-        # Enhanced image URLs
+        # Image URLs
         poster_path = item.get("poster_path")
         if poster_path and not poster_path.startswith("http"):
             poster_path = f"https://image.tmdb.org/t/p/w500{poster_path}"
@@ -766,60 +640,6 @@ class AccurateUpcomingContentService:
         if backdrop_path and not backdrop_path.startswith("http"):
             backdrop_path = f"https://image.tmdb.org/t/p/w1280{backdrop_path}"
         
-        # Enhanced metadata from detailed info
-        runtime_minutes = None
-        director = None
-        cast = []
-        studio = None
-        certification = None
-        trailer_url = None
-        
-        if detailed_info:
-            runtime_minutes = detailed_info.get("runtime")
-            
-            # Director
-            credits = detailed_info.get("credits", {})
-            crew = credits.get("crew", [])
-            for person in crew:
-                if person.get("job") == "Director":
-                    director = person.get("name")
-                    break
-            
-            # Cast
-            cast_list = credits.get("cast", [])
-            cast = [person.get("name") for person in cast_list[:5] if person.get("name")]
-            
-            # Studio/Production
-            production_companies = detailed_info.get("production_companies", [])
-            if production_companies:
-                studio = production_companies[0].get("name")
-            
-            # Certification
-            release_dates = detailed_info.get("release_dates", {}).get("results", [])
-            for release_info in release_dates:
-                if release_info.get("iso_3166_1") == region:
-                    releases = release_info.get("release_dates", [])
-                    if releases:
-                        certification = releases[0].get("certification")
-                        break
-            
-            # Trailer
-            videos = detailed_info.get("videos", {}).get("results", [])
-            for video in videos:
-                if video.get("type") == "Trailer" and video.get("site") == "YouTube":
-                    trailer_url = f"https://www.youtube.com/watch?v={video.get('key')}"
-                    break
-        
-        # Determine release platforms
-        cinema_release = True  # Default for movies
-        ott_release = False
-        ott_platform = None
-        
-        # Check if it's a streaming-first release
-        if item.get("popularity", 0) < 10:
-            ott_release = True
-            ott_platform = "Various"
-        
         release = UpcomingRelease(
             id=f"tmdb_movie_{item['id']}",
             title=item.get("title", ""),
@@ -827,7 +647,7 @@ class AccurateUpcomingContentService:
             content_type=ContentType.MOVIE,
             release_date=release_date,
             languages=languages,
-            genres=self._get_accurate_genre_names(item.get("genre_ids", [])),
+            genres=self._get_genre_names(item.get("genre_ids", [])),
             popularity=item.get("popularity", 0),
             vote_count=item.get("vote_count", 0),
             vote_average=item.get("vote_average", 0),
@@ -837,24 +657,17 @@ class AccurateUpcomingContentService:
             region=region,
             source="tmdb",
             confirmed_release_date=confirmed_date,
-            cinema_release=cinema_release,
-            ott_release=ott_release,
-            ott_platform=ott_platform,
+            cinema_release=True,
+            ott_release=False,
             is_telugu_content=is_telugu,
-            is_tollywood=is_telugu,
-            runtime_minutes=runtime_minutes,
-            director=director,
-            cast=cast,
-            studio=studio,
-            certification=certification,
-            trailer_url=trailer_url
+            is_tollywood=is_telugu
         )
         
         return release
     
-    def _parse_accurate_tv(self, item: Dict[str, Any], region: str, detailed_info: Dict[str, Any] = None) -> UpcomingRelease:
-        """Parse TV show data with 100% accuracy"""
-        # Enhanced air date parsing
+    def _parse_tv_optimized(self, item: Dict[str, Any], region: str) -> UpcomingRelease:
+        """Parse TV show data with optimized processing"""
+        # Parse air date
         air_date_str = item.get("first_air_date", "")
         confirmed_date = False
         
@@ -865,8 +678,8 @@ class AccurateUpcomingContentService:
             air_date = datetime.now() + timedelta(days=30)
             confirmed_date = False
         
-        # Enhanced Telugu detection
-        is_telugu, telugu_confidence = self.telugu_detector.is_telugu_content(item)
+        # Telugu detection
+        is_telugu, _ = self.telugu_detector.is_telugu_content(item)
         
         # Language determination
         original_lang = item.get("original_language", "")
@@ -879,7 +692,7 @@ class AccurateUpcomingContentService:
         else:
             languages = [original_lang] if original_lang else ["en"]
         
-        # Enhanced image URLs
+        # Image URLs
         poster_path = item.get("poster_path")
         if poster_path and not poster_path.startswith("http"):
             poster_path = f"https://image.tmdb.org/t/p/w500{poster_path}"
@@ -888,32 +701,6 @@ class AccurateUpcomingContentService:
         if backdrop_path and not backdrop_path.startswith("http"):
             backdrop_path = f"https://image.tmdb.org/t/p/w1280{backdrop_path}"
         
-        # Enhanced metadata
-        runtime_minutes = None
-        director = None
-        cast = []
-        studio = None
-        
-        if detailed_info:
-            episode_runtime = detailed_info.get("episode_run_time", [])
-            if episode_runtime:
-                runtime_minutes = episode_runtime[0]
-            
-            # Creator as director
-            creators = detailed_info.get("created_by", [])
-            if creators:
-                director = creators[0].get("name")
-            
-            # Cast
-            credits = detailed_info.get("credits", {})
-            cast_list = credits.get("cast", [])
-            cast = [person.get("name") for person in cast_list[:5] if person.get("name")]
-            
-            # Production
-            production_companies = detailed_info.get("production_companies", [])
-            if production_companies:
-                studio = production_companies[0].get("name")
-        
         release = UpcomingRelease(
             id=f"tmdb_tv_{item['id']}",
             title=item.get("name", ""),
@@ -921,7 +708,7 @@ class AccurateUpcomingContentService:
             content_type=ContentType.TV_SERIES,
             release_date=air_date,
             languages=languages,
-            genres=self._get_accurate_genre_names(item.get("genre_ids", [])),
+            genres=self._get_genre_names(item.get("genre_ids", [])),
             popularity=item.get("popularity", 0),
             vote_count=item.get("vote_count", 0),
             vote_average=item.get("vote_average", 0),
@@ -935,17 +722,13 @@ class AccurateUpcomingContentService:
             ott_release=True,
             ott_platform="Television/Streaming",
             is_telugu_content=is_telugu,
-            is_tollywood=is_telugu,
-            runtime_minutes=runtime_minutes,
-            director=director,
-            cast=cast,
-            studio=studio
+            is_tollywood=is_telugu
         )
         
         return release
     
-    def _parse_accurate_anime(self, item: Dict[str, Any]) -> Optional[UpcomingRelease]:
-        """Parse anime data with 100% accuracy"""
+    def _parse_anime_optimized(self, item: Dict[str, Any]) -> Optional[UpcomingRelease]:
+        """Parse anime data with optimized processing"""
         # Parse start date
         start_date_info = item.get("startDate", {})
         if not start_date_info or not start_date_info.get("year"):
@@ -968,11 +751,10 @@ class AccurateUpcomingContentService:
         if not title:
             return None
         
-        # Enhanced anime metadata
+        # Image and studio info
         cover_image = item.get("coverImage", {})
-        poster_url = cover_image.get("extraLarge") or cover_image.get("large")
+        poster_url = cover_image.get("large")
         
-        # Studio info
         studios = item.get("studios", {}).get("nodes", [])
         studio_name = None
         for studio in studios:
@@ -980,7 +762,7 @@ class AccurateUpcomingContentService:
                 studio_name = studio.get("name")
                 break
         
-        # Director/Staff
+        # Director
         director = None
         staff = item.get("staff", {}).get("edges", [])
         for staff_member in staff:
@@ -988,24 +770,13 @@ class AccurateUpcomingContentService:
                 director = staff_member.get("node", {}).get("name", {}).get("full")
                 break
         
-        # Runtime
-        duration = item.get("duration")
-        
-        # Streaming platforms
-        streaming_episodes = item.get("streamingEpisodes", [])
-        ott_platforms = set()
-        for episode in streaming_episodes:
-            site = episode.get("site")
-            if site:
-                ott_platforms.add(site)
-        
         release = UpcomingRelease(
             id=f"anilist_{item['id']}",
             title=title,
             original_title=title_info.get("native"),
             content_type=ContentType.ANIME,
             release_date=release_date,
-            languages=["ja"],  # Japanese default
+            languages=["ja"],
             genres=item.get("genres", []),
             popularity=item.get("popularity", 0),
             vote_count=item.get("favourites", 0),
@@ -1017,16 +788,15 @@ class AccurateUpcomingContentService:
             confirmed_release_date=confirmed_date,
             cinema_release=item.get("format") == "MOVIE",
             ott_release=True,
-            ott_platform=", ".join(ott_platforms) if ott_platforms else "Anime Platforms",
-            runtime_minutes=duration,
+            ott_platform="Anime Platforms",
             director=director,
             studio=studio_name
         )
         
         return release
     
-    def _get_accurate_genre_names(self, genre_ids: List[int]) -> List[str]:
-        """Convert TMDb genre IDs to accurate names"""
+    def _get_genre_names(self, genre_ids: List[int]) -> List[str]:
+        """Convert TMDb genre IDs to names"""
         genre_map = {
             28: "Action", 12: "Adventure", 16: "Animation", 35: "Comedy",
             80: "Crime", 99: "Documentary", 18: "Drama", 10751: "Family",
@@ -1039,15 +809,12 @@ class AccurateUpcomingContentService:
         }
         return [genre_map.get(gid, "Unknown") for gid in genre_ids if gid in genre_map]
     
-    def _sort_by_release_date_and_telugu_priority(self, releases: List[UpcomingRelease]) -> List[UpcomingRelease]:
-        """
-        Sort releases with Telugu priority first, then by release date
-        """
+    def _sort_by_telugu_priority_and_date(self, releases: List[UpcomingRelease]) -> List[UpcomingRelease]:
+        """Sort releases with Telugu priority first, then by date"""
         def sort_key(release):
             # Telugu content gets highest priority (0)
             language_priority = 0 if release.is_telugu_content else release.language_priority
             
-            # Sort by: Telugu priority, release date, data confidence, popularity
             return (
                 language_priority,
                 release.release_date,
@@ -1056,139 +823,6 @@ class AccurateUpcomingContentService:
             )
         
         return sorted(releases, key=sort_key)
-    
-    async def _fetch_accurate_movies(
-        self,
-        windows: List[ReleaseWindow],
-        region: str,
-        languages: List[LanguagePriority]
-    ) -> List[UpcomingRelease]:
-        """Fetch movies with 100% accuracy across all windows"""
-        all_releases = []
-        
-        for window in windows:
-            window_releases = []
-            
-            # Telugu priority: fetch Telugu content FIRST
-            telugu_movies = await self.tmdb_client.get_upcoming_movies_accurate(
-                region=region,
-                start_date=window.start_date,
-                end_date=window.end_date,
-                language="te"
-            )
-            
-            # Process Telugu movies with detailed info
-            for movie in telugu_movies[:20]:  # Limit for performance
-                try:
-                    detailed_info = await self.tmdb_client.get_detailed_info(movie["id"], "movie")
-                    release = self._parse_accurate_movie(movie, region, detailed_info)
-                    release.is_telugu_content = True
-                    release.is_tollywood = True
-                    window_releases.append(release)
-                except Exception as e:
-                    logger.error(f"Error processing Telugu movie {movie.get('id')}: {e}")
-            
-            # Other languages
-            for lang in languages[1:]:  # Skip Telugu as it's already processed
-                try:
-                    movies = await self.tmdb_client.get_upcoming_movies_accurate(
-                        region=region,
-                        start_date=window.start_date,
-                        end_date=window.end_date,
-                        language=lang.iso_code if lang.iso_code != 'xx' else None
-                    )
-                    
-                    for movie in movies[:15]:  # Limit per language
-                        try:
-                            release = self._parse_accurate_movie(movie, region)
-                            window_releases.append(release)
-                        except Exception as e:
-                            logger.error(f"Error processing movie {movie.get('id')}: {e}")
-                            
-                except Exception as e:
-                    logger.error(f"Error fetching movies for language {lang.language_name}: {e}")
-            
-            all_releases.extend(window_releases)
-        
-        return all_releases
-    
-    async def _fetch_accurate_tv(
-        self,
-        windows: List[ReleaseWindow],
-        region: str,
-        languages: List[LanguagePriority]
-    ) -> List[UpcomingRelease]:
-        """Fetch TV shows with 100% accuracy"""
-        all_releases = []
-        
-        for window in windows:
-            window_releases = []
-            
-            # Telugu priority
-            telugu_shows = await self.tmdb_client.get_upcoming_tv_accurate(
-                region=region,
-                start_date=window.start_date,
-                end_date=window.end_date,
-                language="te"
-            )
-            
-            for show in telugu_shows[:15]:
-                try:
-                    detailed_info = await self.tmdb_client.get_detailed_info(show["id"], "tv")
-                    release = self._parse_accurate_tv(show, region, detailed_info)
-                    release.is_telugu_content = True
-                    release.is_tollywood = True
-                    window_releases.append(release)
-                except Exception as e:
-                    logger.error(f"Error processing Telugu TV show {show.get('id')}: {e}")
-            
-            # Other languages
-            for lang in languages[1:]:
-                try:
-                    shows = await self.tmdb_client.get_upcoming_tv_accurate(
-                        region=region,
-                        start_date=window.start_date,
-                        end_date=window.end_date,
-                        language=lang.iso_code if lang.iso_code != 'xx' else None
-                    )
-                    
-                    for show in shows[:10]:
-                        try:
-                            release = self._parse_accurate_tv(show, region)
-                            window_releases.append(release)
-                        except Exception as e:
-                            logger.error(f"Error processing TV show {show.get('id')}: {e}")
-                            
-                except Exception as e:
-                    logger.error(f"Error fetching TV shows for language {lang.language_name}: {e}")
-            
-            all_releases.extend(window_releases)
-        
-        return all_releases
-    
-    async def _fetch_accurate_anime(self, windows: List[ReleaseWindow]) -> List[UpcomingRelease]:
-        """Fetch anime with 100% accuracy"""
-        all_releases = []
-        
-        for window in windows:
-            try:
-                anime_list = await self.anilist_client.get_upcoming_anime_accurate(
-                    start_date=window.start_date,
-                    end_date=window.end_date
-                )
-                
-                for anime in anime_list:
-                    try:
-                        release = self._parse_accurate_anime(anime)
-                        if release:
-                            all_releases.append(release)
-                    except Exception as e:
-                        logger.error(f"Error processing anime {anime.get('id')}: {e}")
-                        
-            except Exception as e:
-                logger.error(f"Error fetching anime for window {window.month_label}: {e}")
-        
-        return all_releases
     
     async def get_upcoming_releases(
         self,
@@ -1199,27 +833,21 @@ class AccurateUpcomingContentService:
         include_analytics: bool = True
     ) -> Dict[str, Any]:
         """
-        Get 100% accurate upcoming releases for next 3 months
-        with strict Telugu priority and release date sorting
+        Get optimized upcoming releases for next 3 months
         """
         if categories is None:
             categories = ["movies", "tv", "anime"]
         
-        # Generate cache key
+        # Check cache first
         cache_key = self._generate_cache_key(region, timezone_name, categories)
-        
-        # Check cache
         if use_cache and self.cache:
             cached_data = await self._get_from_cache(cache_key)
             if cached_data:
-                logger.info(f"Cache hit for accurate upcoming releases")
+                logger.info(f"Cache hit for optimized upcoming releases")
                 return cached_data
         
-        # Get accurate 3-month windows
+        # Get release windows
         windows = self._get_accurate_release_windows(timezone_name)
-        
-        # Get languages in strict priority order
-        priority_languages = LanguagePriority.get_priority_order()
         
         # Initialize results
         results = {
@@ -1229,9 +857,9 @@ class AccurateUpcomingContentService:
             "metadata": {
                 "region": region,
                 "timezone": timezone_name,
-                "language_priorities": [lang.language_name for lang in priority_languages],
+                "language_priorities": ["telugu", "english", "hindi", "malayalam", "kannada", "tamil"],
                 "telugu_priority": True,
-                "accuracy_level": "100%",
+                "accuracy_level": "Optimized",
                 "windows": [
                     {
                         "label": w.month_label,
@@ -1243,77 +871,120 @@ class AccurateUpcomingContentService:
                     }
                     for w in windows
                 ],
-                "fetched_at": datetime.now(pytz.timezone(timezone_name)).isoformat()
+                "fetched_at": datetime.now().isoformat()
             }
         }
         
-        # Fetch data concurrently
-        fetch_tasks = []
-        
-        if "movies" in categories:
-            fetch_tasks.append(("movies", self._fetch_accurate_movies(windows, region, priority_languages)))
-        
-        if "tv" in categories:
-            fetch_tasks.append(("tv_series", self._fetch_accurate_tv(windows, region, priority_languages)))
-        
-        if "anime" in categories:
-            fetch_tasks.append(("anime", self._fetch_accurate_anime(windows)))
-        
-        # Execute tasks
-        for category, task in fetch_tasks:
-            try:
-                releases = await task
-                results[category] = releases
-                logger.info(f"Fetched {len(releases)} {category} with 100% accuracy")
-            except Exception as e:
-                logger.error(f"Error fetching {category}: {e}")
-                results[category] = []
-        
-        # Sort all categories by Telugu priority and release date
-        results["movies"] = self._sort_by_release_date_and_telugu_priority(results["movies"])
-        results["tv_series"] = self._sort_by_release_date_and_telugu_priority(results["tv_series"])
-        results["anime"] = self._sort_by_release_date_and_telugu_priority(results["anime"])
-        
-        # Calculate accuracy statistics
-        total_releases = len(results["movies"]) + len(results["tv_series"]) + len(results["anime"])
-        telugu_releases = sum(1 for r in results["movies"] + results["tv_series"] if r.is_telugu_content)
-        confirmed_dates = sum(1 for r in results["movies"] + results["tv_series"] + results["anime"] if r.confirmed_release_date)
-        high_confidence = sum(1 for r in results["movies"] + results["tv_series"] + results["anime"] if r.data_confidence >= 0.8)
-        
-        results["metadata"]["statistics"] = {
-            "total_releases": total_releases,
-            "movies": len(results["movies"]),
-            "tv_series": len(results["tv_series"]),
-            "anime": len(results["anime"]),
-            "telugu_releases": telugu_releases,
-            "telugu_percentage": round((telugu_releases / max(1, total_releases)) * 100, 1),
-            "confirmed_dates": confirmed_dates,
-            "confirmed_percentage": round((confirmed_dates / max(1, total_releases)) * 100, 1),
-            "high_confidence_releases": high_confidence,
-            "confidence_percentage": round((high_confidence / max(1, total_releases)) * 100, 1),
-            "data_sources": ["tmdb", "anilist"],
-            "accuracy_metrics": {
-                "date_accuracy": "100%",
-                "metadata_completeness": "95%+",
-                "telugu_detection": "Enhanced"
+        # Fetch data concurrently with timeout
+        try:
+            fetch_tasks = []
+            
+            if "movies" in categories:
+                for window in windows:
+                    fetch_tasks.append(("movies", self.tmdb_client.get_upcoming_movies_optimized(
+                        region, window.start_date, window.end_date
+                    )))
+            
+            if "tv" in categories:
+                for window in windows:
+                    fetch_tasks.append(("tv_series", self.tmdb_client.get_upcoming_tv_optimized(
+                        region, window.start_date, window.end_date
+                    )))
+            
+            if "anime" in categories:
+                for window in windows:
+                    fetch_tasks.append(("anime", self.anilist_client.get_upcoming_anime_optimized(
+                        window.start_date, window.end_date
+                    )))
+            
+            # Execute with timeout
+            for category, task in fetch_tasks:
+                try:
+                    items = await asyncio.wait_for(task, timeout=10.0)
+                    
+                    for item in items:
+                        try:
+                            if category == "movies":
+                                release = self._parse_movie_optimized(item, region)
+                                results["movies"].append(release)
+                            elif category == "tv_series":
+                                release = self._parse_tv_optimized(item, region)
+                                results["tv_series"].append(release)
+                            elif category == "anime":
+                                release = self._parse_anime_optimized(item)
+                                if release:
+                                    results["anime"].append(release)
+                        except Exception as e:
+                            logger.warning(f"Error parsing {category} item: {e}")
+                            
+                except asyncio.TimeoutError:
+                    logger.warning(f"Timeout fetching {category}")
+                except Exception as e:
+                    logger.error(f"Error fetching {category}: {e}")
+            
+            # Remove duplicates and sort
+            seen_ids = set()
+            for category in ["movies", "tv_series", "anime"]:
+                unique_releases = []
+                for release in results[category]:
+                    if release.id not in seen_ids:
+                        seen_ids.add(release.id)
+                        unique_releases.append(release)
+                
+                # Sort with Telugu priority
+                results[category] = self._sort_by_telugu_priority_and_date(unique_releases)
+            
+            # Calculate statistics
+            total_releases = len(results["movies"]) + len(results["tv_series"]) + len(results["anime"])
+            telugu_releases = sum(1 for r in results["movies"] + results["tv_series"] if r.is_telugu_content)
+            confirmed_dates = sum(1 for r in results["movies"] + results["tv_series"] + results["anime"] if r.confirmed_release_date)
+            high_confidence = sum(1 for r in results["movies"] + results["tv_series"] + results["anime"] if r.data_confidence >= 0.8)
+            
+            results["metadata"]["statistics"] = {
+                "total_releases": total_releases,
+                "movies": len(results["movies"]),
+                "tv_series": len(results["tv_series"]),
+                "anime": len(results["anime"]),
+                "telugu_releases": telugu_releases,
+                "telugu_percentage": round((telugu_releases / max(1, total_releases)) * 100, 1),
+                "confirmed_dates": confirmed_dates,
+                "confirmed_percentage": round((confirmed_dates / max(1, total_releases)) * 100, 1),
+                "high_confidence_releases": high_confidence,
+                "confidence_percentage": round((high_confidence / max(1, total_releases)) * 100, 1),
+                "data_sources": ["tmdb", "anilist"],
+                "optimization_applied": True
             }
-        }
-        
-        # Convert to dict for JSON serialization
-        results["movies"] = [r.to_dict() for r in results["movies"]]
-        results["tv_series"] = [r.to_dict() for r in results["tv_series"]]
-        results["anime"] = [r.to_dict() for r in results["anime"]]
-        
-        # Cache results
-        if use_cache and self.cache:
-            await self._save_to_cache(cache_key, results, ttl=3600)
-        
-        return results
+            
+            # Convert to dict for JSON serialization
+            results["movies"] = [r.to_dict() for r in results["movies"]]
+            results["tv_series"] = [r.to_dict() for r in results["tv_series"]]
+            results["anime"] = [r.to_dict() for r in results["anime"]]
+            
+            # Cache results
+            if use_cache and self.cache:
+                await self._save_to_cache(cache_key, results, ttl=1800)  # 30 min cache
+            
+            logger.info(f"Successfully fetched {total_releases} upcoming releases")
+            return results
+            
+        except Exception as e:
+            logger.error(f"Error in optimized upcoming service: {e}")
+            return {
+                "movies": [],
+                "tv_series": [],
+                "anime": [],
+                "metadata": {
+                    "error": str(e),
+                    "region": region,
+                    "timezone": timezone_name,
+                    "fetched_at": datetime.now().isoformat()
+                }
+            }
     
     def _generate_cache_key(self, region: str, timezone_name: str, categories: List[str]) -> str:
         """Generate cache key"""
         components = [
-            "accurate_upcoming",
+            "optimized_upcoming",
             region,
             timezone_name,
             "_".join(sorted(categories)),
@@ -1327,7 +998,7 @@ class AccurateUpcomingContentService:
             return None
         
         try:
-            cached = self.cache.get(f"accurate_upcoming:{key}")
+            cached = self.cache.get(f"optimized_upcoming:{key}")
             if cached:
                 data = json.loads(cached) if isinstance(cached, str) else cached
                 return data
@@ -1336,18 +1007,18 @@ class AccurateUpcomingContentService:
         
         return None
     
-    async def _save_to_cache(self, key: str, data: Dict[str, Any], ttl: int = 3600):
+    async def _save_to_cache(self, key: str, data: Dict[str, Any], ttl: int = 1800):
         """Save to cache"""
         if not self.cache:
             return
         
         try:
             self.cache.set(
-                f"accurate_upcoming:{key}",
+                f"optimized_upcoming:{key}",
                 json.dumps(data, default=str),
                 timeout=ttl
             )
-            logger.info(f"Cached accurate upcoming releases")
+            logger.info(f"Cached optimized upcoming releases")
         except Exception as e:
             logger.error(f"Cache save error: {e}")
     
@@ -1358,4 +1029,5 @@ class AccurateUpcomingContentService:
 
 
 # Alias for backward compatibility
-UpcomingContentService = AccurateUpcomingContentService
+UpcomingContentService = OptimizedUpcomingContentService
+AccurateUpcomingContentService = OptimizedUpcomingContentService
