@@ -300,11 +300,10 @@ class CinebrainTMDbClient:
             "with_release_type": "2|3",
             "sort_by": sort_by,
             "include_adult": False,
-            "page": page,
-            "with_status": "2|3"
+            "page": page
         }
         
-        if language and language != 'xx':
+        if language and language != 'all':
             params["with_original_language"] = language
         
         if with_genres:
@@ -338,11 +337,10 @@ class CinebrainTMDbClient:
             "first_air_date.lte": end_date.strftime("%Y-%m-%d"),
             "sort_by": sort_by,
             "include_adult": False,
-            "page": page,
-            "with_status": "0|1"
+            "page": page
         }
         
-        if language and language != 'xx':
+        if language and language != 'all':
             params["with_original_language"] = language
         
         if with_genres:
@@ -368,7 +366,7 @@ class CinebrainAniListClient:
     
     def _build_cinebrain_upcoming_query(self) -> str:
         return """
-        query ($startDate: Int, $endDate: Int, $page: Int, $sort: [MediaSort]) {
+        query ($season: MediaSeason, $seasonYear: Int, $page: Int, $sort: [MediaSort]) {
             Page(page: $page, perPage: 25) {
                 pageInfo {
                     total
@@ -379,8 +377,8 @@ class CinebrainAniListClient:
                 media(
                     type: ANIME
                     format_in: [TV, TV_SHORT, ONA, OVA, MOVIE, SPECIAL]
-                    startDate_greater: $startDate
-                    startDate_lesser: $endDate
+                    season: $season
+                    seasonYear: $seasonYear
                     sort: $sort
                     isAdult: false
                     status_in: [NOT_YET_RELEASED, RELEASING]
@@ -419,6 +417,15 @@ class CinebrainAniListClient:
                     countryOfOrigin
                     source
                     siteUrl
+                    trailer {
+                        id
+                        site
+                    }
+                    studios {
+                        nodes {
+                            name
+                        }
+                    }
                 }
             }
         }
@@ -428,20 +435,30 @@ class CinebrainAniListClient:
         self,
         start_date: datetime,
         end_date: datetime,
+        page: int = 1,
         sort: List[str] = None
     ) -> List[Dict[str, Any]]:
         if sort is None:
-            sort = ["START_DATE", "POPULARITY_DESC"]
+            sort = ["POPULARITY_DESC", "START_DATE_DESC"]
         
-        start_int = int(start_date.strftime("%Y%m%d"))
-        end_int = int(end_date.strftime("%Y%m%d"))
+        month = start_date.month
+        year = start_date.year
         
-        variables = {
-            "startDate": start_int,
-            "endDate": end_int,
-            "page": 1,
-            "sort": sort
-        }
+        if month in [1, 2, 3]:
+            season = "WINTER"
+        elif month in [4, 5, 6]:
+            season = "SPRING"
+        elif month in [7, 8, 9]:
+            season = "SUMMER"
+        else:
+            season = "FALL"
+        
+        all_results = []
+        
+        seasons_to_check = [
+            (season, year),
+            (self._get_next_season(season), year if season != "FALL" else year + 1)
+        ]
         
         try:
             headers = {
@@ -449,27 +466,56 @@ class CinebrainAniListClient:
                 "Accept": "application/json",
             }
             
-            response = await self.http_client.post(
-                self.BASE_URL,
-                json={
-                    "query": self._build_cinebrain_upcoming_query(),
-                    "variables": variables
-                },
-                headers=headers
-            )
-            response.raise_for_status()
-            data = response.json()
+            for check_season, check_year in seasons_to_check[:1]:  # Only check current season for performance
+                variables = {
+                    "season": check_season,
+                    "seasonYear": check_year,
+                    "page": page,
+                    "sort": sort
+                }
+                
+                response = await self.http_client.post(
+                    self.BASE_URL,
+                    json={
+                        "query": self._build_cinebrain_upcoming_query(),
+                        "variables": variables
+                    },
+                    headers=headers
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    
+                    if "errors" in data:
+                        logger.error(f"CineBrain AniList GraphQL errors: {data['errors']}")
+                        continue
+                    
+                    results = data.get("data", {}).get("Page", {}).get("media", [])
+                    
+                    for anime in results:
+                        start_date_info = anime.get("startDate", {})
+                        if start_date_info and start_date_info.get("year"):
+                            try:
+                                anime_date = datetime(
+                                    start_date_info.get("year"),
+                                    start_date_info.get("month", 1),
+                                    start_date_info.get("day", 1)
+                                )
+                                if start_date <= anime_date <= end_date:
+                                    all_results.append(anime)
+                            except:
+                                pass
             
-            if "errors" in data:
-                logger.error(f"CineBrain AniList GraphQL errors: {data['errors']}")
-                return []
-            
-            results = data.get("data", {}).get("Page", {}).get("media", [])
-            return results
+            return all_results
             
         except Exception as e:
             logger.error(f"CineBrain AniList upcoming query error: {e}")
             return []
+    
+    def _get_next_season(self, current_season: str) -> str:
+        seasons = ["WINTER", "SPRING", "SUMMER", "FALL"]
+        current_idx = seasons.index(current_season)
+        return seasons[(current_idx + 1) % 4]
 
 
 class CinebrainUpcomingContentService:
@@ -497,6 +543,7 @@ class CinebrainUpcomingContentService:
         self.http_client = http_client or httpx.AsyncClient(timeout=5.0)
         self.detector = CinebrainTeluguContentDetector()
         self.enable_detailed_info = enable_detailed_info
+        self._all_releases_cache = {}
     
     def _get_cinebrain_flexible_release_windows(
         self, 
@@ -703,61 +750,84 @@ class CinebrainUpcomingContentService:
         
         return release
     
-    async def _fetch_cinebrain_content_by_type_and_language(
+    async def _fetch_initial_data(
         self,
-        content_type: ContentType,
         windows: List[ReleaseWindow],
         region: str,
-        language: str,
-        genre_ids: Optional[List[int]] = None,
-        max_pages: int = 1
-    ) -> List[CinebrainUpcomingRelease]:
-        all_releases = []
+        genre_ids: Optional[List[int]] = None
+    ) -> Dict[str, List[CinebrainUpcomingRelease]]:
+        """Fetch initial data for all content types with all languages"""
+        all_releases = {
+            "movies": [],
+            "tv_series": [],
+            "anime": []
+        }
         
-        for window in windows:
-            try:
-                if content_type == ContentType.MOVIE:
-                    data = await self.tmdb_client.discover_cinebrain_upcoming_movies(
-                        region=region,
-                        start_date=window.start_date,
-                        end_date=window.end_date,
-                        language=language if language != 'xx' else None,
-                        with_genres=genre_ids,
-                        page=1
-                    )
-                    
-                    for item in data.get("results", [])[:15]:
-                        release = await self._parse_cinebrain_tmdb_movie(item, region)
-                        all_releases.append(release)
-                
-                elif content_type == ContentType.TV_SERIES:
-                    data = await self.tmdb_client.discover_cinebrain_upcoming_tv(
-                        region=region,
-                        start_date=window.start_date,
-                        end_date=window.end_date,
-                        language=language if language != 'xx' else None,
-                        with_genres=genre_ids,
-                        page=1
-                    )
-                    
-                    for item in data.get("results", [])[:15]:
-                        release = await self._parse_cinebrain_tmdb_tv(item, region)
-                        all_releases.append(release)
-                
-                elif content_type == ContentType.ANIME:
-                    items = await self.anilist_client.get_cinebrain_upcoming_anime(
-                        start_date=window.start_date,
-                        end_date=window.end_date
-                    )
-                    
-                    for item in items[:15]:
-                        release = await self._parse_cinebrain_anilist_anime(item)
-                        if release:
-                            all_releases.append(release)
-                    
-            except Exception as e:
-                logger.error(f"CineBrain error fetching {content_type.value} for language {language}: {e}")
-                continue
+        # Only fetch first window for initial load
+        first_window = windows[0]
+        
+        # Fetch all languages in parallel for initial display
+        async def fetch_movies():
+            tasks = []
+            # Fetch movies without language filter to get all languages
+            data = await self.tmdb_client.discover_cinebrain_upcoming_movies(
+                region=region,
+                start_date=first_window.start_date,
+                end_date=first_window.end_date,
+                language=None,  # No language filter to get all
+                with_genres=genre_ids,
+                page=1
+            )
+            
+            releases = []
+            for item in data.get("results", [])[:20]:
+                release = await self._parse_cinebrain_tmdb_movie(item, region)
+                releases.append(release)
+            
+            return releases
+        
+        async def fetch_tv():
+            data = await self.tmdb_client.discover_cinebrain_upcoming_tv(
+                region=region,
+                start_date=first_window.start_date,
+                end_date=first_window.end_date,
+                language=None,  # No language filter to get all
+                with_genres=genre_ids,
+                page=1
+            )
+            
+            releases = []
+            for item in data.get("results", [])[:20]:
+                release = await self._parse_cinebrain_tmdb_tv(item, region)
+                releases.append(release)
+            
+            return releases
+        
+        async def fetch_anime():
+            items = await self.anilist_client.get_cinebrain_upcoming_anime(
+                start_date=first_window.start_date,
+                end_date=first_window.end_date,
+                page=1
+            )
+            
+            releases = []
+            for item in items[:20]:
+                release = await self._parse_cinebrain_anilist_anime(item)
+                if release:
+                    releases.append(release)
+            
+            return releases
+        
+        # Execute all fetches in parallel
+        movies, tv_series, anime = await asyncio.gather(
+            fetch_movies(),
+            fetch_tv(),
+            fetch_anime()
+        )
+        
+        all_releases["movies"] = movies
+        all_releases["tv_series"] = tv_series
+        all_releases["anime"] = anime
         
         return all_releases
     
@@ -803,22 +873,26 @@ class CinebrainUpcomingContentService:
         content_type: str,
         language: str,
         genre: str,
-        months: int
+        months: int,
+        page: int,
+        limit: int
     ) -> str:
         components = [
-            "cinebrain_upcoming_fast_v1",
+            "cinebrain_upcoming_lazy_v1",
             region,
             timezone_name,
             content_type,
             language,
             genre,
             str(months),
+            str(page),
+            str(limit),
             datetime.now().strftime("%Y%m%d%H")
         ]
         key_string = ":".join(components)
         return hashlib.md5(key_string.encode()).hexdigest()
     
-    async def get_cinebrain_upcoming_releases(
+    async def get_cinebrain_upcoming_releases_lazy(
         self,
         region: str = "IN",
         timezone_name: str = "Asia/Kolkata",
@@ -826,12 +900,16 @@ class CinebrainUpcomingContentService:
         language: str = "all",
         genre: str = "all",
         months: int = 3,
+        page: int = 1,
+        limit: int = 20,
         use_cache: bool = True
     ) -> Dict[str, Any]:
         months = max(1, min(3, months))
         
         if use_cache and self.cache:
-            cache_key = self._generate_cinebrain_cache_key(region, timezone_name, content_type, language, genre, months)
+            cache_key = self._generate_cinebrain_cache_key(
+                region, timezone_name, content_type, language, genre, months, page, limit
+            )
             cached_data = await self._get_cinebrain_from_cache(cache_key)
             if cached_data:
                 logger.info(f"CineBrain cache hit for upcoming releases: {cache_key}")
@@ -841,52 +919,41 @@ class CinebrainUpcomingContentService:
         genre_ids = self._filter_cinebrain_by_genre(genre)
         priority_languages = LanguagePriority.get_priority_order()
         
-        content_types_to_fetch = []
-        if content_type.lower() in ['all', 'movies']:
-            content_types_to_fetch.append(ContentType.MOVIE)
-        if content_type.lower() in ['all', 'tv']:
-            content_types_to_fetch.append(ContentType.TV_SERIES)
-        if content_type.lower() in ['all', 'anime']:
-            content_types_to_fetch.append(ContentType.ANIME)
+        # For first page, fetch initial data
+        if page == 1:
+            all_releases = await self._fetch_initial_data(windows, region, genre_ids)
+        else:
+            # For subsequent pages, load from cache or fetch more
+            all_releases = await self._fetch_additional_data(
+                windows, region, genre_ids, page, content_type
+            )
         
-        all_releases = {
-            "movies": [],
-            "tv_series": [],
-            "anime": []
+        # Sort all releases with Telugu priority
+        for key in all_releases:
+            all_releases[key] = self._sort_cinebrain_releases_telugu_first(all_releases[key])
+        
+        # Apply filters
+        for key in all_releases:
+            all_releases[key] = self._filter_cinebrain_releases(
+                all_releases[key], language, genre, months
+            )
+        
+        # Paginate results
+        start_idx = (page - 1) * limit
+        end_idx = start_idx + limit
+        
+        paginated_releases = {
+            "movies": all_releases["movies"][start_idx:end_idx],
+            "tv_series": all_releases["tv_series"][start_idx:end_idx],
+            "anime": all_releases["anime"][start_idx:end_idx]
         }
         
-        for ct in content_types_to_fetch:
-            telugu_releases = await self._fetch_cinebrain_content_by_type_and_language(
-                ct, windows, region, 'te', genre_ids, max_pages=1
-            )
-            
-            english_releases = await self._fetch_cinebrain_content_by_type_and_language(
-                ct, windows, region, 'en', genre_ids, max_pages=1
-            )
-            
-            combined_releases = telugu_releases + english_releases
-            seen_ids = set()
-            unique_releases = []
-            
-            for release in combined_releases:
-                if release.id not in seen_ids:
-                    unique_releases.append(release)
-                    seen_ids.add(release.id)
-            
-            sorted_releases = self._sort_cinebrain_releases_telugu_first(unique_releases)
-            
-            filtered_releases = self._filter_cinebrain_releases(
-                sorted_releases, language, genre, months
-            )
-            
-            if ct == ContentType.MOVIE:
-                all_releases["movies"] = filtered_releases[:30]
-            elif ct == ContentType.TV_SERIES:
-                all_releases["tv_series"] = filtered_releases[:30]
-            elif ct == ContentType.ANIME:
-                all_releases["anime"] = filtered_releases[:30]
+        # Calculate totals
+        total_movies = len(all_releases["movies"])
+        total_tv = len(all_releases["tv_series"])
+        total_anime = len(all_releases["anime"])
         
-        total_content = len(all_releases["movies"]) + len(all_releases["tv_series"]) + len(all_releases["anime"])
+        total_content = total_movies + total_tv + total_anime
         telugu_content = sum(
             1 for releases in all_releases.values() 
             for release in releases 
@@ -894,9 +961,21 @@ class CinebrainUpcomingContentService:
         )
         
         response = {
-            "movies": [r.to_dict() for r in all_releases["movies"]],
-            "tv_series": [r.to_dict() for r in all_releases["tv_series"]],
-            "anime": [r.to_dict() for r in all_releases["anime"]],
+            "movies": [r.to_dict() for r in paginated_releases["movies"]],
+            "tv_series": [r.to_dict() for r in paginated_releases["tv_series"]],
+            "anime": [r.to_dict() for r in paginated_releases["anime"]],
+            "pagination": {
+                "current_page": page,
+                "per_page": limit,
+                "total_movies": total_movies,
+                "total_tv_series": total_tv,
+                "total_anime": total_anime,
+                "total_items": total_content,
+                "has_more_movies": end_idx < total_movies,
+                "has_more_tv": end_idx < total_tv,
+                "has_more_anime": end_idx < total_anime,
+                "has_more": end_idx < total_content
+            },
             "metadata": {
                 "cinebrain_service": "upcoming",
                 "cinebrain_brand": "CineBrain Entertainment Platform",
@@ -922,9 +1001,9 @@ class CinebrainUpcomingContentService:
                 "generated_at": datetime.now(pytz.timezone(timezone_name)).isoformat()
             },
             "statistics": {
-                "total_movies": len(all_releases["movies"]),
-                "total_tv_series": len(all_releases["tv_series"]), 
-                "total_anime": len(all_releases["anime"]),
+                "total_movies": total_movies,
+                "total_tv_series": total_tv, 
+                "total_anime": total_anime,
                 "total_content": total_content,
                 "cinebrain_telugu_content_count": telugu_content,
                 "cinebrain_telugu_percentage": round((telugu_content / max(1, total_content)) * 100, 1),
@@ -942,17 +1021,81 @@ class CinebrainUpcomingContentService:
         }
         
         if use_cache and self.cache:
-            cache_key = self._generate_cinebrain_cache_key(region, timezone_name, content_type, language, genre, months)
-            await self._save_cinebrain_to_cache(cache_key, response, ttl=1800)
+            cache_key = self._generate_cinebrain_cache_key(
+                region, timezone_name, content_type, language, genre, months, page, limit
+            )
+            await self._save_cinebrain_to_cache(cache_key, response, ttl=900)  # 15 min cache
         
         return response
+    
+    async def _fetch_additional_data(
+        self,
+        windows: List[ReleaseWindow],
+        region: str,
+        genre_ids: Optional[List[int]],
+        page: int,
+        content_type: str
+    ) -> Dict[str, List[CinebrainUpcomingRelease]]:
+        """Fetch additional data for pagination"""
+        all_releases = {
+            "movies": [],
+            "tv_series": [],
+            "anime": []
+        }
+        
+        # Calculate which TMDB page to fetch based on our page
+        tmdb_page = ((page - 1) // 2) + 1
+        
+        window = windows[0]  # Use first window for now
+        
+        if content_type in ['all', 'movies']:
+            data = await self.tmdb_client.discover_cinebrain_upcoming_movies(
+                region=region,
+                start_date=window.start_date,
+                end_date=window.end_date,
+                language=None,
+                with_genres=genre_ids,
+                page=tmdb_page
+            )
+            
+            for item in data.get("results", []):
+                release = await self._parse_cinebrain_tmdb_movie(item, region)
+                all_releases["movies"].append(release)
+        
+        if content_type in ['all', 'tv']:
+            data = await self.tmdb_client.discover_cinebrain_upcoming_tv(
+                region=region,
+                start_date=window.start_date,
+                end_date=window.end_date,
+                language=None,
+                with_genres=genre_ids,
+                page=tmdb_page
+            )
+            
+            for item in data.get("results", []):
+                release = await self._parse_cinebrain_tmdb_tv(item, region)
+                all_releases["tv_series"].append(release)
+        
+        if content_type in ['all', 'anime'] and tmdb_page <= 2:
+            items = await self.anilist_client.get_cinebrain_upcoming_anime(
+                start_date=window.start_date,
+                end_date=window.end_date,
+                page=tmdb_page
+            )
+            
+            for item in items:
+                release = await self._parse_cinebrain_anilist_anime(item)
+                if release:
+                    all_releases["anime"].append(release)
+        
+        return all_releases
     
     async def _get_cinebrain_from_cache(self, key: str) -> Optional[Dict[str, Any]]:
         if not self.cache:
             return None
         
         try:
-            cached = self.cache.get(f"cinebrain_upcoming_fast:{key}")
+            cached = self.cache.get(f"cinebrain_upcoming_lazy:{key}")
             if cached:
                 data = json.loads(cached) if isinstance(cached, str) else cached
                 if data and "statistics" in data:
@@ -963,17 +1106,17 @@ class CinebrainUpcomingContentService:
         
         return None
     
-    async def _save_cinebrain_to_cache(self, key: str, data: Dict[str, Any], ttl: int = 1800):
+    async def _save_cinebrain_to_cache(self, key: str, data: Dict[str, Any], ttl: int = 900):
         if not self.cache:
             return
         
         try:
             self.cache.set(
-                f"cinebrain_upcoming_fast:{key}",
+                f"cinebrain_upcoming_lazy:{key}",
                 json.dumps(data, default=str),
                 timeout=ttl
             )
-            logger.info(f"CineBrain cached upcoming releases: cinebrain_upcoming_fast:{key}")
+            logger.info(f"CineBrain cached upcoming releases: cinebrain_upcoming_lazy:{key}")
         except Exception as e:
             logger.error(f"CineBrain cache save error: {e}")
     

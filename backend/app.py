@@ -1413,7 +1413,7 @@ def update_cinebrain_new_releases_config():
         return jsonify({'error': 'Failed to update CineBrain configuration'}), 500
 
 @app.route('/api/upcoming', methods=['GET'])
-@cache.cached(timeout=900, key_prefix=make_cache_key)
+@cache.cached(timeout=300, key_prefix=make_cache_key)
 def get_comprehensive_upcoming():
     try:
         months = min(3, max(1, int(request.args.get('months', 3))))
@@ -1423,6 +1423,8 @@ def get_comprehensive_upcoming():
         region = request.args.get('region', 'IN').upper()
         timezone_name = request.args.get('timezone', 'Asia/Kolkata')
         use_cache = request.args.get('use_cache', 'true').lower() == 'true'
+        page = max(1, int(request.args.get('page', 1)))
+        limit = min(50, max(10, int(request.args.get('limit', 20))))
         
         valid_types = ['all', 'movies', 'tv', 'anime']
         if content_type not in valid_types:
@@ -1452,13 +1454,15 @@ def get_comprehensive_upcoming():
             )
             
             try:
-                results = await service.get_cinebrain_upcoming_releases(
+                results = await service.get_cinebrain_upcoming_releases_lazy(
                     region=region,
                     timezone_name=timezone_name,
                     content_type=content_type,
                     language=language,
                     genre=genre,
                     months=months,
+                    page=page,
+                    limit=limit,
                     use_cache=use_cache
                 )
                 return results
