@@ -1070,3 +1070,4 @@ class CineBrainUpcomingContentService:
 
 
 UpcomingContentService = CineBrainUpcomingContentService
+LanguagePriority = CineBrainLanguagePriority
