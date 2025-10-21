@@ -1413,7 +1413,7 @@ def update_cinebrain_new_releases_config():
         return jsonify({'error': 'Failed to update CineBrain configuration'}), 500
 
 @app.route('/api/upcoming', methods=['GET'])
-@cache.cached(timeout=1800, key_prefix=make_cache_key)
+@cache.cached(timeout=900, key_prefix=make_cache_key)
 def get_comprehensive_upcoming():
     try:
         months = min(3, max(1, int(request.args.get('months', 3))))
@@ -1444,18 +1444,15 @@ def get_comprehensive_upcoming():
                 'cinebrain_service': 'upcoming'
             }), 400
         
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-        try:
+        async def fetch_data():
             service = CinebrainUpcomingContentService(
                 tmdb_api_key=TMDB_API_KEY,
                 cache_backend=cache,
-                enable_detailed_info=True
+                enable_detailed_info=False
             )
             
-            results = loop.run_until_complete(
-                service.get_cinebrain_upcoming_releases(
+            try:
+                results = await service.get_cinebrain_upcoming_releases(
                     region=region,
                     timezone_name=timezone_name,
                     content_type=content_type,
@@ -1464,9 +1461,15 @@ def get_comprehensive_upcoming():
                     months=months,
                     use_cache=use_cache
                 )
-            )
-            
-            loop.run_until_complete(service.close())
+                return results
+            finally:
+                await service.close()
+        
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        try:
+            results = loop.run_until_complete(fetch_data())
             
             results['cinebrain_service'] = 'upcoming'
             results['cinebrain_telugu_priority'] = True
