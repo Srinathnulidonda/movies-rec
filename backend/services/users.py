@@ -8,6 +8,7 @@ import jwt
 from functools import wraps
 from collections import defaultdict, Counter
 from sqlalchemy import or_
+from sqlalchemy.exc import IntegrityError
 
 users_bp = Blueprint('users', __name__)
 
@@ -21,9 +22,10 @@ Review = None
 app = None
 recommendation_engine = None
 cache = None
+content_service = None
 
 def init_users(flask_app, database, models, services):
-    global db, User, Content, UserInteraction, Review, app, recommendation_engine, cache
+    global db, User, Content, UserInteraction, Review, app, recommendation_engine, cache, content_service
     
     app = flask_app
     db = database
@@ -32,6 +34,7 @@ def init_users(flask_app, database, models, services):
     UserInteraction = models['UserInteraction']
     Review = models.get('Review')
     cache = services.get('cache')
+    content_service = services.get('ContentService')
     
     try:
         from services.personalized import get_recommendation_engine
@@ -119,6 +122,36 @@ def get_basic_user_stats(user_id):
         logger.error(f"Error calculating CineBrain basic stats: {e}")
         return {}
 
+def create_minimal_content_record(content_id, content_info):
+    try:
+        content_record = Content(
+            id=content_id,
+            title=content_info.get('title', 'Unknown Title'),
+            content_type=content_info.get('content_type', 'movie'),
+            poster_path=content_info.get('poster_path'),
+            rating=content_info.get('rating', 0),
+            overview=content_info.get('overview', ''),
+            release_date=None,
+            tmdb_id=content_info.get('tmdb_id'),
+            genres='[]',
+            languages='[]',
+            slug=f"content-{content_id}-{int(datetime.utcnow().timestamp())}"
+        )
+        
+        if content_info.get('release_date'):
+            try:
+                content_record.release_date = datetime.strptime(content_info['release_date'][:10], '%Y-%m-%d').date()
+            except:
+                pass
+        
+        db.session.add(content_record)
+        db.session.commit()
+        return content_record
+    except Exception as e:
+        logger.error(f"Failed to create minimal content record: {e}")
+        db.session.rollback()
+        return None
+
 @users_bp.route('/api/register', methods=['POST', 'OPTIONS'])
 def register():
     if request.method == 'OPTIONS':
@@ -185,29 +218,22 @@ def login():
     
     try:
         data = request.get_json()
-        print(f"CineBrain Login attempt - Raw data: {data}")
         
         if not data:
-            print("CineBrain Login error: No JSON data received")
             return jsonify({'error': 'No data provided'}), 400
         
         username = data.get('username', '').strip()
         password = data.get('password', '')
         
-        print(f"CineBrain Login attempt - Username: '{username}', Password length: {len(password) if password else 0}")
-        
         if not username or not password:
-            print("CineBrain Login error: Missing username or password")
             return jsonify({'error': 'Missing username or password'}), 400
         
         user = None
         
         if '@' in username:
             user = User.query.filter(User.email.ilike(username)).first()
-            print(f"CineBrain Login: Searching by email for '{username}'")
         else:
             user = User.query.filter(User.username.ilike(username)).first()
-            print(f"CineBrain Login: Searching by username for '{username}'")
         
         if not user:
             user = User.query.filter(
@@ -216,21 +242,13 @@ def login():
                     User.email.ilike(username)
                 )
             ).first()
-            print(f"CineBrain Login: Fallback search for '{username}'")
         
         if not user:
-            print(f"CineBrain Login error: User '{username}' not found")
-            all_users = User.query.all()
-            print(f"Available CineBrain users: {[u.username for u in all_users]}")
             return jsonify({'error': 'Invalid credentials'}), 401
         
-        print(f"CineBrain Login: Found user {user.username} (ID: {user.id})")
-        
         password_valid = check_password_hash(user.password_hash, password)
-        print(f"CineBrain Login: Password check result: {password_valid}")
         
         if not password_valid:
-            print(f"CineBrain Login error: Invalid password for user '{username}'")
             return jsonify({'error': 'Invalid credentials'}), 401
         
         user.last_active = datetime.utcnow()
@@ -249,8 +267,6 @@ def login():
                 rec_effectiveness = recommendation_engine.get_user_recommendation_metrics(user.id)
         except Exception as e:
             logger.warning(f"Could not get CineBrain recommendation effectiveness: {e}")
-        
-        print(f"CineBrain Login successful for user: {user.username}")
         
         return jsonify({
             'message': 'CineBrain login successful',
@@ -271,10 +287,9 @@ def login():
         }), 200
         
     except Exception as e:
-        print(f"CineBrain Login exception: {e}")
         logger.error(f"CineBrain Login error: {e}")
         return jsonify({'error': 'CineBrain login failed'}), 500
-    
+
 @users_bp.route('/api/users/profile', methods=['GET', 'OPTIONS'])
 @require_auth
 def get_user_profile(current_user):
@@ -488,6 +503,48 @@ def record_interaction(current_user):
         if not all(field in data for field in required_fields):
             return jsonify({'error': 'Missing required fields for CineBrain interaction'}), 400
         
+        content_id = data['content_id']
+        
+        content_exists = Content.query.filter_by(id=content_id).first()
+        if not content_exists:
+            logger.warning(f"CineBrain: Content {content_id} not found in database, attempting to create")
+            
+            try:
+                content_metadata = data.get('metadata', {})
+                content_info = content_metadata.get('content_info')
+                
+                if content_info:
+                    if content_service and content_info.get('tmdb_id'):
+                        try:
+                            from app import CineBrainTMDBService
+                            tmdb_data = CineBrainTMDBService.get_content_details(
+                                content_info['tmdb_id'], 
+                                content_info.get('content_type', 'movie')
+                            )
+                            if tmdb_data:
+                                content_exists = content_service.save_content_from_tmdb(
+                                    tmdb_data, 
+                                    content_info.get('content_type', 'movie')
+                                )
+                        except Exception as e:
+                            logger.warning(f"Failed to fetch from TMDB: {e}")
+                    
+                    if not content_exists:
+                        content_exists = create_minimal_content_record(content_id, content_info)
+                
+                if not content_exists:
+                    return jsonify({
+                        'error': 'Content not found in CineBrain database',
+                        'details': 'This content needs to be properly indexed first'
+                    }), 404
+                    
+            except Exception as e:
+                logger.error(f"Failed to create content record: {e}")
+                return jsonify({
+                    'error': 'Content not found in CineBrain database',
+                    'details': 'Unable to create content record'
+                }), 404
+        
         if data['interaction_type'] == 'remove_watchlist':
             interaction = UserInteraction.query.filter_by(
                 user_id=current_user.id,
@@ -520,6 +577,40 @@ def record_interaction(current_user):
                 return jsonify({
                     'success': False,
                     'message': 'Content not in CineBrain watchlist'
+                }), 404
+        
+        if data['interaction_type'] == 'remove_favorite':
+            interaction = UserInteraction.query.filter_by(
+                user_id=current_user.id,
+                content_id=data['content_id'],
+                interaction_type='favorite'
+            ).first()
+            
+            if interaction:
+                db.session.delete(interaction)
+                db.session.commit()
+                
+                if recommendation_engine:
+                    try:
+                        recommendation_engine.update_user_preferences_realtime(
+                            current_user.id,
+                            {
+                                'content_id': data['content_id'],
+                                'interaction_type': 'remove_favorite',
+                                'metadata': data.get('metadata', {})
+                            }
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to update CineBrain real-time preferences: {e}")
+                
+                return jsonify({
+                    'success': True,
+                    'message': 'Removed from CineBrain favorites'
+                }), 200
+            else:
+                return jsonify({
+                    'success': False,
+                    'message': 'Content not in CineBrain favorites'
                 }), 404
         
         if data['interaction_type'] == 'watchlist':
@@ -1073,6 +1164,50 @@ def get_favorites(current_user):
     except Exception as e:
         logger.error(f"CineBrain favorites error: {e}")
         return jsonify({'error': 'Failed to get CineBrain favorites'}), 500
+
+@users_bp.route('/api/user/favorites/<int:content_id>', methods=['DELETE', 'OPTIONS'])
+@require_auth
+def remove_from_favorites(current_user, content_id):
+    if request.method == 'OPTIONS':
+        return '', 200
+    
+    try:
+        interaction = UserInteraction.query.filter_by(
+            user_id=current_user.id,
+            content_id=content_id,
+            interaction_type='favorite'
+        ).first()
+        
+        if interaction:
+            db.session.delete(interaction)
+            db.session.commit()
+            
+            if recommendation_engine:
+                try:
+                    recommendation_engine.update_user_preferences_realtime(
+                        current_user.id,
+                        {
+                            'content_id': content_id,
+                            'interaction_type': 'remove_favorite'
+                        }
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to update CineBrain recommendations: {e}")
+            
+            return jsonify({
+                'success': True,
+                'message': 'Removed from CineBrain favorites'
+            }), 200
+        else:
+            return jsonify({
+                'success': False,
+                'message': 'Content not in CineBrain favorites'
+            }), 404
+            
+    except Exception as e:
+        logger.error(f"Remove from CineBrain favorites error: {e}")
+        db.session.rollback()
+        return jsonify({'error': 'Failed to remove from CineBrain favorites'}), 500
 
 @users_bp.route('/api/user/ratings', methods=['GET', 'OPTIONS'])
 @require_auth
