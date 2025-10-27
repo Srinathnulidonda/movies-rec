@@ -2,6 +2,7 @@
 import re
 import json
 import logging
+import os
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Tuple, Union
 from dataclasses import dataclass, asdict
@@ -18,12 +19,24 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 import time
 import unicodedata
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-TMDB_API_KEY = None
-OMDB_API_KEY = None
-YOUTUBE_API_KEY = None
+TMDB_API_KEY = os.environ.get('TMDB_API_KEY')
+OMDB_API_KEY = os.environ.get('OMDB_API_KEY')
+YOUTUBE_API_KEY = os.environ.get('YOUTUBE_API_KEY')
+
+if not TMDB_API_KEY:
+    raise ValueError("TMDB_API_KEY environment variable is required")
+if not OMDB_API_KEY:
+    raise ValueError("OMDB_API_KEY environment variable is required")
+if not YOUTUBE_API_KEY:
+    raise ValueError("YOUTUBE_API_KEY environment variable is required")
+
 TMDB_BASE_URL = 'https://api.themoviedb.org/3'
 OMDB_BASE_URL = 'http://www.omdbapi.com/'
 YOUTUBE_BASE_URL = 'https://www.googleapis.com/youtube/v3'
@@ -716,18 +729,27 @@ class DetailsService:
         self.content_service = ContentService(db, models)
         self.session = self._create_http_session()
         self.executor = ThreadPoolExecutor(max_workers=5)
-        self._init_api_keys()
+        self._verify_api_keys()
     
-    def _init_api_keys(self):
-        global TMDB_API_KEY, OMDB_API_KEY, YOUTUBE_API_KEY
-        
+    def _verify_api_keys(self):
         try:
-            if has_app_context() and current_app:
-                TMDB_API_KEY = current_app.config.get('TMDB_API_KEY')
-                OMDB_API_KEY = current_app.config.get('OMDB_API_KEY')
-                YOUTUBE_API_KEY = current_app.config.get('YOUTUBE_API_KEY')
+            if not TMDB_API_KEY:
+                logger.error("TMDB_API_KEY not found in environment variables")
+                raise ValueError("TMDB_API_KEY environment variable is required")
+            
+            if not OMDB_API_KEY:
+                logger.error("OMDB_API_KEY not found in environment variables")
+                raise ValueError("OMDB_API_KEY environment variable is required")
+            
+            if not YOUTUBE_API_KEY:
+                logger.error("YOUTUBE_API_KEY not found in environment variables")
+                raise ValueError("YOUTUBE_API_KEY environment variable is required")
+            
+            logger.info("All required API keys verified successfully")
+            
         except Exception as e:
-            logger.warning(f"Could not initialize API keys: {e}")
+            logger.error(f"API key verification failed: {e}")
+            raise e
     
     def _create_http_session(self) -> requests.Session:
         session = requests.Session()
@@ -1309,8 +1331,6 @@ class DetailsService:
 
     def _build_content_details(self, content: Any, user_id: Optional[int] = None) -> Dict:
         try:
-            self._init_api_keys()
-            
             from flask import current_app
             app = current_app._get_current_object() if has_app_context() else None
             
@@ -1546,6 +1566,10 @@ class DetailsService:
         }
         
         try:
+            if not TMDB_API_KEY:
+                logger.warning("TMDB_API_KEY not available for cast/crew fetch")
+                return cast_crew
+            
             endpoint = 'movie' if content.content_type == 'movie' else 'tv'
             url = f"{TMDB_BASE_URL}/{endpoint}/{content.tmdb_id}/credits"
             
@@ -1774,6 +1798,10 @@ class DetailsService:
 
     def _fetch_complete_person_details(self, tmdb_id: int) -> Dict:
         try:
+            if not TMDB_API_KEY:
+                logger.warning("TMDB_API_KEY not available")
+                return {}
+            
             url = f"{TMDB_BASE_URL}/person/{tmdb_id}"
             params = {
                 'api_key': TMDB_API_KEY,
@@ -2754,6 +2782,7 @@ class DetailsService:
     def _fetch_tmdb_details(self, tmdb_id: int, content_type: str) -> Dict:
         try:
             if not TMDB_API_KEY:
+                logger.warning("TMDB_API_KEY not available")
                 return {}
                 
             endpoint = 'movie' if content_type == 'movie' else 'tv'
@@ -2778,6 +2807,7 @@ class DetailsService:
     def _fetch_omdb_details(self, imdb_id: str) -> Dict:
         try:
             if not OMDB_API_KEY:
+                logger.warning("OMDB_API_KEY not available")
                 return {}
                 
             params = {
@@ -2800,6 +2830,7 @@ class DetailsService:
     def _get_trailer(self, title: str, content_type: str) -> Optional[Dict]:
         try:
             if not YOUTUBE_API_KEY:
+                logger.warning("YOUTUBE_API_KEY not available")
                 return None
             
             search_query = f"{title} official trailer"
@@ -3434,6 +3465,14 @@ class DetailsService:
             return None
 
 def init_details_service(app, db, models, cache):
-    with app.app_context():
-        service = DetailsService(db, models, cache)
-        return service
+    try:
+        with app.app_context():
+            service = DetailsService(db, models, cache)
+            logger.info("CineBrain Details Service initialized successfully with environment variables")
+            return service
+    except ValueError as e:
+        logger.error(f"Failed to initialize CineBrain Details Service due to missing environment variables: {e}")
+        raise e
+    except Exception as e:
+        logger.error(f"Failed to initialize CineBrain Details Service: {e}")
+        raise e

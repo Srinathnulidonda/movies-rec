@@ -22,15 +22,34 @@ from urllib.parse import urlparse
 from sqlalchemy import func, desc, and_, or_
 from collections import defaultdict
 import enum
+from dotenv import load_dotenv
+load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 support_bp = Blueprint('support', __name__)
 
-FRONTEND_URL = os.environ.get('FRONTEND_URL', 'https://cinebrain.vercel.app')
-BACKEND_URL = os.environ.get('BACKEND_URL', 'https://cinebrain.onrender.com')
-REDIS_URL = os.environ.get('REDIS_URL', 'redis://red-d3cdplidbo4c73e352eg:Fin34Hk4Hq42PYejhV4Tufncmi4Ym4H6@red-d3cdplidbo4c73e352eg:6379')
+# Get environment variables
+FRONTEND_URL = os.environ.get('FRONTEND_URL')
+BACKEND_URL = os.environ.get('BACKEND_URL')
+REDIS_URL = os.environ.get('REDIS_URL')
+GMAIL_USERNAME = os.environ.get('GMAIL_USERNAME')
+GMAIL_APP_PASSWORD = os.environ.get('GMAIL_APP_PASSWORD')
+
+# Validate required environment variables
+if not FRONTEND_URL:
+    raise ValueError("FRONTEND_URL environment variable is required")
+if not BACKEND_URL:
+    raise ValueError("BACKEND_URL environment variable is required")
+if not GMAIL_USERNAME:
+    raise ValueError("GMAIL_USERNAME environment variable is required")
+if not GMAIL_APP_PASSWORD:
+    raise ValueError("GMAIL_APP_PASSWORD environment variable is required")
+
+# Set defaults for optional variables
+if not REDIS_URL:
+    logger.warning("REDIS_URL not set, Redis features will be disabled")
 
 EMAIL_REGEX = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
 
@@ -71,6 +90,10 @@ class FeedbackType(enum.Enum):
 def init_redis():
     global redis_client
     try:
+        if not REDIS_URL:
+            logger.warning("REDIS_URL not configured, Redis features disabled")
+            return None
+            
         url = urlparse(REDIS_URL)
         redis_client = redis.StrictRedis(
             host=url.hostname,
@@ -876,10 +899,7 @@ def init_support(flask_app, database, models, services):
     
     redis_client = init_redis()
     
-    gmail_username = os.environ.get('GMAIL_USERNAME', 'projects.srinath@gmail.com')
-    gmail_password = os.environ.get('GMAIL_APP_PASSWORD', 'wuus nsow nbee xewv')
-    
-    email_service = SupportEmailService(gmail_username, gmail_password)
+    email_service = SupportEmailService(GMAIL_USERNAME, GMAIL_APP_PASSWORD)
     support_service = SupportService(email_service)
     
     class SupportCategory(database.Model):
@@ -1034,7 +1054,7 @@ def init_support(flask_app, database, models, services):
     except Exception as e:
         logger.error(f"Error creating support tables: {e}")
     
-    logger.info("✅ Support service initialized successfully")
+    logger.info("✅ CineBrain Support service initialized successfully with environment variables")
 
 def create_default_data():
     try:
@@ -1482,6 +1502,13 @@ def support_health():
         return jsonify({
             'status': 'healthy',
             'service': 'support',
+            'environment_variables': {
+                'frontend_url': bool(FRONTEND_URL),
+                'backend_url': bool(BACKEND_URL),
+                'gmail_username': bool(GMAIL_USERNAME),
+                'gmail_app_password': bool(GMAIL_APP_PASSWORD),
+                'redis_url': bool(REDIS_URL)
+            },
             'database': {
                 'categories': categories_count,
                 'faqs': faqs_count,

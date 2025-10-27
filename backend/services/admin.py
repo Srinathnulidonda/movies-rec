@@ -21,6 +21,9 @@ import redis
 from typing import Dict, List, Optional
 import enum
 from urllib.parse import urlparse
+from dotenv import load_dotenv
+
+load_dotenv()
 
 admin_bp = Blueprint('admin', __name__)
 
@@ -28,19 +31,33 @@ logger = logging.getLogger(__name__)
 
 cache = Cache()
 
-TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '7974343726:AAFUCW444L6jbj1tVLRyf8V7Isz2Ua1SxSk')
-TELEGRAM_CHANNEL_ID = os.environ.get('TELEGRAM_CHANNEL_ID', '-1002850793757')
-TELEGRAM_ADMIN_CHAT_ID = os.environ.get('TELEGRAM_ADMIN_CHAT_ID', '-1002850793757')
-GMAIL_USERNAME = os.environ.get('GMAIL_USERNAME', 'projects.srinath@gmail.com')
-GMAIL_APP_PASSWORD = os.environ.get('GMAIL_APP_PASSWORD', 'wuus nsow nbee xewv')
-REDIS_URL = os.environ.get('REDIS_URL', 'redis://red-d3cdplidbo4c73e352eg:Fin34Hk4Hq42PYejhV4Tufncmi4Ym4H6@red-d3cdplidbo4c73e352eg:6379')
+TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
+TELEGRAM_CHANNEL_ID = os.environ.get('TELEGRAM_CHANNEL_ID')
+TELEGRAM_ADMIN_CHAT_ID = os.environ.get('TELEGRAM_ADMIN_CHAT_ID')
+GMAIL_USERNAME = os.environ.get('GMAIL_USERNAME')
+GMAIL_APP_PASSWORD = os.environ.get('GMAIL_APP_PASSWORD')
+REDIS_URL = os.environ.get('REDIS_URL')
 
-if TELEGRAM_BOT_TOKEN and TELEGRAM_BOT_TOKEN != 'your_telegram_bot_token':
+if not TELEGRAM_BOT_TOKEN:
+    logger.warning("TELEGRAM_BOT_TOKEN not set - Telegram notifications will be disabled")
+if not TELEGRAM_CHANNEL_ID:
+    logger.warning("TELEGRAM_CHANNEL_ID not set - Channel notifications will be disabled")
+if not TELEGRAM_ADMIN_CHAT_ID:
+    logger.warning("TELEGRAM_ADMIN_CHAT_ID not set - Admin notifications will be disabled")
+if not GMAIL_USERNAME:
+    logger.warning("GMAIL_USERNAME not set - Email notifications will be disabled")
+if not GMAIL_APP_PASSWORD:
+    logger.warning("GMAIL_APP_PASSWORD not set - Email notifications will be disabled")
+if not REDIS_URL:
+    logger.warning("REDIS_URL not set - Redis features will be disabled")
+
+if TELEGRAM_BOT_TOKEN:
     try:
         bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
-    except:
+        logger.info("✅ Telegram bot initialized successfully")
+    except Exception as e:
         bot = None
-        logging.warning("Failed to initialize Telegram bot")
+        logger.warning(f"Failed to initialize Telegram bot: {e}")
 else:
     bot = None
 
@@ -79,6 +96,10 @@ class NotificationType(enum.Enum):
 def init_redis_admin():
     global redis_client
     try:
+        if not REDIS_URL:
+            logger.warning("Redis URL not configured for admin service")
+            return None
+            
         url = urlparse(REDIS_URL)
         redis_client = redis.StrictRedis(
             host=url.hostname,
@@ -91,10 +112,10 @@ def init_redis_admin():
             health_check_interval=30
         )
         redis_client.ping()
-        logger.info("Admin Redis connected successfully")
+        logger.info("✅ Admin Redis connected successfully")
         return redis_client
     except Exception as e:
-        logger.error(f"Admin Redis connection failed: {e}")
+        logger.error(f"❌ Admin Redis connection failed: {e}")
         return None
 
 def require_admin(f):
@@ -124,9 +145,21 @@ class AdminEmailService:
         self.password = GMAIL_APP_PASSWORD
         self.from_email = "admin@cinebrain.com"
         self.from_name = "CineBrain Admin"
+        
+        self.is_configured = bool(self.username and self.password)
+        if not self.is_configured:
+            logger.warning("Email service not configured - email notifications disabled")
     
     def send_admin_notification(self, subject: str, content: str, admin_emails: List[str]):
         try:
+            if not self.is_configured:
+                logger.warning("Email service not configured, skipping email notification")
+                return False
+                
+            if not admin_emails:
+                logger.warning("No admin emails provided")
+                return False
+            
             msg = MIMEMultipart('alternative')
             msg['From'] = f"{self.from_name} <{self.username}>"
             msg['To'] = ', '.join(admin_emails)
@@ -180,8 +213,12 @@ class TelegramAdminService:
     @staticmethod
     def send_admin_notification(notification_type: str, message: str, is_urgent: bool = False):
         try:
-            if not bot or not TELEGRAM_ADMIN_CHAT_ID:
-                logger.warning("Telegram bot or admin chat ID not configured")
+            if not bot:
+                logger.warning("Telegram bot not configured, skipping notification")
+                return False
+                
+            if not TELEGRAM_ADMIN_CHAT_ID:
+                logger.warning("Telegram admin chat ID not configured")
                 return False
             
             icon_map = {
@@ -217,15 +254,17 @@ class TelegramAdminService:
                 parse_mode='Markdown'
             )
             
+            logger.info(f"✅ Telegram admin notification sent: {notification_type}")
             return True
         except Exception as e:
-            logger.error(f"Telegram admin notification error: {e}")
+            logger.error(f"❌ Telegram admin notification error: {e}")
             return False
     
     @staticmethod
     def send_support_summary():
         try:
-            if not SupportTicket:
+            if not SupportTicket or not bot or not TELEGRAM_ADMIN_CHAT_ID:
+                logger.warning("Support summary skipped - missing configuration or support system")
                 return False
             
             today = datetime.utcnow().date()
@@ -276,7 +315,7 @@ class TelegramAdminService:
             return True
             
         except Exception as e:
-            logger.error(f"Support summary error: {e}")
+            logger.error(f"❌ Support summary error: {e}")
             return False
 
 class AdminNotificationService:
@@ -305,6 +344,7 @@ class AdminNotificationService:
             thread.start()
         
         schedule_daily_summary()
+        logger.info("✅ Admin notification service initialized")
     
     @classmethod
     def create_notification(cls, notification_type: NotificationType, title: str, message: str, 
@@ -339,7 +379,7 @@ class AdminNotificationService:
                 is_urgent
             )
             
-            if is_urgent:
+            if is_urgent and cls.email_service and cls.email_service.is_configured:
                 admin_emails = [user.email for user in User.query.filter_by(is_admin=True).all()]
                 if admin_emails:
                     cls.email_service.send_admin_notification(title, message, admin_emails)
@@ -362,11 +402,11 @@ class AdminNotificationService:
                 except Exception as e:
                     logger.error(f"Redis notification error: {e}")
             
-            logger.info(f"Admin notification created: {title}")
+            logger.info(f"✅ Admin notification created: {title}")
             return notification
             
         except Exception as e:
-            logger.error(f"Error creating admin notification: {e}")
+            logger.error(f"❌ Error creating admin notification: {e}")
             if db:
                 db.session.rollback()
             return None
@@ -394,7 +434,7 @@ class AdminNotificationService:
                 }
             )
         except Exception as e:
-            logger.error(f"Error notifying new ticket: {e}")
+            logger.error(f"❌ Error notifying new ticket: {e}")
     
     @classmethod
     def notify_sla_breach(cls, ticket):
@@ -412,7 +452,7 @@ class AdminNotificationService:
                 action_url=f"/admin/support/tickets/{ticket.id}"
             )
         except Exception as e:
-            logger.error(f"Error notifying SLA breach: {e}")
+            logger.error(f"❌ Error notifying SLA breach: {e}")
     
     @classmethod
     def notify_feedback_received(cls, feedback):
@@ -433,14 +473,18 @@ class AdminNotificationService:
                 }
             )
         except Exception as e:
-            logger.error(f"Error notifying feedback: {e}")
+            logger.error(f"❌ Error notifying feedback: {e}")
 
 class TelegramService:
     @staticmethod
     def send_admin_recommendation(content, admin_name, description):
         try:
-            if not bot or not TELEGRAM_CHANNEL_ID:
-                logger.warning("Telegram bot or channel ID not configured")
+            if not bot:
+                logger.warning("Telegram bot not configured for recommendations")
+                return False
+                
+            if not TELEGRAM_CHANNEL_ID:
+                logger.warning("Telegram channel ID not configured")
                 return False
             
             genres_list = []
@@ -469,7 +513,7 @@ class TelegramService:
 
 📖 **Synopsis:** {(content.overview[:200] + '...') if content.overview else 'No synopsis available'}
 
-#AdminChoice #MovieRecommendation #CineScope"""
+#AdminChoice #MovieRecommendation #CineBrain"""
             
             if poster_url:
                 try:
@@ -485,9 +529,10 @@ class TelegramService:
             else:
                 bot.send_message(TELEGRAM_CHANNEL_ID, message, parse_mode='Markdown')
             
+            logger.info(f"✅ Admin recommendation sent to Telegram: {content.title}")
             return True
         except Exception as e:
-            logger.error(f"Telegram send error: {e}")
+            logger.error(f"❌ Telegram send error: {e}")
             return False
 
 def init_admin(flask_app, database, models, services):
@@ -601,9 +646,9 @@ def create_admin_models(database):
     try:
         with app.app_context():
             database.create_all()
-            logger.info("Admin models created successfully")
+            logger.info("✅ Admin models created successfully")
     except Exception as e:
-        logger.error(f"Error creating admin models: {e}")
+        logger.error(f"❌ Error creating admin models: {e}")
 
 @admin_bp.route('/api/admin/search', methods=['GET'])
 @require_admin
@@ -665,7 +710,6 @@ def save_external_content(current_user):
         
         existing_content = None
         
-        # Handle both string and numeric IDs properly
         if data.get('source') == 'anime' and data.get('id'):
             mal_id = data['id']
             if isinstance(mal_id, str) and mal_id.isdigit():
@@ -753,8 +797,7 @@ def save_external_content(current_user):
     except Exception as e:
         logger.error(f"Save content error: {e}")
         return jsonify({'error': 'Failed to process content'}), 500
-    
-    
+
 @admin_bp.route('/api/admin/recommendations', methods=['POST'])
 @require_admin
 def create_admin_recommendation(current_user):
@@ -1505,7 +1548,14 @@ def get_system_health(current_user):
         health_data = {
             'timestamp': datetime.utcnow().isoformat(),
             'status': 'healthy',
-            'components': {}
+            'components': {},
+            'configuration': {
+                'telegram_bot': 'configured' if TELEGRAM_BOT_TOKEN else 'not_configured',
+                'telegram_channel': 'configured' if TELEGRAM_CHANNEL_ID else 'not_configured',
+                'telegram_admin_chat': 'configured' if TELEGRAM_ADMIN_CHAT_ID else 'not_configured',
+                'email_service': 'configured' if (GMAIL_USERNAME and GMAIL_APP_PASSWORD) else 'not_configured',
+                'redis': 'configured' if REDIS_URL else 'not_configured'
+            }
         }
         
         health_data['components']['database'] = {

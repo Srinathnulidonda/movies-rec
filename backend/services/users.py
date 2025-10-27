@@ -124,31 +124,63 @@ def get_basic_user_stats(user_id):
 
 def create_minimal_content_record(content_id, content_info):
     try:
+        # Clean up content_type to prevent database errors
+        content_type = str(content_info.get('content_type', 'movie')).strip().lower()
+        # Remove any whitespace/newlines that might cause issues
+        content_type = ' '.join(content_type.split())
+        if content_type not in ['movie', 'tv', 'anime']:
+            content_type = 'movie'
+        
+        # Ensure title is reasonable length and properly formatted
+        title = str(content_info.get('title', 'Unknown Title')).strip()[:255]
+        if not title:
+            title = 'Unknown Title'
+        
+        # Create clean slug with length validation
+        timestamp = int(datetime.utcnow().timestamp())
+        slug = f"content-{content_id}-{timestamp}"
+        if len(slug) > 150:  # Ensure slug fits in database
+            slug = slug[:150]
+        
+        # Clean overview and ensure it fits
+        overview = str(content_info.get('overview', '')).strip()[:1000]
+        
+        # Validate and clean poster path
+        poster_path = content_info.get('poster_path')
+        if poster_path and len(str(poster_path)) > 255:
+            poster_path = str(poster_path)[:255]
+        
         content_record = Content(
             id=content_id,
-            title=content_info.get('title', 'Unknown Title'),
-            content_type=content_info.get('content_type', 'movie'),
-            poster_path=content_info.get('poster_path'),
-            rating=content_info.get('rating', 0),
-            overview=content_info.get('overview', ''),
+            title=title,
+            content_type=content_type,  # Now properly cleaned
+            poster_path=poster_path,
+            rating=float(content_info.get('rating', 0)) if content_info.get('rating') else 0,
+            overview=overview,
             release_date=None,
             tmdb_id=content_info.get('tmdb_id'),
             genres='[]',
             languages='[]',
-            slug=f"content-{content_id}-{int(datetime.utcnow().timestamp())}"
+            slug=slug
         )
         
+        # Handle release_date safely
         if content_info.get('release_date'):
             try:
-                content_record.release_date = datetime.strptime(content_info['release_date'][:10], '%Y-%m-%d').date()
-            except:
-                pass
+                release_date_str = str(content_info['release_date'])[:10]
+                content_record.release_date = datetime.strptime(
+                    release_date_str, '%Y-%m-%d'
+                ).date()
+            except (ValueError, TypeError) as e:
+                logger.warning(f"Invalid release date format: {content_info.get('release_date')}")
         
         db.session.add(content_record)
         db.session.commit()
+        logger.info(f"CineBrain: Created minimal content record for ID {content_id}")
         return content_record
+        
     except Exception as e:
-        logger.error(f"Failed to create minimal content record: {e}")
+        logger.error(f"Failed to create minimal content record for ID {content_id}: {e}")
         db.session.rollback()
         return None
 
@@ -505,6 +537,7 @@ def record_interaction(current_user):
         
         content_id = data['content_id']
         
+        # Check if content exists
         content_exists = Content.query.filter_by(id=content_id).first()
         if not content_exists:
             logger.warning(f"CineBrain: Content {content_id} not found in database, attempting to create")
@@ -514,118 +547,95 @@ def record_interaction(current_user):
                 content_info = content_metadata.get('content_info')
                 
                 if content_info:
+                    # First try to fetch from TMDB if tmdb_id is available
                     if content_service and content_info.get('tmdb_id'):
                         try:
                             from app import CineBrainTMDBService
                             tmdb_data = CineBrainTMDBService.get_content_details(
                                 content_info['tmdb_id'], 
-                                content_info.get('content_type', 'movie')
+                                content_info.get('content_type', 'movie').strip()
                             )
                             if tmdb_data:
                                 content_exists = content_service.save_content_from_tmdb(
                                     tmdb_data, 
-                                    content_info.get('content_type', 'movie')
+                                    content_info.get('content_type', 'movie').strip()
                                 )
+                                logger.info(f"CineBrain: Created content from TMDB for ID {content_id}")
                         except Exception as e:
                             logger.warning(f"Failed to fetch from TMDB: {e}")
                     
+                    # Fallback to minimal record creation
                     if not content_exists:
                         content_exists = create_minimal_content_record(content_id, content_info)
                 
                 if not content_exists:
                     return jsonify({
                         'error': 'Content not found in CineBrain database',
-                        'details': 'This content needs to be properly indexed first'
+                        'details': 'Unable to create or fetch content record. Please try again.'
                     }), 404
                     
             except Exception as e:
                 logger.error(f"Failed to create content record: {e}")
                 return jsonify({
                     'error': 'Content not found in CineBrain database',
-                    'details': 'Unable to create content record'
+                    'details': 'Unable to create content record due to data validation error'
                 }), 404
         
-        if data['interaction_type'] == 'remove_watchlist':
+        # Handle remove operations
+        if data['interaction_type'] in ['remove_watchlist', 'remove_favorite']:
+            interaction_type = 'watchlist' if data['interaction_type'] == 'remove_watchlist' else 'favorite'
             interaction = UserInteraction.query.filter_by(
                 user_id=current_user.id,
                 content_id=data['content_id'],
-                interaction_type='watchlist'
+                interaction_type=interaction_type
             ).first()
             
             if interaction:
                 db.session.delete(interaction)
                 db.session.commit()
                 
+                # Update recommendation engine
                 if recommendation_engine:
                     try:
                         recommendation_engine.update_user_preferences_realtime(
                             current_user.id,
                             {
                                 'content_id': data['content_id'],
-                                'interaction_type': 'remove_watchlist',
+                                'interaction_type': data['interaction_type'],
                                 'metadata': data.get('metadata', {})
                             }
                         )
                     except Exception as e:
                         logger.warning(f"Failed to update CineBrain real-time preferences: {e}")
                 
+                message = f'Removed from CineBrain {"watchlist" if interaction_type == "watchlist" else "favorites"}'
                 return jsonify({
                     'success': True,
-                    'message': 'Removed from CineBrain watchlist'
+                    'message': message
                 }), 200
             else:
+                item_type = "watchlist" if interaction_type == "watchlist" else "favorites"
                 return jsonify({
                     'success': False,
-                    'message': 'Content not in CineBrain watchlist'
+                    'message': f'Content not in CineBrain {item_type}'
                 }), 404
         
-        if data['interaction_type'] == 'remove_favorite':
-            interaction = UserInteraction.query.filter_by(
-                user_id=current_user.id,
-                content_id=data['content_id'],
-                interaction_type='favorite'
-            ).first()
-            
-            if interaction:
-                db.session.delete(interaction)
-                db.session.commit()
-                
-                if recommendation_engine:
-                    try:
-                        recommendation_engine.update_user_preferences_realtime(
-                            current_user.id,
-                            {
-                                'content_id': data['content_id'],
-                                'interaction_type': 'remove_favorite',
-                                'metadata': data.get('metadata', {})
-                            }
-                        )
-                    except Exception as e:
-                        logger.warning(f"Failed to update CineBrain real-time preferences: {e}")
-                
-                return jsonify({
-                    'success': True,
-                    'message': 'Removed from CineBrain favorites'
-                }), 200
-            else:
-                return jsonify({
-                    'success': False,
-                    'message': 'Content not in CineBrain favorites'
-                }), 404
-        
-        if data['interaction_type'] == 'watchlist':
+        # Handle duplicate watchlist/favorite additions
+        if data['interaction_type'] in ['watchlist', 'favorite']:
             existing = UserInteraction.query.filter_by(
                 user_id=current_user.id,
                 content_id=data['content_id'],
-                interaction_type='watchlist'
+                interaction_type=data['interaction_type']
             ).first()
             
             if existing:
+                item_type = "watchlist" if data['interaction_type'] == "watchlist" else "favorites"
                 return jsonify({
                     'success': True,
-                    'message': 'Already in CineBrain watchlist'
+                    'message': f'Already in CineBrain {item_type}'
                 }), 200
         
+        # Create new interaction
         interaction = UserInteraction(
             user_id=current_user.id,
             content_id=data['content_id'],
@@ -637,6 +647,7 @@ def record_interaction(current_user):
         db.session.add(interaction)
         db.session.commit()
         
+        # Update recommendation engine
         if recommendation_engine:
             try:
                 recommendation_engine.update_user_preferences_realtime(
@@ -1318,7 +1329,9 @@ def users_health():
             'profile_management': True,
             'watchlist_favorites': True,
             'real_time_updates': True,
-            'email_username_login': True
+            'email_username_login': True,
+            'improved_content_creation': True,
+            'enhanced_error_handling': True
         }
         
         return jsonify(health_info), 200

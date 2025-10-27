@@ -48,20 +48,21 @@ from services.personalized import init_personalized
 from services.details import init_details_service, SlugManager, ContentService
 from services.new_releases import init_cinebrain_new_releases_service
 import re
+from dotenv import load_dotenv
+load_dotenv()
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'your-secret-key-change-in-production')
-
-DATABASE_URL = 'postgresql://cinebrain_user:tgZYZpWyAcCrFjKTtbIqPPphHIzBJaL2@dpg-d3cdosq4d50c73cffot0-a/cinebrain'
-
+DATABASE_URL = os.environ.get('DATABASE_URL')
 if os.environ.get('DATABASE_URL'):
     app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL').replace('postgres://', 'postgresql://')
 else:
+    if not DATABASE_URL:
+        raise ValueError("DATABASE_URL environment variable is required")
     app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
 
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-
-REDIS_URL = os.environ.get('REDIS_URL', 'redis://red-d3cdplidbo4c73e352eg:Fin34Hk4Hq42PYejhV4Tufncmi4Ym4H6@red-d3cdplidbo4c73e352eg:6379')
+REDIS_URL = os.environ.get('REDIS_URL')
 
 if REDIS_URL and REDIS_URL.startswith(('redis://', 'rediss://')):
     app.config['CACHE_TYPE'] = 'redis'
@@ -85,10 +86,16 @@ if DATABASE_URL and DATABASE_URL.startswith('postgresql://'):
 db = SQLAlchemy(app)
 CORS(app)
 cache = Cache(app)
+TMDB_API_KEY = os.environ.get('TMDB_API_KEY')
+OMDB_API_KEY = os.environ.get('OMDB_API_KEY')
+YOUTUBE_API_KEY = os.environ.get('YOUTUBE_API_KEY')
 
-TMDB_API_KEY = os.environ.get('TMDB_API_KEY', '1cf86635f20bb2aff8e70940e7c3ddd5')
-OMDB_API_KEY = os.environ.get('OMDB_API_KEY', '52260795')
-YOUTUBE_API_KEY = os.environ.get('YOUTUBE_API_KEY', 'AIzaSyDU-JLASTdIdoLOmlpWuJYLTZDUspqw2T4')
+if not TMDB_API_KEY:
+    raise ValueError("TMDB_API_KEY environment variable is required")
+if not OMDB_API_KEY:
+    raise ValueError("OMDB_API_KEY environment variable is required")
+if not YOUTUBE_API_KEY:
+    raise ValueError("YOUTUBE_API_KEY environment variable is required")
 
 app.config['TMDB_API_KEY'] = TMDB_API_KEY
 app.config['OMDB_API_KEY'] = OMDB_API_KEY
@@ -2420,7 +2427,7 @@ if __name__ == '__main__':
     print("=== Running CineBrain Flask in development mode with Enhanced Critics Choice ===")
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('FLASK_ENV') == 'development'
-    app.run(host='0.0.0', port=port, debug=debug)
+    app.run(host='0.0.0.0', port=port, debug=debug)
 else:
     print("=== CineBrain Flask app imported by Gunicorn - ENHANCED CRITICS CHOICE VERSION ===")
     print(f"App name: {app.name}")

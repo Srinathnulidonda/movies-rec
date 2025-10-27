@@ -24,15 +24,37 @@ import json
 import redis
 from urllib.parse import urlparse
 import socket
+from dotenv import load_dotenv
+
+load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 auth_bp = Blueprint('auth', __name__)
 
-FRONTEND_URL = os.environ.get('FRONTEND_URL', 'https://cinebrain.vercel.app')
-BACKEND_URL = os.environ.get('BACKEND_URL', 'https://cinebrain.onrender.com')
-REDIS_URL = os.environ.get('REDIS_URL', 'redis://red-d3cdplidbo4c73e352eg:Fin34Hk4Hq42PYejhV4Tufncmi4Ym4H6@red-d3cdplidbo4c73e352eg:6379')
+FRONTEND_URL = os.environ.get('FRONTEND_URL')
+BACKEND_URL = os.environ.get('BACKEND_URL')
+REDIS_URL = os.environ.get('REDIS_URL')
+GMAIL_USERNAME = os.environ.get('GMAIL_USERNAME')
+GMAIL_APP_PASSWORD = os.environ.get('GMAIL_APP_PASSWORD')
+
+if not FRONTEND_URL:
+    logger.warning("FRONTEND_URL not set - using default")
+    FRONTEND_URL = 'https://cinebrain.vercel.app'
+
+if not BACKEND_URL:
+    logger.warning("BACKEND_URL not set - using default")
+    BACKEND_URL = 'https://cinebrain.onrender.com'
+
+if not REDIS_URL:
+    logger.warning("REDIS_URL not set - Redis features will be disabled")
+
+if not GMAIL_USERNAME:
+    logger.warning("GMAIL_USERNAME not set - email notifications will be disabled")
+
+if not GMAIL_APP_PASSWORD:
+    logger.warning("GMAIL_APP_PASSWORD not set - email notifications will be disabled")
 
 EMAIL_REGEX = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
 
@@ -48,6 +70,10 @@ PASSWORD_RESET_SALT = 'password-reset-salt-cinebrain-2025'
 def init_redis():
     global redis_client
     try:
+        if not REDIS_URL:
+            logger.warning("Redis URL not configured for auth service")
+            return None
+            
         url = urlparse(REDIS_URL)
         redis_client = redis.StrictRedis(
             host=url.hostname,
@@ -60,16 +86,16 @@ def init_redis():
             health_check_interval=30
         )
         redis_client.ping()
-        logger.info("Redis connected successfully")
+        logger.info("✅ Auth Redis connected successfully")
         return redis_client
     except Exception as e:
-        logger.error(f"Redis connection failed: {e}")
+        logger.error(f"❌ Auth Redis connection failed: {e}")
         return None
 
 class FreeEmailService:
     def __init__(self, username=None, password=None):
-        self.username = username or os.environ.get('GMAIL_USERNAME', 'projects.srinath@gmail.com')
-        self.password = password or os.environ.get('GMAIL_APP_PASSWORD', 'nddg lphy ajjy rnuq')
+        self.username = username or GMAIL_USERNAME
+        self.password = password or GMAIL_APP_PASSWORD
         self.from_email = "noreply@cinebrain.com"
         self.from_name = "CineBrain"
         self.reply_to = "support@cinebrain.com"
@@ -97,15 +123,25 @@ class FreeEmailService:
                 'use_ssl': False
             }
         ]
-        self.email_enabled = self._test_smtp_connection()
+        
+        self.is_configured = bool(self.username and self.password)
+        if not self.is_configured:
+            logger.warning("Email credentials not configured - email service will be disabled")
+            self.email_enabled = False
+        else:
+            self.email_enabled = self._test_smtp_connection()
         
         if self.email_enabled:
             self.start_email_worker()
         else:
-            logger.warning("Email service disabled - SMTP connection failed")
+            logger.warning("Email service disabled - SMTP connection failed or not configured")
     
     def _test_smtp_connection(self):
         """Test SMTP connectivity at initialization"""
+        if not self.is_configured:
+            logger.warning("Email credentials not available for SMTP test")
+            return False
+            
         for config in self.smtp_configs:
             try:
                 logger.info(f"Testing {config['name']} connection...")
@@ -167,7 +203,7 @@ class FreeEmailService:
         
         thread = threading.Thread(target=worker, daemon=True, name="EmailWorker")
         thread.start()
-        logger.info("Started email worker thread")
+        logger.info("✅ Started email worker thread")
     
     def _send_email_smtp(self, email_data: Dict):
         if not self.email_enabled:
@@ -256,7 +292,7 @@ class FreeEmailService:
                         'subject': email_data['subject'],
                         'timestamp': datetime.utcnow().isoformat(),
                         'reset_token': email_data.get('reset_token'),
-                        'fallback_reason': 'SMTP connection failed'
+                        'fallback_reason': 'SMTP connection failed or not configured'
                     })
                 )
                 
@@ -672,7 +708,7 @@ def init_auth(flask_app, database, user_model):
     if email_service.email_enabled:
         logger.info("✅ Auth module initialized with email support")
     else:
-        logger.warning("⚠️ Auth module initialized WITHOUT email (SMTP blocked) - using fallback mode")
+        logger.warning("⚠️ Auth module initialized WITHOUT email (SMTP blocked or not configured) - using fallback mode")
 
 def check_rate_limit(identifier: str, max_requests: int = 5, window: int = 300) -> bool:
     if not redis_client:
@@ -999,7 +1035,7 @@ def auth_health():
         else:
             redis_stats = {}
         
-        email_configured = email_service is not None
+        email_configured = email_service is not None and email_service.is_configured
         email_enabled = email_service.email_enabled if email_service else False
         
         queue_size = 0
@@ -1015,6 +1051,14 @@ def auth_health():
         if email_service and hasattr(email_service, 'working_config'):
             smtp_config = email_service.working_config.get('name', 'Unknown')
         
+        configuration_status = {
+            'frontend_url': 'configured' if FRONTEND_URL else 'not_configured',
+            'backend_url': 'configured' if BACKEND_URL else 'not_configured',
+            'redis_url': 'configured' if REDIS_URL else 'not_configured',
+            'gmail_username': 'configured' if GMAIL_USERNAME else 'not_configured',
+            'gmail_password': 'configured' if GMAIL_APP_PASSWORD else 'not_configured'
+        }
+        
         return jsonify({
             'status': 'healthy',
             'service': 'authentication',
@@ -1028,6 +1072,7 @@ def auth_health():
             'redis_stats': redis_stats,
             'frontend_url': FRONTEND_URL,
             'fallback_mode': not email_enabled,
+            'configuration': configuration_status,
             'timestamp': datetime.utcnow().isoformat()
         }), 200
         
