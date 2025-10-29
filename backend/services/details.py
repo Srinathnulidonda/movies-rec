@@ -220,7 +220,7 @@ class SlugManager:
     
     @staticmethod
     def generate_slug(title: str, year: Optional[int] = None, content_type: str = 'movie', 
-                     original_title: str = None, tmdb_id: int = None) -> str:
+                    original_title: str = None, tmdb_id: int = None) -> str:
         try:
             if not title or not isinstance(title, str):
                 fallback = f"content-{tmdb_id or int(time.time())}"
@@ -240,7 +240,7 @@ class SlugManager:
                 return fallback
             
             try:
-                slug = slugify(normalized_title, max_length=70, word_boundary=True, save_order=True)
+                slug = slugify(normalized_title, max_length=60, word_boundary=True, save_order=True)
             except Exception as slugify_error:
                 logger.warning(f"Slugify failed for '{normalized_title}': {slugify_error}")
                 slug = SlugManager._manual_slugify(normalized_title)
@@ -257,13 +257,24 @@ class SlugManager:
                 }.get(content_type, 'content')
                 return f"{type_prefix}-{tmdb_id or int(time.time())}"
             
+            # Add content type prefix for better organization and uniqueness
             if content_type == 'anime' and not slug.startswith('anime-'):
                 slug = f"anime-{slug}"
+            elif content_type == 'tv' and not slug.startswith('tv-'):
+                slug = f"tv-{slug}"
+            elif content_type == 'movie' and len(slug) < 10:  # Only for very short movie titles
+                slug = f"movie-{slug}"
             
+            # Add year for movies and anime for better uniqueness
             if year and content_type in ['movie', 'anime'] and isinstance(year, int):
                 if 1900 <= year <= 2030:
                     slug = f"{slug}-{year}"
             
+            # Add tmdb_id suffix for additional uniqueness if needed
+            if tmdb_id and len(slug) < 15:
+                slug = f"{slug}-{tmdb_id}"
+            
+            # Ensure reasonable length
             if len(slug) > 120:
                 parts = slug[:117].split('-')
                 if len(parts) > 1:
@@ -959,47 +970,53 @@ class DetailsService:
             
             logger.debug(f"Fuzzy search for slug '{slug}': title='{title}', year={year}, type={content_type}")
             
+            # Direct slug pattern search first
             slug_results = self._search_by_slug_patterns(slug)
             if slug_results:
-                logger.info(f"Found {len(slug_results)} results by slug pattern for '{slug}'")
-                return slug_results[0]
+                # Verify the match is actually relevant
+                best_slug_match = self._verify_slug_match(slug_results[0], title, year)
+                if best_slug_match:
+                    logger.info(f"Found direct slug match for '{slug}': {best_slug_match.title}")
+                    return best_slug_match
             
-            title_variations = self._generate_comprehensive_title_variations(title)
+            # More conservative title variations
+            title_variations = self._generate_conservative_title_variations(title)
             
             results = []
             
+            # Try exact matches first with stricter criteria
             strategies = [
-                ('exact_match_with_year', lambda v: self._search_exact_with_year(v, content_type, year)),
-                ('flexible_year_match', lambda v: self._search_flexible_year(v, content_type, year)),
-                ('normalized_title_match', lambda v: self._search_normalized_title(v, content_type, year)),
-                ('content_type_match', lambda v: self._search_by_content_type(v, content_type)),
-                ('tmdb_id_match', lambda v: self._search_by_tmdb_data(v, content_type, year)),
-                ('contains_search', lambda v: self._search_contains(v, content_type)),
-                ('partial_word_match', lambda v: self._search_partial_words(v, content_type)),
-                ('fuzzy_distance_match', lambda v: self._search_fuzzy_distance(v, content_type)),
-                ('broad_search', lambda v: self._search_broad(v)),
-                ('super_fuzzy', lambda v: self._search_super_fuzzy(v, content_type, year))
+                ('exact_title_year', lambda v: self._search_exact_title_year(v, content_type, year)),
+                ('exact_title_flexible_year', lambda v: self._search_exact_title_flexible_year(v, content_type, year)),
+                ('exact_title_any_year', lambda v: self._search_exact_title_any_year(v, content_type)),
+                ('normalized_exact_match', lambda v: self._search_normalized_exact(v, content_type, year)),
+                ('tmdb_verification', lambda v: self._search_and_verify_tmdb(v, content_type, year)),
+                ('partial_match_strict', lambda v: self._search_partial_strict(v, content_type, year))
             ]
             
             for strategy_name, search_func in strategies:
-                if results and len(results) >= 5:
+                if results and len(results) >= 3:  # Reduced from 5
                     break
                     
                 logger.debug(f"Trying strategy: {strategy_name}")
                 
-                for i, variation in enumerate(title_variations):
-                    if results and len(results) >= 10:
+                for i, variation in enumerate(title_variations[:5]):  # Reduced variations
+                    if results and len(results) >= 5:
                         break
                     
                     try:
                         strategy_results = search_func(variation)
                         if strategy_results:
-                            results.extend(strategy_results)
-                            logger.debug(f"Strategy '{strategy_name}' found {len(strategy_results)} results")
+                            # Verify each result before adding
+                            for result in strategy_results:
+                                if self._verify_content_match(result, title, year, content_type):
+                                    results.append(result)
+                            logger.debug(f"Strategy '{strategy_name}' found {len(strategy_results)} verified results")
                     except Exception as e:
                         logger.debug(f"Strategy {strategy_name} error: {e}")
                         continue
             
+            # Remove duplicates
             seen_ids = set()
             unique_results = []
             for result in results:
@@ -1008,23 +1025,201 @@ class DetailsService:
                     unique_results.append(result)
             
             if unique_results:
-                best_match = self._find_best_match(unique_results, title, year, content_type)
-                logger.info(f"Found fuzzy match for '{slug}': {best_match.title} (ID: {best_match.id})")
-                return best_match
+                # More strict best match selection
+                best_match = self._find_best_match_strict(unique_results, title, year, content_type)
+                if best_match:
+                    logger.info(f"Found verified fuzzy match for '{slug}': {best_match.title} (ID: {best_match.id})")
+                    return best_match
             
-            if self._should_fetch_from_external(slug, title, year):
+            # Only try external fetch for very specific cases
+            if self._should_fetch_from_external_strict(slug, title, year):
                 logger.info(f"No local match for '{slug}'. Trying external API fetch.")
                 external_content = self._try_fetch_from_external(title, year, content_type)
                 if external_content:
                     return external_content
             
-            logger.debug(f"No match found for '{slug}'")
+            logger.debug(f"No suitable match found for '{slug}'")
             return None
             
         except Exception as e:
             logger.error(f"Error in fuzzy content search: {e}")
             return None
-    
+
+    def _generate_conservative_title_variations(self, title: str) -> List[str]:
+        """Generate fewer, more precise title variations"""
+        try:
+            variations = []
+            title_lower = title.lower().strip()
+            
+            if not title_lower or len(title_lower) < 2:
+                return [title_lower] if title_lower else []
+            
+            variations.append(title_lower)
+            
+            # Only essential variations
+            # Remove articles
+            for article in ['^the\\s+', '^a\\s+', '^an\\s+']:
+                modified = re.sub(article, '', title_lower).strip()
+                if modified and modified != title_lower:
+                    variations.append(modified)
+            
+            # Handle common punctuation
+            no_punct = re.sub(r'[^\w\s]', '', title_lower).strip()
+            if no_punct != title_lower:
+                variations.append(no_punct)
+            
+            # Handle colon/dash replacements
+            colon_replaced = re.sub(r'\s*:\s*', ' ', title_lower)
+            if colon_replaced != title_lower:
+                variations.append(colon_replaced)
+            
+            dash_replaced = re.sub(r'\s*-\s*', ' ', title_lower)
+            if dash_replaced != title_lower:
+                variations.append(dash_replaced)
+            
+            return variations[:8]  # Limit to 8 variations
+            
+        except Exception as e:
+            logger.error(f"Error generating conservative title variations: {e}")
+            return [title.lower().strip()] if title else []
+
+    def _verify_content_match(self, content: Any, search_title: str, search_year: Optional[int], search_type: str) -> bool:
+        """Verify if content actually matches the search criteria"""
+        try:
+            # Title similarity check
+            if content.title:
+                similarity = self._calculate_similarity(content.title.lower(), search_title.lower())
+                if similarity < 0.8:  # Stricter similarity threshold
+                    return False
+            
+            # Year verification (if provided)
+            if search_year and content.release_date:
+                content_year = content.release_date.year
+                if abs(content_year - search_year) > 2:  # Allow only 2 years difference
+                    return False
+            
+            # Content type verification
+            if search_type and search_type != 'multi' and content.content_type != search_type:
+                return False
+            
+            return True
+            
+        except Exception as e:
+            logger.warning(f"Error verifying content match: {e}")
+            return False
+
+    def _search_exact_title_year(self, variation: str, content_type: str, year: Optional[int]) -> List[Any]:
+        """Search for exact title and year match"""
+        if not year or not content_type or content_type == 'multi':
+            return []
+        
+        try:
+            return self.Content.query.filter(
+                func.lower(self.Content.title) == variation,
+                self.Content.content_type == content_type,
+                func.extract('year', self.Content.release_date) == year
+            ).limit(3).all()
+        except Exception:
+            return []
+
+    def _search_exact_title_flexible_year(self, variation: str, content_type: str, year: Optional[int]) -> List[Any]:
+        """Search for exact title with flexible year"""
+        if not year:
+            return []
+        
+        try:
+            query = self.Content.query.filter(
+                func.lower(self.Content.title) == variation,
+                func.extract('year', self.Content.release_date).between(year - 1, year + 1)
+            )
+            
+            if content_type and content_type != 'multi':
+                query = query.filter(self.Content.content_type == content_type)
+                
+            return query.order_by(self.Content.popularity.desc()).limit(3).all()
+        except Exception:
+            return []
+
+    def _search_exact_title_any_year(self, variation: str, content_type: str) -> List[Any]:
+        """Search for exact title regardless of year"""
+        try:
+            query = self.Content.query.filter(func.lower(self.Content.title) == variation)
+            
+            if content_type and content_type != 'multi':
+                query = query.filter(self.Content.content_type == content_type)
+                
+            return query.order_by(self.Content.popularity.desc()).limit(5).all()
+        except Exception:
+            return []
+
+    def _find_best_match_strict(self, results: List[Any], title: str, year: Optional[int], content_type: str) -> Any:
+        """More strict best match selection"""
+        try:
+            if not results:
+                return None
+            
+            if len(results) == 1:
+                return results[0]
+            
+            scored_results = []
+            
+            for result in results:
+                score = 0
+                
+                # Title similarity (most important)
+                try:
+                    title_similarity = self._calculate_similarity(result.title.lower(), title.lower())
+                    score += title_similarity * 100  # Increased weight
+                except Exception:
+                    continue  # Skip if title comparison fails
+                
+                # Year match (very important)
+                if year and result.release_date:
+                    try:
+                        year_diff = abs(result.release_date.year - year)
+                        if year_diff == 0:
+                            score += 50
+                        elif year_diff == 1:
+                            score += 30
+                        elif year_diff == 2:
+                            score += 10
+                        else:
+                            score -= 20  # Penalty for large year difference
+                    except Exception:
+                        pass
+                
+                # Content type match
+                if content_type and content_type != 'multi' and result.content_type == content_type:
+                    score += 30
+                elif content_type and content_type != 'multi':
+                    score -= 10  # Penalty for wrong type
+                
+                # Quality indicators
+                try:
+                    if result.popularity:
+                        score += min(result.popularity / 100, 10)
+                    if result.rating:
+                        score += min(result.rating, 5)
+                except Exception:
+                    pass
+                
+                # Only accept high-confidence matches
+                if score >= 120:  # Increased threshold
+                    scored_results.append((result, score))
+            
+            if not scored_results:
+                return None
+            
+            scored_results.sort(key=lambda x: x[1], reverse=True)
+            best_result = scored_results[0][0]
+            
+            logger.info(f"Strict best match: {best_result.title} (Score: {scored_results[0][1]:.2f})")
+            return best_result
+            
+        except Exception as e:
+            logger.error(f"Error finding strict best match: {e}")
+            return results[0] if results else None
+
     def _search_by_slug_patterns(self, slug: str) -> List[Any]:
         try:
             results = []
@@ -1527,8 +1722,11 @@ class DetailsService:
                     futures['similar'] = executor.submit(self._get_similar_content, content.id, 12)
                     futures['gallery'] = executor.submit(self._get_gallery, content.id)
                 
-                futures['trailer'] = executor.submit(self._get_trailer, content.title, content.content_type)
+                # FIXED: Use actual title, not slug for trailer search
+                search_title = content.title or content.original_title or "Unknown"
+                futures['trailer'] = executor.submit(self._get_trailer, search_title, content.content_type)
             
+            # Rest of the function remains the same...
             tmdb_data = {}
             omdb_data = {}
             cast_crew = {'cast': [], 'crew': {'directors': [], 'writers': [], 'producers': []}}
@@ -3009,32 +3207,35 @@ class DetailsService:
                 logger.warning("YOUTUBE_API_KEY not available")
                 return None
             
-            # Improved search queries
+            # Clean the title for better search
+            clean_title = self._clean_title_for_search(title)
+            
+            # Generate search queries with cleaned title
             search_queries = []
             
             if content_type == 'anime':
                 search_queries = [
-                    f"{title} official trailer",
-                    f"{title} anime trailer",
-                    f"{title} PV trailer",
-                    f"{title} anime PV",
-                    f"{title} official PV"
+                    f"{clean_title} official trailer",
+                    f"{clean_title} anime trailer",
+                    f"{clean_title} PV",
+                    f"{clean_title} anime PV",
+                    f"{clean_title} official PV"
                 ]
             elif content_type == 'tv':
                 search_queries = [
-                    f"{title} official trailer",
-                    f"{title} series trailer", 
-                    f"{title} season 1 trailer",
-                    f"{title} TV series trailer",
-                    f"{title} teaser trailer"
+                    f"{clean_title} official trailer",
+                    f"{clean_title} series trailer", 
+                    f"{clean_title} season 1 trailer",
+                    f"{clean_title} TV series trailer",
+                    f"{clean_title} teaser"
                 ]
             else:  # movie
                 search_queries = [
-                    f"{title} official trailer",
-                    f"{title} movie trailer",
-                    f"{title} film trailer",
-                    f"{title} teaser trailer",
-                    f"{title} final trailer"
+                    f"{clean_title} official trailer",
+                    f"{clean_title} movie trailer",
+                    f"{clean_title} film trailer",
+                    f"{clean_title} teaser trailer",
+                    f"{clean_title} final trailer"
                 ]
             
             for search_query in search_queries:
@@ -3058,9 +3259,20 @@ class DetailsService:
                         if data.get('items'):
                             for video in data['items']:
                                 video_title = video['snippet']['title'].lower()
+                                video_description = video['snippet'].get('description', '').lower()
                                 
-                                # Filter for actual trailers
-                                if any(keyword in video_title for keyword in ['trailer', 'teaser', 'preview', 'tv spot', 'official']):
+                                # More strict filtering for actual trailers
+                                trailer_keywords = ['trailer', 'teaser', 'preview', 'official']
+                                irrelevant_keywords = ['reaction', 'review', 'breakdown', 'behind the scenes', 'making of', 'interview', 'music video']
+                                
+                                # Check if it's a trailer
+                                has_trailer_keyword = any(keyword in video_title for keyword in trailer_keywords)
+                                has_irrelevant = any(keyword in video_title for keyword in irrelevant_keywords)
+                                
+                                # Verify title similarity
+                                title_similarity = self._calculate_similarity(clean_title.lower(), video_title)
+                                
+                                if has_trailer_keyword and not has_irrelevant and title_similarity > 0.3:
                                     return {
                                         'youtube_id': video['id']['videoId'],
                                         'title': video['snippet']['title'],
@@ -3069,19 +3281,50 @@ class DetailsService:
                                         'embed_url': f"https://www.youtube.com/embed/{video['id']['videoId']}",
                                         'watch_url': f"https://www.youtube.com/watch?v={video['id']['videoId']}",
                                         'channel_title': video['snippet']['channelTitle'],
-                                        'published_at': video['snippet']['publishedAt']
+                                        'published_at': video['snippet']['publishedAt'],
+                                        'similarity_score': title_similarity
                                     }
                     
                 except Exception as e:
                     logger.warning(f"Error with search query '{search_query}': {e}")
                     continue
             
-            logger.info(f"No trailer found for '{title}' ({content_type})")
+            logger.info(f"No suitable trailer found for '{clean_title}' ({content_type})")
             return None
             
         except Exception as e:
             logger.error(f"Error getting trailer: {e}")
             return None
+
+    def _clean_title_for_search(self, title: str) -> str:
+        """Clean title for better YouTube search results"""
+        try:
+            if not title:
+                return ""
+            
+            # Remove common problematic elements
+            clean = title.strip()
+            
+            # Remove year in parentheses
+            clean = re.sub(r'\s*\(\d{4}\)\s*', '', clean)
+            
+            # Remove subtitle after colon if it's too long
+            if ':' in clean:
+                parts = clean.split(':')
+                if len(parts[0].strip()) >= 3:  # Keep main title if it's substantial
+                    clean = parts[0].strip()
+            
+            # Remove special characters that might interfere with search
+            clean = re.sub(r'[^\w\s\-&]', '', clean)
+            
+            # Clean up multiple spaces
+            clean = re.sub(r'\s+', ' ', clean).strip()
+            
+            return clean
+            
+        except Exception as e:
+            logger.error(f"Error cleaning title for search: {e}")
+            return title
     
     def _build_synopsis(self, content: Any, tmdb_data: Dict, omdb_data: Dict) -> Dict:
         try:
