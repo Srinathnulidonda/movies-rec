@@ -47,6 +47,7 @@ from services.algorithms import (
 from services.personalized import init_personalized
 from services.details import init_details_service, SlugManager, ContentService
 from services.new_releases import init_cinebrain_new_releases_service
+from services.review import init_review_service
 import re
 from dotenv import load_dotenv
 load_dotenv()
@@ -703,6 +704,13 @@ services = {
     'http_session': http_session,
     'cache': cache
 }
+
+try:
+    review_service = init_review_service(app, db, models, cache)
+    services['review_service'] = review_service
+    logger.info("Review service initialized successfully")
+except Exception as e:
+    logger.error(f"Failed to initialize review service: {e}")
 
 try:
     cinebrain_new_releases_service = init_cinebrain_new_releases_service(app, db, models, services)
