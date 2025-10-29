@@ -33,13 +33,8 @@ from services.algorithms import (
 logger = logging.getLogger(__name__)
 
 class CinematicDNAAnalyzer:
-    """
-    Sophisticated Cinematic DNA Analysis Engine for CineBrain
-    Analyzes deep patterns, themes, and cinematic styles beyond simple genre matching
-    """
     
     def __init__(self):
-        # Cinematic themes mapping
         self.cinematic_themes = {
             'justice_revenge': {
                 'keywords': ['justice', 'revenge', 'vengeance', 'betrayal', 'redemption', 'vigilante', 'corrupt', 'law'],
@@ -75,7 +70,6 @@ class CinematicDNAAnalyzer:
             }
         }
         
-        # Cinematic styles mapping
         self.cinematic_styles = {
             'grand_scale_epic': {
                 'indicators': ['epic', 'grand', 'spectacular', 'massive', 'scale', 'cinematic', 'visual'],
@@ -109,7 +103,6 @@ class CinematicDNAAnalyzer:
             }
         }
         
-        # Director signatures (CineBrain's curated list)
         self.director_signatures = {
             'Christopher Nolan': {
                 'style': ['complex_narrative', 'time_manipulation', 'cerebral', 'practical_effects'],
@@ -130,10 +123,6 @@ class CinematicDNAAnalyzer:
         }
     
     def analyze_cinematic_dna(self, content_list: List[Any]) -> Dict[str, Any]:
-        """
-        Analyze the cinematic DNA of user's favorite/watchlist content
-        Returns deep insights about user's taste preferences
-        """
         if not content_list:
             return {}
         
@@ -154,29 +143,22 @@ class CinematicDNAAnalyzer:
         director_scores = defaultdict(float)
         
         for content in content_list:
-            # Analyze themes from overview and title
             content_text = f"{content.title} {content.overview or ''}"
             themes = self._extract_themes(content_text)
             
             for theme, score in themes.items():
                 theme_scores[theme] += score
             
-            # Analyze cinematic style
             styles = self._analyze_cinematic_style(content)
             for style, score in styles.items():
                 style_scores[style] += score
             
-            # Director analysis (if available through cast/crew)
-            # This would be enhanced when cast/crew data is available
-            
-            # Quality assessment
             if content.rating:
                 dna_profile['quality_threshold'] = max(
                     dna_profile['quality_threshold'],
-                    content.rating * 0.8  # Weighted average
+                    content.rating * 0.8
                 )
         
-        # Normalize and rank
         if theme_scores:
             max_theme_score = max(theme_scores.values())
             dna_profile['dominant_themes'] = {
@@ -191,13 +173,11 @@ class CinematicDNAAnalyzer:
                 for style, score in sorted(style_scores.items(), key=lambda x: x[1], reverse=True)[:5]
             }
         
-        # Calculate sophistication score
         dna_profile['cinematic_sophistication'] = self._calculate_sophistication(content_list)
         
         return dna_profile
     
     def _extract_themes(self, text: str) -> Dict[str, float]:
-        """Extract cinematic themes from content text"""
         text_lower = text.lower()
         themes = {}
         
@@ -211,30 +191,26 @@ class CinematicDNAAnalyzer:
                     score += weight
             
             if score > 0:
-                themes[theme_name] = score / len(keywords)  # Normalize by keyword count
+                themes[theme_name] = score / len(keywords)
         
         return themes
     
     def _analyze_cinematic_style(self, content: Any) -> Dict[str, float]:
-        """Analyze cinematic style of content"""
         styles = {}
         content_text = f"{content.title} {content.overview or ''}".lower()
         
         for style_name, style_data in self.cinematic_styles.items():
             score = 0.0
             
-            # Check for style indicators in text
             if 'indicators' in style_data:
                 for indicator in style_data['indicators']:
                     if indicator in content_text:
                         score += 0.3
             
-            # Check runtime criteria
             if 'runtime_min' in style_data and content.runtime:
                 if content.runtime >= style_data['runtime_min']:
                     score += 0.4
             
-            # Check genre alignment
             if 'genres' in style_data and content.genres:
                 try:
                     content_genres = json.loads(content.genres)
@@ -244,7 +220,6 @@ class CinematicDNAAnalyzer:
                 except:
                     pass
             
-            # Check critical acclaim
             if style_name == 'critical_acclaim':
                 if content.rating and content.vote_count:
                     if (content.rating >= style_data['rating_threshold'] and 
@@ -257,19 +232,16 @@ class CinematicDNAAnalyzer:
         return styles
     
     def _calculate_sophistication(self, content_list: List[Any]) -> float:
-        """Calculate user's cinematic sophistication level"""
         if not content_list:
             return 0.5
         
         sophistication_factors = []
         
-        # Average rating preference
         ratings = [c.rating for c in content_list if c.rating]
         if ratings:
             avg_rating = np.mean(ratings)
             sophistication_factors.append(min(avg_rating / 10, 1.0))
         
-        # Genre diversity
         all_genres = []
         for content in content_list:
             if content.genres:
@@ -282,7 +254,6 @@ class CinematicDNAAnalyzer:
             genre_diversity = len(set(all_genres)) / len(all_genres)
             sophistication_factors.append(genre_diversity)
         
-        # Content type diversity
         content_types = [c.content_type for c in content_list]
         type_diversity = len(set(content_types)) / len(content_types) if content_types else 0
         sophistication_factors.append(type_diversity)
@@ -291,17 +262,12 @@ class CinematicDNAAnalyzer:
     
     def find_cinematic_matches(self, dna_profile: Dict[str, Any], content_pool: List[Any], 
                              limit: int = 20) -> List[Tuple[Any, float, str]]:
-        """
-        Find content that matches the user's cinematic DNA
-        Returns list of (content, match_score, reason)
-        """
         matches = []
         
         for content in content_pool:
             match_score = 0.0
             reasons = []
             
-            # Theme matching
             content_themes = self._extract_themes(f"{content.title} {content.overview or ''}")
             for theme, user_score in dna_profile.get('dominant_themes', {}).items():
                 if theme in content_themes:
@@ -310,7 +276,6 @@ class CinematicDNAAnalyzer:
                     if theme_match > 0.3:
                         reasons.append(f"shares {theme.replace('_', ' ')} themes")
             
-            # Style matching
             content_styles = self._analyze_cinematic_style(content)
             for style, user_score in dna_profile.get('preferred_styles', {}).items():
                 if style in content_styles:
@@ -319,12 +284,10 @@ class CinematicDNAAnalyzer:
                     if style_match > 0.3:
                         reasons.append(f"matches {style.replace('_', ' ')} style")
             
-            # Quality threshold
             if content.rating and content.rating >= dna_profile.get('quality_threshold', 7.0):
                 match_score += 0.2
                 reasons.append("meets quality standards")
             
-            # Sophistication matching
             content_sophistication = self._calculate_sophistication([content])
             user_sophistication = dna_profile.get('cinematic_sophistication', 0.5)
             if abs(content_sophistication - user_sophistication) < 0.3:
@@ -354,17 +317,14 @@ class UserProfileAnalyzer:
             
             interactions = self.UserInteraction.query.filter_by(user_id=user_id).all()
             
-            # Get user's favorites and watchlist for cinematic DNA analysis
             favorite_interactions = [i for i in interactions if i.interaction_type == 'favorite']
             watchlist_interactions = [i for i in interactions if i.interaction_type == 'watchlist']
             
-            # Get actual content for DNA analysis
             all_important_content_ids = [i.content_id for i in favorite_interactions + watchlist_interactions]
             important_content = self.Content.query.filter(
                 self.Content.id.in_(all_important_content_ids)
             ).all() if all_important_content_ids else []
             
-            # Analyze cinematic DNA
             cinematic_dna_profile = self.cinematic_dna.analyze_cinematic_dna(important_content)
             
             profile = {
@@ -374,7 +334,7 @@ class UserProfileAnalyzer:
                 'last_active': user.last_active,
                 'explicit_preferences': self._analyze_explicit_preferences(user),
                 'implicit_preferences': self._analyze_implicit_preferences(interactions),
-                'cinematic_dna': cinematic_dna_profile,  # NEW: Deep cinematic analysis
+                'cinematic_dna': cinematic_dna_profile,
                 'viewing_patterns': self._analyze_viewing_patterns(interactions),
                 'rating_patterns': self._analyze_rating_patterns(interactions),
                 'search_patterns': self._analyze_search_patterns(interactions),
@@ -999,10 +959,6 @@ class UserProfileAnalyzer:
             return "casual_browsing"
 
 class CineBrainRecommendationEngine:
-    """
-    CineBrain's Advanced Personalized Content Recommendation Engine
-    Focuses on deep cinematic DNA analysis and strict language prioritization
-    """
     
     def __init__(self, db, models, cache=None):
         self.db = db
@@ -1016,7 +972,6 @@ class CineBrainRecommendationEngine:
         self.similarity_engine = UltraPowerfulSimilarityEngine()
         self.cinematic_dna = CinematicDNAAnalyzer()
         
-        # Feedback learning system
         self.feedback_log = []
 
     @contextmanager
@@ -1043,12 +998,148 @@ class CineBrainRecommendationEngine:
                 pass
             raise
 
+    def get_user_recommendation_metrics(self, user_id: int) -> Dict[str, Any]:
+        try:
+            with self.safe_db_operation():
+                interactions = self.models['UserInteraction'].query.filter_by(user_id=user_id).all()
+                
+                if not interactions:
+                    return {
+                        'total_recommendations_served': 0,
+                        'recommendations_clicked': 0,
+                        'recommendations_rated': 0,
+                        'average_recommendation_rating': 0.0,
+                        'click_through_rate': 0.0,
+                        'recommendation_accuracy': 0.0,
+                        'engagement_score': 0.0,
+                        'personalization_strength': 0.0,
+                        'algorithm_performance': 'insufficient_data'
+                    }
+                
+                total_interactions = len(interactions)
+                recent_interactions = [i for i in interactions 
+                                     if i.timestamp > datetime.utcnow() - timedelta(days=30)]
+                
+                view_interactions = [i for i in interactions if i.interaction_type == 'view']
+                rating_interactions = [i for i in interactions if i.rating is not None]
+                favorite_interactions = [i for i in interactions if i.interaction_type == 'favorite']
+                
+                engagement_score = min(len(recent_interactions) / 30.0, 1.0)
+                
+                ratings = [i.rating for i in rating_interactions]
+                avg_rating = np.mean(ratings) if ratings else 0.0
+                
+                recommendation_accuracy = min((avg_rating / 10.0) * 100, 95.0) if avg_rating > 0 else 0.0
+                
+                content_ids = [i.content_id for i in interactions]
+                unique_content = len(set(content_ids))
+                personalization_strength = min(unique_content / max(total_interactions, 1), 1.0)
+                
+                click_through_rate = len(view_interactions) / max(total_interactions, 1)
+                
+                if recommendation_accuracy > 80:
+                    algorithm_performance = 'excellent'
+                elif recommendation_accuracy > 65:
+                    algorithm_performance = 'good'
+                elif recommendation_accuracy > 50:
+                    algorithm_performance = 'average'
+                else:
+                    algorithm_performance = 'needs_improvement'
+                
+                user_profile = self.user_profiler.build_comprehensive_user_profile(user_id)
+                profile_completeness = user_profile.get('profile_completeness', 0.0)
+                confidence_score = user_profile.get('confidence_score', 0.0)
+                
+                return {
+                    'total_recommendations_served': total_interactions,
+                    'recommendations_clicked': len(view_interactions),
+                    'recommendations_rated': len(rating_interactions),
+                    'recommendations_favorited': len(favorite_interactions),
+                    'average_recommendation_rating': round(avg_rating, 2),
+                    'click_through_rate': round(click_through_rate * 100, 1),
+                    'recommendation_accuracy': round(recommendation_accuracy, 1),
+                    'engagement_score': round(engagement_score * 100, 1),
+                    'personalization_strength': round(personalization_strength * 100, 1),
+                    'algorithm_performance': algorithm_performance,
+                    'profile_completeness': round(profile_completeness * 100, 1),
+                    'confidence_score': round(confidence_score * 100, 1),
+                    'recent_activity': len(recent_interactions),
+                    'content_diversity': unique_content,
+                    'cinebrain_insights': {
+                        'status': 'active' if len(recent_interactions) > 5 else 'inactive',
+                        'recommendation_quality': 'high' if recommendation_accuracy > 70 else 'medium' if recommendation_accuracy > 50 else 'low',
+                        'user_type': self._classify_user_engagement(interactions),
+                        'improvement_area': self._get_improvement_suggestion(user_profile, interactions)
+                    },
+                    'metrics_generated_at': datetime.utcnow().isoformat(),
+                    'next_optimization': (datetime.utcnow() + timedelta(days=7)).isoformat()
+                }
+                
+        except Exception as e:
+            logger.error(f"Error getting recommendation metrics for user {user_id}: {e}")
+            return {
+                'total_recommendations_served': 0,
+                'recommendations_clicked': 0,
+                'recommendations_rated': 0,
+                'average_recommendation_rating': 0.0,
+                'click_through_rate': 0.0,
+                'recommendation_accuracy': 0.0,
+                'engagement_score': 0.0,
+                'personalization_strength': 0.0,
+                'algorithm_performance': 'error',
+                'error': str(e)
+            }
+
+    def _classify_user_engagement(self, interactions: List[Any]) -> str:
+        if not interactions:
+            return 'new_user'
+        
+        total_interactions = len(interactions)
+        recent_interactions = len([i for i in interactions 
+                                 if i.timestamp > datetime.utcnow() - timedelta(days=7)])
+        
+        rating_interactions = len([i for i in interactions if i.rating is not None])
+        favorite_interactions = len([i for i in interactions if i.interaction_type == 'favorite'])
+        
+        interaction_frequency = recent_interactions / 7.0
+        rating_percentage = rating_interactions / max(total_interactions, 1)
+        favorite_percentage = favorite_interactions / max(total_interactions, 1)
+        
+        if interaction_frequency > 2 and rating_percentage > 0.3:
+            return 'power_user'
+        elif interaction_frequency > 1 and favorite_percentage > 0.2:
+            return 'engaged_user'
+        elif interaction_frequency > 0.5:
+            return 'regular_user'
+        elif total_interactions > 10:
+            return 'casual_user'
+        else:
+            return 'new_user'
+
+    def _get_improvement_suggestion(self, user_profile: Dict[str, Any], 
+                                   interactions: List[Any]) -> str:
+        if not interactions:
+            return 'Start interacting with content to build your CineBrain profile'
+        
+        total_interactions = len(interactions)
+        rating_interactions = len([i for i in interactions if i.rating is not None])
+        favorite_interactions = len([i for i in interactions if i.interaction_type == 'favorite'])
+        
+        profile_completeness = user_profile.get('profile_completeness', 0.0)
+        
+        if rating_interactions < 5:
+            return 'Rate more content to help CineBrain understand your taste preferences'
+        elif favorite_interactions < 3:
+            return 'Add more content to favorites to improve recommendation accuracy'
+        elif profile_completeness < 0.5:
+            return 'Complete your profile preferences for better personalized recommendations'
+        elif total_interactions < 20:
+            return 'Continue exploring content to enhance your CineBrain recommendation engine'
+        else:
+            return 'Your CineBrain recommendations are optimized! Keep discovering new content'
+
     def get_personalized_recommendations(self, user_id: int, limit: int = 50, 
                                         categories: List[str] = None) -> Dict[str, Any]:
-        """
-        CineBrain's Advanced Personalized Recommendation System
-        Analyzes cinematic DNA and applies strict language prioritization
-        """
         try:
             try:
                 with self.safe_db_operation():
@@ -1161,27 +1252,19 @@ class CineBrainRecommendationEngine:
     
     def _generate_cinebrain_for_you(self, user_profile: Dict[str, Any], 
                                    limit: int) -> List[Dict[str, Any]]:
-        """
-        CineBrain's main 'For You' feed with strict language prioritization
-        and cinematic DNA analysis
-        """
         user_id = user_profile['user_id']
         
-        # Get user's interacted content
         interacted_content_ids = self._get_user_interacted_content(user_id)
         
-        # Get content pool with language priority filtering
         explicit_languages = user_profile.get('explicit_preferences', {}).get('preferred_languages', [])
         implicit_languages = user_profile.get('language_preferences', {}).get('preferred_languages', [])
         
-        # Combine and prioritize languages
         all_languages = explicit_languages + implicit_languages
-        priority_languages = list(dict.fromkeys(all_languages))  # Remove duplicates while preserving order
+        priority_languages = list(dict.fromkeys(all_languages))
         
         if not priority_languages:
-            priority_languages = ['Telugu', 'English']  # CineBrain default
+            priority_languages = ['Telugu', 'English']
         
-        # Get content pool with strict language prioritization
         language_grouped_content = self._get_language_grouped_content_pool(
             exclude_ids=interacted_content_ids,
             priority_languages=priority_languages
@@ -1190,12 +1273,10 @@ class CineBrainRecommendationEngine:
         recommendations = []
         cinematic_dna = user_profile.get('cinematic_dna', {})
         
-        # Primary language group (highest priority)
         primary_lang = priority_languages[0] if priority_languages else 'Telugu'
         primary_content = language_grouped_content.get(primary_lang, [])
         
         if primary_content:
-            # Apply cinematic DNA matching to primary language content
             dna_matches = self.cinematic_dna.find_cinematic_matches(
                 cinematic_dna, primary_content, limit=int(limit * 0.6)
             )
@@ -1218,7 +1299,6 @@ class CineBrainRecommendationEngine:
                     'youtube_trailer_id': content.youtube_trailer_id
                 })
         
-        # Secondary languages (fill remaining slots)
         remaining_slots = limit - len(recommendations)
         if remaining_slots > 0 and len(priority_languages) > 1:
             for i, lang in enumerate(priority_languages[1:], 2):
@@ -1241,7 +1321,7 @@ class CineBrainRecommendationEngine:
                         'rating': content.rating,
                         'poster_path': self._format_poster_path(content.poster_path),
                         'overview': content.overview[:150] + '...' if content.overview else '',
-                        'cinebrain_score': round(score * 0.9, 3),  # Slight penalty for secondary languages
+                        'cinebrain_score': round(score * 0.9, 3),
                         'recommendation_reason': reason,
                         'language_priority': i,
                         'primary_language': lang,
@@ -1259,13 +1339,9 @@ class CineBrainRecommendationEngine:
     
     def _generate_because_you_watched_with_reasons(self, user_profile: Dict[str, Any], 
                                                   limit: int) -> List[Dict[str, Any]]:
-        """
-        Generate 'Because you watched X' recommendations with detailed reasoning
-        """
         user_id = user_profile['user_id']
         
         try:
-            # Get user's favorites and recent watchlist items
             recent_interactions = self.models['UserInteraction'].query.filter(
                 and_(
                     self.models['UserInteraction'].user_id == user_id,
@@ -1280,16 +1356,14 @@ class CineBrainRecommendationEngine:
             recommendations = []
             content_pool = self._get_base_content_pool()
             
-            # Get user's explicit language preferences for prioritization
             explicit_languages = user_profile.get('explicit_preferences', {}).get('preferred_languages', [])
             
-            for interaction in recent_interactions[:3]:  # Focus on top 3 recent items
+            for interaction in recent_interactions[:3]:
                 try:
                     base_content = self.models['Content'].query.get(interaction.content_id)
                     if not base_content:
                         continue
                     
-                    # Find similar content using cinematic DNA
                     base_dna = self.cinematic_dna.analyze_cinematic_dna([base_content])
                     similar_content = self.cinematic_dna.find_cinematic_matches(
                         base_dna, content_pool, limit=15
@@ -1298,12 +1372,10 @@ class CineBrainRecommendationEngine:
                     for similar_item, similarity_score, dna_reason in similar_content:
                         content = similar_item
                         
-                        # Generate detailed reason
                         detailed_reason = self._generate_detailed_recommendation_reason(
                             base_content, content, user_profile
                         )
                         
-                        # Language priority bonus
                         content_languages = json.loads(content.languages or '[]')
                         language_bonus = 0.0
                         for lang in explicit_languages:
@@ -1338,7 +1410,6 @@ class CineBrainRecommendationEngine:
                     logger.error(f"Error processing interaction {interaction.id}: {e}")
                     continue
             
-            # Remove duplicates and sort by score
             unique_recs = self._remove_duplicates_and_rerank(recommendations)
             return unique_recs[:limit]
             
@@ -1348,13 +1419,9 @@ class CineBrainRecommendationEngine:
     
     def _generate_language_priority_recommendations(self, user_profile: Dict[str, Any], 
                                                    limit: int) -> List[Dict[str, Any]]:
-        """
-        Generate recommendations with strict language priority
-        """
         explicit_languages = user_profile.get('explicit_preferences', {}).get('preferred_languages', [])
         implicit_languages = user_profile.get('language_preferences', {}).get('preferred_languages', [])
         
-        # Combine with explicit taking precedence
         priority_languages = explicit_languages + [l for l in implicit_languages if l not in explicit_languages]
         
         if not priority_languages:
@@ -1363,7 +1430,6 @@ class CineBrainRecommendationEngine:
         recommendations = []
         
         for i, language in enumerate(priority_languages):
-            # Get content in this language
             lang_content = self.models['Content'].query.filter(
                 self.models['Content'].languages.contains(f'"{language}"')
             ).order_by(desc(self.models['Content'].rating)).limit(20).all()
@@ -1372,7 +1438,7 @@ class CineBrainRecommendationEngine:
             
             for content in lang_content[:lang_limit]:
                 personalization_score = self._calculate_personalization_score(content, user_profile)
-                language_priority_bonus = 1.0 - (i * 0.1)  # Decreasing bonus for lower priority
+                language_priority_bonus = 1.0 - (i * 0.1)
                 
                 final_score = personalization_score * language_priority_bonus
                 
@@ -1398,20 +1464,15 @@ class CineBrainRecommendationEngine:
     
     def _generate_cinematic_dna_matches(self, user_profile: Dict[str, Any], 
                                        limit: int) -> List[Dict[str, Any]]:
-        """
-        Generate recommendations based purely on cinematic DNA analysis
-        """
         user_id = user_profile['user_id']
         cinematic_dna = user_profile.get('cinematic_dna', {})
         
         if not cinematic_dna or not cinematic_dna.get('dominant_themes'):
             return []
         
-        # Get content pool
         interacted_content_ids = self._get_user_interacted_content(user_id)
         content_pool = self._get_filtered_content_pool(exclude_ids=interacted_content_ids)
         
-        # Find matches using cinematic DNA
         dna_matches = self.cinematic_dna.find_cinematic_matches(
             cinematic_dna, content_pool, limit=limit
         )
@@ -1440,12 +1501,8 @@ class CineBrainRecommendationEngine:
     def _generate_detailed_recommendation_reason(self, base_content: Any, 
                                                recommended_content: Any, 
                                                user_profile: Dict[str, Any]) -> str:
-        """
-        Generate detailed, specific reasons for recommendations
-        """
         reasons = []
         
-        # Analyze common themes
         base_themes = self.cinematic_dna._extract_themes(f"{base_content.title} {base_content.overview or ''}")
         rec_themes = self.cinematic_dna._extract_themes(f"{recommended_content.title} {recommended_content.overview or ''}")
         
@@ -1454,25 +1511,22 @@ class CineBrainRecommendationEngine:
             theme_names = [theme.replace('_', ' ') for theme in list(common_themes)[:2]]
             reasons.append(f"shares {' and '.join(theme_names)} themes with {base_content.title}")
         
-        # Analyze genres
         try:
             base_genres = set(json.loads(base_content.genres or '[]'))
             rec_genres = set(json.loads(recommended_content.genres or '[]'))
             common_genres = base_genres & rec_genres
             
-            if common_genres and not common_themes:  # Only mention if themes weren't already covered
+            if common_genres and not common_themes:
                 genre_list = list(common_genres)[:2]
                 reasons.append(f"similar {'/'.join(genre_list).lower()} style")
         except:
             pass
         
-        # Quality and rating similarity
         if base_content.rating and recommended_content.rating:
             rating_diff = abs(base_content.rating - recommended_content.rating)
             if rating_diff < 1.0:
                 reasons.append("maintains similar quality standards")
         
-        # Cinematic style analysis
         base_styles = self.cinematic_dna._analyze_cinematic_style(base_content)
         rec_styles = self.cinematic_dna._analyze_cinematic_style(recommended_content)
         
@@ -1481,25 +1535,20 @@ class CineBrainRecommendationEngine:
             style_names = [style.replace('_', ' ') for style in list(common_styles)[:1]]
             reasons.append(f"employs {style_names[0]} approach")
         
-        # Default reason if nothing specific found
         if not reasons:
             reasons.append("appeals to your sophisticated taste profile")
         
-        # Construct final reason
         base_reason = f"Because you appreciated {base_content.title}"
-        detail_reason = ", ".join(reasons[:2])  # Limit to 2 reasons for readability
+        detail_reason = ", ".join(reasons[:2])
         
         return f"{base_reason}, CineBrain suggests this as it {detail_reason}"
     
     def integrate_user_feedback(self, user_id: int, feedback_data: Dict[str, Any]):
-        """
-        Continuous Learning Loop - Integrate user feedback to improve recommendations
-        """
         try:
             feedback_entry = {
                 'user_id': user_id,
                 'timestamp': datetime.utcnow(),
-                'feedback_type': feedback_data.get('type'),  # 'like', 'dislike', 'watch', 'skip'
+                'feedback_type': feedback_data.get('type'),
                 'content_id': feedback_data.get('content_id'),
                 'recommendation_reason': feedback_data.get('reason'),
                 'category': feedback_data.get('category'),
@@ -1509,7 +1558,6 @@ class CineBrainRecommendationEngine:
             
             self.feedback_log.append(feedback_entry)
             
-            # Update user preferences in real-time
             self.update_user_preferences_realtime(user_id, {
                 'content_id': feedback_data.get('content_id'),
                 'interaction_type': 'feedback',
@@ -1521,7 +1569,6 @@ class CineBrainRecommendationEngine:
                 }
             })
             
-            # Analyze feedback patterns for algorithm improvement
             if len(self.feedback_log) > 100:
                 self._analyze_feedback_patterns()
             
@@ -1531,9 +1578,6 @@ class CineBrainRecommendationEngine:
             logger.error(f"Error integrating user feedback: {e}")
     
     def _analyze_feedback_patterns(self):
-        """
-        Analyze feedback patterns to improve recommendation algorithms
-        """
         try:
             recent_feedback = [f for f in self.feedback_log if 
                              f['timestamp'] > datetime.utcnow() - timedelta(days=7)]
@@ -1541,7 +1585,6 @@ class CineBrainRecommendationEngine:
             if not recent_feedback:
                 return
             
-            # Analyze category performance
             category_performance = defaultdict(list)
             for feedback in recent_feedback:
                 category = feedback.get('category', 'unknown')
@@ -1552,9 +1595,8 @@ class CineBrainRecommendationEngine:
                 elif feedback_type in ['dislike', 'skip']:
                     category_performance[category].append(0)
             
-            # Log performance insights
             for category, scores in category_performance.items():
-                if len(scores) >= 5:  # Minimum feedback for meaningful analysis
+                if len(scores) >= 5:
                     success_rate = np.mean(scores)
                     logger.info(f"CineBrain category '{category}' success rate: {success_rate:.2%}")
                     
@@ -1566,25 +1608,20 @@ class CineBrainRecommendationEngine:
     
     def _get_language_grouped_content_pool(self, exclude_ids: List[int] = None, 
                                           priority_languages: List[str] = None) -> Dict[str, List[Any]]:
-        """
-        Get content pool grouped by language with priority ordering
-        """
         try:
             query = self.models['Content'].query
             
             if exclude_ids:
                 query = query.filter(~self.models['Content'].id.in_(exclude_ids))
             
-            # Get all content
             all_content = query.filter(
                 and_(
                     self.models['Content'].title.isnot(None),
                     self.models['Content'].content_type.isnot(None),
-                    self.models['Content'].rating >= 6.0  # Quality filter
+                    self.models['Content'].rating >= 6.0
                 )
             ).order_by(desc(self.models['Content'].rating)).limit(1000).all()
             
-            # Group by language
             language_groups = defaultdict(list)
             
             for content in all_content:
@@ -1594,13 +1631,11 @@ class CineBrainRecommendationEngine:
                 try:
                     content_languages = json.loads(content.languages)
                     for language in content_languages:
-                        # Normalize language name
                         lang_normalized = language.strip().title()
                         language_groups[lang_normalized].append(content)
                 except:
                     continue
             
-            # Prioritize based on user preferences
             if priority_languages:
                 prioritized_groups = {}
                 for lang in priority_languages:
@@ -1608,7 +1643,6 @@ class CineBrainRecommendationEngine:
                     if lang_normalized in language_groups:
                         prioritized_groups[lang_normalized] = language_groups[lang_normalized]
                 
-                # Add remaining languages
                 for lang, content_list in language_groups.items():
                     if lang not in prioritized_groups:
                         prioritized_groups[lang] = content_list
@@ -1622,9 +1656,6 @@ class CineBrainRecommendationEngine:
             return {}
     
     def _generate_cinebrain_insights(self, user_profile: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Generate CineBrain-specific user insights
-        """
         cinematic_dna = user_profile.get('cinematic_dna', {})
         
         insights = {
@@ -1642,9 +1673,6 @@ class CineBrainRecommendationEngine:
         return insights
     
     def _classify_taste_profile(self, user_profile: Dict[str, Any]) -> str:
-        """
-        Classify user's taste profile based on their preferences and behavior
-        """
         cinematic_dna = user_profile.get('cinematic_dna', {})
         sophistication = cinematic_dna.get('cinematic_sophistication', 0.5)
         themes = cinematic_dna.get('dominant_themes', {})
@@ -1661,9 +1689,6 @@ class CineBrainRecommendationEngine:
             return 'mainstream_enthusiast'
     
     def _get_personalized_tip(self, user_profile: Dict[str, Any]) -> str:
-        """
-        Get personalized tip for improving recommendation accuracy
-        """
         completeness = user_profile.get('profile_completeness', 0)
         
         if completeness < 0.3:
@@ -1674,8 +1699,6 @@ class CineBrainRecommendationEngine:
             return "Explore different genres to help CineBrain discover hidden gems for you"
         else:
             return "Your CineBrain profile is optimized for maximum personalization!"
-    
-    # [Previous methods remain the same - update_user_preferences_realtime, etc.]
     
     def update_user_preferences_realtime(self, user_id: int, interaction_data: Dict[str, Any]):
         try:
@@ -1782,8 +1805,6 @@ class CineBrainRecommendationEngine:
                 'recommendations': {},
                 'error': 'Unable to generate recommendations'
             }
-    
-    # [Include all other existing methods with minimal changes...]
     
     def _format_content_list(self, content_list: List[Any]) -> List[Dict[str, Any]]:
         formatted = []
@@ -1899,32 +1920,24 @@ class CineBrainRecommendationEngine:
         
         return unique_recs
     
-    # Additional methods from original implementation would go here...
     def _generate_trending_for_you(self, user_profile: Dict[str, Any], limit: int) -> List[Dict[str, Any]]:
-        # Implementation similar to original but with CineBrain branding
         pass
     
     def _generate_new_releases_for_you(self, user_profile: Dict[str, Any], limit: int) -> List[Dict[str, Any]]:
-        # Implementation similar to original but with CineBrain branding
         pass
     
     def _generate_hidden_gems(self, user_profile: Dict[str, Any], limit: int) -> List[Dict[str, Any]]:
-        # Implementation similar to original but with CineBrain branding
         pass
     
     def _generate_continue_watching(self, user_profile: Dict[str, Any], limit: int) -> List[Dict[str, Any]]:
-        # Implementation similar to original but with CineBrain branding
         pass
     
     def _generate_quick_picks(self, user_profile: Dict[str, Any], limit: int) -> List[Dict[str, Any]]:
-        # Implementation similar to original but with CineBrain branding
         pass
     
     def _generate_critically_acclaimed(self, user_profile: Dict[str, Any], limit: int) -> List[Dict[str, Any]]:
-        # Implementation similar to original but with CineBrain branding
         pass
 
-# Updated initialization function
 recommendation_engine = None
 
 def init_personalized(app, db, models, services, cache=None):

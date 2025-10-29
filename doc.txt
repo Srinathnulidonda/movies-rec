@@ -1,0 +1,22 @@
+# In backend/services/details.py (add this method)
+def get_details_with_reviews(self, slug, user_id=None):
+    try:
+        # Get basic content details
+        details = self.get_details_by_slug(slug, user_id)
+        if not details:
+            return None
+        
+        # Get reviews using review service
+        if hasattr(self.app, 'review_service'):
+            review_result = self.app.review_service.get_content_reviews(
+                slug, page=1, limit=20, sort_by='newest', user_id=user_id
+            )
+            if review_result['success']:
+                details['reviews'] = review_result['reviews']
+                details['review_stats'] = review_result['stats']
+        
+        return details
+        
+    except Exception as e:
+        logger.error(f"Error getting details with reviews: {e}")
+        return details  # Return basic details even if reviews fail

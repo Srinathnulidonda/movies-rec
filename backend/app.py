@@ -44,8 +44,11 @@ from services.algorithms import (
     HybridRecommendationEngine,
     UltraPowerfulSimilarityEngine
 )
+from services.movies_details import init_movies_details_service
+from services.persons_details import init_persons_details_service
+from services.user_avatar import avatar_bp, init_user_avatar
 from services.personalized import init_personalized
-from services.details import init_details_service, SlugManager, ContentService
+# from services.details import init_details_service, SlugManager, ContentService
 from services.new_releases import init_cinebrain_new_releases_service
 from services.review import init_review_service
 import re
@@ -688,6 +691,21 @@ models = {
 details_service = None
 content_service = None
 cinebrain_new_releases_service = None
+
+try:
+    with app.app_context():
+        movies_details_service = init_movies_details_service(app, db, models, cache)
+        persons_details_service = init_persons_details_service(app, db, models, cache)
+        logger.info("CineBrain details services initialized successfully")
+except Exception as e:
+    logger.error(f"Failed to initialize CineBrain details services: {e}")
+
+try:
+    init_user_avatar(app, db, models)
+    app.register_blueprint(avatar_bp)
+    logger.info("CineBrain avatar service initialized successfully")
+except Exception as e:
+    logger.error(f"Failed to initialize CineBrain avatar service: {e}")
 
 try:
     with app.app_context():
@@ -1931,6 +1949,40 @@ def get_public_admin_recommendations():
     except Exception as e:
         logger.error(f"CineBrain public admin recommendations error: {e}")
         return jsonify({'error': 'Failed to get CineBrain admin recommendations'}), 500
+    
+@app.route('/api/details/<slug>/reviews', methods=['GET'])
+def get_content_reviews_by_slug(slug):
+    try:
+        user_id = None
+        auth_header = request.headers.get('Authorization')
+        if auth_header and auth_header.startswith('Bearer '):
+            token = auth_header.split(' ')[1]
+            try:
+                payload = jwt.decode(token, app.config['SECRET_KEY'], algorithms=['HS256'])
+                user_id = payload.get('user_id')
+            except:
+                pass
+        
+        # Get content first
+        content = Content.query.filter_by(slug=slug).first()
+        if not content:
+            return jsonify({'error': 'Content not found'}), 404
+        
+        # Use review service to get reviews
+        if 'review_service' in globals() and review_service:
+            result = review_service.get_content_reviews(slug, 
+                page=int(request.args.get('page', 1)),
+                limit=int(request.args.get('limit', 10)),
+                sort_by=request.args.get('sort_by', 'newest'),
+                user_id=user_id
+            )
+            return jsonify(result), 200 if result['success'] else 404
+        else:
+            return jsonify({'error': 'Review service not available'}), 503
+            
+    except Exception as e:
+        logger.error(f"Error getting reviews for content {slug}: {e}")
+        return jsonify({'error': 'Failed to get reviews'}), 500
 
 @app.route('/api/person/<slug>', methods=['GET'])
 def get_person_details(slug):

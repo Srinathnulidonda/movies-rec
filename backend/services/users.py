@@ -9,15 +9,6 @@ from functools import wraps
 from collections import defaultdict, Counter
 from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
-import cloudinary
-import cloudinary.uploader
-import cloudinary.api
-import os
-from werkzeug.utils import secure_filename
-import base64
-import io
-from PIL import Image
-import re
 
 users_bp = Blueprint('users', __name__)
 
@@ -32,14 +23,6 @@ app = None
 recommendation_engine = None
 cache = None
 content_service = None
-
-# Cloudinary Configuration
-cloudinary.config(
-    cloud_name=os.environ.get('CLOUDINARY_CLOUD_NAME'),
-    api_key=os.environ.get('CLOUDINARY_API_KEY'),
-    api_secret=os.environ.get('CLOUDINARY_API_SECRET'),
-    secure=True
-)
 
 def init_users(flask_app, database, models, services):
     global db, User, Content, UserInteraction, Review, app, recommendation_engine, cache, content_service
@@ -95,233 +78,6 @@ def require_auth(f):
         return f(current_user, *args, **kwargs)
     return decorated_function
 
-def validate_avatar_upload(file_data):
-    """Validate avatar upload data"""
-    try:
-        # Check if it's base64 data
-        if file_data.startswith('data:image/'):
-            # Extract base64 data
-            header, encoded = file_data.split(',', 1)
-            file_data = base64.b64decode(encoded)
-        
-        # Open image to validate
-        image = Image.open(io.BytesIO(file_data))
-        
-        # Validate image format
-        if image.format not in ['JPEG', 'PNG', 'WEBP']:
-            return False, "Invalid image format. Only JPEG, PNG, and WEBP are allowed."
-        
-        # Validate image size (max 5MB for free tier)
-        if len(file_data) > 5 * 1024 * 1024:
-            return False, "Image size too large. Maximum 5MB allowed."
-        
-        # Validate dimensions (reasonable limits)
-        width, height = image.size
-        if width > 2048 or height > 2048:
-            return False, "Image dimensions too large. Maximum 2048x2048 pixels."
-        
-        if width < 50 or height < 50:
-            return False, "Image too small. Minimum 50x50 pixels required."
-        
-        return True, "Valid image"
-        
-    except Exception as e:
-        return False, f"Invalid image data: {str(e)}"
-
-def process_avatar_image(file_data):
-    """Process and optimize avatar image"""
-    try:
-        # Convert base64 if needed
-        if isinstance(file_data, str) and file_data.startswith('data:image/'):
-            header, encoded = file_data.split(',', 1)
-            file_data = base64.b64decode(encoded)
-        
-        # Open and process image
-        image = Image.open(io.BytesIO(file_data))
-        
-        # Convert to RGB if needed (for PNG with transparency)
-        if image.mode in ('RGBA', 'LA', 'P'):
-            # Create white background
-            background = Image.new('RGB', image.size, (255, 255, 255))
-            if image.mode == 'P':
-                image = image.convert('RGBA')
-            background.paste(image, mask=image.split()[-1] if image.mode == 'RGBA' else None)
-            image = background
-        
-        # Resize to standard avatar size (300x300 for good quality)
-        image = image.resize((300, 300), Image.Resampling.LANCZOS)
-        
-        # Save to bytes
-        output = io.BytesIO()
-        image.save(output, format='JPEG', quality=85, optimize=True)
-        output.seek(0)
-        
-        return output.getvalue()
-        
-    except Exception as e:
-        logger.error(f"Error processing avatar image: {e}")
-        return None
-
-@users_bp.route('/api/users/avatar/upload', methods=['POST', 'OPTIONS'])
-@require_auth
-def upload_avatar(current_user):
-    if request.method == 'OPTIONS':
-        return '', 200
-    
-    try:
-        data = request.get_json()
-        
-        if not data or 'image' not in data:
-            return jsonify({'error': 'No image data provided'}), 400
-        
-        # Validate Cloudinary configuration
-        if not all([
-            os.environ.get('CLOUDINARY_CLOUD_NAME'),
-            os.environ.get('CLOUDINARY_API_KEY'),
-            os.environ.get('CLOUDINARY_API_SECRET')
-        ]):
-            return jsonify({'error': 'CineBrain avatar upload not configured'}), 503
-        
-        image_data = data['image']
-        
-        # Validate image
-        is_valid, message = validate_avatar_upload(image_data)
-        if not is_valid:
-            return jsonify({'error': message}), 400
-        
-        # Process image
-        processed_image = process_avatar_image(image_data)
-        if not processed_image:
-            return jsonify({'error': 'Failed to process image'}), 400
-        
-        # Delete old avatar if exists
-        if current_user.avatar_url:
-            try:
-                # Extract public_id from URL
-                if 'cloudinary' in current_user.avatar_url:
-                    # Extract public_id from Cloudinary URL
-                    url_parts = current_user.avatar_url.split('/')
-                    if len(url_parts) > 2:
-                        public_id = url_parts[-1].split('.')[0]
-                        if public_id.startswith('cinebrain_avatar_'):
-                            cloudinary.uploader.destroy(f"cinebrain/avatars/{public_id}")
-            except Exception as e:
-                logger.warning(f"Failed to delete old avatar: {e}")
-        
-        # Upload to Cloudinary
-        try:
-            upload_result = cloudinary.uploader.upload(
-                processed_image,
-                folder="cinebrain/avatars",
-                public_id=f"cinebrain_avatar_{current_user.id}_{int(datetime.utcnow().timestamp())}",
-                transformation=[
-                    {'width': 300, 'height': 300, 'crop': 'fill', 'gravity': 'face'},
-                    {'quality': 'auto:good'},
-                    {'format': 'jpg'}
-                ],
-                tags=['cinebrain', 'avatar', f'user_{current_user.id}'],
-                overwrite=True,
-                resource_type="image"
-            )
-            
-            # Update user avatar URL
-            current_user.avatar_url = upload_result['secure_url']
-            db.session.commit()
-            
-            logger.info(f"CineBrain: Avatar uploaded successfully for user {current_user.id}")
-            
-            return jsonify({
-                'success': True,
-                'message': 'Avatar uploaded successfully',
-                'avatar_url': upload_result['secure_url'],
-                'cloudinary_data': {
-                    'public_id': upload_result['public_id'],
-                    'version': upload_result['version'],
-                    'width': upload_result['width'],
-                    'height': upload_result['height'],
-                    'format': upload_result['format'],
-                    'bytes': upload_result['bytes']
-                }
-            }), 200
-            
-        except cloudinary.exceptions.Error as e:
-            logger.error(f"Cloudinary upload error: {e}")
-            return jsonify({'error': 'Failed to upload image to cloud storage'}), 500
-            
-    except Exception as e:
-        logger.error(f"CineBrain avatar upload error: {e}")
-        db.session.rollback()
-        return jsonify({'error': 'Failed to upload avatar'}), 500
-
-@users_bp.route('/api/users/avatar/delete', methods=['DELETE', 'OPTIONS'])
-@require_auth
-def delete_avatar(current_user):
-    if request.method == 'OPTIONS':
-        return '', 200
-    
-    try:
-        if not current_user.avatar_url:
-            return jsonify({'error': 'No avatar to delete'}), 400
-        
-        # Delete from Cloudinary if it's a Cloudinary URL
-        if 'cloudinary' in current_user.avatar_url:
-            try:
-                # Extract public_id from URL
-                url_parts = current_user.avatar_url.split('/')
-                if len(url_parts) > 2:
-                    public_id_with_ext = url_parts[-1]
-                    public_id = public_id_with_ext.split('.')[0]
-                    
-                    # Find the full public_id including folder
-                    folder_index = -1
-                    for i, part in enumerate(url_parts):
-                        if part == 'cinebrain':
-                            folder_index = i
-                            break
-                    
-                    if folder_index >= 0:
-                        folder_path = '/'.join(url_parts[folder_index:-1])
-                        full_public_id = f"{folder_path}/{public_id}"
-                        
-                        result = cloudinary.uploader.destroy(full_public_id)
-                        logger.info(f"Cloudinary deletion result: {result}")
-                        
-            except Exception as e:
-                logger.warning(f"Failed to delete avatar from Cloudinary: {e}")
-        
-        # Remove avatar URL from user
-        current_user.avatar_url = None
-        db.session.commit()
-        
-        logger.info(f"CineBrain: Avatar deleted for user {current_user.id}")
-        
-        return jsonify({
-            'success': True,
-            'message': 'Avatar deleted successfully'
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"CineBrain avatar deletion error: {e}")
-        db.session.rollback()
-        return jsonify({'error': 'Failed to delete avatar'}), 500
-
-@users_bp.route('/api/users/avatar/url', methods=['GET', 'OPTIONS'])
-@require_auth
-def get_avatar_url(current_user):
-    if request.method == 'OPTIONS':
-        return '', 200
-    
-    try:
-        return jsonify({
-            'success': True,
-            'avatar_url': current_user.avatar_url,
-            'has_avatar': bool(current_user.avatar_url)
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"CineBrain get avatar URL error: {e}")
-        return jsonify({'error': 'Failed to get avatar URL'}), 500
-
 def get_enhanced_user_stats(user_id):
     try:
         try:
@@ -368,28 +124,22 @@ def get_basic_user_stats(user_id):
 
 def create_minimal_content_record(content_id, content_info):
     try:
-        # Clean up content_type to prevent database errors
         content_type = str(content_info.get('content_type', 'movie')).strip().lower()
-        # Remove any whitespace/newlines that might cause issues
         content_type = ' '.join(content_type.split())
         if content_type not in ['movie', 'tv', 'anime']:
             content_type = 'movie'
         
-        # Ensure title is reasonable length and properly formatted
         title = str(content_info.get('title', 'Unknown Title')).strip()[:255]
         if not title:
             title = 'Unknown Title'
         
-        # Create clean slug with length validation
         timestamp = int(datetime.utcnow().timestamp())
         slug = f"content-{content_id}-{timestamp}"
-        if len(slug) > 150:  # Ensure slug fits in database
+        if len(slug) > 150:
             slug = slug[:150]
         
-        # Clean overview and ensure it fits
         overview = str(content_info.get('overview', '')).strip()[:1000]
         
-        # Validate and clean poster path
         poster_path = content_info.get('poster_path')
         if poster_path and len(str(poster_path)) > 255:
             poster_path = str(poster_path)[:255]
@@ -397,7 +147,7 @@ def create_minimal_content_record(content_id, content_info):
         content_record = Content(
             id=content_id,
             title=title,
-            content_type=content_type,  # Now properly cleaned
+            content_type=content_type,
             poster_path=poster_path,
             rating=float(content_info.get('rating', 0)) if content_info.get('rating') else 0,
             overview=overview,
@@ -408,7 +158,6 @@ def create_minimal_content_record(content_id, content_info):
             slug=slug
         )
         
-        # Handle release_date safely
         if content_info.get('release_date'):
             try:
                 release_date_str = str(content_info['release_date'])[:10]
@@ -781,7 +530,6 @@ def record_interaction(current_user):
         
         content_id = data['content_id']
         
-        # Check if content exists
         content_exists = Content.query.filter_by(id=content_id).first()
         if not content_exists:
             logger.warning(f"CineBrain: Content {content_id} not found in database, attempting to create")
@@ -791,7 +539,6 @@ def record_interaction(current_user):
                 content_info = content_metadata.get('content_info')
                 
                 if content_info:
-                    # First try to fetch from TMDB if tmdb_id is available
                     if content_service and content_info.get('tmdb_id'):
                         try:
                             from app import CineBrainTMDBService
@@ -808,7 +555,6 @@ def record_interaction(current_user):
                         except Exception as e:
                             logger.warning(f"Failed to fetch from TMDB: {e}")
                     
-                    # Fallback to minimal record creation
                     if not content_exists:
                         content_exists = create_minimal_content_record(content_id, content_info)
                 
@@ -825,7 +571,6 @@ def record_interaction(current_user):
                     'details': 'Unable to create content record due to data validation error'
                 }), 404
         
-        # Handle remove operations
         if data['interaction_type'] in ['remove_watchlist', 'remove_favorite']:
             interaction_type = 'watchlist' if data['interaction_type'] == 'remove_watchlist' else 'favorite'
             interaction = UserInteraction.query.filter_by(
@@ -838,7 +583,6 @@ def record_interaction(current_user):
                 db.session.delete(interaction)
                 db.session.commit()
                 
-                # Update recommendation engine
                 if recommendation_engine:
                     try:
                         recommendation_engine.update_user_preferences_realtime(
@@ -864,7 +608,6 @@ def record_interaction(current_user):
                     'message': f'Content not in CineBrain {item_type}'
                 }), 404
         
-        # Handle duplicate watchlist/favorite additions
         if data['interaction_type'] in ['watchlist', 'favorite']:
             existing = UserInteraction.query.filter_by(
                 user_id=current_user.id,
@@ -879,7 +622,6 @@ def record_interaction(current_user):
                     'message': f'Already in CineBrain {item_type}'
                 }), 200
         
-        # Create new interaction
         interaction = UserInteraction(
             user_id=current_user.id,
             content_id=data['content_id'],
@@ -891,7 +633,6 @@ def record_interaction(current_user):
         db.session.add(interaction)
         db.session.commit()
         
-        # Update recommendation engine
         if recommendation_engine:
             try:
                 recommendation_engine.update_user_preferences_realtime(
@@ -1553,14 +1294,6 @@ def users_health():
         
         health_info['recommendation_engine'] = 'connected' if recommendation_engine else 'not_available'
         
-        # Check Cloudinary configuration
-        cloudinary_configured = all([
-            os.environ.get('CLOUDINARY_CLOUD_NAME'),
-            os.environ.get('CLOUDINARY_API_KEY'),
-            os.environ.get('CLOUDINARY_API_SECRET')
-        ])
-        health_info['cloudinary'] = 'configured' if cloudinary_configured else 'not_configured'
-        
         try:
             total_users = User.query.count()
             active_users = User.query.filter(
@@ -1587,9 +1320,7 @@ def users_health():
             'email_username_login': True,
             'improved_content_creation': True,
             'enhanced_error_handling': True,
-            'avatar_upload': cloudinary_configured,
-            'image_processing': True,
-            'cloudinary_integration': cloudinary_configured
+            'avatar_service': 'separated_service'
         }
         
         return jsonify(health_info), 200
