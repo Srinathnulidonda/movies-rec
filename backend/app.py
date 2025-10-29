@@ -44,11 +44,9 @@ from services.algorithms import (
     HybridRecommendationEngine,
     UltraPowerfulSimilarityEngine
 )
-from services.movies_details import init_movies_details_service
-from services.persons_details import init_persons_details_service
 from services.user_avatar import avatar_bp, init_user_avatar
 from services.personalized import init_personalized
-# from services.details import init_details_service, SlugManager, ContentService
+from services.details import init_details_service, SlugManager, ContentService
 from services.new_releases import init_cinebrain_new_releases_service
 from services.review import init_review_service
 import re
@@ -691,14 +689,6 @@ models = {
 details_service = None
 content_service = None
 cinebrain_new_releases_service = None
-
-try:
-    with app.app_context():
-        movies_details_service = init_movies_details_service(app, db, models, cache)
-        persons_details_service = init_persons_details_service(app, db, models, cache)
-        logger.info("CineBrain details services initialized successfully")
-except Exception as e:
-    logger.error(f"Failed to initialize CineBrain details services: {e}")
 
 try:
     init_user_avatar(app, db, models)

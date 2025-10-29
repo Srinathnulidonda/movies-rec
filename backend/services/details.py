@@ -3009,34 +3009,74 @@ class DetailsService:
                 logger.warning("YOUTUBE_API_KEY not available")
                 return None
             
-            search_query = f"{title} official trailer"
+            # Improved search queries
+            search_queries = []
+            
             if content_type == 'anime':
-                search_query = f"{title} anime trailer PV"
+                search_queries = [
+                    f"{title} official trailer",
+                    f"{title} anime trailer",
+                    f"{title} PV trailer",
+                    f"{title} anime PV",
+                    f"{title} official PV"
+                ]
+            elif content_type == 'tv':
+                search_queries = [
+                    f"{title} official trailer",
+                    f"{title} series trailer", 
+                    f"{title} season 1 trailer",
+                    f"{title} TV series trailer",
+                    f"{title} teaser trailer"
+                ]
+            else:  # movie
+                search_queries = [
+                    f"{title} official trailer",
+                    f"{title} movie trailer",
+                    f"{title} film trailer",
+                    f"{title} teaser trailer",
+                    f"{title} final trailer"
+                ]
             
-            url = f"{YOUTUBE_BASE_URL}/search"
-            params = {
-                'key': YOUTUBE_API_KEY,
-                'q': search_query,
-                'part': 'snippet',
-                'type': 'video',
-                'maxResults': 5,
-                'order': 'relevance'
-            }
-            
-            response = self.session.get(url, params=params, timeout=10)
-            
-            if response.status_code == 200:
-                data = response.json()
-                if data.get('items'):
-                    video = data['items'][0]
-                    return {
-                        'youtube_id': video['id']['videoId'],
-                        'title': video['snippet']['title'],
-                        'thumbnail': video['snippet']['thumbnails']['high']['url'],
-                        'embed_url': f"https://www.youtube.com/embed/{video['id']['videoId']}",
-                        'watch_url': f"https://www.youtube.com/watch?v={video['id']['videoId']}"
+            for search_query in search_queries:
+                try:
+                    url = f"{YOUTUBE_BASE_URL}/search"
+                    params = {
+                        'key': YOUTUBE_API_KEY,
+                        'q': search_query,
+                        'part': 'snippet',
+                        'type': 'video',
+                        'maxResults': 5,
+                        'order': 'relevance',
+                        'videoDefinition': 'any',
+                        'videoDuration': 'any'
                     }
+                    
+                    response = self.session.get(url, params=params, timeout=10)
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        if data.get('items'):
+                            for video in data['items']:
+                                video_title = video['snippet']['title'].lower()
+                                
+                                # Filter for actual trailers
+                                if any(keyword in video_title for keyword in ['trailer', 'teaser', 'preview', 'tv spot', 'official']):
+                                    return {
+                                        'youtube_id': video['id']['videoId'],
+                                        'title': video['snippet']['title'],
+                                        'description': video['snippet']['description'][:200] + '...' if len(video['snippet']['description']) > 200 else video['snippet']['description'],
+                                        'thumbnail': video['snippet']['thumbnails']['high']['url'],
+                                        'embed_url': f"https://www.youtube.com/embed/{video['id']['videoId']}",
+                                        'watch_url': f"https://www.youtube.com/watch?v={video['id']['videoId']}",
+                                        'channel_title': video['snippet']['channelTitle'],
+                                        'published_at': video['snippet']['publishedAt']
+                                    }
+                    
+                except Exception as e:
+                    logger.warning(f"Error with search query '{search_query}': {e}")
+                    continue
             
+            logger.info(f"No trailer found for '{title}' ({content_type})")
             return None
             
         except Exception as e:
@@ -3653,6 +3693,30 @@ class DetailsService:
         except Exception as e:
             logger.error(f"Error getting content by slug/id: {e}")
             return None
+
+    def get_details_with_reviews(self, slug, user_id=None):
+        try:
+            # Get basic content details
+            details = self.get_details_by_slug(slug, user_id)
+            if not details:
+                return None
+            
+            # Get reviews using review service
+            if hasattr(current_app, 'review_service'):
+                review_result = current_app.review_service.get_content_reviews(
+                    slug, page=1, limit=20, sort_by='newest', user_id=user_id
+                )
+                if review_result['success']:
+                    details['reviews'] = review_result['reviews']
+                    details['review_stats'] = review_result['stats']
+                    details['pagination'] = review_result['pagination']
+            
+            return details
+            
+        except Exception as e:
+            logger.error(f"Error getting details with reviews: {e}")
+            return details if 'details' in locals() else None
+        
 
 def init_details_service(app, db, models, cache):
     try:
