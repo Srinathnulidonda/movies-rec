@@ -877,6 +877,67 @@ def get_hidden_gems(current_user):
         logger.error(f"CineBrain Hidden gems recommendations error: {e}")
         return jsonify({'error': 'Failed to get CineBrain hidden gems recommendations'}), 500
 
+@users_bp.route('/api/users/profile/public/<username>', methods=['GET'])
+def get_public_profile(username):
+    try:
+        user = User.query.filter_by(username=username).first()
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        # Return limited public profile data
+        return jsonify({
+            'user': {
+                'id': user.id,
+                'username': user.username,
+                'avatar_url': user.avatar_url,
+                'created_at': user.created_at.isoformat(),
+                'last_active': user.last_active.isoformat() if user.last_active else None
+            }
+        }), 200
+    except Exception as e:
+        logger.error(f"Error getting public profile: {e}")
+        return jsonify({'error': 'Failed to get profile'}), 500
+
+@users_bp.route('/api/users/<username>/activity/public', methods=['GET'])
+def get_public_activity(username):
+    try:
+        user = User.query.filter_by(username=username).first()
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        # Return limited public activity
+        public_interactions = UserInteraction.query.filter_by(
+            user_id=user.id,
+            interaction_type='rating'  # Only show ratings publicly
+        ).order_by(UserInteraction.timestamp.desc()).limit(10).all()
+        
+        # Format activity data...
+        return jsonify({'recent_activity': formatted_activity}), 200
+    except Exception as e:
+        logger.error(f"Error getting public activity: {e}")
+        return jsonify({'error': 'Failed to get activity'}), 500
+
+@users_bp.route('/api/users/<username>/stats/public', methods=['GET'])
+def get_public_stats(username):
+    try:
+        user = User.query.filter_by(username=username).first()
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        # Return limited public stats
+        interactions = UserInteraction.query.filter_by(user_id=user.id).all()
+        
+        public_stats = {
+            'total_interactions': len(interactions),
+            'favorites': len([i for i in interactions if i.interaction_type == 'favorite']),
+            'ratings_given': len([i for i in interactions if i.interaction_type == 'rating'])
+        }
+        
+        return jsonify({'stats': public_stats}), 200
+    except Exception as e:
+        logger.error(f"Error getting public stats: {e}")
+        return jsonify({'error': 'Failed to get stats'}), 500
+
 @users_bp.route('/api/personalized/profile-insights', methods=['GET', 'OPTIONS'])
 @require_auth
 def get_profile_insights(current_user):
