@@ -1,5 +1,6 @@
+# backend/app.py
 from typing import Optional
-from flask import Flask, request, jsonify, session, render_template
+from flask import Flask, request, jsonify, session, render_template, redirect
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
 from flask_caching import Cache
@@ -43,10 +44,10 @@ from services.algorithms import (
     UltraPowerfulSimilarityEngine
 )
 from services.personalized import init_personalized
-from services.details import init_details_service, SlugManager, ContentService
 from services.new_releases import init_cinebrain_new_releases_service
 from services.review import init_review_service
 from user.routes import user_bp, init_user_routes
+from details import init_details_module
 import re
 from dotenv import load_dotenv
 load_dotenv()
@@ -236,18 +237,6 @@ class Content(db.Model):
     
     reviews = db.relationship('Review', backref='content', lazy='dynamic')
     cast_crew = db.relationship('ContentPerson', backref='content', lazy='dynamic')
-
-    def ensure_slug(self):
-        if not self.slug and self.title:
-            try:
-                year = self.release_date.year if self.release_date else None
-                self.slug = SlugManager.generate_unique_slug(
-                    db, Content, self.title, year, self.content_type, existing_id=self.id
-                )
-            except Exception as e:
-                logger.error(f"CineBrain error ensuring slug for content {self.id}: {e}")
-                self.slug = f"cinebrain-content-{self.id}-{int(time.time())}"
-        return self.slug
 
 class UserInteraction(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -585,36 +574,6 @@ class CineBrainJikanService:
             logger.error(f"CineBrain Jikan genre search error: {e}")
         return None
 
-class CineBrainYouTubeService:
-    BASE_URL = 'https://www.googleapis.com/youtube/v3'
-    
-    @staticmethod
-    @cache.memoize(timeout=86400)
-    def search_trailers(query, content_type='movie'):
-        url = f"{CineBrainYouTubeService.BASE_URL}/search"
-        
-        if content_type == 'anime':
-            search_query = f"{query} anime trailer PV"
-        else:
-            search_query = f"{query} official trailer"
-        
-        params = {
-            'key': YOUTUBE_API_KEY,
-            'q': search_query,
-            'part': 'snippet',
-            'type': 'video',
-            'maxResults': 3,
-            'order': 'relevance'
-        }
-        
-        try:
-            response = http_session.get(url, params=params, timeout=5)
-            if response.status_code == 200:
-                return response.json()
-        except Exception as e:
-            logger.error(f"CineBrain YouTube search error: {e}")
-        return None
-
 class CineBrainAnonymousRecommendationEngine:
     @staticmethod
     def get_recommendations_for_anonymous(session_id, ip_address, limit=20):
@@ -663,7 +622,7 @@ class CineBrainAnonymousRecommendationEngine:
                 if rec.id not in seen_ids:
                     seen_ids.add(rec.id)
                     if not rec.slug:
-                        rec.ensure_slug()
+                        rec.slug = f"content-{rec.id}"
                     unique_recommendations.append(rec)
                     if len(unique_recommendations) >= limit:
                         break
@@ -673,6 +632,7 @@ class CineBrainAnonymousRecommendationEngine:
             logger.error(f"CineBrain error getting anonymous recommendations: {e}")
             return []
 
+# Initialize all models dict
 models = {
     'User': User,
     'Content': Content,
@@ -684,33 +644,126 @@ models = {
     'AnonymousInteraction': AnonymousInteraction
 }
 
+# Initialize modular details system (NEW)
 details_service = None
-content_service = None
-cinebrain_new_releases_service = None
-
 try:
-    with app.app_context():
-        details_service = init_details_service(app, db, models, cache)
-        content_service = ContentService(db, models)
-        logger.info("CineBrain details and content services initialized successfully")
+    details_service = init_details_module(app, db, models, cache)
+    if details_service:
+        logger.info("CineBrain modular details system initialized successfully")
+        app.details_service = details_service
+    else:
+        logger.warning("CineBrain details system failed to initialize")
 except Exception as e:
-    logger.error(f"Failed to initialize CineBrain details/content services: {e}")
+    logger.error(f"Failed to initialize CineBrain details system: {e}")
 
+# Initialize other services
 services = {
     'TMDBService': CineBrainTMDBService,
     'JikanService': CineBrainJikanService,
-    'ContentService': content_service,
     'http_session': http_session,
-    'cache': cache
+    'cache': cache,
+    'details_service': details_service  # Add to services dict
 }
 
-try:
-    review_service = init_review_service(app, db, models, cache)
-    services['review_service'] = review_service
-    logger.info("Review service initialized successfully")
-except Exception as e:
-    logger.error(f"Failed to initialize review service: {e}")
+# Initialize Content Service (simplified after details module integration)
+class ContentService:
+    def __init__(self, db, models):
+        self.db = db
+        self.models = models
+        self.Content = models.get('Content')
+        self.Person = models.get('Person')
+    
+    def save_content_from_tmdb(self, tmdb_data, content_type):
+        try:
+            tmdb_id = tmdb_data.get('id')
+            if not tmdb_id:
+                return None
+            
+            existing = self.Content.query.filter_by(tmdb_id=tmdb_id).first()
+            if existing:
+                return existing
+            
+            title = tmdb_data.get('title') or tmdb_data.get('name') or 'Unknown Title'
+            release_date = None
+            date_str = tmdb_data.get('release_date') or tmdb_data.get('first_air_date')
+            if date_str:
+                try:
+                    release_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+                except:
+                    pass
+            
+            content_data = {
+                'slug': f"content-{tmdb_id}-{int(time.time())}",  # Temporary slug
+                'tmdb_id': tmdb_id,
+                'title': title,
+                'content_type': content_type,
+                'release_date': release_date,
+                'rating': tmdb_data.get('vote_average'),
+                'vote_count': tmdb_data.get('vote_count'),
+                'popularity': tmdb_data.get('popularity'),
+                'overview': tmdb_data.get('overview'),
+                'poster_path': tmdb_data.get('poster_path'),
+                'backdrop_path': tmdb_data.get('backdrop_path')
+            }
+            
+            content = self.Content(**content_data)
+            self.db.session.add(content)
+            self.db.session.commit()
+            
+            return content
+            
+        except Exception as e:
+            logger.error(f"Error saving content from TMDB: {e}")
+            self.db.session.rollback()
+            return None
+    
+    def save_anime_content(self, anime_data):
+        try:
+            mal_id = anime_data.get('mal_id')
+            if not mal_id:
+                return None
+            
+            existing = self.Content.query.filter_by(mal_id=mal_id).first()
+            if existing:
+                return existing
+            
+            title = anime_data.get('title') or 'Unknown Anime'
+            release_date = None
+            if anime_data.get('aired', {}).get('from'):
+                try:
+                    release_date = datetime.strptime(anime_data['aired']['from'][:10], '%Y-%m-%d').date()
+                except:
+                    pass
+            
+            content_data = {
+                'slug': f"anime-{mal_id}-{int(time.time())}",  # Temporary slug
+                'mal_id': mal_id,
+                'title': title,
+                'content_type': 'anime',
+                'release_date': release_date,
+                'rating': anime_data.get('score'),
+                'vote_count': anime_data.get('scored_by'),
+                'popularity': anime_data.get('popularity'),
+                'overview': anime_data.get('synopsis'),
+                'poster_path': anime_data.get('images', {}).get('jpg', {}).get('image_url')
+            }
+            
+            content = self.Content(**content_data)
+            self.db.session.add(content)
+            self.db.session.commit()
+            
+            return content
+            
+        except Exception as e:
+            logger.error(f"Error saving anime content: {e}")
+            self.db.session.rollback()
+            return None
 
+content_service = ContentService(db, models)
+services['ContentService'] = content_service
+
+# Initialize other services
+cinebrain_new_releases_service = None
 try:
     cinebrain_new_releases_service = init_cinebrain_new_releases_service(app, db, models, services)
     if cinebrain_new_releases_service:
@@ -720,6 +773,13 @@ try:
         logger.warning("CineBrain new releases service failed to initialize")
 except Exception as e:
     logger.error(f"Failed to initialize CineBrain new releases service: {e}")
+
+try:
+    review_service = init_review_service(app, db, models, cache)
+    services['review_service'] = review_service
+    logger.info("Review service initialized successfully")
+except Exception as e:
+    logger.error(f"Failed to initialize review service: {e}")
 
 try:
     init_support(app, db, models, services)
@@ -828,79 +888,7 @@ def setup_support_monitoring():
     monitor_thread.start()
     logger.info("CineBrain support monitoring thread started")
 
-def on_new_support_ticket(ticket):
-    try:
-        from services.admin import AdminNotificationService
-        AdminNotificationService.notify_new_ticket(ticket)
-    except Exception as e:
-        logger.error(f"CineBrain error handling new ticket notification: {e}")
-
-def on_new_feedback(feedback):
-    try:
-        from services.admin import AdminNotificationService
-        AdminNotificationService.notify_feedback_received(feedback)
-    except Exception as e:
-        logger.error(f"CineBrain error handling new feedback notification: {e}")
-
-@app.route('/api/webhooks/support/ticket-created', methods=['POST'])
-def webhook_ticket_created():
-    try:
-        data = request.get_json()
-        ticket_id = data.get('ticket_id')
-        
-        if ticket_id and 'SupportTicket' in globals():
-            ticket = globals()['SupportTicket'].query.get(ticket_id)
-            if ticket:
-                on_new_support_ticket(ticket)
-        
-        return jsonify({'success': True, 'cinebrain_service': 'support_webhook'}), 200
-    except Exception as e:
-        logger.error(f"CineBrain webhook error: {e}")
-        return jsonify({'error': 'CineBrain webhook processing failed'}), 500
-
-@app.route('/api/webhooks/support/feedback-created', methods=['POST'])
-def webhook_feedback_created():
-    try:
-        data = request.get_json()
-        feedback_id = data.get('feedback_id')
-        
-        if feedback_id and 'Feedback' in globals():
-            feedback = globals()['Feedback'].query.get(feedback_id)
-            if feedback:
-                on_new_feedback(feedback)
-        
-        return jsonify({'success': True, 'cinebrain_service': 'support_webhook'}), 200
-    except Exception as e:
-        logger.error(f"CineBrain feedback webhook error: {e}")
-        return jsonify({'error': 'CineBrain webhook processing failed'}), 500
-
-@app.route('/api/details/<slug>', methods=['GET'])
-def get_content_details_by_slug(slug):
-    try:
-        user_id = None
-        auth_header = request.headers.get('Authorization')
-        if auth_header and auth_header.startswith('Bearer '):
-            token = auth_header.split(' ')[1]
-            try:
-                payload = jwt.decode(token, app.config['SECRET_KEY'], algorithms=['HS256'])
-                user_id = payload.get('user_id')
-            except:
-                pass
-        
-        if details_service:
-            details = details_service.get_details_by_slug(slug, user_id)
-        else:
-            logger.error("CineBrain details service not available")
-            return jsonify({'error': 'CineBrain service unavailable'}), 503
-        
-        if not details:
-            return jsonify({'error': 'CineBrain content not found'}), 404
-        
-        return jsonify(details), 200
-        
-    except Exception as e:
-        logger.error(f"CineBrain error getting details for slug {slug}: {e}")
-        return jsonify({'error': 'Failed to get CineBrain content details'}), 500
+# API Routes (only non-details routes remain)
 
 @app.route('/api/search', methods=['GET'])
 @cache.cached(timeout=300, key_prefix=make_cache_key)
@@ -954,10 +942,6 @@ def search_content():
                     except Exception as e:
                         logger.warning(f"CineBrain failed to record interaction: {e}")
                     
-                    youtube_url = None
-                    if content.youtube_trailer_id:
-                        youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
-                    
                     results.append({
                         'id': content.id,
                         'slug': content.slug,
@@ -968,18 +952,13 @@ def search_content():
                         'rating': content.rating,
                         'release_date': content.release_date.isoformat() if content.release_date else None,
                         'poster_path': f"https://image.tmdb.org/t/p/w500{content.poster_path}" if content.poster_path else None,
-                        'overview': content.overview,
-                        'youtube_trailer': youtube_url
+                        'overview': content.overview
                     })
         
         if anime_results:
             for anime in anime_results.get('data', []):
                 content = content_service.save_anime_content(anime)
                 if content:
-                    youtube_url = None
-                    if content.youtube_trailer_id:
-                        youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
-                    
                     results.append({
                         'id': content.id,
                         'slug': content.slug,
@@ -991,8 +970,7 @@ def search_content():
                         'rating': content.rating,
                         'release_date': content.release_date.isoformat() if content.release_date else None,
                         'poster_path': content.poster_path,
-                        'overview': content.overview,
-                        'youtube_trailer': youtube_url
+                        'overview': content.overview
                     })
         
         try:
@@ -1013,143 +991,18 @@ def search_content():
         logger.error(f"CineBrain search error: {e}")
         return jsonify({'error': 'CineBrain search failed'}), 500
 
+# Redirect old content ID URLs to new slug-based URLs
 @app.route('/api/content/<int:content_id>', methods=['GET'])
-def get_content_details(content_id):
+def redirect_old_content_details(content_id):
     try:
-        cache_key = content_cache_key(content_id)
-        cached_content = cache.get(cache_key)
-        
-        if cached_content:
-            content = cached_content
+        content = Content.query.get(content_id)
+        if content and content.slug:
+            return redirect(f'/api/details/{content.slug}', code=301)
         else:
-            content = Content.query.get_or_404(content_id)
-            cache.set(cache_key, content, timeout=3600)
-        
-        if not content.slug:
-            try:
-                content.ensure_slug()
-                db.session.commit()
-            except Exception as e:
-                logger.warning(f"CineBrain failed to ensure slug: {e}")
-        
-        try:
-            session_id = get_session_id()
-            interaction = AnonymousInteraction(
-                session_id=session_id,
-                content_id=content.id,
-                interaction_type='view',
-                ip_address=request.remote_addr
-            )
-            db.session.add(interaction)
-        except Exception as e:
-            logger.warning(f"CineBrain failed to record view interaction: {e}")
-        
-        additional_details = None
-        cast = []
-        crew = []
-        
-        try:
-            if content.content_type == 'anime' and content.mal_id:
-                additional_details = CineBrainJikanService.get_anime_details(content.mal_id)
-                if additional_details:
-                    anime_data = additional_details.get('data', {})
-                    if 'voices' in anime_data:
-                        cast = anime_data['voices'][:10]
-                    if 'staff' in anime_data:
-                        crew = anime_data['staff'][:5]
-            elif content.tmdb_id:
-                additional_details = CineBrainTMDBService.get_content_details(content.tmdb_id, content.content_type)
-                if additional_details:
-                    cast = additional_details.get('credits', {}).get('cast', [])[:10]
-                    crew = additional_details.get('credits', {}).get('crew', [])[:5]
-        except Exception as e:
-            logger.warning(f"CineBrain failed to get additional details: {e}")
-        
-        similar_content = []
-        try:
-            try:
-                genres = json.loads(content.genres) if content.genres else []
-            except (json.JSONDecodeError, TypeError):
-                genres = []
-            
-            if genres:
-                primary_genre = genres[0]
-                similar_items = Content.query.filter(
-                    Content.id != content_id,
-                    Content.content_type == content.content_type,
-                    Content.genres.contains(primary_genre)
-                ).order_by(Content.rating.desc()).limit(8).all()
-                
-                for similar in similar_items:
-                    if not similar.slug:
-                        try:
-                            similar.ensure_slug()
-                        except Exception:
-                            similar.slug = f"cinebrain-content-{similar.id}"
-                    
-                    youtube_url = None
-                    if similar.youtube_trailer_id:
-                        youtube_url = f"https://www.youtube.com/watch?v={similar.youtube_trailer_id}"
-                    
-                    similar_content.append({
-                        'id': similar.id,
-                        'slug': similar.slug,
-                        'title': similar.title,
-                        'poster_path': f"https://image.tmdb.org/t/p/w300{similar.poster_path}" if similar.poster_path and not similar.poster_path.startswith('http') else similar.poster_path,
-                        'rating': similar.rating,
-                        'content_type': similar.content_type,
-                        'youtube_trailer': youtube_url,
-                        'similarity_score': 0.8,
-                        'match_type': 'genre_based'
-                    })
-        except Exception as e:
-            logger.warning(f"CineBrain failed to get similar content: {e}")
-        
-        try:
-            db.session.commit()
-        except Exception as e:
-            logger.warning(f"CineBrain failed to commit view interaction: {e}")
-            db.session.rollback()
-        
-        youtube_trailer_url = None
-        if content.youtube_trailer_id:
-            youtube_trailer_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
-        
-        response_data = {
-            'id': content.id,
-            'slug': content.slug,
-            'tmdb_id': content.tmdb_id,
-            'mal_id': content.mal_id,
-            'title': content.title,
-            'original_title': content.original_title,
-            'content_type': content.content_type,
-            'genres': json.loads(content.genres or '[]'),
-            'languages': json.loads(content.languages or '[]'),
-            'release_date': content.release_date.isoformat() if content.release_date else None,
-            'runtime': content.runtime,
-            'rating': content.rating,
-            'vote_count': content.vote_count,
-            'overview': content.overview,
-            'poster_path': f"https://image.tmdb.org/t/p/w500{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
-            'backdrop_path': f"https://image.tmdb.org/t/p/w1280{content.backdrop_path}" if content.backdrop_path and not content.backdrop_path.startswith('http') else content.backdrop_path,
-            'youtube_trailer': youtube_trailer_url,
-            'similar_content': similar_content,
-            'cast': cast,
-            'crew': crew,
-            'is_trending': content.is_trending,
-            'is_new_release': content.is_new_release,
-            'is_critics_choice': content.is_critics_choice,
-            'cinebrain_service': 'content_details'
-        }
-        
-        if content.content_type == 'anime':
-            response_data['anime_genres'] = json.loads(content.anime_genres or '[]')
-        
-        return jsonify(response_data), 200
-        
+            return jsonify({'error': 'Content not found'}), 404
     except Exception as e:
-        logger.error(f"CineBrain content details error: {e}")
-        return jsonify({'error': 'Failed to get CineBrain content details'}), 500
+        logger.error(f"Error redirecting old content URL: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
 
 @app.route('/api/recommendations/trending', methods=['GET'])
 @cache.cached(timeout=300, key_prefix=make_cache_key)
@@ -1197,12 +1050,6 @@ def get_trending():
         for content in all_content:
             if content.id not in seen_ids:
                 seen_ids.add(content.id)
-                if not content.slug:
-                    try:
-                        content.ensure_slug()
-                    except Exception as e:
-                        logger.warning(f"CineBrain failed to ensure slug for content {content.id}: {e}")
-                        content.slug = f"cinebrain-content-{content.id}"
                 unique_content.append(content)
         
         categories = cinebrain_recommendation_orchestrator.get_trending_with_algorithms(
@@ -1247,28 +1094,6 @@ def get_trending():
                     'cinebrain_service': 'trending'
                 }
             }
-        
-        if category != 'all' and selected_category in categories and categories[selected_category]:
-            try:
-                content_items = categories[selected_category]
-                if content_items and len(content_items) > 0:
-                    content_ids = []
-                    for item in content_items:
-                        if isinstance(item, dict) and 'id' in item:
-                            content_ids.append(item['id'])
-                    
-                    if content_ids:
-                        contents = Content.query.filter(Content.id.in_(content_ids)).all()
-                        
-                        response['metadata']['metrics'] = {
-                            'diversity_score': round(EvaluationMetrics.diversity_score(contents), 3) if contents else 0,
-                            'coverage_score': round(EvaluationMetrics.coverage_score(
-                                content_ids,
-                                Content.query.count()
-                            ), 5) if Content.query.count() > 0 else 0
-                        }
-            except Exception as metric_error:
-                logger.warning(f"CineBrain metrics calculation error: {metric_error}")
         
         try:
             db.session.commit()
@@ -1331,100 +1156,222 @@ def get_new_releases():
             'cinebrain_service': 'new_releases'
         }), 500
 
-@app.route('/api/admin/cinebrain/new-releases/stats', methods=['GET'])
-@auth_required
-def get_cinebrain_new_releases_stats():
+@app.route('/api/recommendations/genre/<genre>', methods=['GET'])
+@cache.cached(timeout=600, key_prefix=make_cache_key)
+def get_genre_recommendations(genre):
     try:
-        user = User.query.get(request.user_id)
-        if not user or not user.is_admin:
-            return jsonify({'error': 'CineBrain admin access required'}), 403
-            
-        if cinebrain_new_releases_service:
-            stats = cinebrain_new_releases_service.get_stats()
-            return jsonify({
-                'success': True,
-                'cinebrain_service': 'new_releases',
-                'stats': stats
-            }), 200
-        else:
-            return jsonify({
-                'success': False,
-                'error': 'CineBrain service not available'
-            }), 503
-            
-    except Exception as e:
-        logger.error(f"CineBrain new releases stats error: {e}")
-        return jsonify({'error': 'Failed to get CineBrain stats'}), 500
-
-@app.route('/api/admin/cinebrain/new-releases/refresh', methods=['POST'])
-@auth_required
-def trigger_cinebrain_new_releases_refresh():
-    try:
-        user = User.query.get(request.user_id)
-        if not user or not user.is_admin:
-            return jsonify({'error': 'CineBrain admin access required'}), 403
-            
-        if cinebrain_new_releases_service:
-            threading.Thread(
-                target=cinebrain_new_releases_service.refresh_new_releases,
-                daemon=True,
-                name=f'CineBrainManualRefresh_{int(time.time())}'
-            ).start()
-            
-            return jsonify({
-                'success': True,
-                'message': 'CineBrain new releases refresh triggered',
-                'cinebrain_service': 'new_releases'
-            }), 200
-        else:
-            return jsonify({
-                'success': False,
-                'error': 'CineBrain service not available'
-            }), 503
-            
-    except Exception as e:
-        logger.error(f"CineBrain manual refresh error: {e}")
-        return jsonify({'error': 'Failed to trigger CineBrain refresh'}), 500
-
-@app.route('/api/admin/cinebrain/new-releases/config', methods=['PUT'])
-@auth_required
-def update_cinebrain_new_releases_config():
-    try:
-        user = User.query.get(request.user_id)
-        if not user or not user.is_admin:
-            return jsonify({'error': 'CineBrain admin access required'}), 403
-            
-        if not cinebrain_new_releases_service:
-            return jsonify({
-                'success': False,
-                'error': 'CineBrain service not available'
-            }), 503
-            
-        config_updates = request.json
-        allowed_updates = {
-            'language_priorities', 'refresh_interval_minutes', 
-            'date_range_days', 'max_items_per_category'
+        content_type = request.args.get('type', 'movie')
+        limit = int(request.args.get('limit', 20))
+        region = request.args.get('region')
+        
+        genre_ids = {
+            'action': 28, 'adventure': 12, 'animation': 16, 'biography': -1,
+            'comedy': 35, 'crime': 80, 'documentary': 99, 'drama': 18,
+            'fantasy': 14, 'horror': 27, 'musical': 10402, 'mystery': 9648,
+            'romance': 10749, 'sci-fi': 878, 'science fiction': 878, 'thriller': 53, 'western': 37
         }
         
-        valid_updates = {k: v for k, v in config_updates.items() if k in allowed_updates}
+        genre_id = genre_ids.get(genre.lower())
+        recommendations = []
         
-        if valid_updates:
-            cinebrain_new_releases_service.update_config(**valid_updates)
-            return jsonify({
-                'success': True,
-                'message': 'CineBrain configuration updated',
-                'updates': valid_updates,
-                'cinebrain_service': 'new_releases'
-            }), 200
-        else:
-            return jsonify({
-                'success': False,
-                'error': 'No valid CineBrain configuration updates provided'
-            }), 400
+        if genre_id and genre_id != -1:
+            genre_content = CineBrainTMDBService.get_by_genre(genre_id, content_type, region=region)
             
+            if genre_content:
+                for item in genre_content.get('results', [])[:limit]:
+                    content = content_service.save_content_from_tmdb(item, content_type)
+                    if content:
+                        recommendations.append({
+                            'id': content.id,
+                            'slug': content.slug,
+                            'title': content.title,
+                            'content_type': content.content_type,
+                            'genres': json.loads(content.genres or '[]'),
+                            'rating': content.rating,
+                            'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
+                            'overview': content.overview[:150] + '...' if content.overview else ''
+                        })
+        
+        return jsonify({
+            'recommendations': recommendations,
+            'cinebrain_service': 'genre_recommendations'
+        }), 200
+        
     except Exception as e:
-        logger.error(f"CineBrain config update error: {e}")
-        return jsonify({'error': 'Failed to update CineBrain configuration'}), 500
+        logger.error(f"CineBrain genre recommendations error: {e}")
+        return jsonify({'error': 'Failed to get CineBrain genre recommendations'}), 500
+
+@app.route('/api/recommendations/regional/<language>', methods=['GET'])
+@cache.cached(timeout=600, key_prefix=make_cache_key)
+def get_regional(language):
+    try:
+        content_type = request.args.get('type', 'movie')
+        limit = int(request.args.get('limit', 20))
+        
+        lang_code = CINEBRAIN_LANGUAGE_PRIORITY['codes'].get(language.lower())
+        recommendations = []
+        
+        if lang_code:
+            lang_content = CineBrainTMDBService.get_language_specific(lang_code, content_type)
+            if lang_content:
+                for item in lang_content.get('results', [])[:limit]:
+                    content = content_service.save_content_from_tmdb(item, content_type)
+                    if content:
+                        recommendations.append({
+                            'id': content.id,
+                            'slug': content.slug,
+                            'title': content.title,
+                            'content_type': content.content_type,
+                            'genres': json.loads(content.genres or '[]'),
+                            'rating': content.rating,
+                            'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
+                            'overview': content.overview[:150] + '...' if content.overview else ''
+                        })
+        
+        return jsonify({
+            'recommendations': recommendations,
+            'cinebrain_service': 'regional_recommendations'
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"CineBrain regional recommendations error: {e}")
+        return jsonify({'error': 'Failed to get CineBrain regional recommendations'}), 500
+
+@app.route('/api/recommendations/anime', methods=['GET'])
+@cache.cached(timeout=600, key_prefix=make_cache_key)
+def get_anime():
+    try:
+        genre = request.args.get('genre')
+        limit = int(request.args.get('limit', 20))
+        
+        recommendations = []
+        
+        if genre and genre.lower() in CINEBRAIN_ANIME_GENRES:
+            genre_keywords = CINEBRAIN_ANIME_GENRES[genre.lower()]
+            for keyword in genre_keywords[:2]:
+                anime_results = CineBrainJikanService.get_anime_by_genre(keyword)
+                if anime_results:
+                    for anime in anime_results.get('data', []):
+                        if len(recommendations) >= limit:
+                            break
+                        content = content_service.save_anime_content(anime)
+                        if content:
+                            recommendations.append({
+                                'id': content.id,
+                                'slug': content.slug,
+                                'mal_id': content.mal_id,
+                                'title': content.title,
+                                'original_title': content.original_title,
+                                'content_type': content.content_type,
+                                'genres': json.loads(content.genres or '[]'),
+                                'anime_genres': json.loads(content.anime_genres or '[]'),
+                                'rating': content.rating,
+                                'poster_path': content.poster_path,
+                                'overview': content.overview[:150] + '...' if content.overview else ''
+                            })
+                    if len(recommendations) >= limit:
+                        break
+        else:
+            top_anime = CineBrainJikanService.get_top_anime()
+            if top_anime:
+                for anime in top_anime.get('data', [])[:limit]:
+                    content = content_service.save_anime_content(anime)
+                    if content:
+                        recommendations.append({
+                            'id': content.id,
+                            'slug': content.slug,
+                            'mal_id': content.mal_id,
+                            'title': content.title,
+                            'original_title': content.original_title,
+                            'content_type': content.content_type,
+                            'genres': json.loads(content.genres or '[]'),
+                            'anime_genres': json.loads(content.anime_genres or '[]'),
+                            'rating': content.rating,
+                            'poster_path': content.poster_path,
+                            'overview': content.overview[:150] + '...' if content.overview else ''
+                        })
+        
+        return jsonify({
+            'recommendations': recommendations[:limit],
+            'cinebrain_service': 'anime_recommendations'
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"CineBrain anime recommendations error: {e}")
+        return jsonify({'error': 'Failed to get CineBrain anime recommendations'}), 500
+
+@app.route('/api/recommendations/anonymous', methods=['GET'])
+def get_anonymous_recommendations():
+    try:
+        session_id = get_session_id()
+        limit = int(request.args.get('limit', 20))
+        
+        recommendations = CineBrainAnonymousRecommendationEngine.get_recommendations_for_anonymous(
+            session_id, request.remote_addr, limit
+        )
+        
+        result = []
+        for content in recommendations:
+            result.append({
+                'id': content.id,
+                'slug': content.slug,
+                'title': content.title,
+                'content_type': content.content_type,
+                'genres': json.loads(content.genres or '[]'),
+                'rating': content.rating,
+                'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
+                'overview': content.overview[:150] + '...' if content.overview else ''
+            })
+        
+        return jsonify({
+            'recommendations': result,
+            'cinebrain_service': 'anonymous_recommendations'
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"CineBrain anonymous recommendations error: {e}")
+        return jsonify({'error': 'Failed to get CineBrain recommendations'}), 500
+
+@app.route('/api/recommendations/admin-choice', methods=['GET'])
+@cache.cached(timeout=600, key_prefix=make_cache_key)
+def get_public_admin_recommendations():
+    try:
+        limit = int(request.args.get('limit', 20))
+        rec_type = request.args.get('type', 'admin_choice')
+        
+        admin_recs = AdminRecommendation.query.filter_by(
+            is_active=True,
+            recommendation_type=rec_type
+        ).order_by(AdminRecommendation.created_at.desc()).limit(limit).all()
+        
+        result = []
+        for rec in admin_recs:
+            content = Content.query.get(rec.content_id)
+            admin = User.query.get(rec.admin_id)
+            
+            if content:
+                result.append({
+                    'id': content.id,
+                    'slug': content.slug,
+                    'title': content.title,
+                    'content_type': content.content_type,
+                    'genres': json.loads(content.genres or '[]'),
+                    'rating': content.rating,
+                    'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
+                    'overview': content.overview[:150] + '...' if content.overview else '',
+                    'admin_description': rec.description,
+                    'admin_name': admin.username if admin else 'CineBrain Admin',
+                    'recommended_at': rec.created_at.isoformat()
+                })
+        
+        return jsonify({
+            'recommendations': result,
+            'cinebrain_service': 'admin_recommendations'
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"CineBrain public admin recommendations error: {e}")
+        return jsonify({'error': 'Failed to get CineBrain admin recommendations'}), 500
 
 @app.route('/api/upcoming', methods=['GET'])
 async def get_upcoming_releases():
@@ -1527,632 +1474,63 @@ def get_upcoming_releases_sync():
             'cinebrain_service': 'upcoming'
         }), 500
 
-@app.route('/api/recommendations/genre/<genre>', methods=['GET'])
-@cache.cached(timeout=600, key_prefix=make_cache_key)
-def get_genre_recommendations(genre):
-    try:
-        content_type = request.args.get('type', 'movie')
-        limit = int(request.args.get('limit', 20))
-        region = request.args.get('region')
-        
-        genre_ids = {
-            'action': 28, 'adventure': 12, 'animation': 16, 'biography': -1,
-            'comedy': 35, 'crime': 80, 'documentary': 99, 'drama': 18,
-            'fantasy': 14, 'horror': 27, 'musical': 10402, 'mystery': 9648,
-            'romance': 10749, 'sci-fi': 878, 'science fiction': 878, 'thriller': 53, 'western': 37
-        }
-        
-        genre_id = genre_ids.get(genre.lower())
-        recommendations = []
-        
-        if genre_id and genre_id != -1:
-            genre_content = CineBrainTMDBService.get_by_genre(genre_id, content_type, region=region)
-            
-            if genre_content:
-                for item in genre_content.get('results', [])[:limit]:
-                    content = content_service.save_content_from_tmdb(item, content_type)
-                    if content:
-                        youtube_url = None
-                        if content.youtube_trailer_id:
-                            youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
-                        
-                        recommendations.append({
-                            'id': content.id,
-                            'slug': content.slug,
-                            'title': content.title,
-                            'content_type': content.content_type,
-                            'genres': json.loads(content.genres or '[]'),
-                            'rating': content.rating,
-                            'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
-                            'overview': content.overview[:150] + '...' if content.overview else '',
-                            'youtube_trailer': youtube_url
-                        })
-        
-        return jsonify({
-            'recommendations': recommendations,
-            'cinebrain_service': 'genre_recommendations'
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"CineBrain genre recommendations error: {e}")
-        return jsonify({'error': 'Failed to get CineBrain genre recommendations'}), 500
-
-@app.route('/api/recommendations/regional/<language>', methods=['GET'])
-@cache.cached(timeout=600, key_prefix=make_cache_key)
-def get_regional(language):
-    try:
-        content_type = request.args.get('type', 'movie')
-        limit = int(request.args.get('limit', 20))
-        
-        lang_code = CINEBRAIN_LANGUAGE_PRIORITY['codes'].get(language.lower())
-        recommendations = []
-        
-        if lang_code:
-            lang_content = CineBrainTMDBService.get_language_specific(lang_code, content_type)
-            if lang_content:
-                for item in lang_content.get('results', [])[:limit]:
-                    content = content_service.save_content_from_tmdb(item, content_type)
-                    if content:
-                        youtube_url = None
-                        if content.youtube_trailer_id:
-                            youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
-                        
-                        recommendations.append({
-                            'id': content.id,
-                            'slug': content.slug,
-                            'title': content.title,
-                            'content_type': content.content_type,
-                            'genres': json.loads(content.genres or '[]'),
-                            'rating': content.rating,
-                            'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
-                            'overview': content.overview[:150] + '...' if content.overview else '',
-                            'youtube_trailer': youtube_url
-                        })
-        
-        return jsonify({
-            'recommendations': recommendations,
-            'cinebrain_service': 'regional_recommendations'
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"CineBrain regional recommendations error: {e}")
-        return jsonify({'error': 'Failed to get CineBrain regional recommendations'}), 500
-
-@app.route('/api/recommendations/anime', methods=['GET'])
-@cache.cached(timeout=600, key_prefix=make_cache_key)
-def get_anime():
-    try:
-        genre = request.args.get('genre')
-        limit = int(request.args.get('limit', 20))
-        
-        recommendations = []
-        
-        if genre and genre.lower() in CINEBRAIN_ANIME_GENRES:
-            genre_keywords = CINEBRAIN_ANIME_GENRES[genre.lower()]
-            for keyword in genre_keywords[:2]:
-                anime_results = CineBrainJikanService.get_anime_by_genre(keyword)
-                if anime_results:
-                    for anime in anime_results.get('data', []):
-                        if len(recommendations) >= limit:
-                            break
-                        content = content_service.save_anime_content(anime)
-                        if content:
-                            youtube_url = None
-                            if content.youtube_trailer_id:
-                                youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
-                            
-                            recommendations.append({
-                                'id': content.id,
-                                'slug': content.slug,
-                                'mal_id': content.mal_id,
-                                'title': content.title,
-                                'original_title': content.original_title,
-                                'content_type': content.content_type,
-                                'genres': json.loads(content.genres or '[]'),
-                                'anime_genres': json.loads(content.anime_genres or '[]'),
-                                'rating': content.rating,
-                                'poster_path': content.poster_path,
-                                'overview': content.overview[:150] + '...' if content.overview else '',
-                                'youtube_trailer': youtube_url
-                            })
-                    if len(recommendations) >= limit:
-                        break
-        else:
-            top_anime = CineBrainJikanService.get_top_anime()
-            if top_anime:
-                for anime in top_anime.get('data', [])[:limit]:
-                    content = content_service.save_anime_content(anime)
-                    if content:
-                        youtube_url = None
-                        if content.youtube_trailer_id:
-                            youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
-                        
-                        recommendations.append({
-                            'id': content.id,
-                            'slug': content.slug,
-                            'mal_id': content.mal_id,
-                            'title': content.title,
-                            'original_title': content.original_title,
-                            'content_type': content.content_type,
-                            'genres': json.loads(content.genres or '[]'),
-                            'anime_genres': json.loads(content.anime_genres or '[]'),
-                            'rating': content.rating,
-                            'poster_path': content.poster_path,
-                            'overview': content.overview[:150] + '...' if content.overview else '',
-                            'youtube_trailer': youtube_url
-                        })
-        
-        return jsonify({
-            'recommendations': recommendations[:limit],
-            'cinebrain_service': 'anime_recommendations'
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"CineBrain anime recommendations error: {e}")
-        return jsonify({'error': 'Failed to get CineBrain anime recommendations'}), 500
-
-@app.route('/api/recommendations/similar/<int:content_id>', methods=['GET'])
-def get_similar_recommendations(content_id):
-    try:
-        limit = min(int(request.args.get('limit', 8)), 15)
-        strict_mode = request.args.get('strict_mode', 'false').lower() == 'true'
-        min_similarity = float(request.args.get('min_similarity', 0.3))
-        
-        cache_key = f"cinebrain:similar:{content_id}:{limit}:{strict_mode}:{min_similarity}"
-        if cache:
-            try:
-                cached_result = cache.get(cache_key)
-                if cached_result:
-                    return jsonify(cached_result), 200
-            except Exception as e:
-                logger.warning(f"CineBrain cache get error: {e}")
-        
-        base_content = Content.query.get(content_id)
-        if not base_content:
-            return jsonify({'error': 'CineBrain content not found'}), 404
-        
-        if not base_content.slug:
-            try:
-                base_content.ensure_slug()
-                db.session.commit()
-            except Exception as e:
-                logger.warning(f"CineBrain slug generation failed for base content: {e}")
-                base_content.slug = f"cinebrain-content-{base_content.id}"
-        
-        similar_content = []
-        
-        try:
-            try:
-                base_genres = json.loads(base_content.genres or '[]')
-            except (json.JSONDecodeError, TypeError):
-                base_genres = []
-            
-            if base_genres:
-                primary_genre = base_genres[0]
-                
-                similar_items = Content.query.filter(
-                    Content.id != content_id,
-                    Content.content_type == base_content.content_type,
-                    Content.genres.contains(primary_genre)
-                ).order_by(
-                    Content.rating.desc()
-                ).limit(limit * 2).all()
-                
-                for item in similar_items[:limit]:
-                    try:
-                        if not item.slug:
-                            item.slug = f"cinebrain-content-{item.id}"
-                        
-                        try:
-                            item_genres = json.loads(item.genres or '[]')
-                        except (json.JSONDecodeError, TypeError):
-                            item_genres = []
-                        
-                        similar_content.append({
-                            'id': item.id,
-                            'slug': item.slug,
-                            'title': item.title,
-                            'poster_path': f"https://image.tmdb.org/t/p/w300{item.poster_path}" if item.poster_path and not item.poster_path.startswith('http') else item.poster_path,
-                            'rating': item.rating,
-                            'content_type': item.content_type,
-                            'genres': item_genres,
-                            'similarity_score': 0.8,
-                            'match_type': 'cinebrain_genre_based'
-                        })
-                        
-                        if len(similar_content) >= limit:
-                            break
-                            
-                    except Exception as e:
-                        logger.warning(f"CineBrain error processing similar item {item.id}: {e}")
-                        continue
-            
-            if not similar_content:
-                fallback_items = Content.query.filter(
-                    Content.id != content_id,
-                    Content.content_type == base_content.content_type
-                ).order_by(
-                    Content.popularity.desc()
-                ).limit(limit).all()
-                
-                for item in fallback_items:
-                    if not item.slug:
-                        item.slug = f"cinebrain-content-{item.id}"
-                    
-                    similar_content.append({
-                        'id': item.id,
-                        'slug': item.slug,
-                        'title': item.title,
-                        'poster_path': f"https://image.tmdb.org/t/p/w300{item.poster_path}" if item.poster_path and not item.poster_path.startswith('http') else item.poster_path,
-                        'rating': item.rating,
-                        'content_type': item.content_type,
-                        'similarity_score': 0.5,
-                        'match_type': 'cinebrain_popularity_fallback'
-                    })
-        
-        except Exception as e:
-            logger.error(f"CineBrain error in similarity calculation: {e}")
-            similar_content = []
-        
-        try:
-            session_id = get_session_id()
-            interaction = AnonymousInteraction(
-                session_id=session_id,
-                content_id=content_id,
-                interaction_type='similar_view',
-                ip_address=request.remote_addr
-            )
-            db.session.add(interaction)
-            db.session.commit()
-        except Exception as e:
-            logger.warning(f"CineBrain interaction tracking failed: {e}")
-        
-        response = {
-            'base_content': {
-                'id': base_content.id,
-                'slug': base_content.slug or f"cinebrain-content-{base_content.id}",
-                'title': base_content.title,
-                'content_type': base_content.content_type,
-                'rating': base_content.rating
-            },
-            'similar_content': similar_content,
-            'metadata': {
-                'algorithm': 'cinebrain_optimized_genre_based',
-                'total_results': len(similar_content),
-                'similarity_threshold': min_similarity,
-                'timestamp': datetime.utcnow().isoformat(),
-                'cinebrain_service': 'similar_recommendations'
-            }
-        }
-        
-        if cache:
-            try:
-                cache.set(cache_key, response, timeout=900)
-            except Exception as e:
-                logger.warning(f"CineBrain caching failed: {e}")
-        
-        return jsonify(response), 200
-        
-    except Exception as e:
-        logger.error(f"CineBrain similar recommendations error: {e}")
-        return jsonify({
-            'error': 'Failed to get CineBrain similar recommendations',
-            'similar_content': [],
-            'metadata': {'error': str(e), 'cinebrain_service': 'similar_recommendations'}
-        }), 500
-
-@app.route('/api/recommendations/anonymous', methods=['GET'])
-def get_anonymous_recommendations():
-    try:
-        session_id = get_session_id()
-        limit = int(request.args.get('limit', 20))
-        
-        recommendations = CineBrainAnonymousRecommendationEngine.get_recommendations_for_anonymous(
-            session_id, request.remote_addr, limit
-        )
-        
-        result = []
-        for content in recommendations:
-            youtube_url = None
-            if content.youtube_trailer_id:
-                youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
-            
-            result.append({
-                'id': content.id,
-                'slug': content.slug,
-                'title': content.title,
-                'content_type': content.content_type,
-                'genres': json.loads(content.genres or '[]'),
-                'rating': content.rating,
-                'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
-                'overview': content.overview[:150] + '...' if content.overview else '',
-                'youtube_trailer': youtube_url
-            })
-        
-        return jsonify({
-            'recommendations': result,
-            'cinebrain_service': 'anonymous_recommendations'
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"CineBrain anonymous recommendations error: {e}")
-        return jsonify({'error': 'Failed to get CineBrain recommendations'}), 500
-
-@app.route('/api/recommendations/admin-choice', methods=['GET'])
-@cache.cached(timeout=600, key_prefix=make_cache_key)
-def get_public_admin_recommendations():
-    try:
-        limit = int(request.args.get('limit', 20))
-        rec_type = request.args.get('type', 'admin_choice')
-        
-        admin_recs = AdminRecommendation.query.filter_by(
-            is_active=True,
-            recommendation_type=rec_type
-        ).order_by(AdminRecommendation.created_at.desc()).limit(limit).all()
-        
-        result = []
-        for rec in admin_recs:
-            content = Content.query.get(rec.content_id)
-            admin = User.query.get(rec.admin_id)
-            
-            if content:
-                if not content.slug:
-                    try:
-                        content.ensure_slug()
-                    except Exception as e:
-                        logger.warning(f"CineBrain failed to ensure slug for admin rec content: {e}")
-                        content.slug = f"cinebrain-content-{content.id}"
-                
-                youtube_url = None
-                if content.youtube_trailer_id:
-                    youtube_url = f"https://www.youtube.com/watch?v={content.youtube_trailer_id}"
-                
-                result.append({
-                    'id': content.id,
-                    'slug': content.slug,
-                    'title': content.title,
-                    'content_type': content.content_type,
-                    'genres': json.loads(content.genres or '[]'),
-                    'rating': content.rating,
-                    'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
-                    'overview': content.overview[:150] + '...' if content.overview else '',
-                    'youtube_trailer': youtube_url,
-                    'admin_description': rec.description,
-                    'admin_name': admin.username if admin else 'CineBrain Admin',
-                    'recommended_at': rec.created_at.isoformat()
-                })
-        
-        return jsonify({
-            'recommendations': result,
-            'cinebrain_service': 'admin_recommendations'
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"CineBrain public admin recommendations error: {e}")
-        return jsonify({'error': 'Failed to get CineBrain admin recommendations'}), 500
-    
-@app.route('/api/details/<slug>/reviews', methods=['GET'])
-def get_content_reviews_by_slug(slug):
-    try:
-        user_id = None
-        auth_header = request.headers.get('Authorization')
-        if auth_header and auth_header.startswith('Bearer '):
-            token = auth_header.split(' ')[1]
-            try:
-                payload = jwt.decode(token, app.config['SECRET_KEY'], algorithms=['HS256'])
-                user_id = payload.get('user_id')
-            except:
-                pass
-        
-        content = Content.query.filter_by(slug=slug).first()
-        if not content:
-            return jsonify({'error': 'Content not found'}), 404
-        
-        if 'review_service' in globals() and review_service:
-            result = review_service.get_content_reviews(slug, 
-                page=int(request.args.get('page', 1)),
-                limit=int(request.args.get('limit', 10)),
-                sort_by=request.args.get('sort_by', 'newest'),
-                user_id=user_id
-            )
-            return jsonify(result), 200 if result['success'] else 404
-        else:
-            return jsonify({'error': 'Review service not available'}), 503
-            
-    except Exception as e:
-        logger.error(f"Error getting reviews for content {slug}: {e}")
-        return jsonify({'error': 'Failed to get reviews'}), 500
-
-@app.route('/api/person/<slug>', methods=['GET'])
-def get_person_details(slug):
-    try:
-        user_id = None
-        auth_header = request.headers.get('Authorization')
-        if auth_header and auth_header.startswith('Bearer '):
-            token = auth_header.split(' ')[1]
-            try:
-                payload = jwt.decode(token, app.config['SECRET_KEY'], algorithms=['HS256'])
-                user_id = payload.get('user_id')
-            except:
-                pass
-        
-        if details_service:
-            person_details = details_service.get_person_details(slug)
-        else:
-            logger.error("CineBrain details service not available")
-            return jsonify({'error': 'CineBrain service unavailable'}), 503
-        
-        if not person_details:
-            return jsonify({'error': 'CineBrain person not found'}), 404
-        
-        return jsonify(person_details), 200
-        
-    except Exception as e:
-        logger.error(f"CineBrain error getting person details for slug {slug}: {e}")
-        return jsonify({'error': 'Failed to get CineBrain person details'}), 500
-
-@app.route('/api/details/<slug>/reviews', methods=['POST'])
+# Admin endpoints
+@app.route('/api/admin/cinebrain/new-releases/stats', methods=['GET'])
 @auth_required
-def add_review(slug):
-    try:
-        content = Content.query.filter_by(slug=slug).first()
-        if not content:
-            return jsonify({'error': 'CineBrain content not found'}), 404
-        
-        user_id = request.user_id
-        review_data = request.json
-        
-        if details_service:
-            result = details_service.add_review(content.id, user_id, review_data)
-        else:
-            return jsonify({'error': 'CineBrain service unavailable'}), 503
-        
-        if result['success']:
-            return jsonify(result), 201
-        else:
-            return jsonify(result), 400
-            
-    except Exception as e:
-        logger.error(f"CineBrain error adding review: {e}")
-        return jsonify({'error': 'Failed to add CineBrain review'}), 500
-
-@app.route('/api/reviews/<int:review_id>/helpful', methods=['POST'])
-@auth_required
-def vote_review_helpful(review_id):
-    try:
-        user_id = request.user_id
-        is_helpful = request.json.get('is_helpful', True)
-        
-        if details_service:
-            success = details_service.vote_review_helpful(review_id, user_id, is_helpful)
-        else:
-            return jsonify({'error': 'CineBrain service unavailable'}), 503
-        
-        if success:
-            return jsonify({'success': True}), 200
-        else:
-            return jsonify({'error': 'Failed to vote on CineBrain review'}), 400
-            
-    except Exception as e:
-        logger.error(f"CineBrain error voting on review: {e}")
-        return jsonify({'error': 'Failed to vote on CineBrain review'}), 500
-
-@app.route('/api/admin/slugs/migrate', methods=['POST'])
-@auth_required
-def migrate_all_slugs():
+def get_cinebrain_new_releases_stats():
     try:
         user = User.query.get(request.user_id)
         if not user or not user.is_admin:
             return jsonify({'error': 'CineBrain admin access required'}), 403
-        
-        if details_service:
-            batch_size = int(request.json.get('batch_size', 50))
-            stats = details_service.migrate_all_slugs(batch_size)
+            
+        if cinebrain_new_releases_service:
+            stats = cinebrain_new_releases_service.get_stats()
             return jsonify({
                 'success': True,
-                'migration_stats': stats,
-                'cinebrain_service': 'slug_migration'
+                'cinebrain_service': 'new_releases',
+                'stats': stats
             }), 200
         else:
-            return jsonify({'error': 'CineBrain service unavailable'}), 503
+            return jsonify({
+                'success': False,
+                'error': 'CineBrain service not available'
+            }), 503
             
     except Exception as e:
-        logger.error(f"CineBrain error migrating slugs: {e}")
-        return jsonify({'error': 'Failed to migrate CineBrain slugs'}), 500
+        logger.error(f"CineBrain new releases stats error: {e}")
+        return jsonify({'error': 'Failed to get CineBrain stats'}), 500
 
-@app.route('/api/admin/content/<int:content_id>/slug', methods=['PUT'])
+@app.route('/api/admin/cinebrain/new-releases/refresh', methods=['POST'])
 @auth_required
-def update_content_slug(content_id):
+def trigger_cinebrain_new_releases_refresh():
     try:
         user = User.query.get(request.user_id)
         if not user or not user.is_admin:
             return jsonify({'error': 'CineBrain admin access required'}), 403
-        
-        if details_service:
-            force_update = request.json.get('force_update', False)
-            new_slug = details_service.update_content_slug(content_id, force_update)
             
-            if new_slug:
-                return jsonify({
-                    'success': True,
-                    'new_slug': new_slug,
-                    'cinebrain_service': 'slug_update'
-                }), 200
-            else:
-                return jsonify({'error': 'CineBrain content not found or update failed'}), 404
-        else:
-            return jsonify({'error': 'CineBrain service unavailable'}), 503
+        if cinebrain_new_releases_service:
+            threading.Thread(
+                target=cinebrain_new_releases_service.refresh_new_releases,
+                daemon=True,
+                name=f'CineBrainManualRefresh_{int(time.time())}'
+            ).start()
             
-    except Exception as e:
-        logger.error(f"CineBrain error updating content slug: {e}")
-        return jsonify({'error': 'Failed to update CineBrain slug'}), 500
-
-@app.route('/api/content/<int:content_id>/refresh-cast-crew', methods=['POST'])
-def refresh_cast_crew(content_id):
-    try:
-        content = Content.query.get_or_404(content_id)
-        
-        if not content.tmdb_id:
-            return jsonify({'error': 'No TMDB ID available for CineBrain content'}), 400
-        
-        if details_service:
-            cast_crew = details_service._fetch_and_save_all_cast_crew(content)
             return jsonify({
                 'success': True,
-                'cast_count': len(cast_crew['cast']),
-                'crew_count': sum(len(crew_list) for crew_list in cast_crew['crew'].values()),
-                'cinebrain_service': 'cast_crew_refresh'
-            })
+                'message': 'CineBrain new releases refresh triggered',
+                'cinebrain_service': 'new_releases'
+            }), 200
         else:
-            return jsonify({'error': 'CineBrain details service not available'}), 503
+            return jsonify({
+                'success': False,
+                'error': 'CineBrain service not available'
+            }), 503
             
     except Exception as e:
-        logger.error(f"CineBrain error refreshing cast/crew: {e}")
-        return jsonify({'error': 'Failed to refresh CineBrain cast/crew data'}), 500
+        logger.error(f"CineBrain manual refresh error: {e}")
+        return jsonify({'error': 'Failed to trigger CineBrain refresh'}), 500
 
-@app.route('/api/admin/populate-cast-crew', methods=['POST'])
-@auth_required
-def populate_all_cast_crew():
-    try:
-        user = User.query.get(request.user_id)
-        if not user or not user.is_admin:
-            return jsonify({'error': 'CineBrain admin access required'}), 403
-        
-        batch_size = int(request.json.get('batch_size', 10))
-        
-        content_items = Content.query.filter(
-            Content.tmdb_id.isnot(None),
-            ~Content.id.in_(
-                db.session.query(ContentPerson.content_id).distinct()
-            )
-        ).limit(batch_size).all()
-        
-        processed = 0
-        errors = 0
-        
-        for content in content_items:
-            try:
-                if details_service:
-                    cast_crew = details_service._fetch_and_save_all_cast_crew(content)
-                    processed += 1
-                    logger.info(f"CineBrain populated cast/crew for {content.title}")
-            except Exception as e:
-                logger.error(f"CineBrain error processing {content.title}: {e}")
-                errors += 1
-        
-        return jsonify({
-            'success': True,
-            'processed': processed,
-            'errors': errors,
-            'total_available': len(content_items),
-            'message': f"Successfully populated CineBrain cast/crew for {processed} content items",
-            'cinebrain_service': 'cast_crew_population'
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"CineBrain error in bulk cast/crew population: {e}")
-        return jsonify({'error': 'Failed to populate CineBrain cast/crew'}), 500
-
+# Health and performance endpoints
 @app.route('/api/performance', methods=['GET'])
 def performance_check():
     try:
@@ -2207,7 +1585,7 @@ def health_check():
         health_info = {
             'status': 'healthy',
             'timestamp': datetime.utcnow().isoformat(),
-            'version': '5.5.0',
+            'version': '6.0.0',  # Updated version
             'python_version': '3.13.4',
             'cinebrain_brand': 'CineBrain Entertainment Platform'
         }
@@ -2234,11 +1612,11 @@ def health_check():
             'tmdb': bool(TMDB_API_KEY),
             'omdb': bool(OMDB_API_KEY),
             'youtube': bool(YOUTUBE_API_KEY),
+            'details_service': 'modular_enabled' if details_service else 'disabled',
             'new_releases_service': 'enabled' if cinebrain_new_releases_service else 'disabled',
             'critics_choice_service': 'enabled' if 'critics_choice_service' in services else 'disabled',
             'algorithms': 'cinebrain_optimized_enabled',
             'slug_support': 'cinebrain_comprehensive_enabled',
-            'details_service': 'enabled' if details_service else 'disabled',
             'content_service': 'enabled' if content_service else 'disabled',
             'cast_crew': 'cinebrain_fully_enabled',
             'support_service': 'enabled' if 'support_bp' in app.blueprints else 'disabled',
@@ -2248,68 +1626,12 @@ def health_check():
             'user_service': 'enabled' if 'user_bp' in app.blueprints else 'disabled'
         }
         
-        try:
-            total_content = Content.query.count()
-            content_with_slugs = Content.query.filter(
-                and_(Content.slug != None, Content.slug != '')
-            ).count()
-            
-            health_info['cinebrain_slug_status'] = {
-                'total_content': total_content,
-                'with_slugs': content_with_slugs,
-                'without_slugs': total_content - content_with_slugs,
-                'coverage_percentage': round((content_with_slugs / total_content * 100), 2) if total_content > 0 else 0
-            }
-        except Exception as e:
-            health_info['cinebrain_slug_status'] = {'error': str(e)}
-        
-        try:
-            total_content_persons = ContentPerson.query.count()
-            total_persons = Person.query.count()
-            
-            health_info['cinebrain_cast_crew_status'] = {
-                'total_relations': total_content_persons,
-                'total_persons': total_persons,
-                'content_with_cast': db.session.query(ContentPerson.content_id).distinct().count()
-            }
-        except Exception as e:
-            health_info['cinebrain_cast_crew_status'] = {'error': str(e)}
-        
-        try:
-            if 'SupportTicket' in globals():
-                health_info['cinebrain_support_status'] = {
-                    'total_tickets': globals()['SupportTicket'].query.count(),
-                    'open_tickets': globals()['SupportTicket'].query.filter(
-                        globals()['SupportTicket'].status.in_(['open', 'in_progress'])
-                    ).count(),
-                    'total_feedback': globals()['Feedback'].query.count() if 'Feedback' in globals() else 0
-                }
-        except Exception as e:
-            health_info['cinebrain_support_status'] = {'error': str(e)}
-        
-        if cinebrain_new_releases_service:
-            health_info['cinebrain_new_releases'] = cinebrain_new_releases_service.get_stats()
-        
-        health_info['cinebrain_performance'] = {
-            'optimizations_applied': [
-                'cinebrain_python_3.13_compatibility',
-                'cinebrain_reduced_api_timeouts', 
-                'cinebrain_optimized_thread_pools',
-                'cinebrain_enhanced_caching',
-                'cinebrain_error_handling_improvements',
-                'cinebrain_cast_crew_optimization',
-                'cinebrain_support_service_integration',
-                'cinebrain_admin_notification_system',
-                'cinebrain_real_time_monitoring',
-                'cinebrain_auth_service_enhanced',
-                'cinebrain_user_service_modular',
-                'cinebrain_new_releases_service',
-                'cinebrain_enhanced_critics_choice_service'
-            ],
-            'memory_optimizations': 'cinebrain_enabled',
-            'unicode_fixes': 'cinebrain_applied',
-            'monitoring': 'cinebrain_background_threads_active',
-            'telugu_priority': 'cinebrain_enabled'
+        health_info['modular_architecture'] = {
+            'details_module': 'integrated',
+            'youtube_optimization': 'on_demand_fetching',
+            'caching_strategy': 'intelligent_multi_layer',
+            'error_handling': 'comprehensive',
+            'performance': 'optimized_parallel_processing'
         }
         
         return jsonify(health_info), 200
@@ -2322,6 +1644,7 @@ def health_check():
             'cinebrain_brand': 'CineBrain Entertainment Platform'
         }), 500
 
+# CLI commands
 @app.cli.command('generate-slugs')
 def generate_slugs():
     try:
@@ -2331,7 +1654,9 @@ def generate_slugs():
             print("Error: CineBrain details service not available")
             return
         
-        stats = details_service.migrate_all_slugs(batch_size=50)
+        # Use the slug manager from details service
+        from details.slug import SlugManager
+        stats = SlugManager.migrate_slugs(db, models, batch_size=50)
         
         print("CineBrain slug migration completed successfully!")
         print(f"Content updated: {stats['content_updated']}")
@@ -2339,89 +1664,9 @@ def generate_slugs():
         print(f"Total processed: {stats['total_processed']}")
         print(f"Errors: {stats['errors']}")
         
-        try:
-            total_content = Content.query.count()
-            content_with_slugs = Content.query.filter(
-                and_(Content.slug != None, Content.slug != '')
-            ).count()
-            
-            total_persons = Person.query.count()
-            persons_with_slugs = Person.query.filter(
-                and_(Person.slug != None, Person.slug != '')
-            ).count()
-            
-            print(f"\nCineBrain Verification Results:")
-            print(f"Content: {content_with_slugs}/{total_content} ({round(content_with_slugs/total_content*100, 1)}% coverage)")
-            print(f"Persons: {persons_with_slugs}/{total_persons} ({round(persons_with_slugs/total_persons*100, 1)}% coverage)")
-            
-        except Exception as e:
-            print(f"CineBrain error during verification: {e}")
-        
     except Exception as e:
         print(f"Failed to generate CineBrain slugs: {e}")
         logger.error(f"CineBrain CLI slug generation error: {e}")
-
-@app.cli.command('populate-cast-crew')
-def populate_cast_crew_cli():
-    try:
-        print("Starting CineBrain cast/crew population...")
-        
-        if not details_service:
-            print("Error: CineBrain details service not available")
-            return
-        
-        content_items = Content.query.filter(
-            Content.tmdb_id.isnot(None),
-            ~Content.id.in_(
-                db.session.query(ContentPerson.content_id).distinct()
-            )
-        ).all()
-        
-        print(f"Found {len(content_items)} CineBrain content items without cast/crew")
-        
-        processed = 0
-        errors = 0
-        
-        for i, content in enumerate(content_items):
-            try:
-                print(f"Processing {i+1}/{len(content_items)}: {content.title}")
-                cast_crew = details_service._fetch_and_save_all_cast_crew(content)
-                processed += 1
-                print(f"  Added {len(cast_crew['cast'])} cast members and crew")
-            except Exception as e:
-                print(f"  Error: {e}")
-                errors += 1
-        
-        print(f"\nCineBrain cast/crew population completed!")
-        print(f"Processed: {processed}")
-        print(f"Errors: {errors}")
-        
-    except Exception as e:
-        print(f"Failed to populate CineBrain cast/crew: {e}")
-        logger.error(f"CineBrain CLI cast/crew population error: {e}")
-
-@app.cli.command('cinebrain-new-releases-refresh')
-def cinebrain_new_releases_refresh_cli():
-    try:
-        print("Starting CineBrain new releases manual refresh...")
-        
-        if not cinebrain_new_releases_service:
-            print("Error: CineBrain new releases service not available")
-            return
-        
-        cinebrain_new_releases_service.refresh_new_releases()
-        stats = cinebrain_new_releases_service.get_stats()
-        
-        print("CineBrain new releases refresh completed!")
-        print(f"Total items: {stats.get('total_items', 0)}")
-        print(f"Priority items: {stats.get('priority_items', 0)}")
-        print(f"Movies: {stats.get('movies', 0)}")
-        print(f"TV Shows: {stats.get('tv_shows', 0)}")
-        print(f"Anime: {stats.get('anime', 0)}")
-        
-    except Exception as e:
-        print(f"Failed to refresh CineBrain new releases: {e}")
-        logger.error(f"CineBrain CLI new releases refresh error: {e}")
 
 def create_tables():
     try:
@@ -2440,17 +1685,8 @@ def create_tables():
                 db.session.add(admin)
                 db.session.commit()
                 print("CineBrain admin user created successfully")
-                print(f"Admin username: admin")
-                print(f"Admin password: admin123")
             else:
                 print("CineBrain admin user already exists")
-                print(f"Admin ID: {admin.id}")
-                print(f"Admin username: {admin.username}")
-                print(f"Admin email: {admin.email}")
-                print(f"Password hash exists: {bool(admin.password_hash)}")
-            
-            test_check = check_password_hash(admin.password_hash, 'admin123')
-            print(f"Password verification test: {test_check}")
             
             setup_support_monitoring()
             
@@ -2461,38 +1697,13 @@ def create_tables():
 create_tables()
 
 if __name__ == '__main__':
-    print("=== Running CineBrain Flask in development mode with Modular User System ===")
+    print("=== Running CineBrain Flask with Modular Details System ===")
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('FLASK_ENV') == 'development'
     app.run(host='0.0.0.0', port=port, debug=debug)
 else:
-    print("=== CineBrain Flask app imported by Gunicorn - MODULAR USER SYSTEM ===")
+    print("=== CineBrain Flask app imported by Gunicorn - MODULAR DETAILS SYSTEM ===")
     print(f"App name: {app.name}")
-    print(f"Python version: 3.13.4")
+    print(f"Python version: 0.2")
     print(f"CineBrain brand: CineBrain Entertainment Platform")
-    print(f"Database URI configured: {'Yes' if app.config.get('SQLALCHEMY_DATABASE_URI') else 'No'}")
-    print(f"Cache type: {app.config.get('CACHE_TYPE', 'Not configured')}")
-    print(f"CineBrain details service status: {'Initialized' if details_service else 'Failed to initialize'}")
-    print(f"CineBrain content service status: {'Initialized' if content_service else 'Failed to initialize'}")
-    print(f"CineBrain new releases service status: {'Integrated' if cinebrain_new_releases_service else 'Failed to initialize'}")
-    print(f"CineBrain critics choice service status: {'Integrated' if 'critics_choice_service' in services else 'Failed to initialize'}")
-    print(f"CineBrain support service status: {'Integrated' if 'support_bp' in app.blueprints else 'Not integrated'}")
-    print(f"CineBrain auth service status: {'Integrated' if 'auth_bp' in app.blueprints else 'Not integrated'}")
-    print(f"CineBrain user service status: {'Integrated' if 'user_bp' in app.blueprints else 'Not integrated'}")
-    
-    print("\n=== CineBrain Modular User System Features ===")
-    print("✅ Modular architecture with separate files")
-    print("✅ Avatar upload with Cloudinary integration")
-    print("✅ Profile management and analytics")
-    print("✅ Watchlist and favorites functionality")
-    print("✅ User ratings and activity tracking")
-    print("✅ Personalized recommendations")
-    print("✅ Settings and account management")
-    print("✅ Public profile support")
-    print("✅ Health monitoring")
-    print("✅ CORS and authentication handling")
-    
-    print(f"\n=== CineBrain Registered Routes ===")
-    for rule in app.url_map.iter_rules():
-        print(f"{rule.endpoint}: {rule.rule} [{', '.join(rule.methods)}]")
-    print("=== End of CineBrain Routes ===\n")
+    print(f"Modular details service status: {'Integrated' if details_service else 'Failed to initialize'}")
