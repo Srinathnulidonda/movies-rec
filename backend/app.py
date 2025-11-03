@@ -1,3 +1,4 @@
+#backend/app.py
 from typing import Optional
 from flask import Flask, request, jsonify, session, render_template
 from flask_sqlalchemy import SQLAlchemy
@@ -47,6 +48,8 @@ from services.details import init_details_service, SlugManager, ContentService
 from services.new_releases import init_cinebrain_new_releases_service
 from services.review import init_review_service
 from user.routes import user_bp, init_user_routes
+from personalized import init_personalization_engine
+from personalized.routes import personalized_bp
 import re
 from dotenv import load_dotenv
 load_dotenv()
@@ -758,6 +761,17 @@ try:
     logger.info("CineBrain user module initialized successfully")
 except Exception as e:
     logger.error(f"Failed to initialize CineBrain user module: {e}")
+
+try:
+    personalization_engine = init_personalization_engine(app, db, models, cache)
+    app.register_blueprint(personalized_bp)
+    if personalization_engine:
+        logger.info("CineBrain Advanced Personalization Engine v2.0 initialized successfully")
+        services['personalization_engine'] = personalization_engine
+    else:
+        logger.warning("CineBrain Advanced Personalization Engine failed to initialize")
+except Exception as e:
+    logger.error(f"Failed to initialize CineBrain Advanced Personalization Engine: {e}")
 
 try:
     critics_choice_service = init_critics_choice_service(app, db, models, services, cache)
@@ -2177,7 +2191,8 @@ def performance_check():
                 'details_service': 'enabled' if details_service else 'disabled',
                 'content_service': 'enabled' if content_service else 'disabled',
                 'new_releases_service': 'enabled' if cinebrain_new_releases_service else 'disabled',
-                'critics_choice_service': 'enabled' if 'critics_choice_service' in services else 'disabled'
+                'critics_choice_service': 'enabled' if 'critics_choice_service' in services else 'disabled',
+                'personalization_engine': 'enabled' if 'personalization_engine' in services else 'disabled'
             },
             'performance': {
                 'thread_pool_workers': 3,
@@ -2245,7 +2260,8 @@ def health_check():
             'admin_notifications': 'cinebrain_enabled',
             'monitoring': 'cinebrain_active',
             'auth_service': 'enabled' if 'auth_bp' in app.blueprints else 'disabled',
-            'user_service': 'enabled' if 'user_bp' in app.blueprints else 'disabled'
+            'user_service': 'enabled' if 'user_bp' in app.blueprints else 'disabled',
+            'personalization_engine': 'enabled' if 'personalization_engine' in services else 'disabled'
         }
         
         try:
@@ -2304,12 +2320,14 @@ def health_check():
                 'cinebrain_auth_service_enhanced',
                 'cinebrain_user_service_modular',
                 'cinebrain_new_releases_service',
-                'cinebrain_enhanced_critics_choice_service'
+                'cinebrain_enhanced_critics_choice_service',
+                'cinebrain_advanced_personalization_engine_v2'
             ],
             'memory_optimizations': 'cinebrain_enabled',
             'unicode_fixes': 'cinebrain_applied',
             'monitoring': 'cinebrain_background_threads_active',
-            'telugu_priority': 'cinebrain_enabled'
+            'telugu_priority': 'cinebrain_enabled',
+            'personalization': 'cinebrain_v2_enabled'
         }
         
         return jsonify(health_info), 200
@@ -2461,12 +2479,12 @@ def create_tables():
 create_tables()
 
 if __name__ == '__main__':
-    print("=== Running CineBrain Flask in development mode with Modular User System ===")
+    print("=== Running CineBrain Flask in development mode with Advanced Personalization ===")
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('FLASK_ENV') == 'development'
     app.run(host='0.0.0.0', port=port, debug=debug)
 else:
-    print("=== CineBrain Flask app imported by Gunicorn - MODULAR USER SYSTEM ===")
+    print("=== CineBrain Flask app imported by Gunicorn - ADVANCED PERSONALIZATION SYSTEM ===")
     print(f"App name: {app.name}")
     print(f"Python version: 3.13.4")
     print(f"CineBrain brand: CineBrain Entertainment Platform")
@@ -2479,18 +2497,19 @@ else:
     print(f"CineBrain support service status: {'Integrated' if 'support_bp' in app.blueprints else 'Not integrated'}")
     print(f"CineBrain auth service status: {'Integrated' if 'auth_bp' in app.blueprints else 'Not integrated'}")
     print(f"CineBrain user service status: {'Integrated' if 'user_bp' in app.blueprints else 'Not integrated'}")
+    print(f"CineBrain personalization engine status: {'Integrated' if 'personalization_engine' in services else 'Not integrated'}")
     
-    print("\n=== CineBrain Modular User System Features ===")
-    print("✅ Modular architecture with separate files")
-    print("✅ Avatar upload with Cloudinary integration")
-    print("✅ Profile management and analytics")
-    print("✅ Watchlist and favorites functionality")
-    print("✅ User ratings and activity tracking")
-    print("✅ Personalized recommendations")
-    print("✅ Settings and account management")
-    print("✅ Public profile support")
-    print("✅ Health monitoring")
-    print("✅ CORS and authentication handling")
+    print("\n=== CineBrain Advanced Personalization Engine v2.0 Features ===")
+    print("✅ Cinematic DNA Analysis with Telugu-first prioritization")
+    print("✅ Hybrid ML algorithms (CF + CB + Deep Ranking)")
+    print("✅ Real-time learning with Thompson Sampling")
+    print("✅ Multi-armed bandits for algorithm optimization")
+    print("✅ Advanced user profiling with behavioral analytics")
+    print("✅ Performance tracking and A/B testing framework")
+    print("✅ Ultra-similarity engine with cultural understanding")
+    print("✅ Feedback processing with context awareness")
+    print("✅ Diversity injection and anti-filter bubble mechanisms")
+    print("✅ Enterprise-grade caching and monitoring")
     
     print(f"\n=== CineBrain Registered Routes ===")
     for rule in app.url_map.iter_rules():
