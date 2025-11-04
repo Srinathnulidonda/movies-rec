@@ -2,830 +2,627 @@
 
 """
 CineBrain User Profile Analyzer
-Advanced user profiling with cinematic DNA analysis and behavioral modeling
+==============================
+
+Continuously learns and updates user preference models through real-time
+interaction monitoring and sophisticated behavioral analysis.
 """
 
 import numpy as np
 import pandas as pd
+from typing import Dict, List, Any, Optional, Tuple
+from datetime import datetime, timedelta
+from collections import defaultdict, Counter
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
-from collections import defaultdict, Counter
-from datetime import datetime, timedelta
 import json
 import logging
-import math
-from typing import List, Dict, Any, Tuple, Optional
-from sqlalchemy import func, desc, and_
+import networkx as nx
+from dataclasses import dataclass
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+import time
 
 from .utils import (
-    VectorOperations, DataProcessor, LanguagePriorityManager,
-    safe_json_loads, LANGUAGE_WEIGHTS, PRIORITY_LANGUAGES
+    EmbeddingManager, 
+    SimilarityCalculator, 
+    CacheManager,
+    PerformanceOptimizer,
+    LANGUAGE_PRIORITY,
+    PRIORITY_LANGUAGES,
+    decay_weight,
+    normalize_vector
 )
 
 logger = logging.getLogger(__name__)
 
+@dataclass
+class UserInteractionEvent:
+    """Structured representation of a user interaction event"""
+    user_id: int
+    content_id: int
+    interaction_type: str
+    timestamp: datetime
+    rating: Optional[float] = None
+    session_id: Optional[str] = None
+    metadata: Optional[Dict] = None
+    context: Optional[Dict] = None
+
+@dataclass 
+class UserPreferenceProfile:
+    """Comprehensive user preference profile"""
+    user_id: int
+    embedding: np.ndarray
+    genre_preferences: Dict[str, float]
+    language_preferences: Dict[str, float]
+    content_type_preferences: Dict[str, float]
+    quality_threshold: float
+    sophistication_score: float
+    engagement_level: str
+    last_updated: datetime
+    confidence_score: float
+    temporal_patterns: Dict[str, Any]
+    cinematic_dna: Dict[str, Any]
+
 class CinematicDNAAnalyzer:
     """
-    Analyze user's cinematic DNA - deep understanding of cinematic preferences
+    Advanced cinematic DNA analyzer that identifies deep narrative and stylistic preferences
     """
     
     def __init__(self):
-        # Advanced cinematic theme detection
-        self.cinematic_themes = {
-            'hero_journey': {
-                'keywords': ['hero', 'journey', 'overcome', 'struggle', 'destiny', 'chosen', 'epic'],
-                'weight': 1.0,
-                'cultural_weight': {'telugu': 1.3, 'hindi': 1.2}  # Higher in Indian cinema
-            },
-            'justice_revenge': {
-                'keywords': ['justice', 'revenge', 'vengeance', 'betrayal', 'redemption', 'vigilante'],
-                'weight': 0.95,
-                'cultural_weight': {'telugu': 1.4, 'tamil': 1.3}  # Strong in South Indian cinema
-            },
-            'family_honor': {
-                'keywords': ['family', 'honor', 'tradition', 'legacy', 'generation', 'respect'],
-                'weight': 0.9,
-                'cultural_weight': {'telugu': 1.5, 'hindi': 1.4, 'tamil': 1.3}
-            },
-            'love_sacrifice': {
-                'keywords': ['love', 'sacrifice', 'devotion', 'romantic', 'passion', 'heartbreak'],
-                'weight': 0.8,
-                'cultural_weight': {'hindi': 1.2, 'telugu': 1.1}
-            },
-            'power_corruption': {
-                'keywords': ['power', 'corruption', 'politics', 'conspiracy', 'manipulation'],
-                'weight': 0.85,
-                'cultural_weight': {'english': 1.2, 'telugu': 1.1}
-            },
-            'supernatural_mythology': {
-                'keywords': ['supernatural', 'mythology', 'gods', 'divine', 'spiritual', 'mystical'],
-                'weight': 0.9,
-                'cultural_weight': {'telugu': 1.6, 'hindi': 1.4, 'tamil': 1.3}  # Strong in Indian content
-            },
-            'comedy_entertainment': {
-                'keywords': ['comedy', 'humor', 'funny', 'entertainment', 'lighthearted', 'fun'],
-                'weight': 0.7,
-                'cultural_weight': {'telugu': 1.2, 'hindi': 1.1}
-            },
-            'action_adventure': {
-                'keywords': ['action', 'adventure', 'thrill', 'excitement', 'chase', 'fight'],
-                'weight': 0.85,
-                'cultural_weight': {'english': 1.2, 'telugu': 1.3}
-            }
-        }
+        """Initialize cinematic DNA analyzer with thematic patterns"""
         
-        # Cinematic style preferences
-        self.cinematic_styles = {
-            'commercial_masala': {
-                'indicators': ['commercial', 'masala', 'entertainment', 'mass', 'blockbuster'],
-                'runtime_range': (120, 180),
-                'weight': 1.0,
-                'cultural_weight': {'telugu': 1.5, 'hindi': 1.4, 'tamil': 1.3}
+        # Define cinematic themes with Telugu cinema emphasis
+        self.cinematic_themes = {
+            'heroic_journey': {
+                'keywords': ['hero', 'journey', 'destiny', 'courage', 'sacrifice', 'honor'],
+                'telugu_emphasis': ['veera', 'yodha', 'dharma', 'karma'],
+                'weight': 1.0
             },
-            'art_house': {
-                'indicators': ['art', 'artistic', 'indie', 'independent', 'festival'],
-                'rating_threshold': 7.5,
-                'weight': 0.9,
-                'cultural_weight': {'english': 1.3, 'telugu': 0.8}
+            'family_values': {
+                'keywords': ['family', 'tradition', 'values', 'legacy', 'generation', 'respect'],
+                'telugu_emphasis': ['kutumbam', 'parampara', 'aadarsha'],
+                'weight': 0.9
             },
-            'epic_spectacle': {
-                'indicators': ['epic', 'spectacular', 'grand', 'scale', 'visual'],
-                'runtime_min': 150,
-                'budget_indicator': 'high',
-                'weight': 1.0,
-                'cultural_weight': {'telugu': 1.6, 'hindi': 1.4}  # S.S. Rajamouli influence
-            },
-            'intimate_drama': {
-                'indicators': ['intimate', 'personal', 'character', 'emotional', 'human'],
-                'genres': ['Drama', 'Biography'],
+            'romance_emotion': {
+                'keywords': ['love', 'romance', 'passion', 'emotion', 'heart', 'relationship'],
+                'telugu_emphasis': ['prema', 'ishq', 'mohabbat'],
                 'weight': 0.8
             },
-            'high_concept': {
-                'indicators': ['concept', 'innovative', 'unique', 'experimental', 'creative'],
-                'weight': 0.85,
-                'cultural_weight': {'english': 1.2}
+            'action_spectacle': {
+                'keywords': ['action', 'fight', 'battle', 'war', 'combat', 'intense'],
+                'telugu_emphasis': ['yuddham', 'samaaram', 'shakti'],
+                'weight': 0.85
+            },
+            'social_message': {
+                'keywords': ['social', 'message', 'society', 'change', 'awareness', 'justice'],
+                'telugu_emphasis': ['nyayam', 'samaj', 'badlaav'],
+                'weight': 0.7
+            },
+            'comedy_entertainment': {
+                'keywords': ['comedy', 'humor', 'entertainment', 'fun', 'laughter', 'joy'],
+                'telugu_emphasis': ['vinoda', 'hasya', 'maja'],
+                'weight': 0.6
             }
         }
         
-        # Director style signatures
+        # Director signature styles
         self.director_signatures = {
             'S.S. Rajamouli': {
-                'style': ['epic_scale', 'visual_spectacle', 'emotional_core', 'mythology'],
-                'themes': ['heroism', 'tradition', 'loyalty', 'justice', 'family'],
-                'weight': 1.0,
-                'cultural_impact': 'high'
+                'style': ['epic_scale', 'visual_spectacle', 'emotional_core', 'cultural_pride'],
+                'themes': ['heroism', 'tradition', 'loyalty', 'sacrifice'],
+                'weight': 1.0
             },
             'Christopher Nolan': {
-                'style': ['complex_narrative', 'time_manipulation', 'cerebral', 'practical'],
-                'themes': ['reality', 'memory', 'sacrifice', 'obsession'],
-                'weight': 0.95,
-                'cultural_impact': 'medium'
+                'style': ['complex_narrative', 'time_manipulation', 'cerebral', 'practical_effects'],
+                'themes': ['reality_perception', 'memory', 'sacrifice', 'obsession'],
+                'weight': 0.9
             },
-            'Puri Jagannadh': {
-                'style': ['commercial', 'stylized', 'dialogues', 'characterization'],
-                'themes': ['heroism', 'justice', 'style', 'attitude'],
-                'weight': 0.9,
-                'cultural_impact': 'high'
+            'Trivikram Srinivas': {
+                'style': ['dialogue_driven', 'family_drama', 'contemporary', 'witty'],
+                'themes': ['family_values', 'relationships', 'humor', 'wisdom'],
+                'weight': 0.95
             },
-            'Denis Villeneuve': {
-                'style': ['atmospheric', 'philosophical', 'visual_poetry', 'slow_burn'],
-                'themes': ['humanity', 'communication', 'existence', 'future'],
-                'weight': 0.9,
-                'cultural_impact': 'medium'
+            'Koratala Siva': {
+                'style': ['mass_appeal', 'social_message', 'emotional', 'commercial'],
+                'themes': ['social_change', 'leadership', 'responsibility', 'justice'],
+                'weight': 0.9
             }
         }
+        
+        logger.info("CineBrain CinematicDNAAnalyzer initialized with Telugu cinema emphasis")
     
-    def analyze_cinematic_dna(self, content_list: List[Any], 
-                            user_languages: List[str] = None) -> Dict[str, Any]:
-        """Analyze user's cinematic DNA from their content consumption"""
-        if not content_list:
+    def analyze_user_cinematic_dna(self, user_interactions: List[Dict]) -> Dict[str, Any]:
+        """
+        Analyze user's cinematic DNA based on interaction history
+        
+        Args:
+            user_interactions: List of user interactions with content metadata
+            
+        Returns:
+            Dict containing cinematic DNA profile
+        """
+        try:
+            if not user_interactions:
+                return self._get_default_dna_profile()
+            
+            theme_scores = defaultdict(float)
+            style_scores = defaultdict(float)
+            director_affinity = defaultdict(float)
+            
+            total_weight = 0
+            
+            for interaction in user_interactions:
+                # Get interaction weight
+                weight = self._get_interaction_weight(interaction)
+                total_weight += weight
+                
+                # Analyze themes from content
+                content_themes = self._extract_content_themes(interaction)
+                for theme, score in content_themes.items():
+                    theme_scores[theme] += score * weight
+                
+                # Analyze director affinity
+                director = interaction.get('director', '')
+                if director in self.director_signatures:
+                    director_weight = self.director_signatures[director]['weight']
+                    director_affinity[director] += weight * director_weight
+                
+                # Analyze cinematic style
+                content_style = self._analyze_cinematic_style(interaction)
+                for style, score in content_style.items():
+                    style_scores[style] += score * weight
+            
+            # Normalize scores
+            if total_weight > 0:
+                theme_scores = {k: v/total_weight for k, v in theme_scores.items()}
+                style_scores = {k: v/total_weight for k, v in style_scores.items()}
+                director_affinity = {k: v/total_weight for k, v in director_affinity.items()}
+            
+            # Calculate sophistication and preferences
+            sophistication = self._calculate_cinematic_sophistication(user_interactions)
+            narrative_complexity = self._calculate_narrative_complexity_preference(user_interactions)
+            
+            return {
+                'dominant_themes': dict(sorted(theme_scores.items(), key=lambda x: x[1], reverse=True)[:5]),
+                'preferred_styles': dict(sorted(style_scores.items(), key=lambda x: x[1], reverse=True)[:5]),
+                'director_affinity': dict(sorted(director_affinity.items(), key=lambda x: x[1], reverse=True)[:3]),
+                'cinematic_sophistication': sophistication,
+                'narrative_complexity_preference': narrative_complexity,
+                'telugu_cinema_affinity': self._calculate_telugu_affinity(user_interactions),
+                'quality_over_popularity': self._calculate_quality_preference(user_interactions),
+                'genre_depth': self._calculate_genre_depth(user_interactions),
+                'last_analyzed': datetime.utcnow().isoformat()
+            }
+            
+        except Exception as e:
+            logger.error(f"Error analyzing cinematic DNA: {e}")
             return self._get_default_dna_profile()
-        
-        dna_profile = {
-            'dominant_themes': {},
-            'preferred_styles': {},
-            'director_affinity': {},
-            'cultural_preferences': {},
-            'narrative_complexity': 0.0,
-            'scale_preference': 'medium',
-            'quality_threshold': 7.0,
-            'emotional_tone_preference': {},
-            'cinematic_sophistication': 0.0,
-            'commercial_vs_art': 0.5,  # 0 = pure art, 1 = pure commercial
-            'cultural_identity_score': 0.0
-        }
-        
-        # Extract themes with cultural weighting
-        theme_scores = self._extract_weighted_themes(content_list, user_languages)
-        dna_profile['dominant_themes'] = self._normalize_scores(theme_scores)
-        
-        # Analyze cinematic styles
-        style_scores = self._analyze_cinematic_styles(content_list, user_languages)
-        dna_profile['preferred_styles'] = self._normalize_scores(style_scores)
-        
-        # Calculate sophistication and preferences
-        dna_profile['cinematic_sophistication'] = self._calculate_sophistication(content_list)
-        dna_profile['commercial_vs_art'] = self._calculate_commercial_art_ratio(content_list)
-        dna_profile['narrative_complexity'] = self._analyze_narrative_complexity(content_list)
-        dna_profile['quality_threshold'] = self._calculate_quality_threshold(content_list)
-        dna_profile['cultural_identity_score'] = self._calculate_cultural_identity(content_list, user_languages)
-        
-        # Emotional tone analysis
-        dna_profile['emotional_tone_preference'] = self._analyze_emotional_preferences(content_list)
-        
-        return dna_profile
     
-    def _extract_weighted_themes(self, content_list: List[Any], 
-                                user_languages: List[str] = None) -> Dict[str, float]:
-        """Extract themes with cultural and language weighting"""
-        theme_scores = defaultdict(float)
+    def _extract_content_themes(self, interaction: Dict) -> Dict[str, float]:
+        """Extract thematic elements from content"""
+        themes = {}
         
-        for content in content_list:
-            content_text = f"{content.title} {content.overview or ''}"
-            content_languages = safe_json_loads(content.languages, [])
+        # Analyze overview/plot
+        overview = interaction.get('overview', '').lower()
+        title = interaction.get('title', '').lower()
+        genres = interaction.get('genres', [])
+        
+        combined_text = f"{title} {overview}"
+        
+        for theme_name, theme_data in self.cinematic_themes.items():
+            score = 0.0
             
-            for theme_name, theme_data in self.cinematic_themes.items():
-                base_score = 0.0
-                keywords = theme_data['keywords']
-                base_weight = theme_data['weight']
-                
-                # Keyword matching
-                for keyword in keywords:
-                    if keyword in content_text.lower():
-                        base_score += 1.0
-                
-                if base_score > 0:
-                    # Apply cultural weighting
-                    cultural_multiplier = 1.0
-                    cultural_weights = theme_data.get('cultural_weight', {})
-                    
-                    for lang in content_languages:
-                        lang_code = lang.lower()[:2]  # Get language code
-                        if lang_code in cultural_weights:
-                            cultural_multiplier = max(cultural_multiplier, cultural_weights[lang_code])
-                    
-                    # Apply user language preference bonus
-                    if user_languages:
-                        for user_lang in user_languages:
-                            if any(user_lang.lower() in cl.lower() for cl in content_languages):
-                                cultural_multiplier *= 1.2
-                                break
-                    
-                    final_score = (base_score / len(keywords)) * base_weight * cultural_multiplier
-                    theme_scores[theme_name] += final_score
+            # Check keywords
+            for keyword in theme_data['keywords']:
+                if keyword in combined_text:
+                    score += 0.5
+            
+            # Check Telugu-specific terms (higher weight)
+            for telugu_term in theme_data.get('telugu_emphasis', []):
+                if telugu_term in combined_text:
+                    score += 1.0
+            
+            # Genre-based scoring
+            if theme_name == 'action_spectacle' and any(g in ['Action', 'Adventure', 'Thriller'] for g in genres):
+                score += 0.7
+            elif theme_name == 'romance_emotion' and 'Romance' in genres:
+                score += 0.8
+            elif theme_name == 'family_values' and any(g in ['Family', 'Drama'] for g in genres):
+                score += 0.6
+            
+            if score > 0:
+                themes[theme_name] = min(score * theme_data['weight'], 1.0)
         
-        return dict(theme_scores)
+        return themes
     
-    def _analyze_cinematic_styles(self, content_list: List[Any], 
-                                 user_languages: List[str] = None) -> Dict[str, float]:
-        """Analyze preferred cinematic styles"""
-        style_scores = defaultdict(float)
+    def _calculate_telugu_affinity(self, interactions: List[Dict]) -> float:
+        """Calculate user's affinity for Telugu cinema"""
+        telugu_interactions = 0
+        total_interactions = len(interactions)
         
-        for content in content_list:
-            content_text = f"{content.title} {content.overview or ''}".lower()
-            content_languages = safe_json_loads(content.languages, [])
-            content_genres = safe_json_loads(content.genres, [])
-            
-            for style_name, style_data in self.cinematic_styles.items():
-                score = 0.0
-                
-                # Indicator matching
-                if 'indicators' in style_data:
-                    for indicator in style_data['indicators']:
-                        if indicator in content_text:
-                            score += 0.3
-                
-                # Runtime check
-                if 'runtime_range' in style_data and content.runtime:
-                    min_runtime, max_runtime = style_data['runtime_range']
-                    if min_runtime <= content.runtime <= max_runtime:
-                        score += 0.4
-                elif 'runtime_min' in style_data and content.runtime:
-                    if content.runtime >= style_data['runtime_min']:
-                        score += 0.4
-                
-                # Genre check
-                if 'genres' in style_data:
-                    for genre in style_data['genres']:
-                        if genre in content_genres:
-                            score += 0.3
-                
-                # Rating threshold check
-                if 'rating_threshold' in style_data and content.rating:
-                    if content.rating >= style_data['rating_threshold']:
-                        score += 0.3
-                
-                if score > 0:
-                    # Apply cultural weighting
-                    cultural_multiplier = 1.0
-                    cultural_weights = style_data.get('cultural_weight', {})
-                    
-                    for lang in content_languages:
-                        lang_key = lang.lower()
-                        if lang_key in cultural_weights:
-                            cultural_multiplier = max(cultural_multiplier, cultural_weights[lang_key])
-                    
-                    final_score = min(score, 1.0) * style_data['weight'] * cultural_multiplier
-                    style_scores[style_name] += final_score
-        
-        return dict(style_scores)
-    
-    def _calculate_sophistication(self, content_list: List[Any]) -> float:
-        """Calculate user's cinematic sophistication level"""
-        if not content_list:
-            return 0.5
-        
-        factors = []
-        
-        # Average rating factor
-        ratings = [c.rating for c in content_list if c.rating]
-        if ratings:
-            avg_rating = np.mean(ratings)
-            rating_factor = min(avg_rating / 10.0, 1.0)
-            factors.append(rating_factor)
-        
-        # Genre diversity factor
-        all_genres = []
-        for content in content_list:
-            genres = safe_json_loads(content.genres, [])
-            all_genres.extend(genres)
-        
-        if all_genres:
-            unique_genres = len(set(all_genres))
-            total_genres = len(all_genres)
-            diversity_factor = min(unique_genres / total_genres, 1.0)
-            factors.append(diversity_factor)
-        
-        # Content type diversity
-        content_types = [c.content_type for c in content_list]
-        type_diversity = len(set(content_types)) / len(content_types) if content_types else 0
-        factors.append(type_diversity)
-        
-        # Language diversity factor
-        all_languages = []
-        for content in content_list:
-            languages = safe_json_loads(content.languages, [])
-            all_languages.extend(languages)
-        
-        if all_languages:
-            unique_languages = len(set(all_languages))
-            lang_diversity = min(unique_languages / 5.0, 1.0)  # Normalize to max 5 languages
-            factors.append(lang_diversity)
-        
-        # Runtime preference (longer content = higher sophistication)
-        runtimes = [c.runtime for c in content_list if c.runtime]
-        if runtimes:
-            avg_runtime = np.mean(runtimes)
-            runtime_factor = min(avg_runtime / 180.0, 1.0)  # Normalize to 3 hours
-            factors.append(runtime_factor)
-        
-        return np.mean(factors) if factors else 0.5
-    
-    def _calculate_commercial_art_ratio(self, content_list: List[Any]) -> float:
-        """Calculate preference for commercial vs art house content"""
-        commercial_indicators = ['action', 'comedy', 'thriller', 'adventure', 'blockbuster']
-        art_indicators = ['drama', 'documentary', 'biography', 'art', 'indie']
-        
-        commercial_score = 0.0
-        art_score = 0.0
-        
-        for content in content_list:
-            text = f"{content.title} {content.overview or ''}".lower()
-            genres = safe_json_loads(content.genres, [])
-            
-            # Check commercial indicators
-            for indicator in commercial_indicators:
-                if indicator in text or any(indicator.title() in g for g in genres):
-                    commercial_score += 1.0
-            
-            # Check art house indicators
-            for indicator in art_indicators:
-                if indicator in text or any(indicator.title() in g for g in genres):
-                    art_score += 1.0
-            
-            # Rating-based scoring (very high ratings suggest art house appeal)
-            if content.rating:
-                if content.rating >= 8.5 and (content.vote_count or 0) > 1000:
-                    art_score += 0.5
-                elif content.rating >= 7.0 and (content.popularity or 0) > 50:
-                    commercial_score += 0.5
-        
-        total_score = commercial_score + art_score
-        if total_score == 0:
-            return 0.5  # Neutral
-        
-        return commercial_score / total_score
-    
-    def _analyze_narrative_complexity(self, content_list: List[Any]) -> float:
-        """Analyze preference for narrative complexity"""
-        complexity_indicators = [
-            'complex', 'intricate', 'layered', 'non-linear', 'puzzle', 
-            'mystery', 'psychological', 'philosophical', 'cerebral'
-        ]
-        
-        complexity_score = 0.0
-        total_content = len(content_list)
-        
-        for content in content_list:
-            text = f"{content.title} {content.overview or ''}".lower()
-            
-            # Check complexity indicators
-            for indicator in complexity_indicators:
-                if indicator in text:
-                    complexity_score += 1.0
-            
-            # Runtime factor (longer movies often more complex)
-            if content.runtime and content.runtime > 150:
-                complexity_score += 0.5
-            
-            # Genre factor
-            complex_genres = ['Mystery', 'Thriller', 'Science Fiction', 'Drama']
-            genres = safe_json_loads(content.genres, [])
-            if any(g in complex_genres for g in genres):
-                complexity_score += 0.3
-        
-        return min(complexity_score / total_content, 1.0) if total_content > 0 else 0.0
-    
-    def _calculate_quality_threshold(self, content_list: List[Any]) -> float:
-        """Calculate user's quality threshold"""
-        ratings = [c.rating for c in content_list if c.rating]
-        
-        if not ratings:
-            return 7.0  # Default threshold
-        
-        # Use 25th percentile as quality threshold
-        threshold = np.percentile(ratings, 25)
-        
-        # Adjust based on average rating
-        avg_rating = np.mean(ratings)
-        if avg_rating < 6:
-            threshold = max(threshold - 0.5, 1.0)
-        elif avg_rating > 8:
-            threshold = min(threshold + 0.5, 10.0)
-        
-        return float(threshold)
-    
-    def _calculate_cultural_identity(self, content_list: List[Any], 
-                                   user_languages: List[str] = None) -> float:
-        """Calculate cultural identity score (preference for local/regional content)"""
-        indian_languages = ['telugu', 'hindi', 'tamil', 'malayalam', 'kannada', 'marathi', 'bengali']
-        indian_content_count = 0
-        total_content = len(content_list)
-        
-        for content in content_list:
-            languages = safe_json_loads(content.languages, [])
-            for lang in languages:
-                if any(indian_lang in lang.lower() for indian_lang in indian_languages):
-                    indian_content_count += 1
-                    break
-        
-        base_score = indian_content_count / total_content if total_content > 0 else 0
-        
-        # Bonus for Telugu content (CineBrain's focus)
-        telugu_content_count = 0
-        for content in content_list:
-            languages = safe_json_loads(content.languages, [])
+        for interaction in interactions:
+            languages = interaction.get('languages', [])
             if any('telugu' in lang.lower() for lang in languages):
-                telugu_content_count += 1
+                telugu_interactions += 1
         
-        telugu_bonus = (telugu_content_count / total_content) * 0.5 if total_content > 0 else 0
-        
-        return min(base_score + telugu_bonus, 1.0)
+        return telugu_interactions / total_interactions if total_interactions > 0 else 0.0
+
+class RealTimeProfileUpdater:
+    """
+    Real-time profile updater that continuously learns from user interactions
+    """
     
-    def _analyze_emotional_preferences(self, content_list: List[Any]) -> Dict[str, float]:
-        """Analyze emotional tone preferences"""
-        emotional_indicators = {
-            'uplifting': ['inspire', 'hope', 'triumph', 'overcome', 'success', 'achieve'],
-            'dark': ['dark', 'grim', 'tragic', 'death', 'violence', 'brutal'],
-            'romantic': ['love', 'romance', 'romantic', 'passion', 'relationship'],
-            'humorous': ['comedy', 'funny', 'humor', 'laugh', 'entertaining'],
-            'intense': ['intense', 'thriller', 'suspense', 'gripping', 'tension'],
-            'emotional': ['emotional', 'touching', 'heartfelt', 'moving', 'tearjerker']
+    def __init__(self, embedding_manager: EmbeddingManager, cache_manager: CacheManager):
+        """
+        Initialize real-time profile updater
+        
+        Args:
+            embedding_manager: EmbeddingManager instance
+            cache_manager: CacheManager instance
+        """
+        self.embedding_manager = embedding_manager
+        self.cache_manager = cache_manager
+        self.performance_optimizer = PerformanceOptimizer()
+        
+        # Learning parameters
+        self.learning_rates = {
+            'favorite': 0.3,
+            'watchlist': 0.2,
+            'rating': 0.25,
+            'view': 0.1,
+            'search': 0.05,
+            'like': 0.15
         }
         
-        emotion_scores = defaultdict(float)
+        # Interaction queue for batch processing
+        self.interaction_queue = []
+        self.batch_size = 10
         
-        for content in content_list:
-            text = f"{content.title} {content.overview or ''}".lower()
+        logger.info("CineBrain RealTimeProfileUpdater initialized")
+    
+    @PerformanceOptimizer.time_function('update_user_profile')
+    def update_user_profile(self, user_id: int, interaction_event: UserInteractionEvent) -> bool:
+        """
+        Update user profile in real-time based on new interaction
+        
+        Args:
+            user_id: User identifier
+            interaction_event: New interaction event
             
-            for emotion, indicators in emotional_indicators.items():
-                for indicator in indicators:
-                    if indicator in text:
-                        emotion_scores[emotion] += 1.0
-        
-        # Normalize scores
-        total_score = sum(emotion_scores.values())
-        if total_score > 0:
-            emotion_scores = {k: v/total_score for k, v in emotion_scores.items()}
-        
-        return dict(emotion_scores)
+        Returns:
+            bool: Success status
+        """
+        try:
+            # Add to interaction queue
+            self.interaction_queue.append(interaction_event)
+            
+            # Calculate learning rate
+            learning_rate = self._calculate_adaptive_learning_rate(user_id, interaction_event)
+            
+            # Update user embedding
+            interaction_data = self._convert_event_to_interaction_data(interaction_event)
+            updated_embedding = self.embedding_manager.update_user_embedding_realtime(
+                user_id, interaction_data
+            )
+            
+            # Invalidate relevant caches
+            self.cache_manager.invalidate_user_cache(user_id)
+            
+            # Process batch if queue is full
+            if len(self.interaction_queue) >= self.batch_size:
+                self._process_interaction_batch()
+            
+            logger.info(f"Updated profile for user {user_id} with learning rate {learning_rate}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error updating user profile for user {user_id}: {e}")
+            return False
     
-    def _normalize_scores(self, scores: Dict[str, float]) -> Dict[str, float]:
-        """Normalize scores to 0-1 range"""
-        if not scores:
-            return {}
+    def _calculate_adaptive_learning_rate(self, user_id: int, 
+                                        interaction_event: UserInteractionEvent) -> float:
+        """Calculate adaptive learning rate based on context"""
+        base_rate = self.learning_rates.get(interaction_event.interaction_type, 0.1)
         
-        max_score = max(scores.values())
-        if max_score == 0:
-            return scores
+        # Adjust based on interaction recency
+        time_since_interaction = datetime.utcnow() - interaction_event.timestamp
+        recency_factor = max(0.5, 1.0 - time_since_interaction.total_seconds() / 3600)  # Decay over 1 hour
         
-        return {k: v/max_score for k, v in scores.items()}
+        # Adjust based on user engagement level
+        engagement_factor = 1.0  # Could be calculated based on user's historical activity
+        
+        # Adjust based on content quality
+        quality_factor = 1.0
+        if interaction_event.rating:
+            quality_factor = min(interaction_event.rating / 10.0, 1.0)
+        
+        return base_rate * recency_factor * engagement_factor * quality_factor
     
-    def _get_default_dna_profile(self) -> Dict[str, Any]:
-        """Get default DNA profile for new users"""
+    def _convert_event_to_interaction_data(self, event: UserInteractionEvent) -> Dict:
+        """Convert interaction event to data format for embedding update"""
         return {
-            'dominant_themes': {},
-            'preferred_styles': {},
-            'director_affinity': {},
-            'cultural_preferences': {},
-            'narrative_complexity': 0.5,
-            'scale_preference': 'medium',
-            'quality_threshold': 7.0,
-            'emotional_tone_preference': {},
-            'cinematic_sophistication': 0.5,
-            'commercial_vs_art': 0.6,  # Slightly commercial by default
-            'cultural_identity_score': 0.8  # Assume preference for local content
+            'content_id': event.content_id,
+            'interaction_type': event.interaction_type,
+            'rating': event.rating,
+            'timestamp': event.timestamp,
+            'metadata': event.metadata or {},
+            'context': event.context or {}
         }
 
 class UserProfileAnalyzer:
     """
-    Comprehensive user profile analysis with multi-dimensional behavioral modeling
+    Main user profile analyzer that orchestrates all profile analysis components
     """
     
-    def __init__(self, db, models, cache_manager=None):
+    def __init__(self, db, models: Dict, embedding_manager: EmbeddingManager, 
+                 cache_manager: CacheManager):
+        """
+        Initialize user profile analyzer
+        
+        Args:
+            db: Database instance
+            models: Dictionary of database models
+            embedding_manager: EmbeddingManager instance
+            cache_manager: CacheManager instance
+        """
         self.db = db
-        self.User = models['User']
-        self.Content = models['Content']
-        self.UserInteraction = models['UserInteraction']
-        self.Review = models.get('Review')
-        
-        self.cinematic_dna = CinematicDNAAnalyzer()
+        self.models = models
+        self.embedding_manager = embedding_manager
         self.cache_manager = cache_manager
-        self.scaler = StandardScaler()
         
-        # User segmentation clusters
-        self.user_clusters = None
-        self.cluster_model = KMeans(n_clusters=5, random_state=42)
+        # Initialize sub-components
+        self.cinematic_dna_analyzer = CinematicDNAAnalyzer()
+        self.realtime_updater = RealTimeProfileUpdater(embedding_manager, cache_manager)
+        self.performance_optimizer = PerformanceOptimizer()
+        
+        # User profile cache
+        self.user_profiles = {}
+        
+        logger.info("CineBrain UserProfileAnalyzer initialized")
     
+    @PerformanceOptimizer.time_function('build_comprehensive_profile')
     def build_comprehensive_user_profile(self, user_id: int, 
-                                       force_refresh: bool = False) -> Dict[str, Any]:
-        """Build comprehensive user profile with caching"""
+                                       force_refresh: bool = False) -> Optional[UserPreferenceProfile]:
+        """
+        Build comprehensive user preference profile
         
-        # Check cache first
-        if self.cache_manager and not force_refresh:
-            cache_key = self.cache_manager.get_user_profile_cache_key(user_id)
-            cached_profile = self.cache_manager.get(cache_key)
-            if cached_profile:
-                logger.info(f"Retrieved cached profile for user {user_id}")
-                return cached_profile
-        
+        Args:
+            user_id: User identifier
+            force_refresh: Force profile regeneration
+            
+        Returns:
+            UserPreferenceProfile or None
+        """
         try:
-            user = self.User.query.get(user_id)
-            if not user:
-                return {}
+            # Check cache first (unless force refresh)
+            if not force_refresh and user_id in self.user_profiles:
+                cached_profile = self.user_profiles[user_id]
+                # Check if profile is recent (within 1 hour)
+                if (datetime.utcnow() - cached_profile.last_updated).total_seconds() < 3600:
+                    return cached_profile
             
-            # Get all user interactions
-            interactions = self.UserInteraction.query.filter_by(user_id=user_id).all()
+            # Get user interactions
+            user_interactions = self._get_user_interactions(user_id)
+            if not user_interactions:
+                return self._create_cold_start_profile(user_id)
             
-            if not interactions:
-                return self._build_cold_start_profile(user)
+            # Convert interactions to structured format
+            interaction_data = self._prepare_interaction_data(user_interactions)
             
-            # Get content for important interactions
-            important_interactions = [i for i in interactions 
-                                    if i.interaction_type in ['favorite', 'watchlist', 'rating']]
+            # Create user embedding
+            user_embedding = self.embedding_manager.create_user_embedding(user_id, interaction_data)
             
-            content_ids = [i.content_id for i in important_interactions]
-            important_content = self.Content.query.filter(
-                self.Content.id.in_(content_ids)
-            ).all() if content_ids else []
+            # Analyze preferences
+            genre_preferences = self._analyze_genre_preferences(interaction_data)
+            language_preferences = self._analyze_language_preferences(interaction_data)
+            content_type_preferences = self._analyze_content_type_preferences(interaction_data)
             
-            # Build comprehensive profile
-            profile = {
-                'user_id': user_id,
-                'username': user.username,
-                'registration_date': user.created_at,
-                'last_active': user.last_active,
-                
-                # Core preference analysis
-                'explicit_preferences': self._analyze_explicit_preferences(user),
-                'implicit_preferences': self._analyze_implicit_preferences(interactions),
-                'cinematic_dna': self.cinematic_dna.analyze_cinematic_dna(
-                    important_content, 
-                    self._get_user_languages(user)
-                ),
-                
-                # Behavioral analysis
-                'viewing_patterns': self._analyze_viewing_patterns(interactions),
-                'rating_patterns': self._analyze_rating_patterns(interactions),
-                'search_patterns': self._analyze_search_patterns(interactions),
-                'temporal_patterns': self._analyze_temporal_patterns(interactions),
-                
-                # Content preferences
-                'genre_preferences': self._analyze_genre_preferences(interactions, important_content),
-                'language_preferences': self._analyze_language_preferences(interactions, important_content),
-                'content_type_preferences': self._analyze_content_type_preferences(interactions, important_content),
-                'quality_preferences': self._analyze_quality_preferences(interactions, important_content),
-                
-                # Advanced metrics
-                'engagement_metrics': self._calculate_engagement_metrics(interactions),
-                'diversity_metrics': self._calculate_diversity_metrics(interactions, important_content),
-                'loyalty_metrics': self._calculate_loyalty_metrics(interactions),
-                'exploration_metrics': self._calculate_exploration_metrics(interactions, important_content),
-                
-                # Predictive features
-                'next_content_prediction': self._predict_next_content_type(interactions),
-                'recommendation_receptivity': self._calculate_recommendation_receptivity(interactions),
-                'churn_risk': self._calculate_churn_risk(interactions),
-                
-                # Profile metadata
-                'profile_completeness': 0.0,
-                'confidence_score': 0.0,
-                'user_segment': 'unknown',
-                'last_updated': datetime.utcnow()
-            }
+            # Calculate quality and sophistication metrics
+            quality_threshold = self._calculate_quality_threshold(interaction_data)
+            sophistication_score = self._calculate_sophistication_score(interaction_data)
             
-            # Calculate derived metrics
-            profile['profile_completeness'] = self._calculate_profile_completeness(profile)
-            profile['confidence_score'] = self._calculate_confidence_score(profile, interactions)
-            profile['user_segment'] = self._determine_user_segment(profile)
+            # Determine engagement level
+            engagement_level = self._determine_engagement_level(interaction_data)
+            
+            # Calculate confidence score
+            confidence_score = self._calculate_profile_confidence(interaction_data)
+            
+            # Analyze temporal patterns
+            temporal_patterns = self._analyze_temporal_patterns(interaction_data)
+            
+            # Analyze cinematic DNA
+            cinematic_dna = self.cinematic_dna_analyzer.analyze_user_cinematic_dna(interaction_data)
+            
+            # Create comprehensive profile
+            profile = UserPreferenceProfile(
+                user_id=user_id,
+                embedding=user_embedding,
+                genre_preferences=genre_preferences,
+                language_preferences=language_preferences,
+                content_type_preferences=content_type_preferences,
+                quality_threshold=quality_threshold,
+                sophistication_score=sophistication_score,
+                engagement_level=engagement_level,
+                last_updated=datetime.utcnow(),
+                confidence_score=confidence_score,
+                temporal_patterns=temporal_patterns,
+                cinematic_dna=cinematic_dna
+            )
             
             # Cache the profile
-            if self.cache_manager:
-                cache_key = self.cache_manager.get_user_profile_cache_key(user_id)
-                self.cache_manager.set(cache_key, profile, ttl=3600)  # Cache for 1 hour
+            self.user_profiles[user_id] = profile
             
-            logger.info(f"Built comprehensive profile for user {user_id} with {len(interactions)} interactions")
+            logger.info(f"Built comprehensive profile for user {user_id} with confidence {confidence_score}")
             return profile
             
         except Exception as e:
             logger.error(f"Error building user profile for user {user_id}: {e}")
-            return {}
+            return None
     
-    def _get_user_languages(self, user: Any) -> List[str]:
-        """Get user's preferred languages"""
-        explicit_langs = safe_json_loads(user.preferred_languages, [])
-        if explicit_langs:
-            return explicit_langs
+    def update_profile_realtime(self, user_id: int, interaction_event: UserInteractionEvent) -> bool:
+        """
+        Update user profile in real-time
         
-        # Default to Telugu-first if no explicit preference
-        return ['Telugu', 'English']
+        Args:
+            user_id: User identifier
+            interaction_event: New interaction event
+            
+        Returns:
+            bool: Success status
+        """
+        try:
+            # Update through real-time updater
+            success = self.realtime_updater.update_user_profile(user_id, interaction_event)
+            
+            # Invalidate cached profile to force refresh on next access
+            if user_id in self.user_profiles:
+                del self.user_profiles[user_id]
+            
+            return success
+            
+        except Exception as e:
+            logger.error(f"Error updating profile in real-time for user {user_id}: {e}")
+            return False
     
-    def _build_cold_start_profile(self, user: Any) -> Dict[str, Any]:
-        """Build basic profile for new users"""
-        return {
-            'user_id': user.id,
-            'username': user.username,
-            'registration_date': user.created_at,
-            'explicit_preferences': self._analyze_explicit_preferences(user),
-            'cold_start': True,
-            'profile_completeness': 0.1,
-            'confidence_score': 0.0,
-            'user_segment': 'new_user',
-            'cinematic_dna': self.cinematic_dna._get_default_dna_profile(),
-            'language_preferences': {
-                'preferred_languages': self._get_user_languages(user),
-                'telugu_preference': True
-            },
-            'last_updated': datetime.utcnow()
-        }
+    def _get_user_interactions(self, user_id: int) -> List[Any]:
+        """Get user interactions from database"""
+        try:
+            UserInteraction = self.models['UserInteraction']
+            Content = self.models['Content']
+            
+            # Get interactions with content details
+            interactions = self.db.session.query(UserInteraction, Content).join(
+                Content, UserInteraction.content_id == Content.id
+            ).filter(UserInteraction.user_id == user_id).order_by(
+                UserInteraction.timestamp.desc()
+            ).limit(500).all()  # Limit to recent 500 interactions
+            
+            return interactions
+            
+        except Exception as e:
+            logger.error(f"Error getting user interactions for user {user_id}: {e}")
+            return []
     
-    # Continue with other analysis methods...
-    # [The rest of the methods would follow the same pattern as the original code
-    # but with enhanced analytics and proper modular structure]
-    
-    def _analyze_genre_preferences(self, interactions: List[Any], 
-                                 content_list: List[Any]) -> Dict[str, Any]:
-        """Enhanced genre preference analysis with cultural weighting"""
-        content_map = {c.id: c for c in content_list}
+    def _prepare_interaction_data(self, interactions: List[Tuple]) -> List[Dict]:
+        """Prepare interaction data for analysis"""
+        interaction_data = []
         
-        # Weighted scoring based on interaction type and recency
-        interaction_weights = {
-            'favorite': 3.0,
-            'watchlist': 2.0,
-            'rating': 2.5,
-            'view': 1.5,
-            'search': 1.0
-        }
-        
-        genre_scores = defaultdict(float)
-        genre_contexts = defaultdict(list)
-        
-        for interaction in interactions:
-            content = content_map.get(interaction.content_id)
-            if not content or not content.genres:
-                continue
-            
-            weight = interaction_weights.get(interaction.interaction_type, 1.0)
-            
-            # Recency weighting
-            days_ago = (datetime.utcnow() - interaction.timestamp).days
-            recency_weight = math.exp(-days_ago / 30)  # Exponential decay over 30 days
-            
-            # Rating weighting
-            rating_weight = 1.0
-            if interaction.rating:
-                rating_weight = (interaction.rating / 10) * 2  # Higher rated content gets more weight
-            
-            # Language cultural bonus
-            content_languages = safe_json_loads(content.languages, [])
-            cultural_bonus = 1.0
-            if any('telugu' in lang.lower() for lang in content_languages):
-                cultural_bonus = 1.3  # Telugu content gets priority
-            elif any('hindi' in lang.lower() for lang in content_languages):
-                cultural_bonus = 1.2
-            
-            final_weight = weight * recency_weight * rating_weight * cultural_bonus
-            
+        for interaction, content in interactions:
             try:
-                genres = safe_json_loads(content.genres, [])
-                for genre in genres:
-                    genre_scores[genre] += final_weight
-                    genre_contexts[genre].append({
-                        'content_title': content.title,
-                        'interaction_type': interaction.interaction_type,
-                        'rating': interaction.rating,
-                        'timestamp': interaction.timestamp
-                    })
-            except:
+                data = {
+                    'content_id': content.id,
+                    'interaction_type': interaction.interaction_type,
+                    'rating': interaction.rating,
+                    'timestamp': interaction.timestamp,
+                    'title': content.title,
+                    'content_type': content.content_type,
+                    'genres': json.loads(content.genres or '[]'),
+                    'languages': json.loads(content.languages or '[]'),
+                    'overview': content.overview or '',
+                    'director': getattr(content, 'director', ''),
+                    'release_year': content.release_date.year if content.release_date else None,
+                    'rating_score': content.rating or 0,
+                    'popularity': content.popularity or 0
+                }
+                interaction_data.append(data)
+                
+            except Exception as e:
+                logger.warning(f"Error preparing interaction data: {e}")
                 continue
+        
+        return interaction_data
+    
+    def _analyze_genre_preferences(self, interaction_data: List[Dict]) -> Dict[str, float]:
+        """Analyze user's genre preferences with weighted scoring"""
+        genre_scores = defaultdict(float)
+        total_weight = 0
+        
+        for interaction in interaction_data:
+            # Calculate weight based on interaction type and recency
+            weight = self._get_interaction_weight(interaction)
+            total_weight += weight
+            
+            # Add genre scores
+            for genre in interaction.get('genres', []):
+                genre_scores[genre] += weight
         
         # Normalize scores
-        if genre_scores:
-            max_score = max(genre_scores.values())
-            normalized_scores = {genre: score/max_score for genre, score in genre_scores.items()}
-        else:
-            normalized_scores = {}
+        if total_weight > 0:
+            genre_scores = {genre: score/total_weight for genre, score in genre_scores.items()}
         
-        # Calculate genre diversity and evolution
-        genre_evolution = self._analyze_genre_evolution(interactions, content_map)
-        
-        return {
-            'genre_scores': dict(normalized_scores),
-            'top_genres': [genre for genre, _ in Counter(normalized_scores).most_common(5)],
-            'genre_diversity': len(normalized_scores),
-            'genre_evolution': genre_evolution,
-            'dominant_genre': max(normalized_scores.items(), key=lambda x: x[1])[0] if normalized_scores else None,
-            'emerging_interests': self._identify_emerging_genre_interests(genre_contexts),
-            'cultural_genre_preference': self._analyze_cultural_genre_preferences(genre_scores, content_map)
-        }
+        # Sort and return top genres
+        sorted_genres = sorted(genre_scores.items(), key=lambda x: x[1], reverse=True)
+        return dict(sorted_genres[:10])  # Top 10 genres
     
-    def _analyze_genre_evolution(self, interactions: List[Any], 
-                               content_map: Dict[int, Any]) -> Dict[str, Any]:
-        """Analyze how user's genre preferences evolve over time"""
-        if len(interactions) < 10:
-            return {'insufficient_data': True}
+    def _analyze_language_preferences(self, interaction_data: List[Dict]) -> Dict[str, float]:
+        """Analyze user's language preferences with Telugu priority"""
+        language_scores = defaultdict(float)
+        total_weight = 0
         
-        # Split interactions into time periods
-        sorted_interactions = sorted(interactions, key=lambda x: x.timestamp)
-        mid_point = len(sorted_interactions) // 2
-        
-        early_interactions = sorted_interactions[:mid_point]
-        recent_interactions = sorted_interactions[mid_point:]
-        
-        early_genres = defaultdict(int)
-        recent_genres = defaultdict(int)
-        
-        for interaction in early_interactions:
-            content = content_map.get(interaction.content_id)
-            if content and content.genres:
-                genres = safe_json_loads(content.genres, [])
-                for genre in genres:
-                    early_genres[genre] += 1
-        
-        for interaction in recent_interactions:
-            content = content_map.get(interaction.content_id)
-            if content and content.genres:
-                genres = safe_json_loads(content.genres, [])
-                for genre in genres:
-                    recent_genres[genre] += 1
-        
-        # Calculate shifts
-        all_genres = set(early_genres.keys()) | set(recent_genres.keys())
-        genre_shifts = {}
-        
-        for genre in all_genres:
-            early_count = early_genres.get(genre, 0)
-            recent_count = recent_genres.get(genre, 0)
+        for interaction in interaction_data:
+            weight = self._get_interaction_weight(interaction)
+            total_weight += weight
             
-            early_ratio = early_count / len(early_interactions) if early_interactions else 0
-            recent_ratio = recent_count / len(recent_interactions) if recent_interactions else 0
-            
-            shift = recent_ratio - early_ratio
-            genre_shifts[genre] = shift
+            # Add language scores with priority weighting
+            for language in interaction.get('languages', []):
+                lang_priority = LANGUAGE_PRIORITY.get(language.lower(), 0.5)
+                language_scores[language] += weight * lang_priority
         
-        # Identify trends
-        growing_interests = {g: s for g, s in genre_shifts.items() if s > 0.1}
-        declining_interests = {g: s for g, s in genre_shifts.items() if s < -0.1}
+        # Normalize scores
+        if total_weight > 0:
+            language_scores = {lang: score/total_weight for lang, score in language_scores.items()}
         
-        return {
-            'growing_interests': growing_interests,
-            'declining_interests': declining_interests,
-            'stability_score': 1 - np.std(list(genre_shifts.values())) if genre_shifts else 0,
-            'exploration_trend': 'increasing' if len(recent_genres) > len(early_genres) else 'decreasing'
+        # Sort by preference
+        sorted_languages = sorted(language_scores.items(), key=lambda x: x[1], reverse=True)
+        return dict(sorted_languages[:5])  # Top 5 languages
+    
+    def _get_interaction_weight(self, interaction: Dict) -> float:
+        """Calculate weight for an interaction based on type and recency"""
+        # Base weights by interaction type
+        type_weights = {
+            'favorite': 3.0,
+            'watchlist': 2.5,
+            'rating': 2.0,
+            'view': 1.5,
+            'search': 1.0,
+            'like': 1.2
         }
+        
+        base_weight = type_weights.get(interaction.get('interaction_type'), 1.0)
+        
+        # Apply recency decay
+        timestamp = interaction.get('timestamp', datetime.utcnow())
+        if isinstance(timestamp, str):
+            timestamp = datetime.fromisoformat(timestamp)
+        
+        days_ago = (datetime.utcnow() - timestamp).days
+        recency_weight = decay_weight(days_ago)
+        
+        # Apply rating boost
+        rating_weight = 1.0
+        if interaction.get('rating'):
+            rating_weight = min(interaction['rating'] / 8.0, 1.5)  # Boost for high ratings
+        
+        return base_weight * recency_weight * rating_weight
     
-    # [Additional methods would continue in the same pattern...]
+    def _create_cold_start_profile(self, user_id: int) -> UserPreferenceProfile:
+        """Create a default profile for new users"""
+        return UserPreferenceProfile(
+            user_id=user_id,
+            embedding=np.zeros(self.embedding_manager.embedding_dim),
+            genre_preferences={'Action': 0.3, 'Drama': 0.3, 'Comedy': 0.2, 'Romance': 0.2},
+            language_preferences={'Telugu': 0.4, 'English': 0.3, 'Hindi': 0.3},
+            content_type_preferences={'movie': 0.6, 'tv': 0.3, 'anime': 0.1},
+            quality_threshold=7.0,
+            sophistication_score=0.5,
+            engagement_level='new_user',
+            last_updated=datetime.utcnow(),
+            confidence_score=0.1,
+            temporal_patterns={},
+            cinematic_dna={}
+        )
     
-    def get_user_embedding(self, user_id: int) -> np.ndarray:
-        """Generate user embedding vector for similarity computations"""
-        profile = self.build_comprehensive_user_profile(user_id)
-        
-        if not profile or profile.get('cold_start'):
-            return np.zeros(50)  # Default embedding size
-        
-        # Extract numerical features for embedding
-        features = []
-        
-        # Genre preferences (top 10 genres)
-        genre_prefs = profile.get('genre_preferences', {}).get('genre_scores', {})
-        top_genres = ['Action', 'Drama', 'Comedy', 'Romance', 'Thriller', 
-                     'Adventure', 'Crime', 'Fantasy', 'Horror', 'Mystery']
-        
-        for genre in top_genres:
-            features.append(genre_prefs.get(genre, 0.0))
-        
-        # Language preferences
-        lang_prefs = profile.get('language_preferences', {}).get('language_scores', {})
-        for lang in PRIORITY_LANGUAGES:
-            features.append(lang_prefs.get(lang.title(), 0.0))
-        
-        # Cinematic DNA features
-        dna = profile.get('cinematic_dna', {})
-        features.extend([
-            dna.get('cinematic_sophistication', 0.5),
-            dna.get('commercial_vs_art', 0.5),
-            dna.get('narrative_complexity', 0.5),
-            dna.get('cultural_identity_score', 0.5)
-        ])
-        
-        # Behavioral features
-        engagement = profile.get('engagement_metrics', {})
-        features.extend([
-            engagement.get('total_interactions', 0) / 100.0,  # Normalize
-            engagement.get('recent_activity_ratio', 0),
-            engagement.get('consistency_score', 0),
-            profile.get('confidence_score', 0)
-        ])
-        
-        # Content type preferences
-        content_prefs = profile.get('content_type_preferences', {}).get('type_scores', {})
-        features.extend([
-            content_prefs.get('movie', 0),
-            content_prefs.get('tv', 0),
-            content_prefs.get('anime', 0)
-        ])
-        
-        # Quality and rating patterns
-        quality = profile.get('quality_preferences', {})
-        features.extend([
-            quality.get('quality_threshold', 7.0) / 10.0,
-            quality.get('rating_strictness', 0.5),
-            quality.get('popular_vs_niche', 0.5)
-        ])
-        
-        # Pad or trim to exactly 50 features
-        while len(features) < 50:
-            features.append(0.0)
-        features = features[:50]
-        
-        return np.array(features, dtype=np.float32)
+    def get_performance_stats(self) -> Dict:
+        """Get performance statistics for the profile analyzer"""
+        return self.performance_optimizer.get_performance_stats()

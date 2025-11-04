@@ -2,524 +2,751 @@
 
 """
 CineBrain Personalization Utilities
-Vector operations, caching, embeddings, and shared utilities
+===================================
+
+Core utilities for embedding management, similarity calculations, caching,
+and performance optimization in the personalization system.
 """
 
 import numpy as np
 import pandas as pd
+from typing import Dict, List, Any, Optional, Tuple, Union
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity, euclidean_distances
-from sklearn.preprocessing import MinMaxScaler, StandardScaler
-from sklearn.decomposition import TruncatedSVD
-from scipy.sparse import csr_matrix
-from scipy.stats import pearsonr
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
+from sklearn.decomposition import PCA, TruncatedSVD
+from sklearn.cluster import KMeans
+from sklearn.manifold import TSNE
 import json
-import logging
 import hashlib
 import time
-from typing import List, Dict, Any, Tuple, Optional, Union
-from collections import defaultdict, Counter
+import logging
 from datetime import datetime, timedelta
+from collections import defaultdict, Counter
 import redis
+from functools import wraps
 import pickle
+import lz4.frame
+from concurrent.futures import ThreadPoolExecutor
+import asyncio
 
 logger = logging.getLogger(__name__)
 
-# Telugu-first language priority configuration
-LANGUAGE_WEIGHTS = {
-    'telugu': 1.0, 'te': 1.0,
-    'english': 0.9, 'en': 0.9,
-    'hindi': 0.85, 'hi': 0.85,
-    'malayalam': 0.75, 'ml': 0.75,
-    'kannada': 0.7, 'kn': 0.7,
-    'tamil': 0.65, 'ta': 0.65
+# Telugu-first language configuration
+LANGUAGE_PRIORITY = {
+    'telugu': 1.0,
+    'english': 0.9,
+    'hindi': 0.85,
+    'malayalam': 0.75,
+    'kannada': 0.7,
+    'tamil': 0.65
 }
 
 PRIORITY_LANGUAGES = ['telugu', 'english', 'hindi', 'malayalam', 'kannada', 'tamil']
 
-class VectorOperations:
-    """Advanced vector operations for content and user embeddings"""
+class EmbeddingManager:
+    """
+    Advanced embedding manager for user preferences and content features.
+    Creates and maintains high-dimensional vector representations.
+    """
     
-    @staticmethod
-    def cosine_similarity_batch(vectors_a: np.ndarray, vectors_b: np.ndarray) -> np.ndarray:
-        """Compute cosine similarity between two batches of vectors efficiently"""
-        try:
-            # Normalize vectors
-            vectors_a_norm = vectors_a / (np.linalg.norm(vectors_a, axis=1, keepdims=True) + 1e-10)
-            vectors_b_norm = vectors_b / (np.linalg.norm(vectors_b, axis=1, keepdims=True) + 1e-10)
-            
-            # Compute similarity
-            similarity = np.dot(vectors_a_norm, vectors_b_norm.T)
-            return similarity
-            
-        except Exception as e:
-            logger.error(f"Error in batch cosine similarity: {e}")
-            return np.zeros((len(vectors_a), len(vectors_b)))
-    
-    @staticmethod
-    def compute_user_content_affinity(user_vector: np.ndarray, 
-                                     content_vectors: np.ndarray) -> np.ndarray:
-        """Compute affinity scores between user and content vectors"""
-        if user_vector.ndim == 1:
-            user_vector = user_vector.reshape(1, -1)
+    def __init__(self, embedding_dim: int = 128, cache=None):
+        """
+        Initialize embedding manager
         
-        # Multiple similarity metrics
-        cosine_sim = cosine_similarity(user_vector, content_vectors)[0]
-        
-        # Euclidean distance (inverted and normalized)
-        euclidean_dist = euclidean_distances(user_vector, content_vectors)[0]
-        euclidean_sim = 1 / (1 + euclidean_dist)
-        
-        # Weighted combination
-        affinity = cosine_sim * 0.7 + euclidean_sim * 0.3
-        
-        return affinity
-    
-    @staticmethod
-    def normalize_scores(scores: np.ndarray, method: str = 'minmax') -> np.ndarray:
-        """Normalize scores using different methods"""
-        if len(scores) == 0:
-            return scores
-        
-        if method == 'minmax':
-            min_score, max_score = np.min(scores), np.max(scores)
-            if max_score == min_score:
-                return np.ones_like(scores) * 0.5
-            return (scores - min_score) / (max_score - min_score)
-        
-        elif method == 'zscore':
-            mean_score, std_score = np.mean(scores), np.std(scores)
-            if std_score == 0:
-                return np.zeros_like(scores)
-            normalized = (scores - mean_score) / std_score
-            # Convert to 0-1 range using sigmoid
-            return 1 / (1 + np.exp(-normalized))
-        
-        elif method == 'robust':
-            median_score = np.median(scores)
-            mad = np.median(np.abs(scores - median_score))
-            if mad == 0:
-                return np.ones_like(scores) * 0.5
-            return (scores - median_score) / (1.4826 * mad)
-        
-        return scores
-    
-    @staticmethod
-    def weighted_average_embeddings(embeddings: List[np.ndarray], 
-                                   weights: List[float]) -> np.ndarray:
-        """Compute weighted average of embeddings"""
-        if not embeddings or not weights:
-            return np.array([])
-        
-        weights = np.array(weights)
-        weights = weights / np.sum(weights)  # Normalize weights
-        
-        weighted_embedding = np.zeros_like(embeddings[0])
-        for embedding, weight in zip(embeddings, weights):
-            weighted_embedding += embedding * weight
-        
-        return weighted_embedding
-
-class ContentEmbedding:
-    """Generate and manage content embeddings for similarity computation"""
-    
-    def __init__(self, max_features: int = 5000):
+        Args:
+            embedding_dim: Dimension of embedding vectors
+            cache: Cache backend for storing embeddings
+        """
+        self.embedding_dim = embedding_dim
+        self.cache = cache
+        self.scaler = StandardScaler()
+        self.pca = PCA(n_components=min(embedding_dim, 50))
         self.tfidf_vectorizer = TfidfVectorizer(
-            max_features=max_features,
-            stop_words='english',
+            max_features=5000,
             ngram_range=(1, 3),
-            min_df=2,
-            max_df=0.95,
-            sublinear_tf=True
+            stop_words='english',
+            min_df=1,
+            max_df=0.95
         )
-        self.svd = TruncatedSVD(n_components=100, random_state=42)
-        self.scaler = MinMaxScaler()
-        self.fitted = False
         
-    def fit_transform(self, content_list: List[Any]) -> np.ndarray:
-        """Fit vectorizer and transform content to embeddings"""
+        # Initialize embedding spaces
+        self._user_embeddings = {}
+        self._content_embeddings = {}
+        self._genre_embeddings = {}
+        self._director_embeddings = {}
+        
+        logger.info(f"CineBrain EmbeddingManager initialized with {embedding_dim}D vectors")
+    
+    def create_user_embedding(self, user_id: int, interaction_data: List[Dict]) -> np.ndarray:
+        """
+        Create comprehensive user embedding from interaction history
+        
+        Args:
+            user_id: User identifier
+            interaction_data: List of user interactions with metadata
+            
+        Returns:
+            numpy.ndarray: User embedding vector
+        """
         try:
-            # Extract text features
-            text_features = []
-            for content in content_list:
-                text = self._extract_content_text(content)
-                text_features.append(text)
+            # Extract features from interactions
+            features = self._extract_user_features(interaction_data)
             
-            # TF-IDF transformation
-            tfidf_matrix = self.tfidf_vectorizer.fit_transform(text_features)
+            # Create multi-dimensional embedding
+            embedding_components = []
             
-            # Dimensionality reduction
-            reduced_embeddings = self.svd.fit_transform(tfidf_matrix)
+            # 1. Genre preference embedding (Telugu cinema bias)
+            genre_embedding = self._create_genre_embedding(features.get('genres', {}))
+            embedding_components.append(genre_embedding)
             
-            # Normalize embeddings
-            normalized_embeddings = self.scaler.fit_transform(reduced_embeddings)
+            # 2. Language preference embedding (Telugu-first)
+            language_embedding = self._create_language_embedding(features.get('languages', {}))
+            embedding_components.append(language_embedding)
             
-            self.fitted = True
-            logger.info(f"Fitted content embeddings for {len(content_list)} items")
+            # 3. Temporal behavior embedding
+            temporal_embedding = self._create_temporal_embedding(features.get('temporal_patterns', {}))
+            embedding_components.append(temporal_embedding)
             
-            return normalized_embeddings
+            # 4. Quality preference embedding
+            quality_embedding = self._create_quality_embedding(features.get('rating_patterns', {}))
+            embedding_components.append(quality_embedding)
+            
+            # 5. Content type preference embedding
+            type_embedding = self._create_content_type_embedding(features.get('content_types', {}))
+            embedding_components.append(type_embedding)
+            
+            # 6. Cinematic sophistication embedding
+            sophistication_embedding = self._create_sophistication_embedding(features.get('sophistication', {}))
+            embedding_components.append(sophistication_embedding)
+            
+            # Combine all components
+            combined_embedding = np.concatenate(embedding_components)
+            
+            # Normalize to target dimension
+            if len(combined_embedding) != self.embedding_dim:
+                combined_embedding = self._normalize_embedding_dimension(combined_embedding)
+            
+            # Cache the embedding
+            self._cache_embedding(f"user_{user_id}", combined_embedding)
+            
+            # Update user embeddings dictionary
+            self._user_embeddings[user_id] = combined_embedding
+            
+            logger.info(f"Created user embedding for user {user_id}: {combined_embedding.shape}")
+            return combined_embedding
             
         except Exception as e:
-            logger.error(f"Error fitting content embeddings: {e}")
-            return np.array([])
+            logger.error(f"Error creating user embedding for user {user_id}: {e}")
+            return np.zeros(self.embedding_dim)
     
-    def transform(self, content_list: List[Any]) -> np.ndarray:
-        """Transform new content to embeddings (requires fitted vectorizer)"""
-        if not self.fitted:
-            raise ValueError("ContentEmbedding must be fitted before transform")
+    def create_content_embedding(self, content_id: int, content_data: Dict) -> np.ndarray:
+        """
+        Create comprehensive content embedding
         
+        Args:
+            content_id: Content identifier
+            content_data: Content metadata and features
+            
+        Returns:
+            numpy.ndarray: Content embedding vector
+        """
         try:
-            text_features = []
-            for content in content_list:
-                text = self._extract_content_text(content)
-                text_features.append(text)
+            embedding_components = []
             
-            tfidf_matrix = self.tfidf_vectorizer.transform(text_features)
-            reduced_embeddings = self.svd.transform(tfidf_matrix)
-            normalized_embeddings = self.scaler.transform(reduced_embeddings)
+            # 1. Genre embedding
+            genres = content_data.get('genres', [])
+            genre_vec = self._vectorize_genres(genres)
+            embedding_components.append(genre_vec)
             
-            return normalized_embeddings
+            # 2. Language embedding with Telugu priority
+            languages = content_data.get('languages', [])
+            language_vec = self._vectorize_languages(languages)
+            embedding_components.append(language_vec)
+            
+            # 3. Plot/overview text embedding
+            overview = content_data.get('overview', '')
+            text_vec = self._vectorize_text(overview)
+            embedding_components.append(text_vec)
+            
+            # 4. Metadata embedding (year, rating, runtime)
+            metadata_vec = self._vectorize_metadata(content_data)
+            embedding_components.append(metadata_vec)
+            
+            # 5. Cinematic style embedding
+            style_vec = self._vectorize_cinematic_style(content_data)
+            embedding_components.append(style_vec)
+            
+            # Combine and normalize
+            combined_embedding = np.concatenate(embedding_components)
+            combined_embedding = self._normalize_embedding_dimension(combined_embedding)
+            
+            # Cache the embedding
+            self._cache_embedding(f"content_{content_id}", combined_embedding)
+            self._content_embeddings[content_id] = combined_embedding
+            
+            return combined_embedding
             
         except Exception as e:
-            logger.error(f"Error transforming content embeddings: {e}")
-            return np.array([])
+            logger.error(f"Error creating content embedding for content {content_id}: {e}")
+            return np.zeros(self.embedding_dim)
     
-    def _extract_content_text(self, content: Any) -> str:
-        """Extract text features from content object"""
-        text_parts = []
+    def update_user_embedding_realtime(self, user_id: int, new_interaction: Dict) -> np.ndarray:
+        """
+        Update user embedding in real-time based on new interaction
         
-        # Title (most important)
-        if hasattr(content, 'title') and content.title:
-            text_parts.extend([content.title] * 3)  # Weight title heavily
-        
-        # Genres
-        if hasattr(content, 'genres') and content.genres:
-            try:
-                genres = json.loads(content.genres)
-                text_parts.extend(genres)
-            except:
-                pass
-        
-        # Overview/Description
-        if hasattr(content, 'overview') and content.overview:
-            text_parts.append(content.overview)
-        
-        # Languages (for Telugu prioritization)
-        if hasattr(content, 'languages') and content.languages:
-            try:
-                languages = json.loads(content.languages)
-                text_parts.extend(languages)
-            except:
-                pass
-        
-        # Content type
-        if hasattr(content, 'content_type') and content.content_type:
-            text_parts.append(content.content_type)
-        
-        return ' '.join(text_parts)
-
-class CacheManager:
-    """Advanced caching for recommendations and user profiles"""
-    
-    def __init__(self, cache_backend=None, default_ttl: int = 3600):
-        self.cache = cache_backend
-        self.default_ttl = default_ttl
-        self.memory_cache = {}  # Fallback in-memory cache
-        self.max_memory_items = 1000
-    
-    def get(self, key: str, default=None):
-        """Get item from cache with fallback"""
+        Args:
+            user_id: User identifier
+            new_interaction: New interaction data
+            
+        Returns:
+            numpy.ndarray: Updated user embedding
+        """
         try:
-            if self.cache:
-                result = self.cache.get(key)
-                if result is not None:
-                    return result
+            # Get current embedding
+            current_embedding = self.get_user_embedding(user_id)
+            if current_embedding is None:
+                # Create new embedding if doesn't exist
+                return self.create_user_embedding(user_id, [new_interaction])
             
-            # Fallback to memory cache
-            if key in self.memory_cache:
-                item, timestamp = self.memory_cache[key]
-                if time.time() - timestamp < self.default_ttl:
-                    return item
-                else:
-                    del self.memory_cache[key]
+            # Create embedding for new interaction
+            interaction_embedding = self._create_interaction_embedding(new_interaction)
             
-            return default
+            # Calculate learning rate based on interaction type and recency
+            learning_rate = self._calculate_learning_rate(new_interaction)
             
-        except Exception as e:
-            logger.warning(f"Cache get error for key {key}: {e}")
-            return default
-    
-    def set(self, key: str, value: Any, ttl: int = None):
-        """Set item in cache with fallback"""
-        try:
-            ttl = ttl or self.default_ttl
-            
-            if self.cache:
-                self.cache.set(key, value, timeout=ttl)
-            
-            # Also store in memory cache
-            self._memory_cache_set(key, value)
-            
-        except Exception as e:
-            logger.warning(f"Cache set error for key {key}: {e}")
-    
-    def delete(self, key: str):
-        """Delete item from cache"""
-        try:
-            if self.cache:
-                self.cache.delete(key)
-            
-            if key in self.memory_cache:
-                del self.memory_cache[key]
-                
-        except Exception as e:
-            logger.warning(f"Cache delete error for key {key}: {e}")
-    
-    def _memory_cache_set(self, key: str, value: Any):
-        """Set item in memory cache with size limit"""
-        if len(self.memory_cache) >= self.max_memory_items:
-            # Remove oldest item
-            oldest_key = min(self.memory_cache.keys(), 
-                           key=lambda k: self.memory_cache[k][1])
-            del self.memory_cache[oldest_key]
-        
-        self.memory_cache[key] = (value, time.time())
-    
-    def get_user_profile_cache_key(self, user_id: int) -> str:
-        """Generate cache key for user profile"""
-        return f"cinebrain:profile:{user_id}"
-    
-    def get_recommendations_cache_key(self, user_id: int, 
-                                    categories: List[str] = None,
-                                    **kwargs) -> str:
-        """Generate cache key for recommendations"""
-        categories_str = ','.join(sorted(categories)) if categories else 'default'
-        params_str = ','.join(f"{k}={v}" for k, v in sorted(kwargs.items()))
-        cache_key = f"cinebrain:recs:{user_id}:{categories_str}:{params_str}"
-        
-        # Hash if too long
-        if len(cache_key) > 200:
-            cache_key = f"cinebrain:recs:{hashlib.md5(cache_key.encode()).hexdigest()}"
-        
-        return cache_key
-    
-    def get_similarity_cache_key(self, content_id: int, algorithm: str = 'default') -> str:
-        """Generate cache key for content similarity"""
-        return f"cinebrain:similarity:{content_id}:{algorithm}"
-
-class LanguagePriorityManager:
-    """Manage Telugu-first language prioritization across the system"""
-    
-    @staticmethod
-    def apply_language_boost(content_list: List[Any], 
-                           user_languages: List[str] = None) -> List[Tuple[Any, float]]:
-        """Apply language priority boosting to content"""
-        boosted_content = []
-        
-        for content in content_list:
-            base_score = 1.0
-            language_boost = LanguagePriorityManager.calculate_language_score(
-                content, user_languages
+            # Update embedding using weighted average
+            updated_embedding = (
+                current_embedding * (1 - learning_rate) + 
+                interaction_embedding * learning_rate
             )
             
-            final_score = base_score * (1 + language_boost)
-            boosted_content.append((content, final_score))
-        
-        return boosted_content
+            # Normalize
+            updated_embedding = updated_embedding / (np.linalg.norm(updated_embedding) + 1e-10)
+            
+            # Cache updated embedding
+            self._cache_embedding(f"user_{user_id}", updated_embedding)
+            self._user_embeddings[user_id] = updated_embedding
+            
+            logger.info(f"Updated user embedding for user {user_id} with learning rate {learning_rate}")
+            return updated_embedding
+            
+        except Exception as e:
+            logger.error(f"Error updating user embedding for user {user_id}: {e}")
+            return self.get_user_embedding(user_id) or np.zeros(self.embedding_dim)
     
-    @staticmethod
-    def calculate_language_score(content: Any, 
-                               user_languages: List[str] = None) -> float:
-        """Calculate language priority score for content"""
-        if not hasattr(content, 'languages') or not content.languages:
-            return 0.0
-        
+    def get_user_embedding(self, user_id: int) -> Optional[np.ndarray]:
+        """Get user embedding from cache or memory"""
         try:
-            content_languages = json.loads(content.languages)
-        except:
-            return 0.0
-        
-        max_score = 0.0
-        
-        # Check against priority languages (Telugu first)
-        for i, priority_lang in enumerate(PRIORITY_LANGUAGES):
-            for lang in content_languages:
-                lang_lower = lang.lower() if isinstance(lang, str) else ''
-                
-                if priority_lang in lang_lower or lang_lower == LANGUAGE_WEIGHTS.get(priority_lang, ''):
-                    # Telugu gets highest score, others decrease
-                    position_score = 1.0 - (i * 0.1)
-                    priority_weight = LANGUAGE_WEIGHTS.get(priority_lang, 0.5)
-                    
-                    score = position_score * priority_weight
-                    max_score = max(max_score, score)
-                    break
-        
-        # User preference bonus
-        if user_languages:
-            for user_lang in user_languages:
-                for content_lang in content_languages:
-                    if user_lang.lower() in content_lang.lower():
-                        max_score *= 1.2  # 20% boost for user preference
-                        break
-        
-        return min(max_score, 2.0)  # Cap the boost
+            # Try memory first
+            if user_id in self._user_embeddings:
+                return self._user_embeddings[user_id]
+            
+            # Try cache
+            cached_embedding = self._get_cached_embedding(f"user_{user_id}")
+            if cached_embedding is not None:
+                self._user_embeddings[user_id] = cached_embedding
+                return cached_embedding
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error getting user embedding for user {user_id}: {e}")
+            return None
     
-    @staticmethod
-    def sort_by_language_priority(content_list: List[Any], 
-                                user_languages: List[str] = None) -> List[Any]:
-        """Sort content by language priority (Telugu first)"""
-        boosted_content = LanguagePriorityManager.apply_language_boost(
-            content_list, user_languages
-        )
-        
-        # Sort by boosted score
-        boosted_content.sort(key=lambda x: x[1], reverse=True)
-        
-        return [content for content, _ in boosted_content]
-
-class DataProcessor:
-    """Process and clean data for machine learning models"""
+    def get_content_embedding(self, content_id: int) -> Optional[np.ndarray]:
+        """Get content embedding from cache or memory"""
+        try:
+            # Try memory first
+            if content_id in self._content_embeddings:
+                return self._content_embeddings[content_id]
+            
+            # Try cache
+            cached_embedding = self._get_cached_embedding(f"content_{content_id}")
+            if cached_embedding is not None:
+                self._content_embeddings[content_id] = cached_embedding
+                return cached_embedding
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error getting content embedding for content {content_id}: {e}")
+            return None
     
-    @staticmethod
-    def extract_user_features(interactions: List[Any], 
-                            content_pool: List[Any]) -> Dict[str, Any]:
-        """Extract comprehensive user features from interactions"""
-        if not interactions:
-            return {}
-        
+    def _extract_user_features(self, interaction_data: List[Dict]) -> Dict:
+        """Extract comprehensive features from user interactions"""
         features = {
-            'interaction_counts': Counter([i.interaction_type for i in interactions]),
-            'rating_stats': DataProcessor._calculate_rating_stats(interactions),
-            'temporal_patterns': DataProcessor._analyze_temporal_patterns(interactions),
-            'content_preferences': DataProcessor._analyze_content_preferences(interactions, content_pool),
-            'engagement_metrics': DataProcessor._calculate_engagement_metrics(interactions)
+            'genres': defaultdict(float),
+            'languages': defaultdict(float),
+            'content_types': defaultdict(float),
+            'rating_patterns': defaultdict(float),
+            'temporal_patterns': defaultdict(float),
+            'sophistication': defaultdict(float)
         }
+        
+        if not interaction_data:
+            return features
+        
+        # Interaction weights
+        weights = {
+            'favorite': 3.0,
+            'watchlist': 2.5,
+            'rating': 2.0,
+            'view': 1.5,
+            'search': 1.0,
+            'like': 1.2
+        }
+        
+        for interaction in interaction_data:
+            weight = weights.get(interaction.get('interaction_type', 'view'), 1.0)
+            
+            # Recency decay
+            timestamp = interaction.get('timestamp', datetime.utcnow())
+            if isinstance(timestamp, str):
+                timestamp = datetime.fromisoformat(timestamp)
+            
+            days_ago = (datetime.utcnow() - timestamp).days
+            recency_weight = np.exp(-days_ago / 30)  # 30-day half-life
+            
+            final_weight = weight * recency_weight
+            
+            # Extract genre features
+            if 'genres' in interaction:
+                for genre in interaction['genres']:
+                    features['genres'][genre] += final_weight
+            
+            # Extract language features with Telugu priority
+            if 'languages' in interaction:
+                for language in interaction['languages']:
+                    lang_weight = LANGUAGE_PRIORITY.get(language.lower(), 0.5)
+                    features['languages'][language] += final_weight * lang_weight
+            
+            # Extract content type features
+            if 'content_type' in interaction:
+                features['content_types'][interaction['content_type']] += final_weight
+            
+            # Extract rating patterns
+            if 'rating' in interaction and interaction['rating']:
+                rating = float(interaction['rating'])
+                features['rating_patterns']['avg_rating'] += rating * final_weight
+                features['rating_patterns']['rating_count'] += final_weight
+                
+                if rating >= 8.0:
+                    features['sophistication']['high_quality_preference'] += final_weight
         
         return features
     
-    @staticmethod
-    def _calculate_rating_stats(interactions: List[Any]) -> Dict[str, float]:
-        """Calculate user rating statistics"""
-        ratings = [i.rating for i in interactions if i.rating is not None]
+    def _create_genre_embedding(self, genre_features: Dict) -> np.ndarray:
+        """Create genre preference embedding"""
+        # Define standard genres
+        standard_genres = [
+            'Action', 'Adventure', 'Animation', 'Biography', 'Comedy', 'Crime',
+            'Documentary', 'Drama', 'Family', 'Fantasy', 'History', 'Horror',
+            'Music', 'Musical', 'Mystery', 'Romance', 'Science Fiction', 'Sport',
+            'Thriller', 'War', 'Western'
+        ]
         
-        if not ratings:
-            return {'count': 0, 'mean': 0, 'std': 0}
+        embedding = np.zeros(len(standard_genres))
+        total_weight = sum(genre_features.values()) if genre_features else 1
         
-        return {
-            'count': len(ratings),
-            'mean': np.mean(ratings),
-            'std': np.std(ratings),
-            'median': np.median(ratings),
-            'min': np.min(ratings),
-            'max': np.max(ratings)
-        }
+        for i, genre in enumerate(standard_genres):
+            if genre in genre_features:
+                embedding[i] = genre_features[genre] / total_weight
+        
+        return embedding
     
-    @staticmethod
-    def _analyze_temporal_patterns(interactions: List[Any]) -> Dict[str, Any]:
-        """Analyze temporal patterns in user behavior"""
-        if not interactions:
-            return {}
+    def _create_language_embedding(self, language_features: Dict) -> np.ndarray:
+        """Create language preference embedding with Telugu priority"""
+        embedding = np.zeros(len(PRIORITY_LANGUAGES))
+        total_weight = sum(language_features.values()) if language_features else 1
         
-        hours = [i.timestamp.hour for i in interactions]
-        days = [i.timestamp.weekday() for i in interactions]
+        for i, lang in enumerate(PRIORITY_LANGUAGES):
+            if lang in language_features:
+                embedding[i] = language_features[lang] / total_weight
+            elif lang.title() in language_features:
+                embedding[i] = language_features[lang.title()] / total_weight
         
-        return {
-            'peak_hour': Counter(hours).most_common(1)[0][0] if hours else 12,
-            'weekend_ratio': sum(1 for d in days if d >= 5) / len(days) if days else 0,
-            'activity_spread': np.std(hours) if hours else 0,
-            'most_active_day': Counter(days).most_common(1)[0][0] if days else 0
-        }
+        return embedding
     
-    @staticmethod
-    def _analyze_content_preferences(interactions: List[Any], 
-                                   content_pool: List[Any]) -> Dict[str, Any]:
-        """Analyze content preferences from interactions"""
-        content_ids = [i.content_id for i in interactions]
-        content_map = {c.id: c for c in content_pool if c.id in content_ids}
+    def _normalize_embedding_dimension(self, embedding: np.ndarray) -> np.ndarray:
+        """Normalize embedding to target dimension"""
+        if len(embedding) == self.embedding_dim:
+            return embedding
+        elif len(embedding) > self.embedding_dim:
+            # Reduce dimension using PCA
+            return self.pca.fit_transform(embedding.reshape(1, -1)).flatten()[:self.embedding_dim]
+        else:
+            # Pad with zeros
+            padded = np.zeros(self.embedding_dim)
+            padded[:len(embedding)] = embedding
+            return padded
+    
+    def _cache_embedding(self, key: str, embedding: np.ndarray):
+        """Cache embedding with compression"""
+        if not self.cache:
+            return
         
-        genres = []
-        content_types = []
-        languages = []
+        try:
+            # Compress embedding
+            compressed_data = lz4.frame.compress(pickle.dumps(embedding))
+            cache_key = f"cinebrain:embedding:{key}"
+            self.cache.set(cache_key, compressed_data, timeout=86400)  # 24 hours
+        except Exception as e:
+            logger.warning(f"Failed to cache embedding {key}: {e}")
+    
+    def _get_cached_embedding(self, key: str) -> Optional[np.ndarray]:
+        """Get embedding from cache with decompression"""
+        if not self.cache:
+            return None
         
-        for content_id in content_ids:
-            content = content_map.get(content_id)
-            if not content:
-                continue
+        try:
+            cache_key = f"cinebrain:embedding:{key}"
+            compressed_data = self.cache.get(cache_key)
             
-            if content.genres:
+            if compressed_data:
+                return pickle.loads(lz4.frame.decompress(compressed_data))
+            
+            return None
+        except Exception as e:
+            logger.warning(f"Failed to get cached embedding {key}: {e}")
+            return None
+
+class SimilarityCalculator:
+    """
+    Advanced similarity calculator for users and content using multiple metrics
+    """
+    
+    def __init__(self):
+        """Initialize similarity calculator with multiple distance metrics"""
+        self.metrics = {
+            'cosine': self._cosine_similarity,
+            'euclidean': self._euclidean_similarity,
+            'pearson': self._pearson_similarity,
+            'jaccard': self._jaccard_similarity,
+            'hybrid': self._hybrid_similarity
+        }
+        
+        logger.info("CineBrain SimilarityCalculator initialized with multiple metrics")
+    
+    def calculate_user_similarity(self, user1_embedding: np.ndarray, 
+                                 user2_embedding: np.ndarray,
+                                 metric: str = 'hybrid') -> float:
+        """
+        Calculate similarity between two user embeddings
+        
+        Args:
+            user1_embedding: First user's embedding vector
+            user2_embedding: Second user's embedding vector
+            metric: Similarity metric to use
+            
+        Returns:
+            float: Similarity score between 0 and 1
+        """
+        try:
+            if metric not in self.metrics:
+                metric = 'hybrid'
+            
+            return self.metrics[metric](user1_embedding, user2_embedding)
+            
+        except Exception as e:
+            logger.error(f"Error calculating user similarity: {e}")
+            return 0.0
+    
+    def calculate_content_similarity(self, content1_embedding: np.ndarray,
+                                   content2_embedding: np.ndarray,
+                                   metric: str = 'hybrid') -> float:
+        """
+        Calculate similarity between two content embeddings
+        
+        Args:
+            content1_embedding: First content's embedding vector
+            content2_embedding: Second content's embedding vector
+            metric: Similarity metric to use
+            
+        Returns:
+            float: Similarity score between 0 and 1
+        """
+        try:
+            if metric not in self.metrics:
+                metric = 'hybrid'
+            
+            return self.metrics[metric](content1_embedding, content2_embedding)
+            
+        except Exception as e:
+            logger.error(f"Error calculating content similarity: {e}")
+            return 0.0
+    
+    def find_similar_users(self, target_user_embedding: np.ndarray,
+                          user_embeddings: Dict[int, np.ndarray],
+                          top_k: int = 10) -> List[Tuple[int, float]]:
+        """
+        Find most similar users to target user
+        
+        Args:
+            target_user_embedding: Target user's embedding
+            user_embeddings: Dictionary of user embeddings
+            top_k: Number of similar users to return
+            
+        Returns:
+            List of (user_id, similarity_score) tuples
+        """
+        try:
+            similarities = []
+            
+            for user_id, embedding in user_embeddings.items():
+                similarity = self.calculate_user_similarity(target_user_embedding, embedding)
+                similarities.append((user_id, similarity))
+            
+            # Sort by similarity and return top K
+            similarities.sort(key=lambda x: x[1], reverse=True)
+            return similarities[:top_k]
+            
+        except Exception as e:
+            logger.error(f"Error finding similar users: {e}")
+            return []
+    
+    def find_similar_content(self, target_content_embedding: np.ndarray,
+                           content_embeddings: Dict[int, np.ndarray],
+                           top_k: int = 20) -> List[Tuple[int, float]]:
+        """
+        Find most similar content to target content
+        
+        Args:
+            target_content_embedding: Target content's embedding
+            content_embeddings: Dictionary of content embeddings
+            top_k: Number of similar content items to return
+            
+        Returns:
+            List of (content_id, similarity_score) tuples
+        """
+        try:
+            similarities = []
+            
+            for content_id, embedding in content_embeddings.items():
+                similarity = self.calculate_content_similarity(target_content_embedding, embedding)
+                similarities.append((content_id, similarity))
+            
+            # Sort by similarity and return top K
+            similarities.sort(key=lambda x: x[1], reverse=True)
+            return similarities[:top_k]
+            
+        except Exception as e:
+            logger.error(f"Error finding similar content: {e}")
+            return []
+    
+    def _cosine_similarity(self, vec1: np.ndarray, vec2: np.ndarray) -> float:
+        """Calculate cosine similarity"""
+        try:
+            return cosine_similarity([vec1], [vec2])[0][0]
+        except:
+            return 0.0
+    
+    def _euclidean_similarity(self, vec1: np.ndarray, vec2: np.ndarray) -> float:
+        """Calculate euclidean similarity (inverted distance)"""
+        try:
+            distance = euclidean_distances([vec1], [vec2])[0][0]
+            return 1 / (1 + distance)
+        except:
+            return 0.0
+    
+    def _hybrid_similarity(self, vec1: np.ndarray, vec2: np.ndarray) -> float:
+        """Calculate hybrid similarity combining multiple metrics"""
+        try:
+            cosine = self._cosine_similarity(vec1, vec2)
+            euclidean = self._euclidean_similarity(vec1, vec2)
+            
+            # Weighted combination
+            return cosine * 0.7 + euclidean * 0.3
+        except:
+            return 0.0
+
+class CacheManager:
+    """
+    Advanced cache manager for personalization system with intelligent invalidation
+    """
+    
+    def __init__(self, cache=None):
+        """
+        Initialize cache manager
+        
+        Args:
+            cache: Cache backend (Redis or Simple cache)
+        """
+        self.cache = cache
+        self.default_timeout = 3600  # 1 hour
+        self.cache_stats = defaultdict(int)
+        
+        logger.info("CineBrain CacheManager initialized")
+    
+    def get_user_recommendations(self, user_id: int, category: str = 'general') -> Optional[List[Dict]]:
+        """Get cached user recommendations"""
+        try:
+            cache_key = f"cinebrain:user_recs:{user_id}:{category}"
+            cached_data = self.cache.get(cache_key) if self.cache else None
+            
+            if cached_data:
+                self.cache_stats['hits'] += 1
+                return json.loads(cached_data)
+            
+            self.cache_stats['misses'] += 1
+            return None
+            
+        except Exception as e:
+            logger.warning(f"Error getting cached recommendations: {e}")
+            return None
+    
+    def set_user_recommendations(self, user_id: int, recommendations: List[Dict],
+                               category: str = 'general', timeout: int = None):
+        """Cache user recommendations"""
+        try:
+            if not self.cache:
+                return
+            
+            cache_key = f"cinebrain:user_recs:{user_id}:{category}"
+            cache_timeout = timeout or self.default_timeout
+            
+            self.cache.set(cache_key, json.dumps(recommendations), timeout=cache_timeout)
+            self.cache_stats['sets'] += 1
+            
+        except Exception as e:
+            logger.warning(f"Error caching recommendations: {e}")
+    
+    def invalidate_user_cache(self, user_id: int):
+        """Invalidate all cache entries for a user"""
+        try:
+            if not self.cache:
+                return
+            
+            # Define cache patterns to invalidate
+            patterns = [
+                f"cinebrain:user_recs:{user_id}:*",
+                f"cinebrain:embedding:user_{user_id}",
+                f"cinebrain:profile:{user_id}",
+                f"cinebrain:similar_users:{user_id}"
+            ]
+            
+            for pattern in patterns:
                 try:
-                    genres.extend(json.loads(content.genres))
+                    # For Redis
+                    if hasattr(self.cache, 'delete_many'):
+                        keys = self.cache.keys(pattern)
+                        if keys:
+                            self.cache.delete_many(keys)
+                    # For simple cache
+                    else:
+                        self.cache.delete(pattern)
                 except:
                     pass
             
-            if content.content_type:
-                content_types.append(content.content_type)
+            self.cache_stats['invalidations'] += 1
+            logger.info(f"Invalidated cache for user {user_id}")
             
-            if content.languages:
+        except Exception as e:
+            logger.warning(f"Error invalidating user cache: {e}")
+    
+    def get_cache_stats(self) -> Dict:
+        """Get cache performance statistics"""
+        total_requests = self.cache_stats['hits'] + self.cache_stats['misses']
+        hit_rate = (self.cache_stats['hits'] / total_requests * 100) if total_requests > 0 else 0
+        
+        return {
+            'hits': self.cache_stats['hits'],
+            'misses': self.cache_stats['misses'],
+            'sets': self.cache_stats['sets'],
+            'invalidations': self.cache_stats['invalidations'],
+            'hit_rate_percent': round(hit_rate, 2),
+            'total_requests': total_requests
+        }
+
+class PerformanceOptimizer:
+    """
+    Performance optimization utilities for the personalization system
+    """
+    
+    def __init__(self):
+        """Initialize performance optimizer"""
+        self.execution_times = defaultdict(list)
+        self.thread_pool = ThreadPoolExecutor(max_workers=4)
+        
+        logger.info("CineBrain PerformanceOptimizer initialized")
+    
+    def time_function(self, func_name: str):
+        """Decorator to time function execution"""
+        def decorator(func):
+            @wraps(func)
+            def wrapper(*args, **kwargs):
+                start_time = time.time()
+                result = func(*args, **kwargs)
+                execution_time = time.time() - start_time
+                
+                self.execution_times[func_name].append(execution_time)
+                
+                # Keep only last 100 measurements
+                if len(self.execution_times[func_name]) > 100:
+                    self.execution_times[func_name] = self.execution_times[func_name][-100:]
+                
+                return result
+            return wrapper
+        return decorator
+    
+    def get_performance_stats(self) -> Dict:
+        """Get performance statistics"""
+        stats = {}
+        
+        for func_name, times in self.execution_times.items():
+            if times:
+                stats[func_name] = {
+                    'avg_time': np.mean(times),
+                    'min_time': np.min(times),
+                    'max_time': np.max(times),
+                    'call_count': len(times),
+                    'total_time': np.sum(times)
+                }
+        
+        return stats
+    
+    def batch_process(self, items: List, process_func, batch_size: int = 10):
+        """Process items in parallel batches"""
+        try:
+            results = []
+            
+            # Split into batches
+            batches = [items[i:i + batch_size] for i in range(0, len(items), batch_size)]
+            
+            # Process batches in parallel
+            future_to_batch = {
+                self.thread_pool.submit(process_func, batch): batch 
+                for batch in batches
+            }
+            
+            for future in future_to_batch:
                 try:
-                    languages.extend(json.loads(content.languages))
-                except:
-                    pass
-        
-        return {
-            'top_genres': [g for g, _ in Counter(genres).most_common(5)],
-            'content_type_dist': dict(Counter(content_types)),
-            'top_languages': [l for l, _ in Counter(languages).most_common(3)],
-            'genre_diversity': len(set(genres)) / max(len(genres), 1)
-        }
-    
-    @staticmethod
-    def _calculate_engagement_metrics(interactions: List[Any]) -> Dict[str, float]:
-        """Calculate user engagement metrics"""
-        if not interactions:
-            return {'total': 0, 'recent': 0, 'consistency': 0}
-        
-        total_interactions = len(interactions)
-        recent_cutoff = datetime.utcnow() - timedelta(days=30)
-        recent_interactions = len([i for i in interactions if i.timestamp > recent_cutoff])
-        
-        # Calculate consistency (activity spread over time)
-        dates = [i.timestamp.date() for i in interactions]
-        unique_dates = len(set(dates))
-        date_span = (max(dates) - min(dates)).days + 1 if len(dates) > 1 else 1
-        consistency = unique_dates / date_span
-        
-        return {
-            'total': total_interactions,
-            'recent': recent_interactions,
-            'consistency': consistency,
-            'avg_per_day': total_interactions / max(date_span, 1)
-        }
+                    batch_result = future.result(timeout=30)
+                    results.extend(batch_result)
+                except Exception as e:
+                    logger.warning(f"Batch processing error: {e}")
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"Error in batch processing: {e}")
+            return []
 
-def safe_json_loads(json_str: str, default=None):
-    """Safely load JSON string with fallback"""
-    try:
-        return json.loads(json_str) if json_str else (default or [])
-    except (json.JSONDecodeError, TypeError):
-        return default or []
+# Utility functions
+def create_cache_key(*args, **kwargs) -> str:
+    """Create a consistent cache key from arguments"""
+    key_parts = [str(arg) for arg in args]
+    key_parts.extend([f"{k}={v}" for k, v in sorted(kwargs.items())])
+    key_string = ":".join(key_parts)
+    return hashlib.md5(key_string.encode()).hexdigest()
 
-def calculate_content_quality_score(content: Any) -> float:
-    """Calculate overall quality score for content"""
-    score = 0.0
-    
-    # Rating component (40%)
-    if hasattr(content, 'rating') and content.rating:
-        score += (content.rating / 10.0) * 0.4
-    
-    # Vote count component (20%)
-    if hasattr(content, 'vote_count') and content.vote_count:
-        vote_score = min(content.vote_count / 1000.0, 1.0)
-        score += vote_score * 0.2
-    
-    # Popularity component (20%)
-    if hasattr(content, 'popularity') and content.popularity:
-        pop_score = min(content.popularity / 100.0, 1.0)
-        score += pop_score * 0.2
-    
-    # Language priority bonus (20%)
-    if hasattr(content, 'languages') and content.languages:
-        lang_score = LanguagePriorityManager.calculate_language_score(content)
-        score += (lang_score / 2.0) * 0.2  # Normalize to 0-1 range
-    
-    return min(score, 1.0)
+def normalize_vector(vector: np.ndarray) -> np.ndarray:
+    """Normalize a vector to unit length"""
+    norm = np.linalg.norm(vector)
+    if norm == 0:
+        return vector
+    return vector / norm
+
+def decay_weight(days_ago: int, half_life: int = 30) -> float:
+    """Calculate exponential decay weight based on time"""
+    return np.exp(-days_ago / half_life)
