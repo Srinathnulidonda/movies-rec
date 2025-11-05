@@ -1,137 +1,112 @@
 # backend/personalized/__init__.py
 
-"""
-CineBrain Personalized Recommendation System
-===========================================
+__version__ = "3.0.0"
+__author__ = "CineBrain AI Team"
 
-A modern, continuously learning recommendation engine that adapts to user preferences
-in real-time, similar to TikTok, YouTube, or Instagram feeds.
-
-Key Features:
-- Real-time user preference learning
-- Dynamic user embeddings that evolve with interactions
-- Hybrid recommendation algorithms (content-based, collaborative, graph-based)
-- Telugu-first language prioritization
-- Cinematic DNA analysis for sophisticated content matching
-- Production-grade caching and performance optimization
-
-Architecture:
-- profile_analyzer.py: Continuous user preference learning
-- recommendation_engine.py: Hybrid recommendation generation
-- utils.py: Core utilities, embeddings, similarity calculations
-- routes.py: Flask API endpoints
-"""
-
-__version__ = "2.0.0"
-__author__ = "CineBrain Team"
-
-# Core imports for external use
-from .profile_analyzer import (
-    UserProfileAnalyzer,
-    CinematicDNAAnalyzer,
-    RealTimeProfileUpdater
-)
-
-from .recommendation_engine import (
-    HybridRecommendationEngine,
-    ModernPersonalizationEngine,
-    RecommendationOrchestrator
-)
-
+from .profile_analyzer import UserProfileAnalyzer
 from .utils import (
     EmbeddingManager,
-    SimilarityCalculator,
+    SimilarityEngine, 
     CacheManager,
-    PerformanceOptimizer
+    TeluguPriorityManager
 )
 
-from .routes import personalized_bp
+_profile_analyzer = None
+_embedding_manager = None
+_similarity_engine = None
+_cache_manager = None
+_recommendation_engine = None
 
-# Package-level configuration
-PACKAGE_CONFIG = {
-    'version': __version__,
-    'telugu_priority': True,
-    'real_time_learning': True,
-    'cache_enabled': True,
-    'performance_mode': 'production',
-    'supported_algorithms': [
-        'content_based',
-        'collaborative_filtering', 
-        'graph_based',
-        'clustering',
-        'cinematic_dna',
-        'hybrid_scoring'
-    ]
-}
+def get_profile_analyzer():
+    global _profile_analyzer
+    if _profile_analyzer is None:
+        _profile_analyzer = UserProfileAnalyzer()
+    return _profile_analyzer
 
-def initialize_personalization_system(app, db, models, services, cache=None):
-    """
-    Initialize the complete CineBrain personalization system
+def get_embedding_manager():
+    global _embedding_manager
+    if _embedding_manager is None:
+        _embedding_manager = EmbeddingManager()
+    return _embedding_manager
+
+def get_similarity_engine():
+    global _similarity_engine
+    if _similarity_engine is None:
+        _similarity_engine = SimilarityEngine()
+    return _similarity_engine
+
+def get_cache_manager():
+    global _cache_manager
+    if _cache_manager is None:
+        _cache_manager = CacheManager()
+    return _cache_manager
+
+def get_recommendation_engine():
+    global _recommendation_engine
+    if _recommendation_engine is None:
+        from .recommendation_engine import HybridRecommendationEngine
+        _recommendation_engine = HybridRecommendationEngine()
+    return _recommendation_engine
+
+def initialize_personalization_system(app=None, db=None, models=None, cache=None):
+    global _profile_analyzer, _embedding_manager, _similarity_engine, _cache_manager, _recommendation_engine
     
-    Args:
-        app: Flask application instance
-        db: SQLAlchemy database instance
-        models: Dictionary of database models
-        services: Dictionary of external services
-        cache: Cache backend (Redis/Simple)
-    
-    Returns:
-        dict: Initialized personalization components
-    """
     try:
-        # Initialize core utilities
-        embedding_manager = EmbeddingManager(cache=cache)
-        similarity_calculator = SimilarityCalculator()
-        cache_manager = CacheManager(cache=cache)
+        _cache_manager = CacheManager(cache_backend=cache)
         
-        # Initialize profile analyzer
-        profile_analyzer = UserProfileAnalyzer(
-            db=db,
-            models=models,
-            embedding_manager=embedding_manager,
-            cache_manager=cache_manager
+        _embedding_manager = EmbeddingManager(cache_manager=_cache_manager)
+        
+        _similarity_engine = SimilarityEngine(
+            embedding_manager=_embedding_manager,
+            cache_manager=_cache_manager
         )
         
-        # Initialize recommendation engine
-        recommendation_engine = ModernPersonalizationEngine(
+        _profile_analyzer = UserProfileAnalyzer(
             db=db,
             models=models,
-            profile_analyzer=profile_analyzer,
-            similarity_calculator=similarity_calculator,
-            cache_manager=cache_manager
+            embedding_manager=_embedding_manager,
+            similarity_engine=_similarity_engine,
+            cache_manager=_cache_manager
         )
         
-        # Register Flask blueprint
-        app.register_blueprint(personalized_bp, url_prefix='/api/personalized')
+        from .recommendation_engine import HybridRecommendationEngine
+        _recommendation_engine = HybridRecommendationEngine(
+            db=db,
+            models=models,
+            cache_manager=_cache_manager
+        )
         
-        # Store components in app context for access by routes
-        app.personalization_system = {
-            'profile_analyzer': profile_analyzer,
-            'recommendation_engine': recommendation_engine,
-            'embedding_manager': embedding_manager,
-            'similarity_calculator': similarity_calculator,
-            'cache_manager': cache_manager
+        if models and db and cache:
+            from .routes import init_personalized_routes
+            init_personalized_routes(models, db, cache)
+        
+        if app:
+            app.logger.info("🧠 CineBrain Personalization System v3.0 initialized successfully")
+        
+        return {
+            'profile_analyzer': _profile_analyzer,
+            'embedding_manager': _embedding_manager,
+            'similarity_engine': _similarity_engine,
+            'cache_manager': _cache_manager,
+            'recommendation_engine': _recommendation_engine,
+            'status': 'initialized'
         }
         
-        return app.personalization_system
-        
     except Exception as e:
-        app.logger.error(f"Failed to initialize CineBrain personalization system: {e}")
-        return None
+        if app:
+            app.logger.error(f"Failed to initialize CineBrain personalization system: {e}")
+        return {'status': 'failed', 'error': str(e)}
 
-# Export all public components
 __all__ = [
     'UserProfileAnalyzer',
-    'CinematicDNAAnalyzer', 
-    'RealTimeProfileUpdater',
-    'HybridRecommendationEngine',
-    'ModernPersonalizationEngine',
-    'RecommendationOrchestrator',
-    'EmbeddingManager',
-    'SimilarityCalculator',
+    'EmbeddingManager', 
+    'SimilarityEngine',
     'CacheManager',
-    'PerformanceOptimizer',
-    'personalized_bp',
-    'initialize_personalization_system',
-    'PACKAGE_CONFIG'
+    'TeluguPriorityManager',
+    'get_profile_analyzer',
+    'get_embedding_manager', 
+    'get_similarity_engine',
+    'get_cache_manager',
+    'get_recommendation_engine',
+    'initialize_personalization_system'
 ]

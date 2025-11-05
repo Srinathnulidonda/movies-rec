@@ -1,4 +1,5 @@
-# user/avatar.py
+# backend/user/avatar.py
+
 from flask import request, jsonify
 from datetime import datetime
 import logging
@@ -10,11 +11,10 @@ import base64
 import io
 from PIL import Image
 import re
-from .utils import require_auth, db, User
+from .utils import require_auth, db, User, cache_delete, get_cache_key
 
 logger = logging.getLogger(__name__)
 
-# Configure Cloudinary
 cloudinary.config(
     cloud_name=os.environ.get('CLOUDINARY_CLOUD_NAME'),
     api_key=os.environ.get('CLOUDINARY_API_KEY'),
@@ -23,7 +23,6 @@ cloudinary.config(
 )
 
 def validate_avatar_upload(file_data):
-    """Validate uploaded avatar file"""
     try:
         if file_data.startswith('data:image/'):
             header, encoded = file_data.split(',', 1)
@@ -50,7 +49,6 @@ def validate_avatar_upload(file_data):
         return False, f"Invalid image data: {str(e)}"
 
 def process_avatar_image(file_data):
-    """Process and optimize avatar image"""
     try:
         if isinstance(file_data, str) and file_data.startswith('data:image/'):
             header, encoded = file_data.split(',', 1)
@@ -78,11 +76,9 @@ def process_avatar_image(file_data):
         return None
 
 def clean_username_for_storage(username):
-    """Clean username for safe storage"""
     return re.sub(r'[^a-zA-Z0-9_-]', '_', username.lower())
 
 def delete_old_avatar(current_user):
-    """Delete old avatar from Cloudinary"""
     if not current_user.avatar_url:
         return
         
@@ -101,7 +97,6 @@ def delete_old_avatar(current_user):
             logger.warning(f"Failed to delete old avatar: {e}")
 
 def upload_avatar_to_cloudinary(processed_image, username):
-    """Upload avatar to Cloudinary"""
     clean_username = clean_username_for_storage(username)
     
     upload_result = cloudinary.uploader.upload(
@@ -121,7 +116,6 @@ def upload_avatar_to_cloudinary(processed_image, username):
     return upload_result
 
 def is_cloudinary_configured():
-    """Check if Cloudinary is configured"""
     return all([
         os.environ.get('CLOUDINARY_CLOUD_NAME'),
         os.environ.get('CLOUDINARY_API_KEY'),
@@ -130,7 +124,6 @@ def is_cloudinary_configured():
 
 @require_auth
 def upload_avatar(current_user):
-    """Handle avatar upload"""
     try:
         data = request.get_json()
         
@@ -157,6 +150,9 @@ def upload_avatar(current_user):
             
             current_user.avatar_url = upload_result['secure_url']
             db.session.commit()
+            
+            cache_key = get_cache_key('user_profile', current_user.id)
+            cache_delete(cache_key)
             
             logger.info(f"CineBrain: Avatar uploaded successfully for user {current_user.username} (ID: {current_user.id})")
             
@@ -187,7 +183,6 @@ def upload_avatar(current_user):
 
 @require_auth
 def delete_avatar(current_user):
-    """Handle avatar deletion"""
     try:
         if not current_user.avatar_url:
             return jsonify({'error': 'No avatar to delete'}), 400
@@ -197,6 +192,9 @@ def delete_avatar(current_user):
         
         current_user.avatar_url = None
         db.session.commit()
+        
+        cache_key = get_cache_key('user_profile', current_user.id)
+        cache_delete(cache_key)
         
         logger.info(f"CineBrain: Avatar deleted for user {current_user.username} (ID: {current_user.id})")
         
@@ -213,7 +211,6 @@ def delete_avatar(current_user):
 
 @require_auth
 def get_avatar_url(current_user):
-    """Get current avatar URL"""
     try:
         return jsonify({
             'success': True,
