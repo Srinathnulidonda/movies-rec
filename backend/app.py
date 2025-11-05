@@ -1,4 +1,3 @@
-# backend/app.py
 from typing import Optional
 from flask import Flask, request, jsonify, session, render_template
 from flask_sqlalchemy import SQLAlchemy
@@ -6,7 +5,7 @@ from flask_cors import CORS
 from flask_caching import Cache
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta
-from sqlalchemy import func, and_, or_, desc, text, Index
+from sqlalchemy import func, and_, or_, desc, text
 import requests
 import os
 import json
@@ -43,21 +42,18 @@ from services.algorithms import (
     HybridRecommendationEngine,
     UltraPowerfulSimilarityEngine
 )
+from services.personalized import init_personalized
 from services.details import init_details_service, SlugManager, ContentService
 from services.new_releases import init_cinebrain_new_releases_service
 from services.review import init_review_service
 from user.routes import user_bp, init_user_routes
-from personalized.routes import personalized_bp
-from personalized import initialize_personalization_system
 import re
 from dotenv import load_dotenv
-
 load_dotenv()
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'your-secret-key-change-in-production')
 DATABASE_URL = os.environ.get('DATABASE_URL')
-
 if os.environ.get('DATABASE_URL'):
     app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL').replace('postgres://', 'postgresql://')
 else:
@@ -193,25 +189,19 @@ def auth_required(f):
     return decorated_function
 
 class User(db.Model):
-    __tablename__ = 'users'
-    
     id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(80), unique=True, nullable=False, index=True)
-    email = db.Column(db.String(120), unique=True, nullable=False, index=True)
+    username = db.Column(db.String(80), unique=True, nullable=False)
+    email = db.Column(db.String(120), unique=True, nullable=False)
     password_hash = db.Column(db.String(255), nullable=False)
     is_admin = db.Column(db.Boolean, default=False)
     preferred_languages = db.Column(db.Text)
     preferred_genres = db.Column(db.Text)
     location = db.Column(db.String(100))
     avatar_url = db.Column(db.String(255))
-    created_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)
-    last_active = db.Column(db.DateTime, default=datetime.utcnow, index=True)
-    profile_public = db.Column(db.Boolean, default=True)
-    activity_tracking = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    last_active = db.Column(db.DateTime, default=datetime.utcnow)
     
     reviews = db.relationship('Review', backref='user', lazy='dynamic')
-    interactions = db.relationship('UserInteraction', backref='user', lazy='dynamic')
-    device_activities = db.relationship('UserDeviceActivity', backref='user', lazy='dynamic')
 
 class Content(db.Model):
     __tablename__ = 'content'
@@ -246,7 +236,6 @@ class Content(db.Model):
     
     reviews = db.relationship('Review', backref='content', lazy='dynamic')
     cast_crew = db.relationship('ContentPerson', backref='content', lazy='dynamic')
-    interactions = db.relationship('UserInteraction', backref='content', lazy='dynamic')
 
     def ensure_slug(self):
         if not self.slug and self.title:
@@ -261,42 +250,18 @@ class Content(db.Model):
         return self.slug
 
 class UserInteraction(db.Model):
-    __tablename__ = 'user_interactions'
-    
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
-    content_id = db.Column(db.Integer, db.ForeignKey('content.id'), nullable=False, index=True)
-    interaction_type = db.Column(db.String(20), nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    content_id = db.Column(db.Integer, db.ForeignKey('content.id'), nullable=False)
+    interaction_type = db.Column(db.String(20), nullable=False)
     rating = db.Column(db.Float)
     interaction_metadata = db.Column(db.JSON)
-    timestamp = db.Column(db.DateTime, default=datetime.utcnow, index=True)
-    
-    __table_args__ = (
-        Index('idx_user_content', 'user_id', 'content_id'),
-        Index('idx_user_timestamp', 'user_id', 'timestamp'),
-        Index('idx_interaction_type', 'interaction_type'),
-    )
-
-class UserDeviceActivity(db.Model):
-    __tablename__ = 'user_device_activities'
-    
-    id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
-    device_type = db.Column(db.String(20), nullable=False)
-    browser = db.Column(db.String(50), nullable=False)
-    os = db.Column(db.String(50), nullable=False)
-    ip_address = db.Column(db.String(45), nullable=False)
-    user_agent = db.Column(db.Text)
-    timestamp = db.Column(db.DateTime, default=datetime.utcnow, index=True)
-    
-    __table_args__ = (
-        Index('idx_user_device_time', 'user_id', 'timestamp'),
-    )
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
 
 class AdminRecommendation(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     content_id = db.Column(db.Integer, db.ForeignKey('content.id'), nullable=False)
-    admin_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    admin_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     recommendation_type = db.Column(db.String(50))
     description = db.Column(db.Text)
     is_active = db.Column(db.Boolean, default=True)
@@ -350,7 +315,7 @@ class Review(db.Model):
     
     id = db.Column(db.Integer, primary_key=True)
     content_id = db.Column(db.Integer, db.ForeignKey('content.id'), nullable=False)
-    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     rating = db.Column(db.Float)
     title = db.Column(db.String(255))
     review_text = db.Column(db.Text)
@@ -712,7 +677,6 @@ models = {
     'User': User,
     'Content': Content,
     'UserInteraction': UserInteraction,
-    'UserDeviceActivity': UserDeviceActivity,
     'AdminRecommendation': AdminRecommendation,
     'Review': Review,
     'Person': Person,
@@ -765,6 +729,16 @@ except Exception as e:
     logger.error(f"Failed to initialize CineBrain support service: {e}")
 
 try:
+    personalized_engine = init_personalized(app, db, models, services, cache)
+    if personalized_engine:
+        logger.info("CineBrain personalized recommendation system initialized successfully")
+        services['personalized_engine'] = personalized_engine
+    else:
+        logger.warning("CineBrain personalized recommendation system failed to initialize")
+except Exception as e:
+    logger.error(f"Failed to initialize CineBrain personalized recommendation system: {e}")
+
+try:
     init_auth(app, db, User)
     app.register_blueprint(auth_bp)
     logger.info("CineBrain enhanced authentication service initialized successfully")
@@ -779,6 +753,13 @@ except Exception as e:
     logger.error(f"Failed to initialize CineBrain admin service: {e}")
 
 try:
+    init_user_routes(app, db, models, {**services, 'cache': cache})
+    app.register_blueprint(user_bp)
+    logger.info("CineBrain user module initialized successfully")
+except Exception as e:
+    logger.error(f"Failed to initialize CineBrain user module: {e}")
+
+try:
     critics_choice_service = init_critics_choice_service(app, db, models, services, cache)
     app.register_blueprint(critics_choice_bp)
     if critics_choice_service:
@@ -788,39 +769,6 @@ try:
         logger.warning("CineBrain Critics Choice service failed to initialize")
 except Exception as e:
     logger.error(f"Failed to initialize CineBrain Critics Choice service: {e}")
-
-personalization_services = {}
-try:
-    personalization_components = initialize_personalization_system(
-        app=app,
-        db=db,
-        models=models,
-        cache=cache
-    )
-    
-    if personalization_components['status'] == 'initialized':
-        app.register_blueprint(personalized_bp)
-        personalization_services = {
-            'profile_analyzer': personalization_components.get('profile_analyzer'),
-            'embedding_manager': personalization_components.get('embedding_manager'),
-            'similarity_engine': personalization_components.get('similarity_engine'),
-            'cache_manager': personalization_components.get('cache_manager'),
-            'recommendation_engine': personalization_components.get('recommendation_engine')
-        }
-        services.update(personalization_components)
-        logger.info("🧠 CineBrain Advanced Personalization Engine v3.0 initialized successfully")
-    else:
-        logger.warning("⚠️ CineBrain Advanced Personalization Engine failed to initialize")
-except Exception as e:
-    logger.error(f"❌ Failed to initialize CineBrain Advanced Personalization Engine: {e}")
-
-try:
-    user_services = {**services, **personalization_services, 'cache': cache}
-    init_user_routes(app, db, models, user_services)
-    app.register_blueprint(user_bp)
-    logger.info("✅ CineBrain user module initialized successfully")
-except Exception as e:
-    logger.error(f"❌ Failed to initialize CineBrain user module: {e}")
 
 def setup_support_monitoring():
     def support_monitor():
@@ -2229,9 +2177,7 @@ def performance_check():
                 'details_service': 'enabled' if details_service else 'disabled',
                 'content_service': 'enabled' if content_service else 'disabled',
                 'new_releases_service': 'enabled' if cinebrain_new_releases_service else 'disabled',
-                'critics_choice_service': 'enabled' if 'critics_choice_service' in services else 'disabled',
-                'user_module': 'enabled' if 'user' in app.blueprints else 'disabled',
-                'personalization_engine': 'enabled' if 'personalized' in app.blueprints else 'disabled'
+                'critics_choice_service': 'enabled' if 'critics_choice_service' in services else 'disabled'
             },
             'performance': {
                 'thread_pool_workers': 3,
@@ -2261,7 +2207,7 @@ def health_check():
         health_info = {
             'status': 'healthy',
             'timestamp': datetime.utcnow().isoformat(),
-            'version': '6.0.0',
+            'version': '5.5.0',
             'python_version': '3.13.4',
             'cinebrain_brand': 'CineBrain Entertainment Platform'
         }
@@ -2295,12 +2241,11 @@ def health_check():
             'details_service': 'enabled' if details_service else 'disabled',
             'content_service': 'enabled' if content_service else 'disabled',
             'cast_crew': 'cinebrain_fully_enabled',
-            'support_service': 'enabled' if 'support' in app.blueprints else 'disabled',
+            'support_service': 'enabled' if 'support_bp' in app.blueprints else 'disabled',
             'admin_notifications': 'cinebrain_enabled',
             'monitoring': 'cinebrain_active',
-            'auth_service': 'enabled' if 'auth' in app.blueprints else 'disabled',
-            'user_module': 'enabled' if 'user' in app.blueprints else 'disabled',
-            'personalized_module': 'enabled' if 'personalized' in app.blueprints else 'disabled'
+            'auth_service': 'enabled' if 'auth_bp' in app.blueprints else 'disabled',
+            'user_service': 'enabled' if 'user_bp' in app.blueprints else 'disabled'
         }
         
         try:
@@ -2342,41 +2287,29 @@ def health_check():
         except Exception as e:
             health_info['cinebrain_support_status'] = {'error': str(e)}
         
-        try:
-            total_users = User.query.count()
-            total_interactions = UserInteraction.query.count()
-            active_users = User.query.filter(
-                User.last_active >= datetime.utcnow() - timedelta(days=7)
-            ).count()
-            
-            health_info['cinebrain_user_stats'] = {
-                'total_users': total_users,
-                'total_interactions': total_interactions,
-                'active_users_7d': active_users,
-                'user_device_activities': UserDeviceActivity.query.count()
-            }
-        except Exception as e:
-            health_info['cinebrain_user_stats'] = {'error': str(e)}
-        
         if cinebrain_new_releases_service:
             health_info['cinebrain_new_releases'] = cinebrain_new_releases_service.get_stats()
         
         health_info['cinebrain_performance'] = {
             'optimizations_applied': [
                 'cinebrain_python_3.13_compatibility',
-                'cinebrain_modular_user_system',
-                'cinebrain_advanced_personalization_v3',
+                'cinebrain_reduced_api_timeouts', 
+                'cinebrain_optimized_thread_pools',
                 'cinebrain_enhanced_caching',
-                'cinebrain_jwt_authentication',
-                'cinebrain_device_tracking',
-                'cinebrain_real_time_learning',
-                'cinebrain_telugu_first_prioritization',
-                'cinebrain_ai_powered_recommendations',
-                'cinebrain_production_ready_architecture'
+                'cinebrain_error_handling_improvements',
+                'cinebrain_cast_crew_optimization',
+                'cinebrain_support_service_integration',
+                'cinebrain_admin_notification_system',
+                'cinebrain_real_time_monitoring',
+                'cinebrain_auth_service_enhanced',
+                'cinebrain_user_service_modular',
+                'cinebrain_new_releases_service',
+                'cinebrain_enhanced_critics_choice_service'
             ],
-            'modules_loaded': list(app.blueprints.keys()),
-            'telugu_priority': 'cinebrain_enabled',
-            'personalization': 'cinebrain_v3_enabled'
+            'memory_optimizations': 'cinebrain_enabled',
+            'unicode_fixes': 'cinebrain_applied',
+            'monitoring': 'cinebrain_background_threads_active',
+            'telugu_priority': 'cinebrain_enabled'
         }
         
         return jsonify(health_info), 200
@@ -2502,11 +2435,7 @@ def create_tables():
                     username='admin',
                     email='srinathnulidonda.dev@gmail.com',
                     password_hash=generate_password_hash('admin123'),
-                    is_admin=True,
-                    preferred_languages='["telugu", "english"]',
-                    preferred_genres='[]',
-                    profile_public=True,
-                    activity_tracking=True
+                    is_admin=True
                 )
                 db.session.add(admin)
                 db.session.commit()
@@ -2532,12 +2461,12 @@ def create_tables():
 create_tables()
 
 if __name__ == '__main__':
-    print("=== Running CineBrain Flask v6.0 with Advanced User & Personalization Modules ===")
+    print("=== Running CineBrain Flask in development mode with Modular User System ===")
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('FLASK_ENV') == 'development'
     app.run(host='0.0.0.0', port=port, debug=debug)
 else:
-    print("=== CineBrain Flask App v6.0 - MODULAR ARCHITECTURE WITH AI PERSONALIZATION ===")
+    print("=== CineBrain Flask app imported by Gunicorn - MODULAR USER SYSTEM ===")
     print(f"App name: {app.name}")
     print(f"Python version: 3.13.4")
     print(f"CineBrain brand: CineBrain Entertainment Platform")
@@ -2547,22 +2476,21 @@ else:
     print(f"CineBrain content service status: {'Initialized' if content_service else 'Failed to initialize'}")
     print(f"CineBrain new releases service status: {'Integrated' if cinebrain_new_releases_service else 'Failed to initialize'}")
     print(f"CineBrain critics choice service status: {'Integrated' if 'critics_choice_service' in services else 'Failed to initialize'}")
-    print(f"CineBrain support service status: {'Integrated' if 'support' in app.blueprints else 'Not integrated'}")
-    print(f"CineBrain auth service status: {'Integrated' if 'auth' in app.blueprints else 'Not integrated'}")
-    print(f"CineBrain user module status: {'✅ Integrated' if 'user' in app.blueprints else '❌ Not integrated'}")
-    print(f"CineBrain personalized module status: {'🧠 Integrated' if 'personalized' in app.blueprints else '❌ Not integrated'}")
+    print(f"CineBrain support service status: {'Integrated' if 'support_bp' in app.blueprints else 'Not integrated'}")
+    print(f"CineBrain auth service status: {'Integrated' if 'auth_bp' in app.blueprints else 'Not integrated'}")
+    print(f"CineBrain user service status: {'Integrated' if 'user_bp' in app.blueprints else 'Not integrated'}")
     
-    print("\n=== CineBrain Modular Architecture v6.0 Features ===")
-    print("✅ Advanced User Management with Device Tracking")
-    print("✅ AI-Powered Personalization Engine v3.0")
-    print("✅ Real-time User Profiling & Behavioral Analysis")
-    print("✅ Telugu-first Content Prioritization")
-    print("✅ JWT Authentication with Security Features")
-    print("✅ Comprehensive Activity Tracking")
-    print("✅ Avatar Management with Cloudinary")
-    print("✅ Enhanced Database Models with Indexes")
-    print("✅ Modular Blueprint Architecture")
-    print("✅ Production-Ready Error Handling")
+    print("\n=== CineBrain Modular User System Features ===")
+    print("✅ Modular architecture with separate files")
+    print("✅ Avatar upload with Cloudinary integration")
+    print("✅ Profile management and analytics")
+    print("✅ Watchlist and favorites functionality")
+    print("✅ User ratings and activity tracking")
+    print("✅ Personalized recommendations")
+    print("✅ Settings and account management")
+    print("✅ Public profile support")
+    print("✅ Health monitoring")
+    print("✅ CORS and authentication handling")
     
     print(f"\n=== CineBrain Registered Routes ===")
     for rule in app.url_map.iter_rules():

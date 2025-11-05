@@ -1,5 +1,4 @@
-# backend/user/routes.py
-
+# user/routes.py
 from flask import Blueprint, request, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta
@@ -18,27 +17,36 @@ from . import ratings
 from . import dashboard
 from . import settings
 
+# Create the user blueprint
 user_bp = Blueprint('user', __name__)
 
 logger = logging.getLogger(__name__)
 
+# Global variables (will be set by init function)
 db = None
 User = None
 app = None
 
 def init_user_routes(flask_app, database, models, services):
+    """Initialize the user routes with dependencies"""
     global db, User, app
     
     app = flask_app
     db = database
     User = models['User']
     
+    # Initialize the user module
     init_user_module(flask_app, database, models, services)
     
     logger.info("✅ CineBrain user routes initialized successfully")
 
+# ============================================================================
+# AUTHENTICATION ROUTES
+# ============================================================================
+
 @user_bp.route('/api/register', methods=['POST', 'OPTIONS'])
 def register():
+    """User registration"""
     if request.method == 'OPTIONS':
         return '', 200
     
@@ -99,6 +107,7 @@ def register():
 
 @user_bp.route('/api/login', methods=['POST', 'OPTIONS'])
 def login():
+    """User login"""
     if request.method == 'OPTIONS':
         return '', 200
     
@@ -177,6 +186,10 @@ def login():
         logger.error(f"CineBrain Login error: {e}")
         return jsonify({'error': 'CineBrain login failed'}), 500
 
+# ============================================================================
+# PROFILE ROUTES
+# ============================================================================
+
 @user_bp.route('/api/users/profile', methods=['GET', 'OPTIONS'])
 def get_profile():
     return profile.get_user_profile()
@@ -189,13 +202,13 @@ def update_profile():
 def get_public_profile_route(username):
     return profile.get_public_profile(username)
 
-@user_bp.route('/api/users/profile/analytics', methods=['GET', 'OPTIONS'])
-def get_profile_analytics_route():
-    return profile.get_profile_analytics()
-
 @user_bp.route('/api/personalized/update-preferences', methods=['POST', 'OPTIONS'])
 def update_preferences():
     return profile.update_user_preferences()
+
+# ============================================================================
+# AVATAR ROUTES
+# ============================================================================
 
 @user_bp.route('/api/users/avatar/upload', methods=['POST', 'OPTIONS'])
 def upload_avatar_route():
@@ -208,6 +221,10 @@ def delete_avatar_route():
 @user_bp.route('/api/users/avatar/url', methods=['GET', 'OPTIONS'])
 def get_avatar_url_route():
     return avatar.get_avatar_url()
+
+# ============================================================================
+# WATCHLIST ROUTES
+# ============================================================================
 
 @user_bp.route('/api/user/watchlist', methods=['GET', 'OPTIONS'])
 def get_watchlist_route():
@@ -233,13 +250,9 @@ def check_watchlist_status_route(content_id):
         return watchlist.check_watchlist_status(current_user, content_id)
     return wrapper()
 
-@user_bp.route('/api/user/watchlist/recommendations', methods=['GET', 'OPTIONS'])
-def get_watchlist_recommendations_route():
-    return watchlist.get_watchlist_recommendations()
-
-@user_bp.route('/api/user/watchlist/organize', methods=['POST', 'OPTIONS'])
-def organize_watchlist_route():
-    return watchlist.organize_watchlist()
+# ============================================================================
+# FAVORITES ROUTES
+# ============================================================================
 
 @user_bp.route('/api/user/favorites', methods=['GET', 'OPTIONS'])
 def get_favorites_route():
@@ -265,13 +278,9 @@ def check_favorite_status_route(content_id):
         return favorites.check_favorite_status(current_user, content_id)
     return wrapper()
 
-@user_bp.route('/api/user/favorites/insights', methods=['GET', 'OPTIONS'])
-def get_favorites_insights_route():
-    return favorites.get_favorites_insights()
-
-@user_bp.route('/api/user/favorites/export', methods=['GET', 'OPTIONS'])
-def export_favorites_route():
-    return favorites.export_favorites()
+# ============================================================================
+# RATINGS ROUTES
+# ============================================================================
 
 @user_bp.route('/api/user/ratings', methods=['GET', 'OPTIONS'])
 def get_ratings_route():
@@ -297,29 +306,13 @@ def get_rating_for_content_route(content_id):
         return ratings.get_rating_for_content(current_user, content_id)
     return wrapper()
 
-@user_bp.route('/api/user/ratings/recommendations', methods=['GET', 'OPTIONS'])
-def get_rating_recommendations_route():
-    return ratings.get_rating_recommendations()
-
-@user_bp.route('/api/user/ratings/export', methods=['GET', 'OPTIONS'])
-def export_ratings_route():
-    return ratings.export_ratings()
+# ============================================================================
+# ACTIVITY ROUTES
+# ============================================================================
 
 @user_bp.route('/api/interactions', methods=['POST', 'OPTIONS'])
 def record_interaction_route():
     return activity.record_interaction()
-
-@user_bp.route('/api/user/activity', methods=['GET', 'OPTIONS'])
-def get_user_activity_route():
-    return activity.get_user_activity()
-
-@user_bp.route('/api/user/activity/insights', methods=['GET', 'OPTIONS'])
-def get_activity_insights_route():
-    return activity.get_activity_insights()
-
-@user_bp.route('/api/user/activity/weekly-recap', methods=['GET', 'OPTIONS'])
-def get_weekly_recap_route():
-    return activity.get_weekly_recap()
 
 @user_bp.route('/api/users/<username>/activity/public', methods=['GET'])
 def get_public_activity_route(username):
@@ -329,6 +322,10 @@ def get_public_activity_route(username):
 def get_public_stats_route(username):
     return activity.get_public_stats(username)
 
+# ============================================================================
+# DASHBOARD ROUTES
+# ============================================================================
+
 @user_bp.route('/api/users/analytics', methods=['GET', 'OPTIONS'])
 def get_analytics_route():
     return dashboard.get_user_analytics()
@@ -337,9 +334,9 @@ def get_analytics_route():
 def get_profile_insights_route():
     return dashboard.get_profile_insights()
 
-@user_bp.route('/api/user/dashboard', methods=['GET', 'OPTIONS'])
-def get_dashboard_route():
-    return dashboard.get_dashboard()
+# ============================================================================
+# PERSONALIZED RECOMMENDATION ROUTES
+# ============================================================================
 
 @user_bp.route('/api/personalized/', methods=['GET', 'OPTIONS'])
 def get_personalized_recommendations():
@@ -366,10 +363,10 @@ def get_personalized_recommendations():
             else:
                 category_list = None
             
-            recommendations = recommendation_engine.generate_recommendations(
+            recommendations = recommendation_engine.get_personalized_recommendations(
                 user_id=current_user.id,
                 limit=limit,
-                context={'categories': category_list}
+                categories=category_list
             )
             
             recommendations['platform'] = 'cinebrain'
@@ -416,13 +413,13 @@ def get_for_you_recommendations():
             
             limit = min(int(request.args.get('limit', 30)), 50)
             
-            recommendations = recommendation_engine.generate_recommendations(
+            recommendations = recommendation_engine.get_personalized_recommendations(
                 user_id=current_user.id,
                 limit=limit,
-                context={'categories': ['for_you']}
+                categories=['for_you']
             )
             
-            for_you_recs = recommendations.get('recommendations', [])
+            for_you_recs = recommendations.get('recommendations', {}).get('for_you', [])
             
             return jsonify({
                 'success': True,
@@ -454,10 +451,10 @@ def get_because_you_watched():
             
             limit = min(int(request.args.get('limit', 20)), 30)
             
-            recommendations = recommendation_engine.generate_recommendations(
+            recommendations = recommendation_engine.get_personalized_recommendations(
                 user_id=current_user.id,
                 limit=limit,
-                context={'categories': ['because_you_watched']}
+                categories=['because_you_watched']
             )
             
             because_recs = recommendations.get('recommendations', {}).get('because_you_watched', [])
@@ -491,10 +488,10 @@ def get_trending_for_you():
             
             limit = min(int(request.args.get('limit', 25)), 40)
             
-            recommendations = recommendation_engine.generate_recommendations(
+            recommendations = recommendation_engine.get_personalized_recommendations(
                 user_id=current_user.id,
                 limit=limit,
-                context={'categories': ['trending_for_you']}
+                categories=['trending_for_you']
             )
             
             trending_recs = recommendations.get('recommendations', {}).get('trending_for_you', [])
@@ -528,10 +525,10 @@ def get_your_language_recommendations():
             
             limit = min(int(request.args.get('limit', 25)), 40)
             
-            recommendations = recommendation_engine.generate_recommendations(
+            recommendations = recommendation_engine.get_personalized_recommendations(
                 user_id=current_user.id,
                 limit=limit,
-                context={'categories': ['your_language']}
+                categories=['your_language']
             )
             
             language_recs = recommendations.get('recommendations', {}).get('your_language', [])
@@ -568,10 +565,10 @@ def get_hidden_gems():
             
             limit = min(int(request.args.get('limit', 15)), 25)
             
-            recommendations = recommendation_engine.generate_recommendations(
+            recommendations = recommendation_engine.get_personalized_recommendations(
                 user_id=current_user.id,
                 limit=limit,
-                context={'categories': ['hidden_gems']}
+                categories=['hidden_gems']
             )
             
             gems_recs = recommendations.get('recommendations', {}).get('hidden_gems', [])
@@ -590,6 +587,10 @@ def get_hidden_gems():
     
     return wrapper()
 
+# ============================================================================
+# SETTINGS ROUTES
+# ============================================================================
+
 @user_bp.route('/api/users/settings', methods=['GET', 'OPTIONS'])
 def get_settings_route():
     return settings.get_user_settings()
@@ -602,41 +603,17 @@ def update_account_settings_route():
 def change_password_route():
     return settings.change_password()
 
-@user_bp.route('/api/users/settings/devices', methods=['GET', 'OPTIONS'])
-def get_active_devices_route():
-    return settings.get_active_devices()
-
-@user_bp.route('/api/users/settings/logout-all', methods=['POST', 'OPTIONS'])
-def logout_all_devices_route():
-    return settings.logout_all_devices()
-
-@user_bp.route('/api/users/settings/revoke-device', methods=['POST', 'OPTIONS'])
-def revoke_device_access_route():
-    return settings.revoke_device_access()
-
-@user_bp.route('/api/users/settings/privacy', methods=['PUT', 'OPTIONS'])
-def update_privacy_settings_route():
-    return settings.update_privacy_settings()
-
-@user_bp.route('/api/users/settings/data-control', methods=['GET', 'OPTIONS'])
-def get_data_control_options_route():
-    return settings.get_data_control_options()
+@user_bp.route('/api/users/settings/delete-account', methods=['DELETE', 'OPTIONS'])
+def delete_account_route():
+    return settings.delete_account()
 
 @user_bp.route('/api/users/settings/export-data', methods=['GET', 'OPTIONS'])
 def export_data_route():
     return settings.export_user_data()
 
-@user_bp.route('/api/users/settings/download-data', methods=['POST', 'OPTIONS'])
-def download_specific_data_route():
-    return settings.download_specific_data()
-
-@user_bp.route('/api/users/settings/login-history', methods=['GET', 'OPTIONS'])
-def get_login_history_route():
-    return settings.get_login_history()
-
-@user_bp.route('/api/users/settings/delete-account', methods=['DELETE', 'OPTIONS'])
-def delete_account_route():
-    return settings.delete_account()
+# ============================================================================
+# HEALTH ROUTE
+# ============================================================================
 
 @user_bp.route('/api/users/health', methods=['GET'])
 def users_health():
@@ -683,12 +660,7 @@ def users_health():
             'real_time_updates': True,
             'email_username_login': True,
             'avatar_service': True,
-            'modular_architecture': True,
-            'device_management': True,
-            'privacy_controls': True,
-            'data_export': True,
-            'advanced_dashboard': True,
-            'ai_insights': True
+            'modular_architecture': True
         }
         
         return jsonify(health_info), 200
@@ -701,8 +673,10 @@ def users_health():
             'timestamp': datetime.utcnow().isoformat()
         }), 500
 
+# Add CORS headers to all responses
 @user_bp.after_request
 def after_request(response):
     return add_cors_headers(response)
 
+# Export the initialization function
 __all__ = ['user_bp', 'init_user_routes']
