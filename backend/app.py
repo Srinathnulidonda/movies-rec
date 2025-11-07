@@ -1,3 +1,5 @@
+# backend/app.py
+
 from typing import Optional
 from flask import Flask, request, jsonify, session, render_template, redirect
 from flask_sqlalchemy import SQLAlchemy
@@ -46,6 +48,7 @@ from services.personalized import init_personalized
 from services.details import init_details_service, SlugManager, ContentService
 from services.new_releases import init_cinebrain_new_releases_service
 from services.review import init_review_service
+from services.restart import init_restart_service
 from user.routes import user_bp, init_user_routes
 from recommendation import recommendation_bp, init_recommendation_routes
 from personalized import init_personalized_system, personalized_bp
@@ -870,34 +873,6 @@ def setup_support_monitoring():
     monitor_thread.start()
     logger.info("CineBrain support monitoring thread started")
 
-def setup_render_keepalive():
-    def keepalive_task():
-        while True:
-            try:
-                time.sleep(600)
-                
-                if os.environ.get('PORT') and not os.environ.get('FLASK_ENV') == 'development':
-                    try:
-                        response = http_session.get(
-                            f"http://localhost:{os.environ.get('PORT', 5000)}/api/health",
-                            timeout=5
-                        )
-                        if response.status_code == 200:
-                            logger.info("✅ CineBrain keep-alive ping successful")
-                        else:
-                            logger.warning(f"⚠️ CineBrain keep-alive ping returned {response.status_code}")
-                    except Exception as e:
-                        logger.warning(f"⚠️ CineBrain keep-alive ping failed: {e}")
-                        
-            except Exception as e:
-                logger.error(f"❌ CineBrain keep-alive thread error: {e}")
-                time.sleep(600)
-    
-    if os.environ.get('PORT') and not os.environ.get('FLASK_ENV') == 'development':
-        keepalive_thread = threading.Thread(target=keepalive_task, daemon=True)
-        keepalive_thread.start()
-        logger.info("🔄 CineBrain Render keep-alive service started")
-
 def on_new_support_ticket(ticket):
     try:
         from services.admin import AdminNotificationService
@@ -1546,7 +1521,8 @@ def health_check():
             'auth_service': 'enabled' if 'auth_bp' in app.blueprints else 'disabled',
             'user_service': 'enabled' if 'user_bp' in app.blueprints else 'disabled',
             'recommendation_service': 'enabled' if 'recommendations' in app.blueprints else 'disabled',
-            'personalized_service': 'enabled' if 'personalized' in app.blueprints else 'disabled'
+            'personalized_service': 'enabled' if 'personalized' in app.blueprints else 'disabled',
+            'restart_service': 'enabled' if 'restart_service' in services else 'disabled'
         }
         
         try:
@@ -1610,6 +1586,16 @@ def health_check():
         if cinebrain_new_releases_service:
             health_info['cinebrain_new_releases'] = cinebrain_new_releases_service.get_stats()
         
+        if 'restart_service' in services and services['restart_service']:
+            restart_status = services['restart_service'].get_comprehensive_status()
+            health_info['cinebrain_restart_service'] = {
+                'is_active': restart_status['service_info']['is_running'],
+                'restart_count': restart_status['restart_info']['total_restarts'],
+                'uptime_hours': restart_status['service_info']['uptime_hours'],
+                'health_score': restart_status['health_summary']['current_score'],
+                'memory_usage_mb': restart_status['system_metrics'].get('memory', {}).get('usage_mb', 0)
+            }
+        
         health_info['cinebrain_performance'] = {
             'optimizations_applied': [
                 'cinebrain_python_3.13_compatibility',
@@ -1630,7 +1616,7 @@ def health_check():
                 'cinebrain_cinematic_dna_analysis',
                 'cinebrain_preference_embedding_engine',
                 'cinebrain_real_time_learning',
-                'cinebrain_render_keepalive_service'
+                'cinebrain_advanced_restart_service_v2'
             ],
             'memory_optimizations': 'cinebrain_enabled',
             'unicode_fixes': 'cinebrain_applied',
@@ -1662,6 +1648,7 @@ def production_stats():
                 UserInteraction.timestamp >= datetime.utcnow() - timedelta(hours=1)
             ).count(),
             'recommendation_engine_status': 'active' if 'personalized_recommendation_engine' in services else 'inactive',
+            'restart_service_status': 'active' if 'restart_service' in services else 'inactive',
             'database_connections': 'healthy',
             'cache_status': 'connected' if cache else 'disconnected'
         }
@@ -1889,7 +1876,37 @@ def create_tables():
                 print("✅ CineBrain production admin created")
             
             setup_support_monitoring()
-            setup_render_keepalive()
+            
+            restart_config = {
+                'restart_interval': 600,
+                'memory_threshold': 280,
+                'health_check_interval': 45,
+                'max_restart_attempts': 5,
+                'force_restart_on_memory': True,
+                'aggressive_cleanup': True
+            }
+            
+            restart_service = init_restart_service(
+                app=app, 
+                db=db, 
+                cache=cache, 
+                config=restart_config
+            )
+            
+            if restart_service:
+                def custom_cleanup():
+                    try:
+                        if executor:
+                            executor.shutdown(wait=False)
+                        logger.info("✅ Custom cleanup completed")
+                    except Exception as e:
+                        logger.warning(f"⚠️ Custom cleanup error: {e}")
+                
+                restart_service.add_cleanup_handler(custom_cleanup)
+                services['restart_service'] = restart_service
+                logger.info("🚀 CineBrain Advanced Restart Service v2.0 activated")
+            else:
+                logger.error("❌ Failed to initialize restart service")
             
             logger.info("🚀 CineBrain production database initialized successfully")
     except Exception as e:
@@ -1898,15 +1915,15 @@ def create_tables():
 create_tables()
 
 if __name__ == '__main__':
-    print("=== Running CineBrain Flask with Advanced Personalized Recommendation System ===")
+    print("=== Running CineBrain Flask with Advanced Restart Service ===")
     print("Features:")
-    print("  ✅ Cinematic DNA Analysis")
-    print("  ✅ Advanced Behavioral Analysis") 
-    print("  ✅ Preference Embedding Engine")
-    print("  ✅ Telugu-first Cultural Priority")
-    print("  ✅ Real-time Learning")
-    print("  ✅ Multi-strategy Recommendations")
-    print("  ✅ Render Keep-Alive Service")
+    print("  ✅ Auto-restart every 10 minutes")
+    print("  ✅ Comprehensive health monitoring")
+    print("  ✅ Memory threshold management")
+    print("  ✅ Aggressive resource cleanup")
+    print("  ✅ Performance tracking")
+    print("  ✅ Intelligent restart triggers")
+    print("  ✅ Advanced Personalized Recommendations")
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('FLASK_ENV') == 'development'
     app.run(host='0.0.0.0', port=port, debug=debug)
@@ -1915,9 +1932,7 @@ else:
     print(f"App name: {app.name}")
     print(f"Python version: 3.13.4")
     print(f"Environment: {os.environ.get('FLASK_ENV', 'production')}")
-    print(f"Database configured: {'Yes' if app.config.get('SQLALCHEMY_DATABASE_URI') else 'No'}")
-    print(f"Cache type: {app.config.get('CACHE_TYPE', 'Not configured')}")
-    print(f"Keep-alive service: {'Active' if os.environ.get('PORT') else 'Disabled'}")
+    print(f"Advanced restart service: {'Active' if 'restart_service' in services else 'Disabled'}")
     print("✅ Production optimizations enabled")
     print("✅ Security headers active")
     print("✅ Render deployment ready")
