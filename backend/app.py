@@ -48,10 +48,11 @@ from services.personalized import init_personalized
 from services.details import init_details_service, SlugManager, ContentService
 from services.new_releases import init_cinebrain_new_releases_service
 from services.review import init_review_service
-from services.restart import init_restart_service
 from user.routes import user_bp, init_user_routes
 from recommendation import recommendation_bp, init_recommendation_routes
 from personalized import init_personalized_system, personalized_bp
+from system.memory_optimizer import CineBrainMemoryOptimizer
+from system.restart_service import CineBrainAdvancedRestartService
 import re
 import click
 import traceback
@@ -710,6 +711,8 @@ models = {
 details_service = None
 content_service = None
 cinebrain_new_releases_service = None
+memory_optimizer = None
+restart_service = None
 
 try:
     with app.app_context():
@@ -757,7 +760,11 @@ try:
     )
     
     if profile_analyzer and personalized_recommendation_engine:
-        logger.info("✅ CineBrain Advanced Personalized Recommendation System initialized successfully")
+        logger.info("✅ CineBrain Personalized Recommendation System initialized successfully")
+        logger.info("   📊 Profile Analyzer: ProfileAnalyzer")
+        logger.info("   🤖 Recommendation Engine: PersonalizedRecommendationEngine")
+        logger.info("   🎯 Telugu-first priority: Enabled")
+        logger.info("   ⚡ Real-time learning: Active")
         services['profile_analyzer'] = profile_analyzer
         services['personalized_recommendation_engine'] = personalized_recommendation_engine
         app.register_blueprint(personalized_bp, url_prefix='/api')
@@ -786,7 +793,7 @@ except Exception as e:
 try:
     init_user_routes(app, db, models, {**services, 'cache': cache})
     app.register_blueprint(user_bp)
-    logger.info("CineBrain user module initialized successfully")
+    logger.info("CineBrain user routes initialized successfully")
 except Exception as e:
     logger.error(f"Failed to initialize CineBrain user module: {e}")
 
@@ -918,6 +925,96 @@ def webhook_feedback_created():
     except Exception as e:
         logger.error(f"CineBrain feedback webhook error: {e}")
         return jsonify({'error': 'CineBrain webhook processing failed'}), 500
+
+@app.route('/api/system/restart/status', methods=['GET'])
+def system_restart_status():
+    try:
+        if restart_service:
+            status = restart_service.get_status()
+            return jsonify(status), 200
+        else:
+            return jsonify({'error': 'Restart service not initialized'}), 503
+    except Exception as e:
+        return jsonify({
+            'error': str(e),
+            'timestamp': datetime.utcnow().isoformat(),
+            'service': 'restart_status'
+        }), 500
+
+@app.route('/api/system/restart/health', methods=['GET'])
+def system_restart_health():
+    try:
+        if restart_service:
+            health = restart_service.perform_health_check()
+            return jsonify(health), 200
+        else:
+            return jsonify({'error': 'Restart service not initialized'}), 503
+    except Exception as e:
+        return jsonify({
+            'error': str(e),
+            'timestamp': datetime.utcnow().isoformat(),
+            'service': 'restart_health'
+        }), 500
+
+@app.route('/api/system/restart/metrics', methods=['GET'])
+def system_restart_metrics():
+    try:
+        if restart_service:
+            metrics = restart_service.get_system_metrics()
+            return jsonify(metrics), 200
+        else:
+            return jsonify({'error': 'Restart service not initialized'}), 503
+    except Exception as e:
+        return jsonify({
+            'error': str(e),
+            'timestamp': datetime.utcnow().isoformat(),
+            'service': 'restart_metrics'
+        }), 500
+
+@app.route('/api/system/restart/force', methods=['POST'])
+def system_force_restart():
+    try:
+        if restart_service:
+            data = request.get_json() or {}
+            reason = data.get('reason', 'manual_admin_trigger')
+            
+            health = restart_service.perform_health_check()
+            restart_service.intelligent_force_restart(reason, health)
+            
+            return jsonify({'message': 'Intelligent restart initiated', 'reason': reason}), 200
+        else:
+            return jsonify({'error': 'Restart service not initialized'}), 503
+    except Exception as e:
+        return jsonify({'error': str(e), 'service': 'force_restart'}), 500
+
+@app.route('/api/system/memory/status', methods=['GET'])
+def system_memory_status():
+    try:
+        if memory_optimizer:
+            status = memory_optimizer.get_status()
+            return jsonify(status), 200
+        else:
+            return jsonify({'error': 'Memory optimizer not initialized'}), 503
+    except Exception as e:
+        return jsonify({
+            'error': str(e),
+            'timestamp': datetime.utcnow().isoformat(),
+            'service': 'memory_status'
+        }), 500
+
+@app.route('/api/system/memory/cleanup', methods=['POST'])
+def system_memory_cleanup():
+    try:
+        if memory_optimizer:
+            freed = memory_optimizer.force_optimization()
+            return jsonify({
+                'message': 'Memory cleanup completed',
+                'memory_freed_mb': freed
+            }), 200
+        else:
+            return jsonify({'error': 'Memory optimizer not initialized'}), 503
+    except Exception as e:
+        return jsonify({'error': str(e), 'service': 'memory_cleanup'}), 500
 
 @app.route('/api/details/<slug>', methods=['GET'])
 def get_content_details_by_slug(slug):
@@ -1472,7 +1569,7 @@ def health_check():
         health_info = {
             'status': 'healthy',
             'timestamp': datetime.utcnow().isoformat(),
-            'version': '5.5.0',
+            'version': '6.0.0',
             'python_version': '3.13.4',
             'cinebrain_brand': 'CineBrain Entertainment Platform'
         }
@@ -1522,7 +1619,8 @@ def health_check():
             'user_service': 'enabled' if 'user_bp' in app.blueprints else 'disabled',
             'recommendation_service': 'enabled' if 'recommendations' in app.blueprints else 'disabled',
             'personalized_service': 'enabled' if 'personalized' in app.blueprints else 'disabled',
-            'restart_service': 'enabled' if 'restart_service' in services else 'disabled'
+            'restart_service': 'enabled' if restart_service else 'disabled',
+            'memory_optimizer': 'enabled' if memory_optimizer else 'disabled'
         }
         
         try:
@@ -1586,8 +1684,8 @@ def health_check():
         if cinebrain_new_releases_service:
             health_info['cinebrain_new_releases'] = cinebrain_new_releases_service.get_stats()
         
-        if 'restart_service' in services and services['restart_service']:
-            restart_status = services['restart_service'].get_comprehensive_status()
+        if restart_service:
+            restart_status = restart_service.get_status()
             health_info['cinebrain_restart_service'] = {
                 'is_active': restart_status['service_info']['is_running'],
                 'restart_count': restart_status['restart_info']['total_restarts'],
@@ -1596,33 +1694,33 @@ def health_check():
                 'memory_usage_mb': restart_status['system_metrics'].get('memory', {}).get('usage_mb', 0)
             }
         
+        if memory_optimizer:
+            memory_status = memory_optimizer.get_status()
+            health_info['cinebrain_memory_optimizer'] = {
+                'is_active': memory_status['service_info']['is_running'],
+                'target_memory_mb': memory_status['service_info']['target_memory_mb'],
+                'current_memory_mb': memory_status['current_memory']['rss_mb'],
+                'optimization_count': memory_status['service_info']['optimization_count'],
+                'efficiency_score': memory_status['performance']['memory_efficiency_score']
+            }
+        
         health_info['cinebrain_performance'] = {
             'optimizations_applied': [
-                'cinebrain_python_3.13_compatibility',
-                'cinebrain_reduced_api_timeouts', 
-                'cinebrain_optimized_thread_pools',
-                'cinebrain_enhanced_caching',
-                'cinebrain_error_handling_improvements',
-                'cinebrain_cast_crew_optimization',
-                'cinebrain_support_service_integration',
-                'cinebrain_admin_notification_system',
-                'cinebrain_real_time_monitoring',
-                'cinebrain_auth_service_enhanced',
-                'cinebrain_user_service_modular',
-                'cinebrain_new_releases_service',
-                'cinebrain_enhanced_critics_choice_service',
-                'cinebrain_recommendation_service_modular',
-                'cinebrain_advanced_personalized_system',
-                'cinebrain_cinematic_dna_analysis',
-                'cinebrain_preference_embedding_engine',
-                'cinebrain_real_time_learning',
-                'cinebrain_advanced_restart_service_v2'
+                'cinebrain_system_services_modular',
+                'cinebrain_memory_optimizer_dedicated',
+                'cinebrain_restart_service_intelligent',
+                'cinebrain_render_free_tier_optimized',
+                'cinebrain_10min_restart_cycle',
+                'cinebrain_200mb_memory_threshold',
+                'cinebrain_comprehensive_health_monitoring',
+                'cinebrain_aggressive_memory_management',
+                'cinebrain_personalized_recommendation_system',
+                'cinebrain_real_time_learning'
             ],
-            'memory_optimizations': 'cinebrain_enabled',
-            'unicode_fixes': 'cinebrain_applied',
-            'monitoring': 'cinebrain_background_threads_active',
-            'telugu_priority': 'cinebrain_enabled',
-            'omdb_removed': 'cinebrain_complete'
+            'memory_target': '180MB with 200MB threshold',
+            'restart_interval': '10 minutes',
+            'monitoring': 'real_time_active',
+            'system_services': 'modular_architecture'
         }
         
         return jsonify(health_info), 200
@@ -1648,7 +1746,8 @@ def production_stats():
                 UserInteraction.timestamp >= datetime.utcnow() - timedelta(hours=1)
             ).count(),
             'recommendation_engine_status': 'active' if 'personalized_recommendation_engine' in services else 'inactive',
-            'restart_service_status': 'active' if 'restart_service' in services else 'inactive',
+            'restart_service_status': 'active' if restart_service else 'inactive',
+            'memory_optimizer_status': 'active' if memory_optimizer else 'inactive',
             'database_connections': 'healthy',
             'cache_status': 'connected' if cache else 'disconnected'
         }
@@ -1855,6 +1954,49 @@ def test_personalized_recommendations_cli(username):
         print(f"Error testing recommendations: {e}")
         logger.error(f"CineBrain CLI recommendation test error: {e}")
 
+def init_system_services():
+    global memory_optimizer, restart_service
+    
+    memory_optimizer = CineBrainMemoryOptimizer(
+        app=app,
+        db=db,
+        cache=cache,
+        target_memory_mb=180
+    )
+    memory_optimizer.start_monitoring()
+    services['memory_optimizer'] = memory_optimizer
+    logger.info("🧠 CineBrain Memory Optimizer activated")
+    
+    restart_config = {
+        'restart_interval': 600,
+        'memory_threshold': 200,
+        'health_check_interval': 60,
+        'max_restart_attempts': 5,
+        'force_restart_on_memory': True,
+        'aggressive_cleanup': True
+    }
+    
+    restart_service = CineBrainAdvancedRestartService(
+        app=app,
+        db=db,
+        cache=cache,
+        memory_optimizer=memory_optimizer,
+        config=restart_config
+    )
+    
+    def custom_cleanup():
+        try:
+            if executor:
+                executor.shutdown(wait=False)
+            logger.info("✅ Custom cleanup completed")
+        except Exception as e:
+            logger.warning(f"⚠️ Custom cleanup error: {e}")
+    
+    restart_service.add_cleanup_handler(custom_cleanup)
+    restart_service.start()
+    services['restart_service'] = restart_service
+    logger.info("🚀 CineBrain Advanced Restart Service v2.0 activated")
+
 def create_tables():
     try:
         with app.app_context():
@@ -1876,37 +2018,7 @@ def create_tables():
                 print("✅ CineBrain production admin created")
             
             setup_support_monitoring()
-            
-            restart_config = {
-                'restart_interval': 600,
-                'memory_threshold': 280,
-                'health_check_interval': 45,
-                'max_restart_attempts': 5,
-                'force_restart_on_memory': True,
-                'aggressive_cleanup': True
-            }
-            
-            restart_service = init_restart_service(
-                app=app, 
-                db=db, 
-                cache=cache, 
-                config=restart_config
-            )
-            
-            if restart_service:
-                def custom_cleanup():
-                    try:
-                        if executor:
-                            executor.shutdown(wait=False)
-                        logger.info("✅ Custom cleanup completed")
-                    except Exception as e:
-                        logger.warning(f"⚠️ Custom cleanup error: {e}")
-                
-                restart_service.add_cleanup_handler(custom_cleanup)
-                services['restart_service'] = restart_service
-                logger.info("🚀 CineBrain Advanced Restart Service v2.0 activated")
-            else:
-                logger.error("❌ Failed to initialize restart service")
+            init_system_services()
             
             logger.info("🚀 CineBrain production database initialized successfully")
     except Exception as e:
@@ -1915,24 +2027,19 @@ def create_tables():
 create_tables()
 
 if __name__ == '__main__':
-    print("=== Running CineBrain Flask with Advanced Restart Service ===")
+    print("=== CineBrain Flask with System Services ===")
     print("Features:")
-    print("  ✅ Auto-restart every 10 minutes")
-    print("  ✅ Comprehensive health monitoring")
-    print("  ✅ Memory threshold management")
-    print("  ✅ Aggressive resource cleanup")
-    print("  ✅ Performance tracking")
-    print("  ✅ Intelligent restart triggers")
-    print("  ✅ Advanced Personalized Recommendations")
+    print("  🧠 Advanced Memory Optimizer")
+    print("  🔄 Intelligent Restart Service") 
+    print("  📊 Comprehensive Health Monitoring")
+    print("  ⚡ Render Free Tier Optimized")
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('FLASK_ENV') == 'development'
     app.run(host='0.0.0.0', port=port, debug=debug)
 else:
     print("=== CineBrain Flask Production Mode ===")
     print(f"App name: {app.name}")
-    print(f"Python version: 3.13.4")
-    print(f"Environment: {os.environ.get('FLASK_ENV', 'production')}")
-    print(f"Advanced restart service: {'Active' if 'restart_service' in services else 'Disabled'}")
-    print("✅ Production optimizations enabled")
-    print("✅ Security headers active")
+    print(f"System services: Active")
+    print("✅ Memory optimizer enabled")
+    print("✅ Auto-restart service enabled")
     print("✅ Render deployment ready")
