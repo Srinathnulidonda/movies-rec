@@ -16,6 +16,7 @@ from . import activity
 from . import ratings
 from . import dashboard
 from . import settings
+from personalized import get_personalization_system
 
 # Create the user blueprint
 user_bp = Blueprint('user', __name__)
@@ -348,13 +349,64 @@ def get_personalized_recommendations():
             return '', 200
         
         try:
+            # Try to use the new advanced personalization system first
+            personalization_system = get_personalization_system()
+            
+            if personalization_system and personalization_system.is_ready():
+                # Use the advanced system
+                if hasattr(personalization_system, 'recommendation_engine'):
+                    advanced_engine = personalization_system.recommendation_engine
+                    
+                    limit = min(int(request.args.get('limit', 50)), 100)
+                    categories = request.args.get('categories')
+                    
+                    if categories:
+                        category_list = [cat.strip() for cat in categories.split(',')]
+                    else:
+                        category_list = ['for_you']  # Default to for_you with new system
+                    
+                    # Generate recommendations using advanced system
+                    result = advanced_engine.generate_personalized_recommendations(
+                        user_id=current_user.id,
+                        recommendation_type=category_list[0] if len(category_list) == 1 else 'for_you',
+                        limit=limit
+                    )
+                    
+                    # Enhanced response format
+                    enhanced_result = {
+                        'success': True,
+                        'data': result,
+                        'message': 'CineBrain Advanced Personalization System recommendations',
+                        'user': {
+                            'id': current_user.id,
+                            'username': current_user.username
+                        },
+                        'system_info': {
+                            'engine_version': '3.0_neural_cultural',
+                            'personalization_level': 'advanced',
+                            'telugu_priority': 'maximum',
+                            'cultural_awareness': 'active',
+                            'adaptive_learning': 'enabled'
+                        },
+                        'metadata': {
+                            'generated_at': datetime.utcnow().isoformat(),
+                            'algorithm_version': '3.0',
+                            'personalization_strength': result.get('user_insights', {}).get('personalization_strength', 0.8)
+                        }
+                    }
+                    
+                    return jsonify(enhanced_result), 200
+            
+            # Fallback to legacy system if advanced system not available
             if not recommendation_engine:
                 return jsonify({
                     'error': 'CineBrain recommendation engine not available',
                     'recommendations': {},
-                    'fallback': True
+                    'fallback': True,
+                    'message': 'Please try again later or contact support'
                 }), 503
             
+            # Legacy system logic (existing code)
             limit = min(int(request.args.get('limit', 50)), 100)
             categories = request.args.get('categories')
             
@@ -369,22 +421,24 @@ def get_personalized_recommendations():
                 categories=category_list
             )
             
+            # Enhanced legacy response
             recommendations['platform'] = 'cinebrain'
             recommendations['user_tier'] = 'premium'
-            recommendations['personalization_level'] = 'high'
+            recommendations['personalization_level'] = 'standard'
+            recommendations['system_version'] = 'legacy_compatible'
             
             return jsonify({
                 'success': True,
                 'data': recommendations,
-                'message': 'CineBrain personalized recommendations generated successfully',
+                'message': 'CineBrain personalized recommendations (legacy system)',
                 'user': {
                     'id': current_user.id,
                     'username': current_user.username
                 },
                 'metadata': {
                     'generated_at': datetime.utcnow().isoformat(),
-                    'algorithm_version': '3.0',
-                    'personalization_strength': recommendations.get('recommendation_metadata', {}).get('confidence_score', 0.8)
+                    'algorithm_version': '2.0_legacy',
+                    'personalization_strength': recommendations.get('recommendation_metadata', {}).get('confidence_score', 0.6)
                 }
             }), 200
             
@@ -393,7 +447,143 @@ def get_personalized_recommendations():
             return jsonify({
                 'error': 'Failed to generate CineBrain personalized recommendations',
                 'success': False,
-                'data': {}
+                'data': {},
+                'fallback_available': True
+            }), 500
+    
+    return wrapper()
+
+@user_bp.route('/api/personalized/neural-for-you', methods=['GET', 'OPTIONS'])
+def get_neural_for_you():
+    from .utils import require_auth
+    
+    @require_auth
+    def wrapper(current_user):
+        if request.method == 'OPTIONS':
+            return '', 200
+        
+        try:
+            personalization_system = get_personalization_system()
+            
+            if not personalization_system or not personalization_system.is_ready():
+                return jsonify({
+                    'error': 'CineBrain Neural Personalization not available',
+                    'message': 'Use standard /api/personalized/for-you endpoint',
+                    'fallback_endpoint': '/api/personalized/for-you'
+                }), 503
+            
+            if hasattr(personalization_system, 'recommendation_engine'):
+                advanced_engine = personalization_system.recommendation_engine
+                
+                limit = min(int(request.args.get('limit', 30)), 50)
+                
+                result = advanced_engine.generate_personalized_recommendations(
+                    user_id=current_user.id,
+                    recommendation_type='for_you',
+                    limit=limit
+                )
+                
+                # Add neural-specific metadata
+                neural_result = {
+                    'success': True,
+                    'recommendations': result.get('recommendations', []),
+                    'total_count': len(result.get('recommendations', [])),
+                    'user_insights': result.get('user_insights', {}),
+                    'neural_features': {
+                        'embedding_dimension': 128,
+                        'collaborative_filtering': 'SVD-based',
+                        'cultural_awareness': 'Telugu-first priority',
+                        'behavioral_intelligence': 'Advanced pattern recognition',
+                        'adaptive_learning': 'Real-time feedback integration'
+                    },
+                    'algorithm_metadata': result.get('algorithm_metadata', {}),
+                    'generated_at': datetime.utcnow().isoformat()
+                }
+                
+                return jsonify(neural_result), 200
+            else:
+                return jsonify({
+                    'error': 'Neural recommendation engine not ready',
+                    'message': 'System is initializing, please try again'
+                }), 503
+                
+        except Exception as e:
+            logger.error(f"Neural for-you recommendations error: {e}")
+            return jsonify({
+                'error': 'Failed to generate neural recommendations',
+                'fallback_endpoint': '/api/personalized/for-you'
+            }), 500
+    
+    return wrapper()
+
+@user_bp.route('/api/personalized/cultural-match', methods=['GET', 'OPTIONS'])
+def get_cultural_match_recommendations():
+    from .utils import require_auth
+    
+    @require_auth
+    def wrapper(current_user):
+        if request.method == 'OPTIONS':
+            return '', 200
+        
+        try:
+            personalization_system = get_personalization_system()
+            
+            if not personalization_system or not personalization_system.is_ready():
+                return jsonify({
+                    'error': 'CineBrain Cultural Awareness Engine not available'
+                }), 503
+            
+            # Get user's cultural preferences
+            user_languages = []
+            if current_user.preferred_languages:
+                try:
+                    user_languages = json.loads(current_user.preferred_languages)
+                except:
+                    pass
+            
+            # Default to Telugu if no preferences
+            if not user_languages:
+                user_languages = ['Telugu']
+            
+            # Focus on cultural matching
+            if hasattr(personalization_system, 'recommendation_engine'):
+                advanced_engine = personalization_system.recommendation_engine
+                
+                limit = min(int(request.args.get('limit', 25)), 40)
+                
+                # Use Telugu specials or language-specific recommendations
+                result = advanced_engine.generate_personalized_recommendations(
+                    user_id=current_user.id,
+                    recommendation_type='telugu_specials' if 'telugu' in [l.lower() for l in user_languages] else 'your_language',
+                    limit=limit,
+                    filters={'languages': user_languages, 'cultural_authenticity': True}
+                )
+                
+                cultural_result = {
+                    'success': True,
+                    'recommendations': result.get('recommendations', []),
+                    'total_count': len(result.get('recommendations', [])),
+                    'cultural_context': {
+                        'user_languages': user_languages,
+                        'primary_culture': user_languages[0] if user_languages else 'Telugu',
+                        'cultural_authenticity': 'High priority',
+                        'regional_focus': 'Telugu cinema and Indian content',
+                        'cross_cultural_bridge': 'Enabled for discovery'
+                    },
+                    'algorithm_metadata': result.get('algorithm_metadata', {}),
+                    'generated_at': datetime.utcnow().isoformat()
+                }
+                
+                return jsonify(cultural_result), 200
+            else:
+                return jsonify({
+                    'error': 'Cultural recommendation engine not ready'
+                }), 503
+                
+        except Exception as e:
+            logger.error(f"Cultural match recommendations error: {e}")
+            return jsonify({
+                'error': 'Failed to generate cultural match recommendations'
             }), 500
     
     return wrapper()
@@ -625,6 +815,7 @@ def users_health():
             'version': '3.1.0'
         }
         
+        # Database check
         try:
             User.query.limit(1).first()
             health_info['database'] = 'connected'
@@ -632,9 +823,32 @@ def users_health():
             health_info['database'] = f'error: {str(e)}'
             health_info['status'] = 'degraded'
         
+        # Recommendation engines status
         from .utils import recommendation_engine
-        health_info['recommendation_engine'] = 'connected' if recommendation_engine else 'not_available'
+        health_info['recommendation_engines'] = {
+            'legacy_engine': 'connected' if recommendation_engine else 'not_available',
+            'advanced_personalization': 'checking...'
+        }
         
+        # Check advanced personalization system
+        try:
+            personalization_system = get_personalization_system()
+            if personalization_system:
+                system_status = personalization_system.get_system_status()
+                health_info['recommendation_engines']['advanced_personalization'] = 'connected'
+                health_info['advanced_personalization_status'] = system_status
+                health_info['neural_features'] = {
+                    'collaborative_filtering': system_status.get('recommendation_engine_ready', False),
+                    'cultural_awareness': system_status.get('profile_analyzer_ready', False),
+                    'adaptive_learning': system_status.get('initialized', False),
+                    'telugu_priority': True
+                }
+            else:
+                health_info['recommendation_engines']['advanced_personalization'] = 'not_available'
+        except Exception as e:
+            health_info['recommendation_engines']['advanced_personalization'] = f'error: {str(e)}'
+        
+        # User metrics
         try:
             total_users = User.query.count()
             active_users = User.query.filter(
@@ -652,15 +866,22 @@ def users_health():
         except Exception as e:
             health_info['user_metrics'] = {'error': str(e)}
         
+        # Enhanced features list
         health_info['features'] = {
             'personalized_recommendations': True,
+            'neural_collaborative_filtering': True,
+            'cultural_awareness_engine': True,
+            'adaptive_learning': True,
+            'behavioral_intelligence': True,
+            'cinematic_dna_analysis': True,
             'user_analytics': True,
             'profile_management': True,
             'watchlist_favorites': True,
             'real_time_updates': True,
             'email_username_login': True,
             'avatar_service': True,
-            'modular_architecture': True
+            'modular_architecture': True,
+            'telugu_cinema_prioritization': True
         }
         
         return jsonify(health_info), 200
