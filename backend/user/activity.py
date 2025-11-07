@@ -3,7 +3,10 @@ from flask import request, jsonify
 from datetime import datetime
 import json
 import logging
-from .utils import require_auth, db, UserInteraction, Content, create_minimal_content_record, content_service, recommendation_engine
+from .utils import (
+    require_auth, db, UserInteraction, Content, create_minimal_content_record, 
+    content_service, recommendation_engine, profile_analyzer, personalized_recommendation_engine
+)
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +76,27 @@ def record_interaction(current_user):
                 db.session.delete(interaction)
                 db.session.commit()
                 
-                if recommendation_engine:
+                # Update all recommendation systems for removal
+                update_results = []
+                
+                # Update new personalized system
+                if profile_analyzer:
+                    try:
+                        success = profile_analyzer.update_profile_realtime(
+                            current_user.id,
+                            {
+                                'content_id': data['content_id'],
+                                'interaction_type': data['interaction_type'],
+                                'metadata': data.get('metadata', {})
+                            }
+                        )
+                        if success:
+                            update_results.append('advanced_profile_updated')
+                    except Exception as e:
+                        logger.warning(f"Failed to update CineBrain advanced profile for removal: {e}")
+                
+                # Update legacy system
+                if recommendation_engine and recommendation_engine != personalized_recommendation_engine:
                     try:
                         recommendation_engine.update_user_preferences_realtime(
                             current_user.id,
@@ -83,13 +106,15 @@ def record_interaction(current_user):
                                 'metadata': data.get('metadata', {})
                             }
                         )
+                        update_results.append('legacy_profile_updated')
                     except Exception as e:
-                        logger.warning(f"Failed to update CineBrain real-time preferences: {e}")
+                        logger.warning(f"Failed to update CineBrain legacy profile for removal: {e}")
                 
                 message = f'Removed from CineBrain {"watchlist" if interaction_type == "watchlist" else "favorites"}'
                 return jsonify({
                     'success': True,
-                    'message': message
+                    'message': message,
+                    'real_time_updates': update_results
                 }), 200
             else:
                 item_type = "watchlist" if interaction_type == "watchlist" else "favorites"
@@ -125,7 +150,29 @@ def record_interaction(current_user):
         db.session.add(interaction)
         db.session.commit()
         
-        if recommendation_engine:
+        # Update all recommendation systems
+        update_results = []
+        
+        # Update new personalized system
+        if profile_analyzer:
+            try:
+                success = profile_analyzer.update_profile_realtime(
+                    current_user.id,
+                    {
+                        'content_id': data['content_id'],
+                        'interaction_type': data['interaction_type'],
+                        'rating': data.get('rating'),
+                        'metadata': data.get('metadata', {})
+                    }
+                )
+                if success:
+                    update_results.append('advanced_profile_updated')
+                    logger.info(f"Successfully updated CineBrain advanced profile for user {current_user.id}")
+            except Exception as e:
+                logger.warning(f"Failed to update CineBrain advanced profile: {e}")
+        
+        # Update legacy system
+        if recommendation_engine and recommendation_engine != personalized_recommendation_engine:
             try:
                 recommendation_engine.update_user_preferences_realtime(
                     current_user.id,
@@ -136,13 +183,17 @@ def record_interaction(current_user):
                         'metadata': data.get('metadata', {})
                     }
                 )
+                update_results.append('legacy_profile_updated')
+                logger.info(f"Successfully updated CineBrain legacy profile for user {current_user.id}")
             except Exception as e:
-                logger.warning(f"Failed to update CineBrain real-time preferences: {e}")
+                logger.warning(f"Failed to update CineBrain legacy profile: {e}")
         
         return jsonify({
             'success': True,
             'message': 'CineBrain interaction recorded successfully',
-            'interaction_id': interaction.id
+            'interaction_id': interaction.id,
+            'real_time_updates': update_results,
+            'advanced_features_active': bool(profile_analyzer)
         }), 201
         
     except Exception as e:

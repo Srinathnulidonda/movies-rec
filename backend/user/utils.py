@@ -1,6 +1,7 @@
 # user/utils.py
 from flask import request, jsonify
 from datetime import datetime, timedelta
+from typing import Optional, Dict, Any
 import json
 import logging
 import jwt
@@ -20,10 +21,12 @@ app = None
 recommendation_engine = None
 cache = None
 content_service = None
+profile_analyzer = None
+personalized_recommendation_engine = None
 
 def init_user_module(flask_app, database, models, services):
     """Initialize the user module with dependencies"""
-    global db, User, Content, UserInteraction, Review, app, recommendation_engine, cache, content_service
+    global db, User, Content, UserInteraction, Review, app, recommendation_engine, cache, content_service, profile_analyzer, personalized_recommendation_engine
     
     app = flask_app
     db = database
@@ -34,12 +37,22 @@ def init_user_module(flask_app, database, models, services):
     cache = services.get('cache')
     content_service = services.get('ContentService')
     
+    # Try to get the new personalized system components
+    profile_analyzer = services.get('profile_analyzer')
+    personalized_recommendation_engine = services.get('personalized_recommendation_engine')
+    
+    # Fallback to old recommendation engine if new one not available
     try:
-        from services.personalized import get_recommendation_engine
-        recommendation_engine = get_recommendation_engine()
-        logger.info("✅ CineBrain personalized recommendation engine connected to user module")
+        if personalized_recommendation_engine:
+            recommendation_engine = personalized_recommendation_engine
+            logger.info("✅ Using CineBrain Advanced Personalized Recommendation Engine")
+        else:
+            from services.personalized import get_recommendation_engine
+            recommendation_engine = get_recommendation_engine()
+            logger.info("✅ Using CineBrain legacy recommendation engine")
     except Exception as e:
-        logger.warning(f"Could not connect to CineBrain recommendation engine: {e}")
+        logger.warning(f"Could not connect to any CineBrain recommendation engine: {e}")
+        recommendation_engine = None
 
 def require_auth(f):
     """Authentication decorator for user routes"""
@@ -121,6 +134,32 @@ def get_basic_user_stats(user_id):
         
     except Exception as e:
         logger.error(f"Error calculating CineBrain basic stats: {e}")
+        return {}
+
+def get_cinematic_dna_summary(user_id: int) -> Dict[str, Any]:
+    """Get user's Cinematic DNA summary"""
+    if not profile_analyzer:
+        return {}
+    
+    try:
+        profile = profile_analyzer.build_comprehensive_profile(user_id)
+        if not profile:
+            return {}
+        
+        cinematic_dna = profile.get('cinematic_dna', {})
+        
+        return {
+            'sophistication_score': cinematic_dna.get('cinematic_sophistication_score', 0),
+            'telugu_affinity': cinematic_dna.get('telugu_cultural_affinity', 0),
+            'indian_affinity': cinematic_dna.get('indian_cultural_affinity', 0),
+            'global_exposure': cinematic_dna.get('global_cinema_exposure', 0),
+            'dominant_narratives': list(cinematic_dna.get('narrative_preferences', {}).keys())[:3],
+            'preferred_scale': cinematic_dna.get('production_scale_preference', 'medium'),
+            'profile_confidence': profile.get('profile_confidence', 0),
+            'recommendation_strategy': profile.get('recommendations_strategy', 'content_based')
+        }
+    except Exception as e:
+        logger.error(f"Error getting Cinematic DNA summary: {e}")
         return {}
 
 def create_minimal_content_record(content_id, content_info):
@@ -224,3 +263,8 @@ def add_cors_headers(response):
         response.headers['Access-Control-Allow-Credentials'] = 'true'
     
     return response
+
+# Export functions
+__all__ = ['require_auth', 'get_enhanced_user_stats', 'get_basic_user_stats', 
+           'create_minimal_content_record', 'format_content_for_response',
+           'add_cors_headers', 'get_cinematic_dna_summary']

@@ -49,6 +49,7 @@ from services.new_releases import init_cinebrain_new_releases_service
 from services.review import init_review_service
 from user.routes import user_bp, init_user_routes
 from recommendation import recommendation_bp, init_recommendation_routes
+# Add these imports for the new personalized system
 from personalized import init_personalized_system, personalized_bp
 import re
 import click
