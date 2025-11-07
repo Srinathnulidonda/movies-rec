@@ -49,7 +49,10 @@ from services.new_releases import init_cinebrain_new_releases_service
 from services.review import init_review_service
 from user.routes import user_bp, init_user_routes
 from recommendation import recommendation_bp, init_recommendation_routes
+from personalized import init_personalized_system, personalized_bp
 import re
+import click
+import traceback
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -704,15 +707,32 @@ try:
 except Exception as e:
     logger.error(f"Failed to initialize CineBrain support service: {e}")
 
+# Replace the existing personalized initialization block with the new advanced system
 try:
-    personalized_engine = init_personalized(app, db, models, services, cache)
-    if personalized_engine:
-        logger.info("CineBrain personalized recommendation system initialized successfully")
-        services['personalized_engine'] = personalized_engine
+    # Initialize the new modular personalized recommendation system
+    profile_analyzer, personalized_recommendation_engine = init_personalized_system(
+        app, db, models, services, cache
+    )
+    
+    if profile_analyzer and personalized_recommendation_engine:
+        logger.info("✅ CineBrain Advanced Personalized Recommendation System initialized successfully")
+        logger.info(f"   - Profile Analyzer: Active")
+        logger.info(f"   - Recommendation Engine: Active with Telugu-first priority")
+        logger.info(f"   - Real-time Learning: Enabled")
+        
+        # Add to services dictionary
+        services['profile_analyzer'] = profile_analyzer
+        services['personalized_recommendation_engine'] = personalized_recommendation_engine
+        
+        # Register the personalized blueprint
+        app.register_blueprint(personalized_bp, url_prefix='/api')
+        logger.info("✅ CineBrain Personalized routes registered at /api/personalized/*")
     else:
-        logger.warning("CineBrain personalized recommendation system failed to initialize")
+        logger.warning("⚠️ CineBrain Personalized Recommendation System failed to initialize fully")
+        
 except Exception as e:
-    logger.error(f"Failed to initialize CineBrain personalized recommendation system: {e}")
+    logger.error(f"❌ Failed to initialize CineBrain Personalized Recommendation System: {e}")
+    logger.error(f"Traceback: {traceback.format_exc()}")
 
 try:
     init_auth(app, db, User)
@@ -1413,6 +1433,7 @@ def performance_check():
             'cinebrain_brand': 'CineBrain Entertainment Platform'
         }), 500
 
+# Updated health check endpoint with personalized system status
 @app.route('/api/health', methods=['GET'])
 def health_check():
     try:
@@ -1424,6 +1445,7 @@ def health_check():
             'cinebrain_brand': 'CineBrain Entertainment Platform'
         }
         
+        # Database check
         try:
             db.session.execute(text('SELECT 1'))
             health_info['database'] = 'connected'
@@ -1431,6 +1453,7 @@ def health_check():
             health_info['database'] = 'disconnected'
             health_info['status'] = 'degraded'
         
+        # Cache check
         try:
             cache.set('cinebrain_health_check', 'ok', timeout=10)
             if cache.get('cinebrain_health_check') == 'ok':
@@ -1441,6 +1464,17 @@ def health_check():
         except:
             health_info['cache'] = 'disconnected'
             health_info['status'] = 'degraded'
+        
+        # Add personalized system check
+        health_info['personalized_recommendation_system'] = {
+            'profile_analyzer': 'enabled' if 'profile_analyzer' in services and services['profile_analyzer'] else 'disabled',
+            'recommendation_engine': 'enabled' if 'personalized_recommendation_engine' in services and services['personalized_recommendation_engine'] else 'disabled',
+            'real_time_learning': 'enabled',
+            'telugu_priority': 'active',
+            'cinematic_dna_analysis': 'active',
+            'behavior_analysis': 'active',
+            'preference_embeddings': 'active'
+        }
         
         health_info['cinebrain_services'] = {
             'tmdb': bool(TMDB_API_KEY),
@@ -1457,8 +1491,29 @@ def health_check():
             'monitoring': 'cinebrain_active',
             'auth_service': 'enabled' if 'auth_bp' in app.blueprints else 'disabled',
             'user_service': 'enabled' if 'user_bp' in app.blueprints else 'disabled',
-            'recommendation_service': 'enabled' if 'recommendations' in app.blueprints else 'disabled'
+            'recommendation_service': 'enabled' if 'recommendations' in app.blueprints else 'disabled',
+            'personalized_service': 'enabled' if 'personalized' in app.blueprints else 'disabled'
         }
+        
+        # Add personalized system stats
+        try:
+            if 'profile_analyzer' in services and services['profile_analyzer']:
+                total_users = User.query.count()
+                health_info['personalized_stats'] = {
+                    'total_users': total_users,
+                    'profile_cache_enabled': bool(cache),
+                    'embedding_engine': 'active',
+                    'cinematic_dna_analyzer': 'active',
+                    'behavior_analyzer': 'active',
+                    'recommendation_strategies': [
+                        'advanced_hybrid',
+                        'content_collaborative_mix', 
+                        'content_based_primary',
+                        'popularity_cultural'
+                    ]
+                }
+        except Exception as e:
+            health_info['personalized_stats'] = {'error': str(e)}
         
         try:
             total_content = Content.query.count()
@@ -1517,7 +1572,11 @@ def health_check():
                 'cinebrain_user_service_modular',
                 'cinebrain_new_releases_service',
                 'cinebrain_enhanced_critics_choice_service',
-                'cinebrain_recommendation_service_modular'
+                'cinebrain_recommendation_service_modular',
+                'cinebrain_advanced_personalized_system',
+                'cinebrain_cinematic_dna_analysis',
+                'cinebrain_preference_embedding_engine',
+                'cinebrain_real_time_learning'
             ],
             'memory_optimizations': 'cinebrain_enabled',
             'unicode_fixes': 'cinebrain_applied',
@@ -1637,6 +1696,112 @@ def cinebrain_new_releases_refresh_cli():
         print(f"Failed to refresh CineBrain new releases: {e}")
         logger.error(f"CineBrain CLI new releases refresh error: {e}")
 
+# New CLI commands for personalized system
+@app.cli.command('analyze-user-profiles')
+def analyze_user_profiles_cli():
+    """Analyze all user profiles and generate Cinematic DNA"""
+    try:
+        print("Starting CineBrain user profile analysis...")
+        
+        if 'profile_analyzer' not in services or not services['profile_analyzer']:
+            print("Error: Profile Analyzer not available")
+            return
+        
+        profile_analyzer = services['profile_analyzer']
+        
+        # Get all users
+        users = User.query.all()
+        print(f"Found {len(users)} users to analyze")
+        
+        successful = 0
+        failed = 0
+        
+        for i, user in enumerate(users, 1):
+            try:
+                print(f"\nAnalyzing user {i}/{len(users)}: {user.username} (ID: {user.id})")
+                
+                # Build comprehensive profile
+                profile = profile_analyzer.build_comprehensive_profile(user.id)
+                
+                if profile:
+                    print(f"  ✓ Profile built successfully")
+                    print(f"  - Cinematic Sophistication: {profile['cinematic_dna']['cinematic_sophistication_score']:.2f}")
+                    print(f"  - Telugu Affinity: {profile['cinematic_dna']['telugu_cultural_affinity']:.2f}")
+                    print(f"  - Profile Confidence: {profile['profile_confidence']:.2f}")
+                    print(f"  - Recommendation Strategy: {profile['recommendations_strategy']}")
+                    successful += 1
+                else:
+                    print(f"  ✗ Failed to build profile")
+                    failed += 1
+                    
+            except Exception as e:
+                print(f"  ✗ Error: {e}")
+                failed += 1
+        
+        print(f"\nCineBrain Profile Analysis Complete!")
+        print(f"Successful: {successful}")
+        print(f"Failed: {failed}")
+        
+    except Exception as e:
+        print(f"Failed to analyze user profiles: {e}")
+        logger.error(f"CineBrain CLI profile analysis error: {e}")
+
+@app.cli.command('test-personalized-recommendations')
+@click.argument('username')
+def test_personalized_recommendations_cli(username):
+    """Test personalized recommendations for a specific user"""
+    try:
+        print(f"Testing CineBrain personalized recommendations for user: {username}")
+        
+        # Get user
+        user = User.query.filter_by(username=username).first()
+        if not user:
+            print(f"Error: User '{username}' not found")
+            return
+        
+        if 'personalized_recommendation_engine' not in services:
+            print("Error: Personalized Recommendation Engine not available")
+            return
+        
+        engine = services['personalized_recommendation_engine']
+        
+        # Get recommendations
+        print(f"\nGenerating recommendations for {username} (ID: {user.id})...")
+        
+        recommendations = engine.get_personalized_recommendations(
+            user_id=user.id,
+            recommendation_type='for_you',
+            limit=10
+        )
+        
+        if recommendations['success']:
+            print(f"\n✅ Successfully generated {len(recommendations['recommendations'])} recommendations")
+            
+            print("\nTop 5 Recommendations:")
+            for i, rec in enumerate(recommendations['recommendations'][:5], 1):
+                print(f"{i}. {rec['title']}")
+                print(f"   - Type: {rec['content_type']}")
+                print(f"   - Languages: {', '.join(rec['languages'])}")
+                print(f"   - Personalization Score: {rec['personalization_score']:.3f}")
+                print(f"   - Recommendation Strength: {rec['recommendation_strength']}")
+                print(f"   - Why: {rec['personalized_explanation']}")
+                print()
+            
+            # Show insights
+            insights = recommendations.get('profile_insights', {})
+            print("User Profile Insights:")
+            print(f"- Profile Strength: {insights.get('profile_strength', 'unknown')}")
+            print(f"- Cinematic Sophistication: {insights.get('cinematic_sophistication', 0):.2f}")
+            print(f"- Dominant Themes: {', '.join(insights.get('dominant_themes', []))}")
+            print(f"- Language Priority: {', '.join(insights.get('language_priority', []))}")
+            
+        else:
+            print(f"❌ Failed to generate recommendations")
+            
+    except Exception as e:
+        print(f"Error testing recommendations: {e}")
+        logger.error(f"CineBrain CLI recommendation test error: {e}")
+
 def create_tables():
     try:
         with app.app_context():
@@ -1675,12 +1840,19 @@ def create_tables():
 create_tables()
 
 if __name__ == '__main__':
-    print("=== Running CineBrain Flask in development mode with Modular Recommendation System ===")
+    print("=== Running CineBrain Flask with Advanced Personalized Recommendation System ===")
+    print("Features:")
+    print("  ✅ Cinematic DNA Analysis")
+    print("  ✅ Advanced Behavioral Analysis") 
+    print("  ✅ Preference Embedding Engine")
+    print("  ✅ Telugu-first Cultural Priority")
+    print("  ✅ Real-time Learning")
+    print("  ✅ Multi-strategy Recommendations")
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('FLASK_ENV') == 'development'
     app.run(host='0.0.0.0', port=port, debug=debug)
 else:
-    print("=== CineBrain Flask app imported by Gunicorn - MODULAR RECOMMENDATION SYSTEM ===")
+    print("=== CineBrain Flask app with Advanced Personalized System ===")
     print(f"App name: {app.name}")
     print(f"Python version: 3.13.4")
     print(f"CineBrain brand: CineBrain Entertainment Platform")
@@ -1694,8 +1866,9 @@ else:
     print(f"CineBrain auth service status: {'Integrated' if 'auth_bp' in app.blueprints else 'Not integrated'}")
     print(f"CineBrain user service status: {'Integrated' if 'user_bp' in app.blueprints else 'Not integrated'}")
     print(f"CineBrain recommendation service status: {'Integrated' if 'recommendations' in app.blueprints else 'Not integrated'}")
+    print(f"   Personalized System: {'Active' if 'profile_analyzer' in services else 'Not Initialized'}")
     
-    print("\n=== CineBrain Modular Recommendation System Features ===")
+    print("\n=== CineBrain Advanced Personalized Recommendation System Features ===")
     print("✅ Modular recommendation architecture")
     print("✅ All original endpoints preserved")
     print("✅ OMDb completely removed")
@@ -1707,6 +1880,10 @@ else:
     print("✅ Upcoming content with Telugu focus")
     print("✅ Anonymous recommendation engine")
     print("✅ Admin recommendation system")
+    print("✅ Advanced Personalized System with Cinematic DNA")
+    print("✅ Real-time Learning and Profile Analysis")
+    print("✅ Multi-strategy Recommendation Engine")
+    print("✅ Behavioral Analysis and Preference Embeddings")
     
     print(f"\n=== CineBrain Registered Routes ===")
     for rule in app.url_map.iter_rules():
