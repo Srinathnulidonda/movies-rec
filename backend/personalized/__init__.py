@@ -1,3 +1,5 @@
+#backend/personalized/__init__.py
+
 """
 CineBrain Personalized Recommendation System
 Advanced AI-powered recommendation engine with Cinematic DNA Analysis

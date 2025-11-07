@@ -5,11 +5,11 @@ CineBrain Personalized Recommendation API Routes
 Flask blueprint providing personalized recommendation endpoints
 
 This module provides:
-- /personalized/for-you: Main personalized recommendations
-- /personalized/discover: Discovery and exploration recommendations
-- /personalized/mix: Mixed recommendation strategies
-- /personalized/<genre>: Genre-specific personalized recommendations
-- /personalized/<type>: Content type specific recommendations
+- /api/personalized/for-you: Main personalized recommendations
+- /api/personalized/discover: Discovery and exploration recommendations
+- /api/personalized/mix: Mixed recommendation strategies
+- /api/personalized/<genre>: Genre-specific personalized recommendations
+- /api/personalized/<type>: Content type specific recommendations
 - Real-time feedback processing endpoints
 """
 
@@ -22,13 +22,30 @@ from typing import Dict, Any, List, Optional
 # Import from user module for authentication
 from user.utils import require_auth
 
-# Import personalized components
-from . import get_profile_analyzer, get_recommendation_engine
-
 logger = logging.getLogger(__name__)
 
-# Create blueprint
-personalized_bp = Blueprint('personalized', __name__)
+# Create blueprint with API prefix
+personalized_bp = Blueprint('personalized', __name__, url_prefix='/api')
+
+def get_personalized_services():
+    """
+    Get personalized services with late import to avoid circular dependency
+    Returns tuple of (profile_analyzer, recommendation_engine)
+    """
+    try:
+        # Try to get from current_app context first
+        if hasattr(current_app, 'profile_analyzer') and hasattr(current_app, 'recommendation_engine'):
+            return current_app.profile_analyzer, current_app.recommendation_engine
+        
+        # Fallback to importing from personalized module
+        import personalized
+        profile_analyzer = personalized.get_profile_analyzer()
+        recommendation_engine = personalized.get_recommendation_engine()
+        
+        return profile_analyzer, recommendation_engine
+    except Exception as e:
+        logger.error(f"Error getting personalized services: {e}")
+        return None, None
 
 def get_request_context() -> Dict[str, Any]:
     """Extract context from request"""
@@ -74,6 +91,8 @@ def get_for_you_recommendations(current_user):
     """
     Get main 'For You' personalized recommendations
     
+    URL: /api/personalized/for-you
+    
     Query Parameters:
     - limit: Number of recommendations (default: 50, max: 100)
     - refresh: Force refresh of recommendations (default: false)
@@ -91,8 +110,8 @@ def get_for_you_recommendations(current_user):
         limit = min(int(request.args.get('limit', 50)), 100)
         force_refresh = request.args.get('refresh', 'false').lower() == 'true'
         
-        # Get recommendation engine
-        recommendation_engine = get_recommendation_engine()
+        # Get services with late import
+        profile_analyzer, recommendation_engine = get_personalized_services()
         if not recommendation_engine:
             return jsonify({
                 'error': 'CineBrain recommendation engine not available',
@@ -120,7 +139,7 @@ def get_for_you_recommendations(current_user):
         
         # Add response metadata
         recommendations['api_metadata'] = {
-            'endpoint': '/personalized/for-you',
+            'endpoint': '/api/personalized/for-you',
             'algorithm_version': '3.0.0',
             'response_time': datetime.utcnow().isoformat(),
             'total_recommendations': len(recommendations.get('recommendations', [])),
@@ -144,6 +163,8 @@ def get_discover_recommendations(current_user):
     """
     Get discovery recommendations to help users explore new content
     
+    URL: /api/personalized/discover
+    
     Query Parameters:
     - limit: Number of recommendations (default: 30, max: 50)
     - exploration_level: low|medium|high (default: medium)
@@ -161,8 +182,8 @@ def get_discover_recommendations(current_user):
         limit = min(int(request.args.get('limit', 30)), 50)
         exploration_level = request.args.get('exploration_level', 'medium')
         
-        # Get recommendation engine
-        recommendation_engine = get_recommendation_engine()
+        # Get services with late import
+        profile_analyzer, recommendation_engine = get_personalized_services()
         if not recommendation_engine:
             return jsonify({
                 'error': 'CineBrain recommendation engine not available',
@@ -207,6 +228,8 @@ def get_mixed_recommendations(current_user):
     """
     Get mixed recommendations combining multiple strategies
     
+    URL: /api/personalized/mix
+    
     Query Parameters:
     - limit: Number of recommendations (default: 40, max: 60)
     - balance: safe|balanced|adventurous (default: balanced)
@@ -224,8 +247,8 @@ def get_mixed_recommendations(current_user):
         limit = min(int(request.args.get('limit', 40)), 60)
         balance = request.args.get('balance', 'balanced')
         
-        # Get recommendation engine
-        recommendation_engine = get_recommendation_engine()
+        # Get services with late import
+        profile_analyzer, recommendation_engine = get_personalized_services()
         if not recommendation_engine:
             return jsonify({
                 'error': 'CineBrain recommendation engine not available',
@@ -267,6 +290,8 @@ def get_genre_personalized_recommendations(current_user, genre_name):
     """
     Get personalized recommendations for a specific genre
     
+    URL: /api/personalized/genre/<genre_name>
+    
     Path Parameters:
     - genre_name: Genre to focus on (e.g., 'action', 'drama', 'comedy')
     
@@ -302,10 +327,8 @@ def get_genre_personalized_recommendations(current_user, genre_name):
         limit = min(int(request.args.get('limit', 25)), 40)
         subgenre = request.args.get('subgenre')
         
-        # Get recommendation engine and profile analyzer
-        recommendation_engine = get_recommendation_engine()
-        profile_analyzer = get_profile_analyzer()
-        
+        # Get services with late import
+        profile_analyzer, recommendation_engine = get_personalized_services()
         if not recommendation_engine or not profile_analyzer:
             return jsonify({
                 'error': 'CineBrain services not available',
@@ -377,6 +400,8 @@ def get_content_type_personalized_recommendations(current_user, content_type):
     """
     Get personalized recommendations for a specific content type
     
+    URL: /api/personalized/type/<content_type>
+    
     Path Parameters:
     - content_type: Type of content ('movie', 'tv', 'anime')
     
@@ -406,10 +431,8 @@ def get_content_type_personalized_recommendations(current_user, content_type):
         limit = min(int(request.args.get('limit', 30)), 50)
         filter_type = request.args.get('filter', 'all')
         
-        # Get recommendation engine and profile analyzer
-        recommendation_engine = get_recommendation_engine()
-        profile_analyzer = get_profile_analyzer()
-        
+        # Get services with late import
+        profile_analyzer, recommendation_engine = get_personalized_services()
         if not recommendation_engine or not profile_analyzer:
             return jsonify({
                 'error': 'CineBrain services not available',
@@ -490,6 +513,8 @@ def process_recommendation_feedback(current_user):
     """
     Process user feedback on recommendations for real-time learning
     
+    URL: /api/personalized/feedback
+    
     Request Body:
     {
         "content_id": int,
@@ -531,8 +556,8 @@ def process_recommendation_feedback(current_user):
                 'success': False
             }), 400
         
-        # Get recommendation engine
-        recommendation_engine = get_recommendation_engine()
+        # Get services with late import
+        profile_analyzer, recommendation_engine = get_personalized_services()
         if not recommendation_engine:
             return jsonify({
                 'error': 'CineBrain recommendation engine not available',
@@ -588,6 +613,8 @@ def get_personalization_insights(current_user):
     """
     Get detailed insights about user's personalization profile
     
+    URL: /api/personalized/profile/insights
+    
     Returns:
     - Comprehensive profile analysis
     - Recommendation accuracy metrics
@@ -598,8 +625,8 @@ def get_personalization_insights(current_user):
         return '', 200
     
     try:
-        # Get profile analyzer
-        profile_analyzer = get_profile_analyzer()
+        # Get services with late import
+        profile_analyzer, recommendation_engine = get_personalized_services()
         if not profile_analyzer:
             return jsonify({
                 'error': 'CineBrain profile analyzer not available',
@@ -676,6 +703,8 @@ def refresh_recommendations(current_user):
     """
     Force refresh of user's personalized recommendations
     
+    URL: /api/personalized/refresh
+    
     Request Body (optional):
     {
         "clear_cache": boolean,
@@ -692,10 +721,8 @@ def refresh_recommendations(current_user):
     try:
         data = request.get_json() or {}
         
-        # Get services
-        profile_analyzer = get_profile_analyzer()
-        recommendation_engine = get_recommendation_engine()
-        
+        # Get services with late import
+        profile_analyzer, recommendation_engine = get_personalized_services()
         if not profile_analyzer or not recommendation_engine:
             return jsonify({
                 'error': 'CineBrain services not available',
@@ -753,7 +780,11 @@ def refresh_recommendations(current_user):
 
 @personalized_bp.route('/personalized/health', methods=['GET'])
 def personalization_health():
-    """Health check for personalization services"""
+    """
+    Health check for personalization services
+    
+    URL: /api/personalized/health
+    """
     try:
         health_info = {
             'status': 'healthy',
@@ -762,12 +793,9 @@ def personalization_health():
             'version': '3.0.0'
         }
         
-        # Check profile analyzer
-        profile_analyzer = get_profile_analyzer()
+        # Check services with late import
+        profile_analyzer, recommendation_engine = get_personalized_services()
         health_info['profile_analyzer'] = 'available' if profile_analyzer else 'unavailable'
-        
-        # Check recommendation engine
-        recommendation_engine = get_recommendation_engine()
         health_info['recommendation_engine'] = 'available' if recommendation_engine else 'unavailable'
         
         # Check if real-time learning is enabled
@@ -815,6 +843,9 @@ def personalization_health():
 
 def _calculate_genre_affinity(genre_name: str, user_profile: Dict[str, Any]) -> float:
     """Calculate user's affinity for a specific genre"""
+    if not user_profile:
+        return 0.5
+        
     genre_sophistication = user_profile.get('cinematic_dna', {}).get('genre_sophistication', {})
     
     if genre_name in genre_sophistication:
@@ -855,6 +886,9 @@ def _analyze_user_genre_relationship(genre_name: str, user_profile: Dict[str, An
 
 def _calculate_type_preference(content_type: str, user_profile: Dict[str, Any]) -> float:
     """Calculate user's preference for a content type"""
+    if not user_profile:
+        return 0.33
+        
     behavior_profile = user_profile.get('behavior_profile', {})
     engagement_patterns = behavior_profile.get('engagement_patterns', {})
     
