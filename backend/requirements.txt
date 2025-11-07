@@ -37,3 +37,4 @@ textblob
 spacy
 cloudinary
 Pillow
+psutil
