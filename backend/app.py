@@ -1,4 +1,4 @@
-# backend/app.py
+#backend/app.py 
 from typing import Optional
 from flask import Flask, request, jsonify, session, render_template
 from flask_sqlalchemy import SQLAlchemy
@@ -49,12 +49,6 @@ from services.new_releases import init_cinebrain_new_releases_service
 from services.review import init_review_service
 from user.routes import user_bp, init_user_routes
 from recommendation import recommendation_bp, init_recommendation_routes
-from personalized import (
-    init_personalized_system,
-    get_personalization_system,
-    CineBrainPersonalizationSystem
-)
-from personalized.routes import personalized_bp, init_personalized_routes
 import re
 from dotenv import load_dotenv
 load_dotenv()
@@ -720,26 +714,6 @@ try:
 except Exception as e:
     logger.error(f"Failed to initialize CineBrain personalized recommendation system: {e}")
 
-cinebrain_personalization_system = None
-try:
-    cinebrain_personalization_system = init_personalized_system(app, db, models, services, cache)
-    if cinebrain_personalization_system and cinebrain_personalization_system.is_ready():
-        logger.info("🚀 CineBrain Advanced Personalization System integrated successfully")
-        services['personalization_system'] = cinebrain_personalization_system
-        
-        init_personalized_routes(app, db, models, services, cache)
-        app.register_blueprint(personalized_bp)
-        logger.info("✅ CineBrain Personalized API routes registered successfully")
-        
-        if 'personalized_engine' in services:
-            services['legacy_personalized_engine'] = services['personalized_engine']
-        services['personalized_engine'] = cinebrain_personalization_system
-        
-    else:
-        logger.warning("⚠️ CineBrain Advanced Personalization System failed to initialize")
-except Exception as e:
-    logger.error(f"❌ Failed to initialize CineBrain Advanced Personalization System: {e}")
-
 try:
     init_auth(app, db, User)
     app.register_blueprint(auth_bp)
@@ -772,21 +746,21 @@ try:
 except Exception as e:
     logger.error(f"Failed to initialize CineBrain Critics Choice service: {e}")
 
+# Add RecommendationOrchestrator to services
 try:
     cinebrain_recommendation_orchestrator = RecommendationOrchestrator()
-    
-    if cinebrain_personalization_system:
-        cinebrain_recommendation_orchestrator.personalization_system = cinebrain_personalization_system
-        logger.info("🔗 Recommendation orchestrator linked with advanced personalization")
-    
     services['recommendation_orchestrator'] = cinebrain_recommendation_orchestrator
-    logger.info("✅ CineBrain RecommendationOrchestrator initialized successfully")
-    
+    logger.info("CineBrain RecommendationOrchestrator initialized successfully")
+except Exception as e:
+    logger.error(f"Failed to initialize CineBrain RecommendationOrchestrator: {e}")
+
+# Initialize recommendation routes
+try:
     init_recommendation_routes(app, db, models, services, cache)
     app.register_blueprint(recommendation_bp)
-    logger.info("✅ CineBrain recommendation routes initialized with personalization integration")
+    logger.info("CineBrain recommendation routes initialized successfully")
 except Exception as e:
-    logger.error(f"❌ Failed to initialize CineBrain recommendation routes: {e}")
+    logger.error(f"Failed to initialize CineBrain recommendation routes: {e}")
 
 def setup_support_monitoring():
     def support_monitor():
@@ -1275,118 +1249,6 @@ def vote_review_helpful(review_id):
         logger.error(f"CineBrain error voting on review: {e}")
         return jsonify({'error': 'Failed to vote on CineBrain review'}), 500
 
-@app.route('/api/recommendations/advanced/<int:user_id>', methods=['GET'])
-@auth_required
-def get_advanced_user_recommendations(user_id):
-    try:
-        if request.user_id != user_id:
-            user = User.query.get(request.user_id)
-            if not user or not user.is_admin:
-                return jsonify({'error': 'Access denied'}), 403
-        
-        if not cinebrain_personalization_system:
-            return jsonify({
-                'error': 'Advanced personalization not available',
-                'fallback': 'Use /api/personalized/ endpoints'
-            }), 503
-        
-        rec_type = request.args.get('type', 'for_you')
-        limit = min(int(request.args.get('limit', 50)), 100)
-        
-        if cinebrain_personalization_system.recommendation_engine:
-            result = cinebrain_personalization_system.recommendation_engine.generate_personalized_recommendations(
-                user_id=user_id,
-                recommendation_type=rec_type,
-                limit=limit
-            )
-            
-            return jsonify({
-                'success': True,
-                'advanced_system': True,
-                'data': result,
-                'message': 'Generated using CineBrain Advanced Personalization System'
-            }), 200
-        else:
-            return jsonify({
-                'error': 'Advanced recommendation engine not ready',
-                'system_status': cinebrain_personalization_system.get_system_status()
-            }), 503
-            
-    except Exception as e:
-        logger.error(f"Advanced recommendations error: {e}")
-        return jsonify({'error': 'Failed to generate advanced recommendations'}), 500
-
-@app.route('/api/recommendations/neural-similar/<int:content_id>', methods=['GET'])
-def get_neural_similar_content(content_id):
-    try:
-        if not cinebrain_personalization_system:
-            return jsonify({
-                'message': 'Using legacy similarity engine',
-                'redirect': f'/api/similar/{content_id}'
-            }), 302
-        
-        base_content = Content.query.get_or_404(content_id)
-        
-        content_pool = Content.query.filter(
-            Content.id != content_id,
-            Content.rating.isnot(None)
-        ).order_by(desc(Content.rating)).limit(1000).all()
-        
-        if (cinebrain_personalization_system.recommendation_engine and 
-            hasattr(cinebrain_personalization_system.recommendation_engine, 'neural_cf')):
-            
-            neural_cf = cinebrain_personalization_system.recommendation_engine.neural_cf
-            
-            similar_results = []
-            
-            if hasattr(cinebrain_personalization_system.recommendation_engine, 'similarity_engine'):
-                similarity_engine = cinebrain_personalization_system.recommendation_engine.similarity_engine
-                similar_results = similarity_engine.find_ultra_similar_content(
-                    base_content=base_content,
-                    content_pool=content_pool,
-                    limit=20,
-                    min_similarity=0.5,
-                    strict_mode=True
-                )
-            
-            formatted_results = []
-            for result in similar_results:
-                content = result['content']
-                formatted_results.append({
-                    'id': content.id,
-                    'slug': content.slug,
-                    'title': content.title,
-                    'content_type': content.content_type,
-                    'similarity_score': result['similarity_score'],
-                    'match_type': result['match_type'],
-                    'confidence': result['confidence'],
-                    'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
-                    'rating': content.rating,
-                    'neural_enhanced': True
-                })
-            
-            return jsonify({
-                'success': True,
-                'base_content': {
-                    'id': base_content.id,
-                    'title': base_content.title,
-                    'content_type': base_content.content_type
-                },
-                'similar_content': formatted_results,
-                'algorithm': 'neural_enhanced_similarity',
-                'total_found': len(formatted_results)
-            }), 200
-        
-        else:
-            return jsonify({
-                'message': 'Neural engine not ready, use existing similarity endpoint',
-                'redirect': f'/api/similar/{content_id}'
-            }), 302
-            
-    except Exception as e:
-        logger.error(f"Neural similarity error: {e}")
-        return jsonify({'error': 'Failed to get neural similar content'}), 500
-
 @app.route('/api/admin/slugs/migrate', methods=['POST'])
 @auth_required
 def migrate_all_slugs():
@@ -1595,28 +1457,8 @@ def health_check():
             'monitoring': 'cinebrain_active',
             'auth_service': 'enabled' if 'auth_bp' in app.blueprints else 'disabled',
             'user_service': 'enabled' if 'user_bp' in app.blueprints else 'disabled',
-            'recommendation_service': 'enabled' if 'recommendations' in app.blueprints else 'disabled',
-            
-            'advanced_personalization': 'enabled' if cinebrain_personalization_system else 'disabled',
-            'neural_collaborative_filtering': 'enabled' if (cinebrain_personalization_system and 
-                                                          hasattr(cinebrain_personalization_system, 'recommendation_engine')) else 'disabled',
-            'cultural_awareness_engine': 'enabled' if cinebrain_personalization_system else 'disabled',
-            'adaptive_learning': 'enabled' if cinebrain_personalization_system else 'disabled',
-            'personalized_api_routes': 'enabled' if 'personalized' in app.blueprints else 'disabled'
+            'recommendation_service': 'enabled' if 'recommendations' in app.blueprints else 'disabled'
         }
-        
-        if cinebrain_personalization_system:
-            health_info['advanced_personalization_status'] = cinebrain_personalization_system.get_system_status()
-            health_info['personalization_features'] = [
-                'neural_collaborative_filtering',
-                'cinematic_dna_analysis', 
-                'cultural_awareness_engine',
-                'adaptive_personalization',
-                'telugu_cinema_prioritization',
-                'real_time_learning',
-                'behavioral_intelligence',
-                'serendipity_injection'
-            ]
         
         try:
             total_content = Content.query.count()
@@ -1675,18 +1517,13 @@ def health_check():
                 'cinebrain_user_service_modular',
                 'cinebrain_new_releases_service',
                 'cinebrain_enhanced_critics_choice_service',
-                'cinebrain_recommendation_service_modular',
-                'cinebrain_advanced_personalization_system',
-                'cinebrain_neural_embedding_engine',
-                'cinebrain_cultural_awareness_integration',
-                'cinebrain_adaptive_learning_pipeline'
+                'cinebrain_recommendation_service_modular'
             ],
             'memory_optimizations': 'cinebrain_enabled',
             'unicode_fixes': 'cinebrain_applied',
             'monitoring': 'cinebrain_background_threads_active',
             'telugu_priority': 'cinebrain_enabled',
-            'omdb_removed': 'cinebrain_complete',
-            'personalization_level': 'advanced_neural_cultural'
+            'omdb_removed': 'cinebrain_complete'
         }
         
         return jsonify(health_info), 200
@@ -1800,63 +1637,6 @@ def cinebrain_new_releases_refresh_cli():
         print(f"Failed to refresh CineBrain new releases: {e}")
         logger.error(f"CineBrain CLI new releases refresh error: {e}")
 
-@app.cli.command('init-personalization')
-def init_personalization_cli():
-    try:
-        print("Initializing CineBrain Advanced Personalization System...")
-        
-        global cinebrain_personalization_system
-        cinebrain_personalization_system = init_personalized_system(app, db, models, services, cache)
-        
-        if cinebrain_personalization_system and cinebrain_personalization_system.is_ready():
-            print("✅ CineBrain Advanced Personalization System initialized successfully!")
-            
-            status = cinebrain_personalization_system.get_system_status()
-            print(f"Profile Analyzer: {'✅' if status['profile_analyzer_ready'] else '❌'}")
-            print(f"Recommendation Engine: {'✅' if status['recommendation_engine_ready'] else '❌'}")
-            print(f"Cache Status: {status['cache_status']}")
-            
-        else:
-            print("❌ Failed to initialize CineBrain Advanced Personalization System")
-            
-    except Exception as e:
-        print(f"Error initializing personalization system: {e}")
-
-@app.cli.command('test-neural-embeddings')
-def test_neural_embeddings_cli():
-    try:
-        print("Testing CineBrain Neural Embeddings...")
-        
-        if not cinebrain_personalization_system:
-            print("❌ Personalization system not available")
-            return
-        
-        with app.app_context():
-            sample_user = User.query.first()
-            if not sample_user:
-                print("❌ No users found for testing")
-                return
-            
-            print(f"Testing with user: {sample_user.username}")
-            
-            if cinebrain_personalization_system.profile_analyzer:
-                profile = cinebrain_personalization_system.profile_analyzer.build_comprehensive_user_profile(
-                    sample_user.id
-                )
-                
-                if profile:
-                    print(f"✅ Profile generated successfully")
-                    print(f"Telugu Cinema Affinity: {profile.get('telugu_cinema_affinity', 'N/A')}")
-                    print(f"Personalization Strength: {profile.get('personalization_strength', 'N/A')}")
-                    print(f"Embedding Dimension: {profile.get('embedding_dimension', 'N/A')}")
-                else:
-                    print("❌ Failed to generate profile")
-            else:
-                print("❌ Profile analyzer not available")
-                
-    except Exception as e:
-        print(f"Error testing neural embeddings: {e}")
-
 def create_tables():
     try:
         with app.app_context():
@@ -1895,16 +1675,12 @@ def create_tables():
 create_tables()
 
 if __name__ == '__main__':
-    print("=== Running CineBrain Flask with Advanced Personalization System ===")
-    print("🧠 Neural Collaborative Filtering: Enabled")
-    print("🎭 Cultural Awareness Engine: Active")
-    print("🔄 Adaptive Learning: Real-time")
-    print("🎯 Telugu Cinema Priority: Maximum")
+    print("=== Running CineBrain Flask in development mode with Modular Recommendation System ===")
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('FLASK_ENV') == 'development'
     app.run(host='0.0.0.0', port=port, debug=debug)
 else:
-    print("=== CineBrain Flask app imported by Gunicorn - ADVANCED PERSONALIZATION SYSTEM ===")
+    print("=== CineBrain Flask app imported by Gunicorn - MODULAR RECOMMENDATION SYSTEM ===")
     print(f"App name: {app.name}")
     print(f"Python version: 3.13.4")
     print(f"CineBrain brand: CineBrain Entertainment Platform")
@@ -1918,29 +1694,21 @@ else:
     print(f"CineBrain auth service status: {'Integrated' if 'auth_bp' in app.blueprints else 'Not integrated'}")
     print(f"CineBrain user service status: {'Integrated' if 'user_bp' in app.blueprints else 'Not integrated'}")
     print(f"CineBrain recommendation service status: {'Integrated' if 'recommendations' in app.blueprints else 'Not integrated'}")
-    print(f"CineBrain advanced personalization status: {'🚀 ACTIVE' if cinebrain_personalization_system else '❌ Not initialized'}")
-    print(f"CineBrain neural embeddings status: {'🧠 ENABLED' if cinebrain_personalization_system else '❌ Disabled'}")
-    print(f"CineBrain cultural awareness status: {'🎭 ACTIVE' if cinebrain_personalization_system else '❌ Inactive'}")
-    print(f"CineBrain adaptive learning status: {'🔄 REAL-TIME' if cinebrain_personalization_system else '❌ Disabled'}")
     
-    print("\n=== CineBrain Advanced Personalization Features ===")
-    print("✅ Neural collaborative filtering with SVD embeddings")
-    print("✅ Cultural awareness engine with Telugu-first priority")
-    print("✅ Adaptive personalization with real-time learning")
-    print("✅ Behavioral intelligence system")
-    print("✅ Cinematic DNA analysis")
-    print("✅ Advanced recommendation categories (8 types)")
-    print("✅ Feedback-driven adaptive learning")
-    print("✅ Performance monitoring and caching")
-    print("✅ Production-grade error handling")
-    print("✅ Comprehensive API routes")
+    print("\n=== CineBrain Modular Recommendation System Features ===")
+    print("✅ Modular recommendation architecture")
+    print("✅ All original endpoints preserved")
+    print("✅ OMDb completely removed")
+    print("✅ Advanced algorithms integration")
+    print("✅ Telugu-first priority system")
+    print("✅ Ultra-powerful similarity engine")
+    print("✅ Critics choice with auto-refresh")
+    print("✅ New releases with 45-day strict filter")
+    print("✅ Upcoming content with Telugu focus")
+    print("✅ Anonymous recommendation engine")
+    print("✅ Admin recommendation system")
     
     print(f"\n=== CineBrain Registered Routes ===")
     for rule in app.url_map.iter_rules():
-        if '/personalized/' in rule.rule:
-            print(f"🧠 {rule.endpoint}: {rule.rule} [{', '.join(rule.methods)}] - ADVANCED PERSONALIZATION")
-        elif '/recommendations/' in rule.rule:
-            print(f"🎯 {rule.endpoint}: {rule.rule} [{', '.join(rule.methods)}] - RECOMMENDATIONS")
-        else:
-            print(f"   {rule.endpoint}: {rule.rule} [{', '.join(rule.methods)}]")
+        print(f"{rule.endpoint}: {rule.rule} [{', '.join(rule.methods)}]")
     print("=== End of CineBrain Routes ===\n")
