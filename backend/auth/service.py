@@ -20,6 +20,7 @@ from dotenv import load_dotenv
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+import socket
 
 # Load environment variables
 load_dotenv()
@@ -39,14 +40,15 @@ redis_client = None
 FRONTEND_URL = os.getenv('FRONTEND_URL')
 BACKEND_URL = os.getenv('BACKEND_URL')
 REDIS_URL = os.getenv('REDIS_URL')
+ENVIRONMENT = os.getenv('ENVIRONMENT', 'development')
 
 # Brevo Configuration
 BREVO_API_KEY = os.getenv('BREVO_API_KEY')
-BREVO_SMTP_SERVER = os.getenv('BREVO_SMTP_SERVER')
-BREVO_SMTP_PORT = int(os.getenv('BREVO_SMTP_PORT'))
+BREVO_SMTP_SERVER = os.getenv('BREVO_SMTP_SERVER', 'smtp-relay.brevo.com')
+BREVO_SMTP_PORT = int(os.getenv('BREVO_SMTP_PORT', '587'))
 BREVO_SMTP_USERNAME = os.getenv('BREVO_SMTP_USERNAME')
 BREVO_SMTP_PASSWORD = os.getenv('BREVO_SMTP_PASSWORD')
-BREVO_SENDER_EMAIL = os.getenv('BREVO_SENDER_EMAIL')
+BREVO_SENDER_EMAIL = os.getenv('BREVO_SENDER_EMAIL', 'projects.srinath@gmail.com')
 BREVO_SENDER_NAME = os.getenv('BREVO_SENDER_NAME', 'CineBrain')
 REPLY_TO_EMAIL = os.getenv('REPLY_TO_EMAIL', BREVO_SENDER_EMAIL)
 
@@ -108,7 +110,7 @@ class BrevoEmailService:
         self.api_enabled = False
         self.is_configured = False
         
-        # Determine which service to use
+        # Initialize email service based on environment
         self._initialize_email_service()
         
         if self.email_enabled:
@@ -118,37 +120,74 @@ class BrevoEmailService:
             logger.warning("⚠️ Email service disabled - no valid configuration found")
 
     def _initialize_email_service(self):
-        """Initialize email service with SMTP as primary, API as fallback"""
+        """Initialize email service - API first in production, SMTP first in development"""
         
-        # Try SMTP first (preferred)
-        if self.smtp_username and self.smtp_password:
-            self.smtp_enabled = self._test_smtp_connection()
-            if self.smtp_enabled:
-                logger.info("✅ Using Brevo SMTP for email delivery")
-                self.email_enabled = True
-                self.is_configured = True
-                return
-        
-        # Try API as fallback
-        if self.api_key and self.sender_email:
-            self.api_enabled = self._test_api_connection()
-            if self.api_enabled:
-                logger.info("✅ Using Brevo API for email delivery")
-                self.email_enabled = True
-                self.is_configured = True
-                return
+        # In production, prefer API over SMTP (many hosts block SMTP)
+        if ENVIRONMENT == 'production':
+            # Try API first in production
+            if self.api_key and self.sender_email:
+                self.api_enabled = self._test_api_connection()
+                if self.api_enabled:
+                    logger.info("✅ Using Brevo API for email delivery (Production)")
+                    self.email_enabled = True
+                    self.is_configured = True
+                    return
+            
+            # Try SMTP as fallback (might be blocked)
+            if self.smtp_username and self.smtp_password:
+                self.smtp_enabled = self._test_smtp_connection_safe()
+                if self.smtp_enabled:
+                    logger.info("✅ Using Brevo SMTP for email delivery (Production)")
+                    self.email_enabled = True
+                    self.is_configured = True
+                    return
+        else:
+            # In development, prefer SMTP
+            if self.smtp_username and self.smtp_password:
+                self.smtp_enabled = self._test_smtp_connection_safe()
+                if self.smtp_enabled:
+                    logger.info("✅ Using Brevo SMTP for email delivery (Development)")
+                    self.email_enabled = True
+                    self.is_configured = True
+                    return
+            
+            # Try API as fallback
+            if self.api_key and self.sender_email:
+                self.api_enabled = self._test_api_connection()
+                if self.api_enabled:
+                    logger.info("✅ Using Brevo API for email delivery (Development)")
+                    self.email_enabled = True
+                    self.is_configured = True
+                    return
         
         # No valid configuration
         if not self.smtp_username and not self.api_key:
             logger.warning("⚠️ Neither SMTP nor API credentials configured")
+        elif ENVIRONMENT == 'production' and not self.api_key:
+            logger.warning("⚠️ In production environment - Brevo API key recommended (SMTP might be blocked)")
         
-    def _test_smtp_connection(self):
-        """Test SMTP connectivity"""
+    def _test_smtp_connection_safe(self):
+        """Test SMTP connectivity with timeout protection"""
         try:
             logger.info(f"Testing SMTP connection to {self.smtp_server}:{self.smtp_port}")
-            logger.info(f"SMTP Username: {self.smtp_username}")
             
-            server = smtplib.SMTP(self.smtp_server, self.smtp_port)
+            # Set a short timeout for production environments
+            timeout = 5 if ENVIRONMENT == 'production' else 10
+            
+            # Create socket with timeout
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(timeout)
+            
+            # Test if port is reachable
+            result = sock.connect_ex((self.smtp_server, self.smtp_port))
+            sock.close()
+            
+            if result != 0:
+                logger.warning(f"⚠️ SMTP port {self.smtp_port} appears to be blocked or unreachable")
+                return False
+            
+            # Now try actual SMTP connection
+            server = smtplib.SMTP(self.smtp_server, self.smtp_port, timeout=timeout)
             server.starttls()
             server.login(self.smtp_username, self.smtp_password)
             server.quit()
@@ -156,6 +195,12 @@ class BrevoEmailService:
             logger.info("✅ Brevo SMTP connection successful")
             return True
             
+        except socket.timeout:
+            logger.warning(f"⚠️ SMTP connection timed out - port {self.smtp_port} might be blocked")
+            return False
+        except socket.error as e:
+            logger.warning(f"⚠️ SMTP socket error - {e}")
+            return False
         except Exception as e:
             logger.error(f"❌ Brevo SMTP connection failed: {e}")
             return False
@@ -209,20 +254,19 @@ class BrevoEmailService:
         threading.Thread(target=worker, daemon=True, name="BrevoEmailWorker").start()
 
     def _send_email(self, email_data: Dict, retry_count: int = 0):
-        """Send email using SMTP or API based on configuration"""
+        """Send email using available method"""
         if not self.email_enabled:
             self._store_fallback_email(email_data)
             return
         
-        # Try SMTP first
-        if self.smtp_enabled:
-            success = self._send_email_smtp(email_data, retry_count)
+        # Use whichever method is enabled
+        if self.api_enabled:
+            success = self._send_email_api(email_data, retry_count)
             if success:
                 return
         
-        # Fallback to API
-        if self.api_enabled:
-            success = self._send_email_api(email_data, retry_count)
+        if self.smtp_enabled:
+            success = self._send_email_smtp(email_data, retry_count)
             if success:
                 return
         
@@ -232,6 +276,9 @@ class BrevoEmailService:
     def _send_email_smtp(self, email_data: Dict, retry_count: int = 0) -> bool:
         """Send email using SMTP"""
         try:
+            # In production, use shorter timeout
+            timeout = 10 if ENVIRONMENT == 'production' else 30
+            
             # Create message
             message = MIMEMultipart("alternative")
             message["Subject"] = email_data['subject']
@@ -250,8 +297,8 @@ class BrevoEmailService:
                 part2 = MIMEText(email_data['html'], "html")
                 message.attach(part2)
             
-            # Send email
-            server = smtplib.SMTP(self.smtp_server, self.smtp_port)
+            # Send email with timeout
+            server = smtplib.SMTP(self.smtp_server, self.smtp_port, timeout=timeout)
             server.starttls()
             server.login(self.smtp_username, self.smtp_password)
             server.send_message(message)
@@ -271,12 +318,24 @@ class BrevoEmailService:
             
             return True
             
+        except (socket.timeout, socket.error) as e:
+            logger.warning(f"⚠️ SMTP network error: {e}")
+            # Don't retry network errors in production
+            if ENVIRONMENT == 'production':
+                return False
+            
+            if retry_count < 1:
+                time.sleep(2)
+                return self._send_email_smtp(email_data, retry_count + 1)
+            return False
+            
         except Exception as e:
             error_msg = f"SMTP send failed: {e}"
             
-            # Retry logic
-            if retry_count < 2:
-                logger.warning(f"⚠️ SMTP send failed, retrying... (attempt {retry_count + 1}/2)")
+            # Limited retry in production
+            max_retries = 1 if ENVIRONMENT == 'production' else 2
+            if retry_count < max_retries:
+                logger.warning(f"⚠️ SMTP send failed, retrying... (attempt {retry_count + 1}/{max_retries})")
                 time.sleep(2 ** retry_count)
                 return self._send_email_smtp(email_data, retry_count + 1)
             else:
@@ -368,10 +427,12 @@ class BrevoEmailService:
     def _store_fallback_email(self, email_data: Dict):
         """Store unsent email in fallback queue"""
         if not self.redis_client:
+            logger.warning(f"📧 Fallback email for {email_data['to']}: {email_data.get('reset_token', 'No token')}")
             return
             
         email_data['failed_at'] = datetime.utcnow().isoformat()
         email_data['service'] = 'brevo'
+        email_data['environment'] = ENVIRONMENT
         
         key = f"email_fallback:{uuid.uuid4()}"
         self.redis_client.setex(key, 604800, json.dumps(email_data))  # 7 days
@@ -390,7 +451,8 @@ class BrevoEmailService:
             'text': text,
             'timestamp': datetime.utcnow().isoformat(),
             'reset_token': reset_token,
-            'service': 'brevo'
+            'service': 'brevo',
+            'environment': ENVIRONMENT
         }
 
         if not self.email_enabled:
@@ -473,7 +535,8 @@ class BrevoEmailService:
                 'queue_size': 0, 
                 'fallback_queue_size': 0,
                 'smtp_enabled': self.smtp_enabled,
-                'api_enabled': self.api_enabled
+                'api_enabled': self.api_enabled,
+                'environment': ENVIRONMENT
             }
             
         try:
@@ -486,7 +549,8 @@ class BrevoEmailService:
                 'service': 'brevo',
                 'smtp_enabled': self.smtp_enabled,
                 'api_enabled': self.api_enabled,
-                'method': 'smtp' if self.smtp_enabled else 'api' if self.api_enabled else 'none'
+                'method': 'smtp' if self.smtp_enabled else 'api' if self.api_enabled else 'none',
+                'environment': ENVIRONMENT
             }
         except Exception as e:
             logger.error(f"Error getting queue stats: {e}")
@@ -495,7 +559,8 @@ class BrevoEmailService:
                 'fallback_queue_size': 0, 
                 'error': str(e),
                 'smtp_enabled': self.smtp_enabled,
-                'api_enabled': self.api_enabled
+                'api_enabled': self.api_enabled,
+                'environment': ENVIRONMENT
             }
 
 
@@ -516,9 +581,9 @@ def init_auth(flask_app, database, user_model):
 
     if email_service.email_enabled:
         method = "SMTP" if email_service.smtp_enabled else "API"
-        logger.info(f"✅ Auth module initialized with Brevo {method} support")
+        logger.info(f"✅ Auth module initialized with Brevo {method} support [{ENVIRONMENT}]")
     else:
-        logger.warning("⚠️ Auth module initialized WITHOUT email - using fallback mode")
+        logger.warning(f"⚠️ Auth module initialized WITHOUT email - using fallback mode [{ENVIRONMENT}]")
 
 
 def check_rate_limit(identifier: str, max_requests: int = 5, window: int = 300) -> bool:
