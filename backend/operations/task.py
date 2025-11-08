@@ -375,10 +375,12 @@ class OperationsTasks:
             # Minimal content check
             if self.models.get('Content'):
                 try:
-                    content_count = self.models['Content'].query.count()
-                    results['content_available'] = content_count > 0
-                    results['content_count'] = content_count
-                except:
+                    with self.app.app_context():
+                        content_count = self.models['Content'].query.count()
+                        results['content_available'] = content_count > 0
+                        results['content_count'] = content_count
+                except Exception as e:
+                    logger.warning(f"Content check error: {e}")
                     results['content_available'] = False
             
             # System metrics
@@ -595,11 +597,12 @@ class OperationsTasks:
             }
             
             # Database status
-            status['database'] = {
-                'connected': self._test_database_connection(),
-                'content_count': self.models['Content'].query.count() if self.models.get('Content') else 0,
-                'user_count': self.models['User'].query.count() if self.models.get('User') else 0
-            }
+            with self.app.app_context():
+                status['database'] = {
+                    'connected': self._test_database_connection(),
+                    'content_count': self.models['Content'].query.count() if self.models.get('Content') else 0,
+                    'user_count': self.models['User'].query.count() if self.models.get('User') else 0
+                }
             
         except Exception as e:
             status['error'] = str(e)
@@ -687,38 +690,40 @@ class OperationsTasks:
     def _refresh_admin_recommendations_cache(self, force: bool = False) -> Dict[str, Any]:
         """Refresh admin recommendations cache"""
         try:
-            cache_key = 'cinebrain:admin_recommendations'
-            
-            if not force and self.cache and self.cache.get(cache_key):
-                return {'success': True, 'action': 'already_cached', 'cache_key': cache_key}
-            
-            AdminRecommendation = self.models.get('AdminRecommendation')
-            Content = self.models.get('Content')
-            
-            if AdminRecommendation and Content:
-                admin_recs = AdminRecommendation.query.filter_by(is_active=True).limit(20).all()
+            # 🔥 FIX: Add Flask app context
+            with self.app.app_context():
+                cache_key = 'cinebrain:admin_recommendations'
                 
-                admin_data = []
-                for rec in admin_recs:
-                    content = Content.query.get(rec.content_id)
-                    if content:
-                        admin_data.append({
-                            'id': content.id,
-                            'title': content.title,
-                            'description': rec.description,
-                            'recommendation_type': rec.recommendation_type,
-                            'slug': content.slug,
-                            'content_type': content.content_type,
-                            'rating': content.rating,
-                            'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path
-                        })
+                if not force and self.cache and self.cache.get(cache_key):
+                    return {'success': True, 'action': 'already_cached', 'cache_key': cache_key}
                 
-                if self.cache:
-                    self.cache.set(cache_key, admin_data, timeout=self.TIMEOUTS['admin_recs'])
-                    return {'success': True, 'action': 'refreshed', 'items': len(admin_data)}
-            
-            return {'success': False, 'error': 'Models not available'}
-            
+                AdminRecommendation = self.models.get('AdminRecommendation')
+                Content = self.models.get('Content')
+                
+                if AdminRecommendation and Content:
+                    admin_recs = AdminRecommendation.query.filter_by(is_active=True).limit(20).all()
+                    
+                    admin_data = []
+                    for rec in admin_recs:
+                        content = Content.query.get(rec.content_id)
+                        if content:
+                            admin_data.append({
+                                'id': content.id,
+                                'title': content.title,
+                                'description': rec.description,
+                                'recommendation_type': rec.recommendation_type,
+                                'slug': content.slug,
+                                'content_type': content.content_type,
+                                'rating': content.rating,
+                                'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path
+                            })
+                    
+                    if self.cache:
+                        self.cache.set(cache_key, admin_data, timeout=self.TIMEOUTS['admin_recs'])
+                        return {'success': True, 'action': 'refreshed', 'items': len(admin_data)}
+                
+                return {'success': True, 'action': 'no_recommendations', 'items': 0}
+                
         except Exception as e:
             logger.error(f"Admin recommendations cache refresh error: {e}")
             return {'success': False, 'error': str(e)}
@@ -726,53 +731,55 @@ class OperationsTasks:
     def _refresh_content_details_samples(self, force: bool = False) -> Dict[str, Any]:
         """Refresh content details cache for popular items"""
         try:
-            if self.models.get('Content'):
-                popular_content = self.models['Content'].query.filter(
-                    self.models['Content'].rating >= 7.0
-                ).order_by(self.models['Content'].popularity.desc()).limit(20).all()
+            # 🔥 FIX: Add Flask app context
+            with self.app.app_context():
+                if self.models.get('Content'):
+                    popular_content = self.models['Content'].query.filter(
+                        self.models['Content'].rating >= 7.0
+                    ).order_by(self.models['Content'].popularity.desc()).limit(20).all()
+                    
+                    refreshed = 0
+                    for content in popular_content:
+                        cache_key = f'cinebrain:details:{content.slug or content.id}'
+                        
+                        if not force and self.cache and self.cache.get(cache_key):
+                            continue
+                        
+                        # Create comprehensive details cache
+                        try:
+                            genres = json.loads(content.genres or '[]')
+                        except (json.JSONDecodeError, TypeError):
+                            genres = []
+                        
+                        details_data = {
+                            'id': content.id,
+                            'slug': content.slug,
+                            'title': content.title,
+                            'original_title': content.original_title,
+                            'content_type': content.content_type,
+                            'genres': genres,
+                            'rating': content.rating,
+                            'vote_count': content.vote_count,
+                            'overview': content.overview,
+                            'release_date': content.release_date.isoformat() if content.release_date else None,
+                            'runtime': content.runtime,
+                            'poster_path': f"https://image.tmdb.org/t/p/w500{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
+                            'backdrop_path': f"https://image.tmdb.org/t/p/w1280{content.backdrop_path}" if content.backdrop_path and not content.backdrop_path.startswith('http') else content.backdrop_path,
+                            'youtube_trailer': f"https://www.youtube.com/watch?v={content.youtube_trailer_id}" if content.youtube_trailer_id else None,
+                            'is_trending': content.is_trending,
+                            'is_new_release': content.is_new_release,
+                            'is_critics_choice': content.is_critics_choice,
+                            'cached_at': datetime.utcnow().isoformat()
+                        }
+                        
+                        if self.cache:
+                            self.cache.set(cache_key, details_data, timeout=self.TIMEOUTS['details'])
+                            refreshed += 1
+                    
+                    return {'success': True, 'action': 'refreshed', 'items_refreshed': refreshed}
                 
-                refreshed = 0
-                for content in popular_content:
-                    cache_key = f'cinebrain:details:{content.slug or content.id}'
-                    
-                    if not force and self.cache and self.cache.get(cache_key):
-                        continue
-                    
-                    # Create comprehensive details cache
-                    try:
-                        genres = json.loads(content.genres or '[]')
-                    except (json.JSONDecodeError, TypeError):
-                        genres = []
-                    
-                    details_data = {
-                        'id': content.id,
-                        'slug': content.slug,
-                        'title': content.title,
-                        'original_title': content.original_title,
-                        'content_type': content.content_type,
-                        'genres': genres,
-                        'rating': content.rating,
-                        'vote_count': content.vote_count,
-                        'overview': content.overview,
-                        'release_date': content.release_date.isoformat() if content.release_date else None,
-                        'runtime': content.runtime,
-                        'poster_path': f"https://image.tmdb.org/t/p/w500{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
-                        'backdrop_path': f"https://image.tmdb.org/t/p/w1280{content.backdrop_path}" if content.backdrop_path and not content.backdrop_path.startswith('http') else content.backdrop_path,
-                        'youtube_trailer': f"https://www.youtube.com/watch?v={content.youtube_trailer_id}" if content.youtube_trailer_id else None,
-                        'is_trending': content.is_trending,
-                        'is_new_release': content.is_new_release,
-                        'is_critics_choice': content.is_critics_choice,
-                        'cached_at': datetime.utcnow().isoformat()
-                    }
-                    
-                    if self.cache:
-                        self.cache.set(cache_key, details_data, timeout=self.TIMEOUTS['details'])
-                        refreshed += 1
+                return {'success': False, 'error': 'Content model not available'}
                 
-                return {'success': True, 'action': 'refreshed', 'items_refreshed': refreshed}
-            
-            return {'success': False, 'error': 'Content model not available'}
-            
         except Exception as e:
             logger.error(f"Content details samples refresh error: {e}")
             return {'success': False, 'error': str(e)}
@@ -794,39 +801,43 @@ class OperationsTasks:
             results['services_status'] = services_status
             
             # Check critical models
-            if self.models.get('Content'):
-                try:
-                    content_count = self.models['Content'].query.count()
-                    results['content_available'] = content_count > 0
-                    results['content_count'] = content_count
+            try:
+                with self.app.app_context():
+                    if self.models.get('Content'):
+                        try:
+                            content_count = self.models['Content'].query.count()
+                            results['content_available'] = content_count > 0
+                            results['content_count'] = content_count
+                            
+                            # Check content with different flags
+                            trending_count = self.models['Content'].query.filter_by(is_trending=True).count()
+                            new_releases_count = self.models['Content'].query.filter_by(is_new_release=True).count()
+                            critics_choice_count = self.models['Content'].query.filter_by(is_critics_choice=True).count()
+                            
+                            results['content_breakdown'] = {
+                                'trending': trending_count,
+                                'new_releases': new_releases_count,
+                                'critics_choice': critics_choice_count
+                            }
+                        except Exception as e:
+                            results['content_error'] = str(e)
                     
-                    # Check content with different flags
-                    trending_count = self.models['Content'].query.filter_by(is_trending=True).count()
-                    new_releases_count = self.models['Content'].query.filter_by(is_new_release=True).count()
-                    critics_choice_count = self.models['Content'].query.filter_by(is_critics_choice=True).count()
-                    
-                    results['content_breakdown'] = {
-                        'trending': trending_count,
-                        'new_releases': new_releases_count,
-                        'critics_choice': critics_choice_count
-                    }
-                except Exception as e:
-                    results['content_error'] = str(e)
-            
-            if self.models.get('User'):
-                try:
-                    user_count = self.models['User'].query.count()
-                    results['users_available'] = user_count > 0
-                    results['user_count'] = user_count
-                    
-                    # Check active users
-                    cutoff_date = datetime.utcnow() - timedelta(days=7)
-                    active_users = self.models['User'].query.filter(
-                        self.models['User'].last_active >= cutoff_date
-                    ).count()
-                    results['active_users_7d'] = active_users
-                except Exception as e:
-                    results['users_error'] = str(e)
+                    if self.models.get('User'):
+                        try:
+                            user_count = self.models['User'].query.count()
+                            results['users_available'] = user_count > 0
+                            results['user_count'] = user_count
+                            
+                            # Check active users
+                            cutoff_date = datetime.utcnow() - timedelta(days=7)
+                            active_users = self.models['User'].query.filter(
+                                self.models['User'].last_active >= cutoff_date
+                            ).count()
+                            results['active_users_7d'] = active_users
+                        except Exception as e:
+                            results['users_error'] = str(e)
+            except Exception as e:
+                results['database_context_error'] = str(e)
             
             # System health
             results['system_metrics'] = self._get_basic_system_metrics()
@@ -1005,59 +1016,61 @@ class OperationsTasks:
     def _refresh_similar_samples(self, force: bool = False) -> Dict[str, Any]:
         """Refresh similar content samples for popular items"""
         try:
-            # Get a few popular content IDs to cache similar content for
-            if self.models.get('Content'):
-                popular_content = self.models['Content'].query.filter(
-                    self.models['Content'].rating >= 7.0
-                ).order_by(self.models['Content'].popularity.desc()).limit(15).all()
-                
-                refreshed = 0
-                for content in popular_content:
-                    cache_key = f'cinebrain:similar:{content.id}'
+            # 🔥 FIX: Add Flask app context
+            with self.app.app_context():
+                # Get a few popular content IDs to cache similar content for
+                if self.models.get('Content'):
+                    popular_content = self.models['Content'].query.filter(
+                        self.models['Content'].rating >= 7.0
+                    ).order_by(self.models['Content'].popularity.desc()).limit(15).all()
                     
-                    if not force and self.cache and self.cache.get(cache_key):
-                        continue
-                    
-                    # Get similar content (genre-based)
-                    try:
-                        # Parse genres
-                        try:
-                            content_genres = json.loads(content.genres or '[]')
-                        except (json.JSONDecodeError, TypeError):
-                            content_genres = []
+                    refreshed = 0
+                    for content in popular_content:
+                        cache_key = f'cinebrain:similar:{content.id}'
                         
-                        if content_genres:
-                            # Find similar content with same primary genre
-                            primary_genre = content_genres[0]
-                            similar_items = self.models['Content'].query.filter(
-                                self.models['Content'].id != content.id,
-                                self.models['Content'].content_type == content.content_type,
-                                self.models['Content'].genres.contains(primary_genre)
-                            ).order_by(self.models['Content'].rating.desc()).limit(10).all()
+                        if not force and self.cache and self.cache.get(cache_key):
+                            continue
+                        
+                        # Get similar content (genre-based)
+                        try:
+                            # Parse genres
+                            try:
+                                content_genres = json.loads(content.genres or '[]')
+                            except (json.JSONDecodeError, TypeError):
+                                content_genres = []
                             
-                            similar_data = []
-                            for item in similar_items:
-                                similar_data.append({
-                                    'id': item.id,
-                                    'slug': item.slug,
-                                    'title': item.title,
-                                    'content_type': item.content_type,
-                                    'rating': item.rating,
-                                    'poster_path': f"https://image.tmdb.org/t/p/w300{item.poster_path}" if item.poster_path and not item.poster_path.startswith('http') else item.poster_path,
-                                    'similarity_score': 0.8,  # Simplified
-                                    'match_type': 'genre_based'
-                                })
-                            
-                            if self.cache and similar_data:
-                                self.cache.set(cache_key, similar_data, timeout=self.TIMEOUTS['similar'])
-                                refreshed += 1
-                    except Exception as e:
-                        logger.warning(f"Error caching similar for content {content.id}: {e}")
+                            if content_genres:
+                                # Find similar content with same primary genre
+                                primary_genre = content_genres[0]
+                                similar_items = self.models['Content'].query.filter(
+                                    self.models['Content'].id != content.id,
+                                    self.models['Content'].content_type == content.content_type,
+                                    self.models['Content'].genres.contains(primary_genre)
+                                ).order_by(self.models['Content'].rating.desc()).limit(10).all()
+                                
+                                similar_data = []
+                                for item in similar_items:
+                                    similar_data.append({
+                                        'id': item.id,
+                                        'slug': item.slug,
+                                        'title': item.title,
+                                        'content_type': item.content_type,
+                                        'rating': item.rating,
+                                        'poster_path': f"https://image.tmdb.org/t/p/w300{item.poster_path}" if item.poster_path and not item.poster_path.startswith('http') else item.poster_path,
+                                        'similarity_score': 0.8,  # Simplified
+                                        'match_type': 'genre_based'
+                                    })
+                                
+                                if self.cache and similar_data:
+                                    self.cache.set(cache_key, similar_data, timeout=self.TIMEOUTS['similar'])
+                                    refreshed += 1
+                        except Exception as e:
+                            logger.warning(f"Error caching similar for content {content.id}: {e}")
+                    
+                    return {'success': True, 'action': 'refreshed', 'items_refreshed': refreshed}
                 
-                return {'success': True, 'action': 'refreshed', 'items_refreshed': refreshed}
-            
-            return {'success': False, 'error': 'Content model not available'}
-            
+                return {'success': False, 'error': 'Content model not available'}
+                
         except Exception as e:
             logger.error(f"Similar samples cache refresh error: {e}")
             return {'success': False, 'error': str(e)}
@@ -1113,17 +1126,19 @@ class OperationsTasks:
     def _get_active_users(self, limit: int = 50) -> List:
         """Get list of active users for personalized cache refresh"""
         try:
-            if self.models.get('User'):
-                # Get users active in the last 7 days
-                cutoff_date = datetime.utcnow() - timedelta(days=7)
-                return self.models['User'].query.filter(
-                    self.models['User'].last_active >= cutoff_date
-                ).order_by(
-                    self.models['User'].last_active.desc()
-                ).limit(limit).all()
-            
-            return []
-            
+            # 🔥 FIX: Add Flask app context
+            with self.app.app_context():
+                if self.models.get('User'):
+                    # Get users active in the last 7 days
+                    cutoff_date = datetime.utcnow() - timedelta(days=7)
+                    return self.models['User'].query.filter(
+                        self.models['User'].last_active >= cutoff_date
+                    ).order_by(
+                        self.models['User'].last_active.desc()
+                    ).limit(limit).all()
+                
+                return []
+                
         except Exception as e:
             logger.error(f"Error getting active users: {e}")
             return []
@@ -1140,11 +1155,15 @@ class OperationsTasks:
             results['cache'] = self._test_cache_connection()
             
             # Basic content check
-            if self.models.get('Content'):
-                try:
-                    results['content_available'] = self.models['Content'].query.count() > 0
-                except:
-                    results['content_available'] = False
+            try:
+                with self.app.app_context():
+                    if self.models.get('Content'):
+                        try:
+                            results['content_available'] = self.models['Content'].query.count() > 0
+                        except:
+                            results['content_available'] = False
+            except:
+                results['content_available'] = False
             
             return {'success': True, 'checks': results}
             
@@ -1320,30 +1339,31 @@ class OperationsTasks:
         results = {}
         
         try:
-            # Check for content without slugs
-            if self.models.get('Content'):
-                content_without_slugs = self.models['Content'].query.filter(
-                    (self.models['Content'].slug == None) | (self.models['Content'].slug == '')
-                ).count()
+            with self.app.app_context():
+                # Check for content without slugs
+                if self.models.get('Content'):
+                    content_without_slugs = self.models['Content'].query.filter(
+                        (self.models['Content'].slug == None) | (self.models['Content'].slug == '')
+                    ).count()
+                    
+                    results['content_integrity'] = {
+                        'content_without_slugs': content_without_slugs,
+                        'needs_attention': content_without_slugs > 0
+                    }
                 
-                results['content_integrity'] = {
-                    'content_without_slugs': content_without_slugs,
-                    'needs_attention': content_without_slugs > 0
-                }
-            
-            # Check for users without activity
-            if self.models.get('User'):
-                inactive_users = self.models['User'].query.filter(
-                    (self.models['User'].last_active == None) | 
-                    (self.models['User'].last_active < datetime.utcnow() - timedelta(days=30))
-                ).count()
+                # Check for users without activity
+                if self.models.get('User'):
+                    inactive_users = self.models['User'].query.filter(
+                        (self.models['User'].last_active == None) | 
+                        (self.models['User'].last_active < datetime.utcnow() - timedelta(days=30))
+                    ).count()
+                    
+                    results['user_integrity'] = {
+                        'inactive_users_30d': inactive_users
+                    }
                 
-                results['user_integrity'] = {
-                    'inactive_users_30d': inactive_users
-                }
-            
-            results['success'] = True
-            
+                results['success'] = True
+                
         except Exception as e:
             results['error'] = str(e)
             results['success'] = False
