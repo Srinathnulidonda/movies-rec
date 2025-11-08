@@ -18,8 +18,10 @@ from urllib.parse import urlparse
 import requests
 from dotenv import load_dotenv
 
+# Load environment variables
 load_dotenv()
 
+# Logger setup
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -31,16 +33,16 @@ serializer = None
 redis_client = None
 
 # Configuration
-FRONTEND_URL = os.environ.get('FRONTEND_URL')
-BACKEND_URL = os.environ.get('BACKEND_URL')
-REDIS_URL = os.environ.get('REDIS_URL')
-RESEND_API_KEY = os.environ.get('RESEND_API_KEY')
-
-if not RESEND_API_KEY:
-    logger.warning("RESEND_API_KEY not set - email notifications will be disabled")
+FRONTEND_URL = os.getenv('FRONTEND_URL')
+BACKEND_URL = os.getenv('BACKEND_URL')
+REDIS_URL = os.getenv('REDIS_URL')
+RESEND_API_KEY = os.getenv('RESEND_API_KEY')
+MAIL_DEFAULT_SENDER = os.getenv('MAIL_DEFAULT_SENDER')
+REPLY_TO_EMAIL = os.getenv('REPLY_TO_EMAIL')
 
 EMAIL_REGEX = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
 PASSWORD_RESET_SALT = 'password-reset-salt-cinebrain-2025'
+
 
 def init_redis():
     """Initialize Redis connection"""
@@ -49,7 +51,7 @@ def init_redis():
         if not REDIS_URL:
             logger.warning("Redis URL not configured for auth service")
             return None
-            
+
         url = urlparse(REDIS_URL)
         redis_client = redis.StrictRedis(
             host=url.hostname,
@@ -68,60 +70,54 @@ def init_redis():
         logger.error(f"❌ Auth Redis connection failed: {e}")
         return None
 
+
 class ResendEmailService:
-    """Email service using Resend API"""
-    
+    """Email service using Resend API (supports free sandbox mode)"""
+
     def __init__(self, api_key=None):
         self.api_key = api_key or RESEND_API_KEY
-        self.from_email = "noreply@cinebrain.com"
-        self.from_name = "CineBrain"
+        self.from_email = MAIL_DEFAULT_SENDER.split('<')[-1].replace('>', '').strip()
+        self.from_name = MAIL_DEFAULT_SENDER.split('<')[0].strip()
+        self.reply_to_email = REPLY_TO_EMAIL
         self.base_url = "https://api.resend.com"
         self.redis_client = redis_client
-        
+        self.email_enabled = False
         self.is_configured = bool(self.api_key)
-        if not self.is_configured:
-            logger.warning("Resend API key not configured - email service will be disabled")
-            self.email_enabled = False
+
+        if not self.api_key:
+            logger.warning("⚠️ RESEND_API_KEY not set — email service disabled")
+            return
+
+        # Check sandbox or production
+        if "resend.dev" in self.from_email:
+            logger.info("📦 Using Resend Sandbox mode (free tier)")
+            self.email_enabled = True
         else:
             self.email_enabled = self._test_resend_connection()
-        
+
         if self.email_enabled:
             self.start_email_worker()
+            logger.info("✅ Resend email worker initialized successfully")
         else:
-            logger.warning("Email service disabled - Resend API connection failed or not configured")
-    
+            logger.warning("⚠️ Email service disabled - Resend API connection failed or not configured")
+
     def _test_resend_connection(self):
-        """Test Resend API connectivity"""
-        if not self.is_configured:
-            logger.warning("Resend API key not available for connection test")
-            return False
-            
+        """Basic Resend API connectivity test"""
         try:
-            headers = {
-                'Authorization': f'Bearer {self.api_key}',
-                'Content-Type': 'application/json'
-            }
-            
-            # Test with a simple domains list request
-            response = requests.get(
-                f"{self.base_url}/domains",
-                headers=headers,
-                timeout=10
-            )
-            
-            if response.status_code in [200, 401]:  # 401 means API key worked but may not have domain access
-                logger.info("✅ Resend API connection successful!")
+            headers = {'Authorization': f'Bearer {self.api_key}', 'Content-Type': 'application/json'}
+            response = requests.get(f"{self.base_url}/api/v1", headers=headers, timeout=10)
+            if response.status_code in [200, 404]:
+                logger.info("✅ Resend API reachable (production mode)")
                 return True
-            else:
-                logger.warning(f"Resend API test failed with status: {response.status_code}")
-                return False
-                
+            logger.warning(f"⚠️ Resend test returned status: {response.status_code}")
+            return False
         except Exception as e:
             logger.error(f"❌ Resend API connection test failed: {e}")
             return False
-    
+
     def start_email_worker(self):
-        """Start background email worker"""
+        """Background worker to process queued emails"""
+
         def worker():
             while True:
                 try:
@@ -137,105 +133,57 @@ class ResendEmailService:
                 except Exception as e:
                     logger.error(f"Email worker error: {e}")
                     time.sleep(5)
-        
-        thread = threading.Thread(target=worker, daemon=True, name="ResendEmailWorker")
-        thread.start()
-        logger.info("✅ Started Resend email worker thread")
-    
+
+        threading.Thread(target=worker, daemon=True, name="ResendEmailWorker").start()
+
     def _send_email_resend(self, email_data: Dict):
         """Send email using Resend API"""
         if not self.email_enabled:
-            logger.warning(f"Email service disabled - storing email for {email_data['to']} in fallback queue")
             self._store_fallback_email(email_data)
             return
-        
-        max_retries = 2
-        retry_count = email_data.get('retry_count', 0)
-        
+
+        headers = {
+            'Authorization': f'Bearer {self.api_key}',
+            'Content-Type': 'application/json'
+        }
+
+        payload = {
+            'from': f"{self.from_name} <{self.from_email}>",
+            'to': [email_data['to']],
+            'subject': email_data['subject'],
+            'html': email_data['html'],
+            'text': email_data.get('text', ''),
+            'reply_to': self.reply_to_email
+        }
+
         try:
-            headers = {
-                'Authorization': f'Bearer {self.api_key}',
-                'Content-Type': 'application/json'
-            }
-            
-            payload = {
-                'from': f'{self.from_name} <{self.from_email}>',
-                'to': [email_data['to']],
-                'subject': email_data['subject'],
-                'html': email_data['html'],
-                'text': email_data['text'],
-                'reply_to': 'support@cinebrain.com'
-            }
-            
-            response = requests.post(
-                f"{self.base_url}/emails",
-                headers=headers,
-                json=payload,
-                timeout=30
-            )
-            
+            response = requests.post(f"{self.base_url}/emails", headers=headers, json=payload, timeout=30)
             if response.status_code == 200:
-                result = response.json()
-                logger.info(f"✅ Email sent successfully to {email_data['to']} via Resend (ID: {result.get('id')})")
-                
+                res = response.json()
+                logger.info(f"✅ Email sent successfully to {email_data['to']} (ID: {res.get('id')})")
                 if self.redis_client:
-                    self.redis_client.setex(
-                        f"email_sent:{email_data.get('id', 'unknown')}",
-                        86400,
-                        json.dumps({
-                            'status': 'sent',
-                            'timestamp': datetime.utcnow().isoformat(),
-                            'to': email_data['to'],
-                            'method': 'resend_api',
-                            'resend_id': result.get('id')
-                        })
-                    )
-            else:
-                raise Exception(f"Resend API returned {response.status_code}: {response.text}")
-            
-        except Exception as e:
-            logger.error(f"❌ Resend API Error sending to {email_data['to']}: {e}")
-            
-            if retry_count < max_retries:
-                retry_count += 1
-                email_data['retry_count'] = retry_count
-                retry_delay = 10 * retry_count
-                
-                logger.info(f"🔄 Retrying email to {email_data['to']} in {retry_delay} seconds (attempt {retry_count}/{max_retries})")
-                
-                if self.redis_client:
-                    threading.Timer(
-                        retry_delay,
-                        lambda: self.redis_client.rpush('email_queue', json.dumps(email_data))
-                    ).start()
-            else:
-                logger.error(f"❌ Failed to send email after {max_retries} attempts - storing in fallback queue")
-                self._store_fallback_email(email_data)
-    
-    def _store_fallback_email(self, email_data: Dict):
-        """Store email data for manual retrieval when API fails"""
-        try:
-            if self.redis_client:
-                fallback_key = f"email_fallback:{email_data.get('id', uuid.uuid4())}"
-                self.redis_client.setex(
-                    fallback_key,
-                    604800,  # 7 days
-                    json.dumps({
-                        'to': email_data['to'],
-                        'subject': email_data['subject'],
+                    self.redis_client.setex(f"email_sent:{res.get('id')}", 86400, json.dumps({
+                        'status': 'sent',
                         'timestamp': datetime.utcnow().isoformat(),
-                        'reset_token': email_data.get('reset_token'),
-                        'fallback_reason': 'Resend API failed or not configured'
-                    })
-                )
-                
-                self.redis_client.rpush('email_fallback_queue', fallback_key)
-                logger.info(f"📥 Email stored in fallback queue: {fallback_key}")
+                        'to': email_data['to']
+                    }))
+            else:
+                raise Exception(f"Resend returned {response.status_code}: {response.text}")
         except Exception as e:
-            logger.error(f"Failed to store fallback email: {e}")
-    
-    def queue_email(self, to: str, subject: str, html: str, text: str, priority: str = 'normal', reset_token: str = None):
-        """Queue email for sending"""
+            logger.error(f"❌ Email send failed to {email_data['to']}: {e}")
+            self._store_fallback_email(email_data)
+
+    def _store_fallback_email(self, email_data: Dict):
+        """Store unsent email in fallback queue"""
+        if not self.redis_client:
+            return
+        key = f"email_fallback:{uuid.uuid4()}"
+        self.redis_client.setex(key, 604800, json.dumps(email_data))
+        self.redis_client.rpush('email_fallback_queue', key)
+        logger.info(f"📥 Stored unsent email for {email_data['to']} in fallback queue")
+
+    def queue_email(self, to: str, subject: str, html: str, text: str = "", priority: str = 'normal', reset_token: str = None):
+        """Queue email to be sent asynchronously"""
         email_id = str(uuid.uuid4())
         email_data = {
             'id': email_id,
@@ -243,49 +191,31 @@ class ResendEmailService:
             'subject': subject,
             'html': html,
             'text': text,
-            'priority': priority,
             'timestamp': datetime.utcnow().isoformat(),
-            'retry_count': 0,
             'reset_token': reset_token
         }
-        
-        try:
-            if not self.email_enabled:
-                logger.warning(f"Email service disabled - providing fallback for {to}")
-                self._store_fallback_email(email_data)
-                
-                if reset_token:
-                    reset_url = f"{FRONTEND_URL}/auth/reset-password.html?token={reset_token}"
-                    logger.info(f"🔗 Password reset link for {to}: {reset_url}")
-                
-                return True
-            
-            if self.redis_client:
-                if priority == 'high':
-                    self.redis_client.lpush('email_queue', json.dumps(email_data))
-                else:
-                    self.redis_client.rpush('email_queue', json.dumps(email_data))
-                
-                logger.info(f"📧 Email queued for {to} - ID: {email_id}")
-            else:
-                logger.warning("Redis not available, attempting direct send")
-                threading.Thread(
-                    target=self._send_email_resend,
-                    args=(email_data,),
-                    daemon=True
-                ).start()
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"Failed to queue email: {e}")
+
+        if not self.email_enabled:
+            logger.warning(f"Email service disabled - providing fallback for {to}")
+            self._store_fallback_email(email_data)
             
             if reset_token:
                 reset_url = f"{FRONTEND_URL}/auth/reset-password.html?token={reset_token}"
-                logger.info(f"🔗 Fallback reset link for {to}: {reset_url}")
+                logger.info(f"🔗 Password reset link for {to}: {reset_url}")
             
             return True
-    
+
+        if self.redis_client:
+            if priority == 'high':
+                self.redis_client.lpush('email_queue', json.dumps(email_data))
+            else:
+                self.redis_client.rpush('email_queue', json.dumps(email_data))
+            logger.info(f"📧 Queued email for {to} (ID: {email_id})")
+        else:
+            threading.Thread(target=self._send_email_resend, args=(email_data,), daemon=True).start()
+        
+        return True
+
     def get_email_status(self, email_id: str) -> Dict:
         """Get email delivery status"""
         if not self.redis_client:
@@ -325,34 +255,33 @@ class ResendEmailService:
             logger.error(f"Error getting fallback emails: {e}")
             return []
 
+
 # Global email service instance
 email_service = None
+
 
 def init_auth(flask_app, database, user_model):
     """Initialize authentication service"""
     global app, db, User, serializer, email_service, redis_client
-    
+
     app = flask_app
     db = database
     User = user_model
-    
     redis_client = init_redis()
     email_service = ResendEmailService()
     serializer = URLSafeTimedSerializer(app.secret_key)
-    
+
     if email_service.email_enabled:
         logger.info("✅ Auth module initialized with Resend email support")
     else:
-        logger.warning("⚠️ Auth module initialized WITHOUT email (Resend API blocked or not configured) - using fallback mode")
+        logger.warning("⚠️ Auth module initialized WITHOUT email - using fallback mode")
+
 
 def check_rate_limit(identifier: str, max_requests: int = 5, window: int = 300) -> bool:
-    """Check rate limiting for requests"""
     if not redis_client:
         return True
-    
     try:
         key = f"rate_limit:{identifier}"
-        
         pipe = redis_client.pipeline()
         pipe.incr(key)
         pipe.expire(key, window)
@@ -365,29 +294,22 @@ def check_rate_limit(identifier: str, max_requests: int = 5, window: int = 300) 
             return False
         
         return True
-        
     except Exception as e:
         logger.error(f"Rate limit check error: {e}")
         return True
 
+
 def generate_reset_token(email):
-    """Generate password reset token"""
     token = serializer.dumps(email, salt=PASSWORD_RESET_SALT)
-    
     if redis_client:
         try:
-            redis_client.setex(
-                f"reset_token:{token[:20]}",
-                3600,
-                email
-            )
+            redis_client.setex(f"reset_token:{token[:20]}", 3600, email)
         except Exception as e:
             logger.error(f"Failed to cache token in Redis: {e}")
-    
     return token
 
+
 def verify_reset_token(token, expiration=3600):
-    """Verify password reset token"""
     if redis_client:
         try:
             cached_email = redis_client.get(f"reset_token:{token[:20]}")
@@ -406,8 +328,8 @@ def verify_reset_token(token, expiration=3600):
     except Exception:
         return None
 
+
 def validate_password(password):
-    """Validate password strength"""
     if len(password) < 8:
         return False, "Password must be at least 8 characters long"
     if not re.search(r'[A-Z]', password):
@@ -416,9 +338,10 @@ def validate_password(password):
         return False, "Password must contain at least one lowercase letter"
     if not re.search(r'[0-9]', password):
         return False, "Password must contain at least one number"
-    if not re.search(r'[!@#$%^&*(),.?":{}|<>]', password):
+    if not re.search(r'[!@#$%^&*(),.?\":{}|<>]', password):
         return False, "Password must contain at least one special character"
     return True, "Valid password"
+
 
 def get_request_info(request):
     """Extract request information for logging"""
@@ -457,8 +380,8 @@ def get_request_info(request):
     
     return ip_address, location, device
 
+
 def require_auth(f):
-    """Authentication decorator"""
     @wraps(f)
     def decorated_function(*args, **kwargs):
         if request.method == 'OPTIONS':
@@ -480,11 +403,12 @@ def require_auth(f):
             
         except jwt.ExpiredSignatureError:
             return jsonify({'error': 'Token expired'}), 401
-        except:
+        except Exception:
             return jsonify({'error': 'Invalid token'}), 401
         
         return f(current_user, *args, **kwargs)
     return decorated_function
+
 
 class EnhancedUserAnalytics:
     """Enhanced user analytics for authentication"""
@@ -514,3 +438,12 @@ class EnhancedUserAnalytics:
         except Exception as e:
             logger.error(f"Error calculating enhanced stats: {e}")
             return {}
+        
+__all__ = [
+    'init_auth',
+    'require_auth',
+    'generate_reset_token',
+    'verify_reset_token',
+    'validate_password',
+    'EnhancedUserAnalytics'
+]
