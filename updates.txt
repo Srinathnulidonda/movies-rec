@@ -1,0 +1,15 @@
+Please create a clean and modular code structure for this, with the following files:
+reviews/
+├── __init__.py
+├── routes.py
+├── moderation.py
+├── analysis.py
+└── review_rating.py
+
+Only logged-in users should be able to submit reviews and ratings.
+
+
+System/
+├── __init__.py
+├── routes.py
+└── system.py
