@@ -36,8 +36,8 @@ redis_client = None
 FRONTEND_URL = os.getenv('FRONTEND_URL')
 BACKEND_URL = os.getenv('BACKEND_URL')
 REDIS_URL = os.getenv('REDIS_URL')
-RESEND_API_KEY = os.getenv('RESEND_API_KEY')
-MAIL_DEFAULT_SENDER = os.getenv('MAIL_DEFAULT_SENDER')
+BREVO_API_KEY = os.getenv('BREVO_API_KEY')
+BREVO_SENDER = os.getenv('BREVO_SENDER')
 REPLY_TO_EMAIL = os.getenv('REPLY_TO_EMAIL')
 
 EMAIL_REGEX = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
@@ -71,48 +71,63 @@ def init_redis():
         return None
 
 
-class ResendEmailService:
-    """Email service using Resend API (supports free sandbox mode)"""
+class BrevoEmailService:
+    """Email service using Brevo (SendinBlue) API"""
 
     def __init__(self, api_key=None):
-        self.api_key = api_key or RESEND_API_KEY
-        self.from_email = MAIL_DEFAULT_SENDER.split('<')[-1].replace('>', '').strip()
-        self.from_name = MAIL_DEFAULT_SENDER.split('<')[0].strip()
+        self.api_key = api_key or BREVO_API_KEY
+        self.sender_email = BREVO_SENDER
+        self.sender_name = "CineBrain"
         self.reply_to_email = REPLY_TO_EMAIL
-        self.base_url = "https://api.resend.com"
+        self.base_url = "https://api.brevo.com/v3"
         self.redis_client = redis_client
         self.email_enabled = False
-        self.is_configured = bool(self.api_key)
+        self.is_configured = bool(self.api_key and self.sender_email)
 
         if not self.api_key:
-            logger.warning("⚠️ RESEND_API_KEY not set — email service disabled")
+            logger.warning("⚠️ BREVO_API_KEY not set — email service disabled")
+            return
+            
+        if not self.sender_email:
+            logger.warning("⚠️ BREVO_SENDER not set — email service disabled")
             return
 
-        # Check sandbox or production
-        if "resend.dev" in self.from_email:
-            logger.info("📦 Using Resend Sandbox mode (free tier)")
-            self.email_enabled = True
-        else:
-            self.email_enabled = self._test_resend_connection()
+        # Test Brevo connection
+        self.email_enabled = self._test_brevo_connection()
 
         if self.email_enabled:
             self.start_email_worker()
-            logger.info("✅ Resend email worker initialized successfully")
+            logger.info("✅ Brevo email worker initialized successfully")
         else:
-            logger.warning("⚠️ Email service disabled - Resend API connection failed or not configured")
+            logger.warning("⚠️ Email service disabled - Brevo API connection failed or not configured")
 
-    def _test_resend_connection(self):
-        """Basic Resend API connectivity test"""
+    def _test_brevo_connection(self):
+        """Test Brevo API connectivity"""
         try:
-            headers = {'Authorization': f'Bearer {self.api_key}', 'Content-Type': 'application/json'}
-            response = requests.get(f"{self.base_url}/api/v1", headers=headers, timeout=10)
-            if response.status_code in [200, 404]:
-                logger.info("✅ Resend API reachable (production mode)")
+            headers = {
+                'api-key': self.api_key,
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            }
+            
+            # Test with account info endpoint
+            response = requests.get(f"{self.base_url}/account", headers=headers, timeout=10)
+            
+            if response.status_code == 200:
+                account_data = response.json()
+                account_email = account_data.get('email', 'Unknown')
+                plan = account_data.get('plan', {}).get('type', 'Unknown')
+                logger.info(f"✅ Brevo API connected successfully")
+                logger.info(f"   Account: {account_email}")
+                logger.info(f"   Plan: {plan}")
                 return True
-            logger.warning(f"⚠️ Resend test returned status: {response.status_code}")
-            return False
+            else:
+                logger.warning(f"⚠️ Brevo API test failed with status: {response.status_code}")
+                logger.warning(f"   Response: {response.text}")
+                return False
+                
         except Exception as e:
-            logger.error(f"❌ Resend API connection test failed: {e}")
+            logger.error(f"❌ Brevo API connection test failed: {e}")
             return False
 
     def start_email_worker(self):
@@ -125,7 +140,7 @@ class ResendEmailService:
                         email_json = self.redis_client.lpop('email_queue')
                         if email_json:
                             email_data = json.loads(email_json)
-                            self._send_email_resend(email_data)
+                            self._send_email_brevo(email_data)
                         else:
                             time.sleep(1)
                     else:
@@ -134,65 +149,116 @@ class ResendEmailService:
                     logger.error(f"Email worker error: {e}")
                     time.sleep(5)
 
-        threading.Thread(target=worker, daemon=True, name="ResendEmailWorker").start()
+        threading.Thread(target=worker, daemon=True, name="BrevoEmailWorker").start()
 
-    def _send_email_resend(self, email_data: Dict):
-        """Send email using Resend API"""
+    def _send_email_brevo(self, email_data: Dict, retry_count: int = 0):
+        """Send email using Brevo API with retry logic"""
         if not self.email_enabled:
             self._store_fallback_email(email_data)
             return
 
         headers = {
-            'Authorization': f'Bearer {self.api_key}',
-            'Content-Type': 'application/json'
+            'api-key': self.api_key,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
         }
 
         payload = {
-            'from': f"{self.from_name} <{self.from_email}>",
-            'to': [email_data['to']],
+            'sender': {
+                'email': self.sender_email,
+                'name': self.sender_name
+            },
+            'to': [
+                {
+                    'email': email_data['to'],
+                    'name': email_data.get('to_name', '')
+                }
+            ],
             'subject': email_data['subject'],
-            'html': email_data['html'],
-            'text': email_data.get('text', ''),
-            'reply_to': self.reply_to_email
+            'htmlContent': email_data['html'],
+            'textContent': email_data.get('text', ''),
+            'replyTo': {
+                'email': self.reply_to_email,
+                'name': self.sender_name
+            } if self.reply_to_email else None
         }
 
+        # Remove replyTo if not configured
+        if not self.reply_to_email:
+            payload.pop('replyTo', None)
+
         try:
-            response = requests.post(f"{self.base_url}/emails", headers=headers, json=payload, timeout=30)
-            if response.status_code == 200:
+            response = requests.post(
+                f"{self.base_url}/smtp/email", 
+                headers=headers, 
+                json=payload, 
+                timeout=30
+            )
+            
+            if response.status_code == 201:
                 res = response.json()
-                logger.info(f"✅ Email sent successfully to {email_data['to']} (ID: {res.get('id')})")
+                message_id = res.get('messageId', 'unknown')
+                logger.info(f"✅ Email sent successfully to {email_data['to']} (Brevo ID: {message_id})")
+                
+                # Store success status in Redis
                 if self.redis_client:
-                    self.redis_client.setex(f"email_sent:{res.get('id')}", 86400, json.dumps({
+                    self.redis_client.setex(f"email_sent:{email_data['id']}", 86400, json.dumps({
                         'status': 'sent',
                         'timestamp': datetime.utcnow().isoformat(),
-                        'to': email_data['to']
+                        'to': email_data['to'],
+                        'brevo_message_id': message_id,
+                        'service': 'brevo'
                     }))
             else:
-                raise Exception(f"Resend returned {response.status_code}: {response.text}")
+                error_msg = f"Brevo API returned {response.status_code}: {response.text}"
+                
+                # Retry logic (up to 2 attempts)
+                if retry_count < 2:
+                    logger.warning(f"⚠️ Email send failed, retrying... (attempt {retry_count + 1}/2)")
+                    time.sleep(2 ** retry_count)  # Exponential backoff
+                    return self._send_email_brevo(email_data, retry_count + 1)
+                else:
+                    logger.error(f"❌ Email send failed after 2 retries to {email_data['to']}: {error_msg}")
+                    self._store_fallback_email(email_data)
+                    
         except Exception as e:
-            logger.error(f"❌ Email send failed to {email_data['to']}: {e}")
-            self._store_fallback_email(email_data)
+            error_msg = f"Brevo API request failed: {e}"
+            
+            # Retry logic
+            if retry_count < 2:
+                logger.warning(f"⚠️ Email send failed, retrying... (attempt {retry_count + 1}/2): {error_msg}")
+                time.sleep(2 ** retry_count)  # Exponential backoff
+                return self._send_email_brevo(email_data, retry_count + 1)
+            else:
+                logger.error(f"❌ Email send failed after 2 retries to {email_data['to']}: {error_msg}")
+                self._store_fallback_email(email_data)
 
     def _store_fallback_email(self, email_data: Dict):
         """Store unsent email in fallback queue"""
         if not self.redis_client:
             return
+            
+        email_data['failed_at'] = datetime.utcnow().isoformat()
+        email_data['service'] = 'brevo'
+        
         key = f"email_fallback:{uuid.uuid4()}"
-        self.redis_client.setex(key, 604800, json.dumps(email_data))
+        self.redis_client.setex(key, 604800, json.dumps(email_data))  # 7 days
         self.redis_client.rpush('email_fallback_queue', key)
         logger.info(f"📥 Stored unsent email for {email_data['to']} in fallback queue")
 
-    def queue_email(self, to: str, subject: str, html: str, text: str = "", priority: str = 'normal', reset_token: str = None):
+    def queue_email(self, to: str, subject: str, html: str, text: str = "", priority: str = 'normal', reset_token: str = None, to_name: str = ""):
         """Queue email to be sent asynchronously"""
         email_id = str(uuid.uuid4())
         email_data = {
             'id': email_id,
             'to': to,
+            'to_name': to_name,
             'subject': subject,
             'html': html,
             'text': text,
             'timestamp': datetime.utcnow().isoformat(),
-            'reset_token': reset_token
+            'reset_token': reset_token,
+            'service': 'brevo'
         }
 
         if not self.email_enabled:
@@ -212,31 +278,42 @@ class ResendEmailService:
                 self.redis_client.rpush('email_queue', json.dumps(email_data))
             logger.info(f"📧 Queued email for {to} (ID: {email_id})")
         else:
-            threading.Thread(target=self._send_email_resend, args=(email_data,), daemon=True).start()
+            # If no Redis, send directly in background thread
+            threading.Thread(target=self._send_email_brevo, args=(email_data,), daemon=True).start()
         
         return True
 
     def get_email_status(self, email_id: str) -> Dict:
         """Get email delivery status"""
         if not self.redis_client:
-            return {'status': 'unknown', 'id': email_id}
+            return {'status': 'unknown', 'id': email_id, 'service': 'brevo'}
         
         try:
-            for status_type in ['sent', 'failed', 'queued']:
-                key = f"email_{status_type}:{email_id}"
-                data = self.redis_client.get(key)
-                if data:
-                    return json.loads(data)
+            # Check sent emails
+            sent_key = f"email_sent:{email_id}"
+            sent_data = self.redis_client.get(sent_key)
+            if sent_data:
+                return json.loads(sent_data)
             
+            # Check failed emails
+            failed_key = f"email_failed:{email_id}"
+            failed_data = self.redis_client.get(failed_key)
+            if failed_data:
+                return json.loads(failed_data)
+            
+            # Check fallback queue
             fallback_key = f"email_fallback:{email_id}"
             fallback_data = self.redis_client.get(fallback_key)
             if fallback_data:
-                return json.loads(fallback_data)
+                data = json.loads(fallback_data)
+                data['status'] = 'fallback'
+                return data
             
-            return {'status': 'not_found', 'id': email_id}
+            return {'status': 'not_found', 'id': email_id, 'service': 'brevo'}
+            
         except Exception as e:
             logger.error(f"Error getting email status: {e}")
-            return {'status': 'error', 'id': email_id}
+            return {'status': 'error', 'id': email_id, 'service': 'brevo'}
     
     def get_fallback_emails(self, limit: int = 10) -> list:
         """Get recent fallback emails for manual processing"""
@@ -249,11 +326,31 @@ class ResendEmailService:
             for key in keys:
                 data = self.redis_client.get(key)
                 if data:
-                    emails.append(json.loads(data))
+                    email_data = json.loads(data)
+                    email_data['fallback_key'] = key
+                    emails.append(email_data)
             return emails
         except Exception as e:
             logger.error(f"Error getting fallback emails: {e}")
             return []
+
+    def get_queue_stats(self) -> Dict:
+        """Get email queue statistics"""
+        if not self.redis_client:
+            return {'queue_size': 0, 'fallback_queue_size': 0}
+            
+        try:
+            queue_size = self.redis_client.llen('email_queue')
+            fallback_queue_size = self.redis_client.llen('email_fallback_queue')
+            
+            return {
+                'queue_size': queue_size,
+                'fallback_queue_size': fallback_queue_size,
+                'service': 'brevo'
+            }
+        except Exception as e:
+            logger.error(f"Error getting queue stats: {e}")
+            return {'queue_size': 0, 'fallback_queue_size': 0, 'error': str(e)}
 
 
 # Global email service instance
@@ -268,11 +365,11 @@ def init_auth(flask_app, database, user_model):
     db = database
     User = user_model
     redis_client = init_redis()
-    email_service = ResendEmailService()
+    email_service = BrevoEmailService()
     serializer = URLSafeTimedSerializer(app.secret_key)
 
     if email_service.email_enabled:
-        logger.info("✅ Auth module initialized with Resend email support")
+        logger.info("✅ Auth module initialized with Brevo email support")
     else:
         logger.warning("⚠️ Auth module initialized WITHOUT email - using fallback mode")
 
