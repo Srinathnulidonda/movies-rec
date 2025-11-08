@@ -28,7 +28,7 @@ from urllib3.util.retry import Retry
 from flask_mail import Mail
 from services.upcoming import UpcomingContentService, ContentType, LanguagePriority
 import asyncio
-from services.auth import auth_bp, init_auth
+from auth.routes import auth_bp
 from services.admin import admin_bp, init_admin
 from services.support import support_bp, init_support
 from services.critics_choice import critics_choice_bp, init_critics_choice_service
@@ -736,12 +736,16 @@ except Exception as e:
     logger.error(f"❌ Failed to initialize CineBrain Personalized Recommendation System: {e}")
     logger.error(f"Traceback: {traceback.format_exc()}")
 
+# Initialize the new modular auth system with Resend
 try:
+    from auth.service import init_auth
+    from auth.routes import auth_bp
+    
     init_auth(app, db, User)
     app.register_blueprint(auth_bp)
-    logger.info("CineBrain enhanced authentication service initialized successfully")
+    logger.info("✅ CineBrain authentication service with Resend email initialized successfully")
 except Exception as e:
-    logger.error(f"Failed to initialize CineBrain authentication service: {e}")
+    logger.error(f"❌ Failed to initialize CineBrain authentication service: {e}")
 
 try:
     init_admin(app, db, models, services)
@@ -1405,7 +1409,7 @@ def populate_all_cast_crew():
         logger.error(f"CineBrain error in bulk cast/crew population: {e}")
         return jsonify({'error': 'Failed to populate CineBrain cast/crew'}), 500
 
-# Note: Removed the original /api/performance and /api/health routes as they're now in the System module
+# CLI Commands
 
 @app.cli.command('generate-slugs')
 def generate_slugs():
@@ -1508,7 +1512,6 @@ def cinebrain_new_releases_refresh_cli():
         print(f"Failed to refresh CineBrain new releases: {e}")
         logger.error(f"CineBrain CLI new releases refresh error: {e}")
 
-# New CLI commands for personalized system
 @app.cli.command('analyze-user-profiles')
 def analyze_user_profiles_cli():
     """Analyze all user profiles and generate Cinematic DNA"""
@@ -1521,7 +1524,6 @@ def analyze_user_profiles_cli():
         
         profile_analyzer = services['profile_analyzer']
         
-        # Get all users
         users = User.query.all()
         print(f"Found {len(users)} users to analyze")
         
@@ -1532,7 +1534,6 @@ def analyze_user_profiles_cli():
             try:
                 print(f"\nAnalyzing user {i}/{len(users)}: {user.username} (ID: {user.id})")
                 
-                # Build comprehensive profile
                 profile = profile_analyzer.build_comprehensive_profile(user.id)
                 
                 if profile:
@@ -1565,7 +1566,6 @@ def test_personalized_recommendations_cli(username):
     try:
         print(f"Testing CineBrain personalized recommendations for user: {username}")
         
-        # Get user
         user = User.query.filter_by(username=username).first()
         if not user:
             print(f"Error: User '{username}' not found")
@@ -1577,7 +1577,6 @@ def test_personalized_recommendations_cli(username):
         
         engine = services['personalized_recommendation_engine']
         
-        # Get recommendations
         print(f"\nGenerating recommendations for {username} (ID: {user.id})...")
         
         recommendations = engine.get_personalized_recommendations(
@@ -1599,7 +1598,6 @@ def test_personalized_recommendations_cli(username):
                 print(f"   - Why: {rec['personalized_explanation']}")
                 print()
             
-            # Show insights
             insights = recommendations.get('profile_insights', {})
             print("User Profile Insights:")
             print(f"- Profile Strength: {insights.get('profile_strength', 'unknown')}")
@@ -1664,6 +1662,8 @@ if __name__ == '__main__':
     print("  ✅ Performance Analytics")
     print("  ✅ Automated Cache Refresh System")
     print("  ✅ Background Operations Management")
+    print("  ✅ Resend Email Service Integration")
+    print("  ✅ Modular Authentication System")
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('FLASK_ENV') == 'development'
     app.run(host='0.0.0.0', port=port, debug=debug)
@@ -1679,7 +1679,7 @@ else:
     print(f"CineBrain new releases service status: {'Integrated' if cinebrain_new_releases_service else 'Failed to initialize'}")
     print(f"CineBrain critics choice service status: {'Integrated' if 'critics_choice_service' in services else 'Failed to initialize'}")
     print(f"CineBrain support service status: {'Integrated' if 'support_bp' in app.blueprints else 'Not integrated'}")
-    print(f"CineBrain auth service status: {'Integrated' if 'auth_bp' in app.blueprints else 'Not integrated'}")
+    print(f"CineBrain auth service status: {'Integrated with Resend' if 'auth' in app.blueprints else 'Not integrated'}")
     print(f"CineBrain user service status: {'Integrated' if 'user_bp' in app.blueprints else 'Not integrated'}")
     print(f"CineBrain recommendation service status: {'Integrated' if 'recommendations' in app.blueprints else 'Not integrated'}")
     print(f"CineBrain system monitoring service status: {'Integrated' if 'system_bp' in app.blueprints else 'Not integrated'}")
@@ -1689,7 +1689,6 @@ else:
     print("\n=== CineBrain Advanced Features ===")
     print("✅ Modular recommendation architecture")
     print("✅ All original endpoints preserved")
-    print("✅ OMDb completely removed")
     print("✅ Advanced algorithms integration")
     print("✅ Telugu-first priority system")
     print("✅ Ultra-powerful similarity engine")
@@ -1707,6 +1706,8 @@ else:
     print("✅ Real-time Metrics & Database Statistics")
     print("✅ Automated Cache Refresh with UptimeRobot Support")
     print("✅ Background Operations & Maintenance Tasks")
+    print("✅ Resend Email Service with Professional Templates")
+    print("✅ Modular Authentication System")
     
     print(f"\n=== CineBrain Registered Routes ===")
     for rule in app.url_map.iter_rules():
