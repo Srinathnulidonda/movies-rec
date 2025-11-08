@@ -17,6 +17,9 @@ import redis
 from urllib.parse import urlparse
 import requests
 from dotenv import load_dotenv
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 # Load environment variables
 load_dotenv()
@@ -36,9 +39,16 @@ redis_client = None
 FRONTEND_URL = os.getenv('FRONTEND_URL')
 BACKEND_URL = os.getenv('BACKEND_URL')
 REDIS_URL = os.getenv('REDIS_URL')
+
+# Brevo Configuration
 BREVO_API_KEY = os.getenv('BREVO_API_KEY')
-BREVO_SENDER = os.getenv('BREVO_SENDER')
-REPLY_TO_EMAIL = os.getenv('REPLY_TO_EMAIL')
+BREVO_SMTP_SERVER = os.getenv('BREVO_SMTP_SERVER')
+BREVO_SMTP_PORT = int(os.getenv('BREVO_SMTP_PORT'))
+BREVO_SMTP_USERNAME = os.getenv('BREVO_SMTP_USERNAME')
+BREVO_SMTP_PASSWORD = os.getenv('BREVO_SMTP_PASSWORD')
+BREVO_SENDER_EMAIL = os.getenv('BREVO_SENDER_EMAIL')
+BREVO_SENDER_NAME = os.getenv('BREVO_SENDER_NAME', 'CineBrain')
+REPLY_TO_EMAIL = os.getenv('REPLY_TO_EMAIL', BREVO_SENDER_EMAIL)
 
 EMAIL_REGEX = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
 PASSWORD_RESET_SALT = 'password-reset-salt-cinebrain-2025'
@@ -72,36 +82,85 @@ def init_redis():
 
 
 class BrevoEmailService:
-    """Email service using Brevo (SendinBlue) API"""
+    """Email service using Brevo SMTP and API"""
 
     def __init__(self, api_key=None):
         self.api_key = api_key or BREVO_API_KEY
-        self.sender_email = BREVO_SENDER
-        self.sender_name = "CineBrain"
+        
+        # SMTP Configuration
+        self.smtp_server = BREVO_SMTP_SERVER
+        self.smtp_port = BREVO_SMTP_PORT
+        self.smtp_username = BREVO_SMTP_USERNAME
+        self.smtp_password = BREVO_SMTP_PASSWORD
+        
+        # Email Configuration
+        self.sender_email = BREVO_SENDER_EMAIL
+        self.sender_name = BREVO_SENDER_NAME
         self.reply_to_email = REPLY_TO_EMAIL
+        
+        # API Configuration
         self.base_url = "https://api.brevo.com/v3"
+        
+        # Service Configuration
         self.redis_client = redis_client
         self.email_enabled = False
-        self.is_configured = bool(self.api_key and self.sender_email)
-
-        if not self.api_key:
-            logger.warning("⚠️ BREVO_API_KEY not set — email service disabled")
-            return
-            
-        if not self.sender_email:
-            logger.warning("⚠️ BREVO_SENDER not set — email service disabled")
-            return
-
-        # Test Brevo connection
-        self.email_enabled = self._test_brevo_connection()
-
+        self.smtp_enabled = False
+        self.api_enabled = False
+        self.is_configured = False
+        
+        # Determine which service to use
+        self._initialize_email_service()
+        
         if self.email_enabled:
             self.start_email_worker()
             logger.info("✅ Brevo email worker initialized successfully")
         else:
-            logger.warning("⚠️ Email service disabled - Brevo API connection failed or not configured")
+            logger.warning("⚠️ Email service disabled - no valid configuration found")
 
-    def _test_brevo_connection(self):
+    def _initialize_email_service(self):
+        """Initialize email service with SMTP as primary, API as fallback"""
+        
+        # Try SMTP first (preferred)
+        if self.smtp_username and self.smtp_password:
+            self.smtp_enabled = self._test_smtp_connection()
+            if self.smtp_enabled:
+                logger.info("✅ Using Brevo SMTP for email delivery")
+                self.email_enabled = True
+                self.is_configured = True
+                return
+        
+        # Try API as fallback
+        if self.api_key and self.sender_email:
+            self.api_enabled = self._test_api_connection()
+            if self.api_enabled:
+                logger.info("✅ Using Brevo API for email delivery")
+                self.email_enabled = True
+                self.is_configured = True
+                return
+        
+        # No valid configuration
+        if not self.smtp_username and not self.api_key:
+            logger.warning("⚠️ Neither SMTP nor API credentials configured")
+        
+    def _test_smtp_connection(self):
+        """Test SMTP connectivity"""
+        try:
+            logger.info(f"Testing SMTP connection to {self.smtp_server}:{self.smtp_port}")
+            logger.info(f"SMTP Username: {self.smtp_username}")
+            
+            server = smtplib.SMTP(self.smtp_server, self.smtp_port)
+            server.starttls()
+            server.login(self.smtp_username, self.smtp_password)
+            server.quit()
+            
+            logger.info("✅ Brevo SMTP connection successful")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Brevo SMTP connection failed: {e}")
+            return False
+
+    def _test_api_connection(self):
         """Test Brevo API connectivity"""
         try:
             headers = {
@@ -110,7 +169,6 @@ class BrevoEmailService:
                 'Accept': 'application/json'
             }
             
-            # Test with account info endpoint
             response = requests.get(f"{self.base_url}/account", headers=headers, timeout=10)
             
             if response.status_code == 200:
@@ -123,7 +181,6 @@ class BrevoEmailService:
                 return True
             else:
                 logger.warning(f"⚠️ Brevo API test failed with status: {response.status_code}")
-                logger.warning(f"   Response: {response.text}")
                 return False
                 
         except Exception as e:
@@ -140,7 +197,7 @@ class BrevoEmailService:
                         email_json = self.redis_client.lpop('email_queue')
                         if email_json:
                             email_data = json.loads(email_json)
-                            self._send_email_brevo(email_data)
+                            self._send_email(email_data)
                         else:
                             time.sleep(1)
                     else:
@@ -151,12 +208,86 @@ class BrevoEmailService:
 
         threading.Thread(target=worker, daemon=True, name="BrevoEmailWorker").start()
 
-    def _send_email_brevo(self, email_data: Dict, retry_count: int = 0):
-        """Send email using Brevo API with retry logic"""
+    def _send_email(self, email_data: Dict, retry_count: int = 0):
+        """Send email using SMTP or API based on configuration"""
         if not self.email_enabled:
             self._store_fallback_email(email_data)
             return
+        
+        # Try SMTP first
+        if self.smtp_enabled:
+            success = self._send_email_smtp(email_data, retry_count)
+            if success:
+                return
+        
+        # Fallback to API
+        if self.api_enabled:
+            success = self._send_email_api(email_data, retry_count)
+            if success:
+                return
+        
+        # Store as fallback if both fail
+        self._store_fallback_email(email_data)
 
+    def _send_email_smtp(self, email_data: Dict, retry_count: int = 0) -> bool:
+        """Send email using SMTP"""
+        try:
+            # Create message
+            message = MIMEMultipart("alternative")
+            message["Subject"] = email_data['subject']
+            message["From"] = f"{self.sender_name} <{self.sender_email}>"
+            message["To"] = email_data['to']
+            
+            if self.reply_to_email:
+                message["Reply-To"] = self.reply_to_email
+            
+            # Add text and HTML parts
+            if email_data.get('text'):
+                part1 = MIMEText(email_data['text'], "plain")
+                message.attach(part1)
+            
+            if email_data.get('html'):
+                part2 = MIMEText(email_data['html'], "html")
+                message.attach(part2)
+            
+            # Send email
+            server = smtplib.SMTP(self.smtp_server, self.smtp_port)
+            server.starttls()
+            server.login(self.smtp_username, self.smtp_password)
+            server.send_message(message)
+            server.quit()
+            
+            logger.info(f"✅ Email sent successfully via SMTP to {email_data['to']}")
+            
+            # Store success status
+            if self.redis_client:
+                self.redis_client.setex(f"email_sent:{email_data['id']}", 86400, json.dumps({
+                    'status': 'sent',
+                    'timestamp': datetime.utcnow().isoformat(),
+                    'to': email_data['to'],
+                    'service': 'brevo_smtp',
+                    'method': 'smtp'
+                }))
+            
+            return True
+            
+        except Exception as e:
+            error_msg = f"SMTP send failed: {e}"
+            
+            # Retry logic
+            if retry_count < 2:
+                logger.warning(f"⚠️ SMTP send failed, retrying... (attempt {retry_count + 1}/2)")
+                time.sleep(2 ** retry_count)
+                return self._send_email_smtp(email_data, retry_count + 1)
+            else:
+                logger.error(f"❌ SMTP send failed after retries to {email_data['to']}: {error_msg}")
+                return False
+
+    def _send_email_api(self, email_data: Dict, retry_count: int = 0) -> bool:
+        """Send email using Brevo API"""
+        if not self.api_key:
+            return False
+            
         headers = {
             'api-key': self.api_key,
             'Content-Type': 'application/json',
@@ -177,15 +308,13 @@ class BrevoEmailService:
             'subject': email_data['subject'],
             'htmlContent': email_data['html'],
             'textContent': email_data.get('text', ''),
-            'replyTo': {
+        }
+        
+        if self.reply_to_email:
+            payload['replyTo'] = {
                 'email': self.reply_to_email,
                 'name': self.sender_name
-            } if self.reply_to_email else None
-        }
-
-        # Remove replyTo if not configured
-        if not self.reply_to_email:
-            payload.pop('replyTo', None)
+            }
 
         try:
             response = requests.post(
@@ -198,40 +327,43 @@ class BrevoEmailService:
             if response.status_code == 201:
                 res = response.json()
                 message_id = res.get('messageId', 'unknown')
-                logger.info(f"✅ Email sent successfully to {email_data['to']} (Brevo ID: {message_id})")
+                logger.info(f"✅ Email sent successfully via API to {email_data['to']} (ID: {message_id})")
                 
-                # Store success status in Redis
+                # Store success status
                 if self.redis_client:
                     self.redis_client.setex(f"email_sent:{email_data['id']}", 86400, json.dumps({
                         'status': 'sent',
                         'timestamp': datetime.utcnow().isoformat(),
                         'to': email_data['to'],
                         'brevo_message_id': message_id,
-                        'service': 'brevo'
+                        'service': 'brevo_api',
+                        'method': 'api'
                     }))
-            else:
-                error_msg = f"Brevo API returned {response.status_code}: {response.text}"
                 
-                # Retry logic (up to 2 attempts)
+                return True
+            else:
+                error_msg = f"API returned {response.status_code}: {response.text}"
+                
+                # Retry logic
                 if retry_count < 2:
-                    logger.warning(f"⚠️ Email send failed, retrying... (attempt {retry_count + 1}/2)")
-                    time.sleep(2 ** retry_count)  # Exponential backoff
-                    return self._send_email_brevo(email_data, retry_count + 1)
+                    logger.warning(f"⚠️ API send failed, retrying... (attempt {retry_count + 1}/2)")
+                    time.sleep(2 ** retry_count)
+                    return self._send_email_api(email_data, retry_count + 1)
                 else:
-                    logger.error(f"❌ Email send failed after 2 retries to {email_data['to']}: {error_msg}")
-                    self._store_fallback_email(email_data)
+                    logger.error(f"❌ API send failed after retries to {email_data['to']}: {error_msg}")
+                    return False
                     
         except Exception as e:
-            error_msg = f"Brevo API request failed: {e}"
+            error_msg = f"API request failed: {e}"
             
             # Retry logic
             if retry_count < 2:
-                logger.warning(f"⚠️ Email send failed, retrying... (attempt {retry_count + 1}/2): {error_msg}")
-                time.sleep(2 ** retry_count)  # Exponential backoff
-                return self._send_email_brevo(email_data, retry_count + 1)
+                logger.warning(f"⚠️ API send failed, retrying... (attempt {retry_count + 1}/2)")
+                time.sleep(2 ** retry_count)
+                return self._send_email_api(email_data, retry_count + 1)
             else:
-                logger.error(f"❌ Email send failed after 2 retries to {email_data['to']}: {error_msg}")
-                self._store_fallback_email(email_data)
+                logger.error(f"❌ API send failed after retries to {email_data['to']}: {error_msg}")
+                return False
 
     def _store_fallback_email(self, email_data: Dict):
         """Store unsent email in fallback queue"""
@@ -279,7 +411,7 @@ class BrevoEmailService:
             logger.info(f"📧 Queued email for {to} (ID: {email_id})")
         else:
             # If no Redis, send directly in background thread
-            threading.Thread(target=self._send_email_brevo, args=(email_data,), daemon=True).start()
+            threading.Thread(target=self._send_email, args=(email_data,), daemon=True).start()
         
         return True
 
@@ -337,7 +469,12 @@ class BrevoEmailService:
     def get_queue_stats(self) -> Dict:
         """Get email queue statistics"""
         if not self.redis_client:
-            return {'queue_size': 0, 'fallback_queue_size': 0}
+            return {
+                'queue_size': 0, 
+                'fallback_queue_size': 0,
+                'smtp_enabled': self.smtp_enabled,
+                'api_enabled': self.api_enabled
+            }
             
         try:
             queue_size = self.redis_client.llen('email_queue')
@@ -346,11 +483,20 @@ class BrevoEmailService:
             return {
                 'queue_size': queue_size,
                 'fallback_queue_size': fallback_queue_size,
-                'service': 'brevo'
+                'service': 'brevo',
+                'smtp_enabled': self.smtp_enabled,
+                'api_enabled': self.api_enabled,
+                'method': 'smtp' if self.smtp_enabled else 'api' if self.api_enabled else 'none'
             }
         except Exception as e:
             logger.error(f"Error getting queue stats: {e}")
-            return {'queue_size': 0, 'fallback_queue_size': 0, 'error': str(e)}
+            return {
+                'queue_size': 0, 
+                'fallback_queue_size': 0, 
+                'error': str(e),
+                'smtp_enabled': self.smtp_enabled,
+                'api_enabled': self.api_enabled
+            }
 
 
 # Global email service instance
@@ -369,7 +515,8 @@ def init_auth(flask_app, database, user_model):
     serializer = URLSafeTimedSerializer(app.secret_key)
 
     if email_service.email_enabled:
-        logger.info("✅ Auth module initialized with Brevo email support")
+        method = "SMTP" if email_service.smtp_enabled else "API"
+        logger.info(f"✅ Auth module initialized with Brevo {method} support")
     else:
         logger.warning("⚠️ Auth module initialized WITHOUT email - using fallback mode")
 
@@ -535,6 +682,7 @@ class EnhancedUserAnalytics:
         except Exception as e:
             logger.error(f"Error calculating enhanced stats: {e}")
             return {}
+
         
 __all__ = [
     'init_auth',
