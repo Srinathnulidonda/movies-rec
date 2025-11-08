@@ -1,4 +1,4 @@
-# System/init.py
+# system/init.py
 
 """
 CineBrain System Module

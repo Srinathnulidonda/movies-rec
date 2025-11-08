@@ -49,10 +49,9 @@ from services.new_releases import init_cinebrain_new_releases_service
 from services.review import init_review_service
 from user.routes import user_bp, init_user_routes
 from recommendation import recommendation_bp, init_recommendation_routes
-# Add these imports for the new personalized system
 from personalized import init_personalized_system, personalized_bp
-# Import System module
 from system.routes import system_bp, init_system_routes
+from operations.routes import operations_bp, init_operations_routes
 import re
 import click
 import traceback
@@ -793,6 +792,15 @@ try:
     services['system_service'] = True
 except Exception as e:
     logger.error(f"❌ Failed to initialize CineBrain system monitoring service: {e}")
+
+# Initialize operations routes
+try:
+    init_operations_routes(app, db, models, services)
+    app.register_blueprint(operations_bp)
+    logger.info("✅ CineBrain operations service initialized successfully")
+    services['operations_service'] = True
+except Exception as e:
+    logger.error(f"❌ Failed to initialize CineBrain operations service: {e}")
 
 def setup_support_monitoring():
     def support_monitor():
@@ -1644,7 +1652,7 @@ def create_tables():
 create_tables()
 
 if __name__ == '__main__':
-    print("=== Running CineBrain Flask with Advanced Personalized Recommendation System & System Monitoring ===")
+    print("=== Running CineBrain Flask with Advanced Personalized Recommendation System & Comprehensive Operations ===")
     print("Features:")
     print("  ✅ Cinematic DNA Analysis")
     print("  ✅ Advanced Behavioral Analysis") 
@@ -1654,6 +1662,8 @@ if __name__ == '__main__':
     print("  ✅ Multi-strategy Recommendations")
     print("  ✅ Comprehensive System Monitoring")
     print("  ✅ Performance Analytics")
+    print("  ✅ Automated Cache Refresh System")
+    print("  ✅ Background Operations Management")
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('FLASK_ENV') == 'development'
     app.run(host='0.0.0.0', port=port, debug=debug)
@@ -1673,6 +1683,7 @@ else:
     print(f"CineBrain user service status: {'Integrated' if 'user_bp' in app.blueprints else 'Not integrated'}")
     print(f"CineBrain recommendation service status: {'Integrated' if 'recommendations' in app.blueprints else 'Not integrated'}")
     print(f"CineBrain system monitoring service status: {'Integrated' if 'system_bp' in app.blueprints else 'Not integrated'}")
+    print(f"CineBrain operations service status: {'Integrated' if 'operations_bp' in app.blueprints else 'Not integrated'}")
     print(f"   Personalized System: {'Active' if 'profile_analyzer' in services else 'Not Initialized'}")
     
     print("\n=== CineBrain Advanced Features ===")
@@ -1694,6 +1705,8 @@ else:
     print("✅ Comprehensive System Monitoring & Health Checks")
     print("✅ Performance Analytics & Alerts")
     print("✅ Real-time Metrics & Database Statistics")
+    print("✅ Automated Cache Refresh with UptimeRobot Support")
+    print("✅ Background Operations & Maintenance Tasks")
     
     print(f"\n=== CineBrain Registered Routes ===")
     for rule in app.url_map.iter_rules():

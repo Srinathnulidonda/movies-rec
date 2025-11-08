@@ -1,4 +1,4 @@
-# System/system.py
+# system/system.py
 
 import os
 import psutil
