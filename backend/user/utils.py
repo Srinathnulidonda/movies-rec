@@ -94,7 +94,8 @@ def get_enhanced_user_stats(user_id):
     """Get comprehensive user statistics"""
     try:
         try:
-            from services.auth import EnhancedUserAnalytics
+            # Updated import to use new auth folder structure
+            from auth.service import EnhancedUserAnalytics
             return EnhancedUserAnalytics.get_comprehensive_user_stats(user_id)
         except ImportError:
             logger.warning("CineBrain enhanced analytics not available, using basic stats")

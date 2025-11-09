@@ -11,7 +11,7 @@ from .service import (
     validate_password, get_request_info, 
     redis_client, app, db, FRONTEND_URL, EMAIL_REGEX
 )
-from .mail_templates import get_professional_template
+from .user_mail_templates import get_professional_template
 
 logger = logging.getLogger(__name__)
 
