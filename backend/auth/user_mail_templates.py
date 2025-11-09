@@ -1,4 +1,4 @@
-# auth/user_mail_templates.py
+# auth/mail_templates.py
 
 from datetime import datetime
 import os
@@ -6,511 +6,112 @@ import os
 FRONTEND_URL = os.environ.get('FRONTEND_URL', 'https://cinebrain.vercel.app')
 
 def get_professional_template(content_type: str, **kwargs) -> tuple:
-    """Get professional email templates with enterprise-level design"""
+    """Get professional email templates with anti-spam optimizations"""
     base_css = """
     <style type="text/css">
-        @import url('https://fonts.googleapis.com/css2?family=Bangers&family=Inter:wght@300;400;500;600;700;800&display=swap');
-        
-        /* CSS Variables matching login page */
-        :root {
-            --cinebrain-primary: #113CCF;
-            --cinebrain-primary-light: #1E4FE5;
-            --cinebrain-accent: #1E4FE5;
-            --text-secondary: #9CA3AF;
-        }
-        
-        /* Reset and base styles */
-        body, table, td, th, p, a {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
-            margin: 0;
-            padding: 0;
-            border: 0;
-            font-size: 100%;
-            vertical-align: baseline;
-        }
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
         
         body {
-            -webkit-text-size-adjust: 100%;
-            -ms-text-size-adjust: 100%;
-            margin: 0 !important;
-            padding: 0 !important;
-            background-color: #ffffff;
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            margin: 0;
+            padding: 0;
+            font-family: 'Inter', Arial, sans-serif;
+            font-size: 16px;
             line-height: 1.6;
-            color: #1f2937;
-            -webkit-font-smoothing: antialiased;
-            -moz-osx-font-smoothing: grayscale;
+            color: #333333;
+            background-color: #f4f4f4;
         }
         
-        table {
-            border-collapse: collapse;
-            mso-table-lspace: 0pt;
-            mso-table-rspace: 0pt;
-        }
-        
-        img {
-            border: 0;
-            outline: none;
-            text-decoration: none;
-            -ms-interpolation-mode: bicubic;
-            max-width: 100%;
-            height: auto;
-            display: block;
-        }
-        
-        /* Glow animation matching login page */
-        @keyframes glow {
-            from {
-                filter: drop-shadow(0 0 10px rgba(17, 60, 207, 0.3));
-            }
-            to {
-                filter: drop-shadow(0 0 20px rgba(30, 79, 229, 0.5));
-            }
-        }
-        
-        /* Main container */
         .email-wrapper {
-            width: 100% !important;
-            background-color: #ffffff;
+            width: 100%;
+            background-color: #f4f4f4;
             padding: 20px 0;
-            min-height: auto;
         }
         
         .email-container {
             max-width: 600px;
             margin: 0 auto;
             background-color: #ffffff;
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1), 0 4px 15px rgba(0, 0, 0, 0.08);
-            border-radius: 16px;
+            border-radius: 8px;
             overflow: hidden;
-            border: 1px solid #e5e7eb;
         }
         
-        /* Header section */
         .header {
-            background-color: #1A1D29;
-            padding: 20px 40px;
+            background-color: #113CCF;
+            padding: 40px 20px;
             text-align: center;
-            position: relative;
-            overflow: hidden;
         }
         
         .brand-logo {
-            font-family: 'Bangers', cursive;
-            font-size: clamp(36px, 8vw, 48px);
-            background: linear-gradient(135deg,
-                var(--cinebrain-primary) 0%,
-                var(--cinebrain-primary-light) 50%,
-                var(--cinebrain-accent) 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-            letter-spacing: 2px;
+            font-size: 32px;
+            font-weight: 600;
+            color: #ffffff;
             margin: 0;
             text-decoration: none;
-            position: relative;
-            z-index: 2;
-            display: inline-block;
-            line-height: 1.2;
-            animation: glow 3s ease-in-out infinite alternate;
-            text-shadow: 0 2px 10px rgba(17, 60, 207, 0.3);
         }
         
-        .brand-subtitle {
-            font-size: clamp(12px, 3vw, 14px);
-            color: var(--text-secondary);
-            font-weight: 400;
-            margin: 4px 0 0 0;
-            letter-spacing: 0.5px;
-            position: relative;
-            z-index: 2;
-        }
-        
-        /* Content section */
         .content {
-            padding: 30px 40px;
+            padding: 40px 30px;
             background-color: #ffffff;
         }
         
-        .content-header {
-            text-align: center;
-            margin-bottom: 24px;
-        }
-        
         .content-title {
-            font-family: 'Bangers', cursive;
-            font-size: clamp(24px, 6vw, 36px);
-            background: linear-gradient(135deg,
-                var(--cinebrain-primary) 0%,
-                var(--cinebrain-primary-light) 50%,
-                var(--cinebrain-accent) 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-            margin: 0 0 8px 0;
-            letter-spacing: 2px;
-            line-height: 1.2;
-            animation: glow 3s ease-in-out infinite alternate;
-            text-shadow: 0 2px 10px rgba(17, 60, 207, 0.3);
-        }
-        
-        .content-subtitle {
-            font-size: 16px;
-            color: #6b7280;
-            font-weight: 400;
-            margin: 0;
-            line-height: 1.5;
+            font-size: 24px;
+            font-weight: 600;
+            color: #333333;
+            margin: 0 0 20px;
         }
         
         .content-body {
-            margin-bottom: 20px;
-        }
-        
-        .greeting {
-            font-size: 18px;
-            font-weight: 600;
-            color: #111827;
-            margin: 0 0 20px 0;
-            line-height: 1.4;
-        }
-        
-        .message-text {
             font-size: 16px;
-            color: #374151;
-            line-height: 1.65;
-            margin: 0 0 16px 0;
-            font-weight: 400;
+            line-height: 1.6;
+            color: #555555;
+            margin-bottom: 30px;
         }
         
-        .message-text.bold {
-            font-weight: 600;
-            color: #111827;
+        .btn {
+            display: inline-block;
+            font-size: 16px;
+            font-weight: 500;
+            text-decoration: none;
+            text-align: center;
+            padding: 14px 30px;
+            border-radius: 5px;
+            background-color: #113CCF;
+            color: #ffffff !important;
         }
         
-        .message-text.highlight {
-            background: linear-gradient(135deg, rgba(17, 60, 207, 0.08) 0%, rgba(30, 79, 229, 0.06) 100%);
-            padding: 16px 20px;
-            border-radius: 12px;
-            border-left: 4px solid var(--cinebrain-primary);
-            margin: 20px 0;
-        }
-        
-        /* Button section */
         .btn-container {
             text-align: center;
             margin: 30px 0;
         }
         
-        .btn-primary {
-            display: inline-block;
-            background: linear-gradient(135deg, var(--cinebrain-primary) 0%, var(--cinebrain-primary-light) 100%);
-            color: #ffffff !important;
-            text-decoration: none;
-            font-size: 16px;
-            font-weight: 600;
-            padding: 14px 30px;
-            border-radius: 12px;
-            letter-spacing: 0.5px;
-            box-shadow: 0 4px 12px rgba(17, 60, 207, 0.3), 0 2px 6px rgba(17, 60, 207, 0.2);
-            transition: all 0.3s ease;
-            border: 2px solid var(--cinebrain-primary);
-            line-height: 1.4;
-        }
-        
-        .btn-primary:hover {
-            background: linear-gradient(135deg, #0A2A9F 0%, var(--cinebrain-primary) 100%);
-            box-shadow: 0 6px 20px rgba(17, 60, 207, 0.4), 0 3px 8px rgba(17, 60, 207, 0.3);
-            transform: translateY(-1px);
-        }
-        
-        /* Info box */
-        .info-box {
-            background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
-            border: 1px solid #e2e8f0;
-            border-radius: 12px;
-            padding: 20px;
-            margin: 24px 0;
-            border-left: 4px solid var(--cinebrain-primary);
-        }
-        
-        .info-title {
-            font-size: 13px;
-            font-weight: 700;
-            color: #374151;
-            margin: 0 0 12px 0;
-            text-transform: uppercase;
-            letter-spacing: 0.8px;
-        }
-        
-        .info-item {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin: 8px 0;
-            font-size: 14px;
-        }
-        
-        .info-label {
-            color: #6b7280;
-            font-weight: 500;
-        }
-        
-        .info-value {
-            color: #111827;
-            font-weight: 600;
-            font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
-        }
-        
-        /* Security notice */
-        .security-notice {
-            background: linear-gradient(135deg, rgba(16, 185, 129, 0.08) 0%, rgba(5, 150, 105, 0.06) 100%);
-            border: 1px solid rgba(16, 185, 129, 0.2);
-            border-radius: 12px;
-            padding: 16px;
-            margin: 20px 0;
-            border-left: 4px solid #10b981;
-        }
-        
-        .security-notice.warning {
-            background: linear-gradient(135deg, rgba(239, 68, 68, 0.08) 0%, rgba(220, 38, 38, 0.06) 100%);
-            border-color: rgba(239, 68, 68, 0.2);
-            border-left-color: #ef4444;
-        }
-        
-        .security-icon {
-            font-size: 18px;
-            margin-bottom: 6px;
-            display: block;
-        }
-        
-        .security-text {
-            font-size: 14px;
-            line-height: 1.5;
-            color: #374151;
-            margin: 0;
-            font-weight: 500;
-        }
-        
-        /* Footer */
         .footer {
-            background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
-            padding: 20px 40px;
-            border-top: 1px solid #e5e7eb;
-        }
-        
-        .footer-content {
+            background-color: #f8f9fa;
+            padding: 30px;
             text-align: center;
+            border-top: 1px solid #e0e0e0;
         }
         
         .footer-text {
-            font-size: 12px;
-            color: #6b7280;
-            margin: 6px 0;
-            line-height: 1.5;
-            font-weight: 400;
-        }
-        
-        .footer-brand {
             font-size: 13px;
-            color: #374151;
-            margin: 0 0 12px 0;
-            font-weight: 600;
+            color: #666666;
+            margin: 5px 0;
         }
         
         .footer-links {
-            margin: 12px 0 0 0;
+            margin-top: 15px;
         }
         
-        .footer-link {
-            color: var(--cinebrain-primary);
+        .footer-links a {
+            color: #113CCF;
             text-decoration: none;
-            margin: 0 12px;
-            font-size: 12px;
-            font-weight: 500;
-            transition: color 0.3s ease;
+            margin: 0 10px;
+            font-size: 13px;
         }
         
-        .footer-link:hover {
-            color: #0A2A9F;
-            text-decoration: underline;
-        }
-        
-        .footer-link:last-child {
-            margin-right: 0;
-        }
-        
-        /* Mobile optimizations */
-        @media only screen and (max-width: 480px) {
-            .email-wrapper {
-                padding: 15px 0;
-            }
-            
-            .email-container {
-                margin: 0 10px;
-                border-radius: 12px;
-            }
-            
-            .header {
-                padding: 16px 20px;
-            }
-            
-            .brand-logo {
-                font-size: 32px;
-                letter-spacing: 2px;
-            }
-            
-            .brand-subtitle {
-                font-size: 11px;
-            }
-            
+        @media only screen and (max-width: 600px) {
             .content {
-                padding: 24px 20px;
-            }
-            
-            .content-title {
-                font-size: 24px;
-                letter-spacing: 1.5px;
-            }
-            
-            .content-subtitle {
-                font-size: 14px;
-            }
-            
-            .btn-primary {
-                display: block;
-                width: 100%;
-                box-sizing: border-box;
-                text-align: center;
-                padding: 16px 20px;
-            }
-            
-            .footer {
-                padding: 16px 20px;
-            }
-            
-            .footer-link {
-                display: block;
-                margin: 6px 0;
-            }
-            
-            .info-item {
-                flex-direction: column;
-                align-items: flex-start;
-            }
-            
-            .info-value {
-                margin-top: 4px;
-            }
-        }
-        
-        @media only screen and (max-width: 360px) {
-            .brand-logo {
-                font-size: 28px;
-                letter-spacing: 1px;
-            }
-        }
-        
-        /* Fallback for email clients that don't support background-clip */
-        @supports not (-webkit-background-clip: text) {
-            .brand-logo,
-            .content-title {
-                background: none !important;
-                -webkit-background-clip: inherit !important;
-                -webkit-text-fill-color: var(--cinebrain-primary) !important;
-                background-clip: inherit !important;
-                color: var(--cinebrain-primary) !important;
-                animation: none !important;
-            }
-        }
-        
-        /* Email client compatibility - disable animations */
-        @media screen and (-webkit-min-device-pixel-ratio:0) {
-            /* Keep animations for WebKit browsers */
-        }
-        
-        /* Outlook and other email clients - disable animations and use solid colors */
-        .outlook .brand-logo,
-        .outlook .content-title {
-            background: none !important;
-            -webkit-background-clip: inherit !important;
-            -webkit-text-fill-color: var(--cinebrain-primary) !important;
-            background-clip: inherit !important;
-            color: var(--cinebrain-primary) !important;
-            animation: none !important;
-            filter: none !important;
-        }
-        
-        /* Dark mode support */
-        @media (prefers-color-scheme: dark) {
-            .email-wrapper {
-                background-color: #ffffff !important;
-            }
-            
-            .email-container {
-                background-color: #ffffff !important;
-                border-color: #e5e7eb !important;
-            }
-            
-            .content {
-                background-color: #ffffff !important;
-            }
-        }
-        
-        /* High contrast mode */
-        @media (prefers-contrast: high) {
-            .btn-primary {
-                border-width: 3px;
-            }
-            
-            .info-box,
-            .security-notice {
-                border-width: 2px;
-            }
-            
-            .brand-logo,
-            .content-title {
-                background: none !important;
-                -webkit-background-clip: inherit !important;
-                -webkit-text-fill-color: var(--cinebrain-primary) !important;
-                background-clip: inherit !important;
-                color: var(--cinebrain-primary) !important;
-                animation: none !important;
-            }
-        }
-        
-        /* Print styles */
-        @media print {
-            .email-wrapper {
-                background: white !important;
-                padding: 0 !important;
-            }
-            
-            .email-container {
-                box-shadow: none !important;
-                border: 1px solid #000 !important;
-            }
-            
-            .header {
-                background: #1A1D29 !important;
-                -webkit-print-color-adjust: exact;
-                print-color-adjust: exact;
-            }
-            
-            .btn-primary {
-                background: var(--cinebrain-primary) !important;
-                border: 2px solid var(--cinebrain-primary) !important;
-                -webkit-print-color-adjust: exact;
-                print-color-adjust: exact;
-            }
-            
-            .brand-logo,
-            .content-title {
-                background: none !important;
-                -webkit-background-clip: inherit !important;
-                -webkit-text-fill-color: var(--cinebrain-primary) !important;
-                background-clip: inherit !important;
-                color: var(--cinebrain-primary) !important;
-                animation: none !important;
+                padding: 30px 20px;
             }
         }
     </style>
@@ -524,89 +125,61 @@ def get_professional_template(content_type: str, **kwargs) -> tuple:
         return _get_generic_template(base_css, **kwargs)
 
 def _get_password_reset_template(base_css: str, **kwargs) -> tuple:
-    """Generate enterprise-level password reset email template"""
+    """Generate password reset email template"""
     reset_url = kwargs.get('reset_url', '')
     user_name = kwargs.get('user_name', 'there')
     user_email = kwargs.get('user_email', '')
     
     html = f"""
     <!DOCTYPE html>
-    <html lang="en" xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+    <html lang="en">
     <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <meta http-equiv="X-UA-Compatible" content="IE=edge">
-        <meta name="x-apple-disable-message-reformatting">
-        <meta name="format-detection" content="telephone=no,address=no,email=no,date=no,url=no">
-        <meta name="color-scheme" content="light dark">
-        <meta name="supported-color-schemes" content="light dark">
-        <title>Reset your password - CineBrain</title>
-        <!--[if mso]>
-        <noscript>
-            <xml>
-                <o:OfficeDocumentSettings>
-                    <o:AllowPNG/>
-                    <o:PixelsPerInch>96</o:PixelsPerInch>
-                </o:OfficeDocumentSettings>
-            </xml>
-        </noscript>
-        <![endif]-->
+        <title>Reset your CineBrain password</title>
         {base_css}
     </head>
     <body>
-        <div role="article" aria-roledescription="email" aria-label="Password Reset Email" lang="en">
-            <div class="email-wrapper">
-                <div class="email-container">
-                    <div class="header">
-                        <h1 class="brand-logo">CineBrain</h1>
-                        <p class="brand-subtitle">The Mind Behind Your Next Favorite</p>
+        <div class="email-wrapper">
+            <div class="email-container">
+                <div class="header">
+                    <h1 class="brand-logo">CineBrain</h1>
+                </div>
+                
+                <div class="content">
+                    <h2 class="content-title">Reset your password</h2>
+                    
+                    <div class="content-body">
+                        <p>Hi {user_name},</p>
+                        <p>You recently requested to reset your password for your CineBrain account. Click the button below to reset it:</p>
                     </div>
                     
-                    <div class="content">
-                        <div class="content-header">
-                            <h2 class="content-title">Reset Your Password</h2>
-                            <p class="content-subtitle">Secure access to your CineBrain account</p>
-                        </div>
-                        
-                        <div class="content-body">
-                            <p class="greeting">Hello {user_name},</p>
-                            
-                            <p class="message-text">
-                                We received a request to reset the password for your CineBrain account. To proceed with resetting your password, please click the secure button below:
-                            </p>
-                            
-                            <div class="btn-container">
-                                <a href="{reset_url}" class="btn-primary" role="button" aria-label="Reset your password">
-                                    Reset My Password
-                                </a>
-                            </div>
-                            
-                            <div class="security-notice">
-                                <span class="security-icon">🔒</span>
-                                <p class="security-text">
-                                    <strong>Security Notice:</strong> This password reset link will expire in 1 hour for your protection. If you didn't request this reset, please ignore this email or contact our support team.
-                                </p>
-                            </div>
-                            
-                            <p class="message-text">
-                                For your security, this link can only be used once and will expire automatically. If you continue to have trouble accessing your account, our support team is here to help.
-                            </p>
-                        </div>
+                    <div class="btn-container">
+                        <a href="{reset_url}" class="btn" style="color: #ffffff;">Reset Password</a>
                     </div>
                     
-                    <div class="footer">
-                        <div class="footer-content">
-                            <p class="footer-brand">© {datetime.now().year} CineBrain</p>
-                            <p class="footer-text">
-                                CineBrain is committed to protecting your account security and privacy.
-                            </p>
-                            <div class="footer-links">
-                                <a href="{FRONTEND_URL}" class="footer-link">Visit CineBrain</a>
-                                <a href="{FRONTEND_URL}/privacy" class="footer-link">Privacy Policy</a>
-                                <a href="{FRONTEND_URL}/terms" class="footer-link">Terms of Service</a>
-                                <a href="{FRONTEND_URL}/support" class="footer-link">Support</a>
-                            </div>
-                        </div>
+                    <div class="content-body">
+                        <p><strong>This password reset link will expire in 1 hour.</strong></p>
+                        <p>If you did not request a password reset, please ignore this email or contact support if you have concerns.</p>
+                        <p style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #e0e0e0; font-size: 14px; color: #666666;">
+                            If the button above doesn't work, copy and paste this link into your browser:<br>
+                            <span style="color: #113CCF; word-break: break-all;">{reset_url}</span>
+                        </p>
+                    </div>
+                </div>
+                
+                <div class="footer">
+                    <p class="footer-text">
+                        This email was sent to {user_email} because a password reset was requested for this account.
+                    </p>
+                    <p class="footer-text">
+                        © {datetime.now().year} CineBrain. All rights reserved.
+                    </p>
+                    <div class="footer-links">
+                        <a href="{FRONTEND_URL}">Visit CineBrain</a>
+                        <a href="{FRONTEND_URL}/privacy">Privacy Policy</a>
+                        <a href="{FRONTEND_URL}/terms">Terms of Service</a>
                     </div>
                 </div>
             </div>
@@ -616,142 +189,87 @@ def _get_password_reset_template(base_css: str, **kwargs) -> tuple:
     """
     
     text = f"""
-CineBrain - Reset Your Password
+Reset your CineBrain password
 
-Hello {user_name},
+Hi {user_name},
 
-We received a request to reset the password for your CineBrain account.
+You recently requested to reset your password for your CineBrain account.
 
-To reset your password, visit the following secure link:
+To reset your password, visit the following link:
 {reset_url}
 
-SECURITY NOTICE: This password reset link will expire in 1 hour for your protection.
+This password reset link will expire in 1 hour.
 
-If you didn't request this password reset, please ignore this email or contact our support team if you have concerns.
+If you did not request a password reset, please ignore this email or contact support if you have concerns.
 
-For your security, this link can only be used once and will expire automatically.
+Best regards,
+The CineBrain Team
 
----
+© {datetime.now().year} CineBrain. All rights reserved.
 
-© {datetime.now().year} CineBrain
-The Mind Behind Your Next Favorite
-
-Visit CineBrain: {FRONTEND_URL}
-Privacy Policy: {FRONTEND_URL}/privacy
-Terms of Service: {FRONTEND_URL}/terms
-Support: {FRONTEND_URL}/support
-
-CineBrain is committed to protecting your account security and privacy.
+This email was sent to {user_email} because a password reset was requested for this account.
     """
     
     return html, text
 
 def _get_password_changed_template(base_css: str, **kwargs) -> tuple:
-    """Generate enterprise-level password changed confirmation template"""
+    """Generate password changed confirmation template"""
     user_name = kwargs.get('user_name', 'there')
     user_email = kwargs.get('user_email', '')
     ip_address = kwargs.get('ip_address', 'Unknown')
-    location = kwargs.get('location', 'Unknown location')
     device = kwargs.get('device', 'Unknown device')
-    
-    # Format timestamp
-    timestamp = datetime.now().strftime('%B %d, %Y at %I:%M %p UTC')
     
     html = f"""
     <!DOCTYPE html>
-    <html lang="en" xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+    <html lang="en">
     <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <meta http-equiv="X-UA-Compatible" content="IE=edge">
-        <meta name="x-apple-disable-message-reformatting">
-        <meta name="format-detection" content="telephone=no,address=no,email=no,date=no,url=no">
-        <meta name="color-scheme" content="light dark">
-        <meta name="supported-color-schemes" content="light dark">
-        <title>Password changed successfully - CineBrain</title>
+        <title>Your CineBrain password was changed</title>
         {base_css}
     </head>
     <body>
-        <div role="article" aria-roledescription="email" aria-label="Password Changed Confirmation Email" lang="en">
-            <div class="email-wrapper">
-                <div class="email-container">
-                    <div class="header">
-                        <h1 class="brand-logo">CineBrain</h1>
-                        <p class="brand-subtitle">The Mind Behind Your Next Favorite</p>
-                    </div>
+        <div class="email-wrapper">
+            <div class="email-container">
+                <div class="header" style="background-color: #22c55e;">
+                    <h1 class="brand-logo">CineBrain</h1>
+                </div>
+                
+                <div class="content">
+                    <h2 class="content-title">Password successfully changed</h2>
                     
-                    <div class="content">
-                        <div class="content-header">
-                            <h2 class="content-title" style="background: linear-gradient(135deg, #10b981 0%, #059669 50%, #047857 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;">Password Updated Successfully</h2>
-                            <p class="content-subtitle">Your CineBrain account is now more secure</p>
+                    <div class="content-body">
+                        <p>Hi {user_name},</p>
+                        <p>Your CineBrain account password was successfully changed.</p>
+                        
+                        <div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0;">
+                            <p style="margin: 0; font-size: 14px;"><strong>Details:</strong></p>
+                            <p style="margin: 5px 0; font-size: 14px;">Time: {datetime.now().strftime('%B %d, %Y at %I:%M %p UTC')}</p>
+                            <p style="margin: 5px 0; font-size: 14px;">Device: {device}</p>
+                            <p style="margin: 5px 0; font-size: 14px;">IP Address: {ip_address}</p>
                         </div>
                         
-                        <div class="content-body">
-                            <p class="greeting">Hello {user_name},</p>
-                            
-                            <p class="message-text">
-                                Great news! Your CineBrain account password has been successfully updated. Your account security has been enhanced and you can continue enjoying our personalized entertainment recommendations.
-                            </p>
-                            
-                            <div class="info-box">
-                                <p class="info-title">Security Details</p>
-                                <div class="info-item">
-                                    <span class="info-label">Changed on:</span>
-                                    <span class="info-value">{timestamp}</span>
-                                </div>
-                                <div class="info-item">
-                                    <span class="info-label">Device:</span>
-                                    <span class="info-value">{device}</span>
-                                </div>
-                                <div class="info-item">
-                                    <span class="info-label">Location:</span>
-                                    <span class="info-value">{location}</span>
-                                </div>
-                                <div class="info-item">
-                                    <span class="info-label">IP Address:</span>
-                                    <span class="info-value">{ip_address}</span>
-                                </div>
-                            </div>
-                            
-                            <div class="security-notice">
-                                <span class="security-icon">✅</span>
-                                <p class="security-text">
-                                    <strong>Account Secured:</strong> If you made this change, no further action is needed. Your account is now protected with your new password.
-                                </p>
-                            </div>
-                            
-                            <div class="security-notice warning">
-                                <span class="security-icon">⚠️</span>
-                                <p class="security-text">
-                                    <strong>Didn't make this change?</strong> If you didn't update your password, please contact our support team immediately and reset your password to secure your account.
-                                </p>
-                            </div>
-                            
-                            <div class="btn-container">
-                                <a href="{FRONTEND_URL}/login" class="btn-primary" role="button" aria-label="Sign in to CineBrain">
-                                    Sign In to CineBrain
-                                </a>
-                            </div>
-                            
-                            <p class="message-text">
-                                Thank you for keeping your CineBrain account secure. We're committed to protecting your privacy and providing you with the best entertainment discovery experience.
-                            </p>
-                        </div>
+                        <p>If you made this change, no further action is needed.</p>
+                        <p><strong>If you did not make this change, please reset your password immediately and contact our support team.</strong></p>
                     </div>
                     
-                    <div class="footer">
-                        <div class="footer-content">
-                            <p class="footer-brand">© {datetime.now().year} CineBrain</p>
-                            <p class="footer-text">
-                                CineBrain is committed to protecting your account security and privacy.
-                            </p>
-                            <div class="footer-links">
-                                <a href="{FRONTEND_URL}" class="footer-link">Visit CineBrain</a>
-                                <a href="{FRONTEND_URL}/privacy" class="footer-link">Privacy Policy</a>
-                                <a href="{FRONTEND_URL}/terms" class="footer-link">Terms of Service</a>
-                                <a href="{FRONTEND_URL}/support" class="footer-link">Support</a>
-                            </div>
-                        </div>
+                    <div class="btn-container">
+                        <a href="{FRONTEND_URL}/login" class="btn" style="color: #ffffff;">Sign in to CineBrain</a>
+                    </div>
+                </div>
+                
+                <div class="footer">
+                    <p class="footer-text">
+                        This is a security notification for {user_email}
+                    </p>
+                    <p class="footer-text">
+                        © {datetime.now().year} CineBrain. All rights reserved.
+                    </p>
+                    <div class="footer-links">
+                        <a href="{FRONTEND_URL}">Visit CineBrain</a>
+                        <a href="{FRONTEND_URL}/support">Get Support</a>
+                        <a href="{FRONTEND_URL}/security">Security Info</a>
                     </div>
                 </div>
             </div>
@@ -761,95 +279,58 @@ def _get_password_changed_template(base_css: str, **kwargs) -> tuple:
     """
     
     text = f"""
-CineBrain - Password Updated Successfully
+Your CineBrain password was changed
 
-Hello {user_name},
+Hi {user_name},
 
-Great news! Your CineBrain account password has been successfully updated.
+Your CineBrain account password was successfully changed.
 
-SECURITY DETAILS:
-- Changed on: {timestamp}
-- Device: {device}  
-- Location: {location}
+Details:
+- Time: {datetime.now().strftime('%B %d, %Y at %I:%M %p UTC')}
+- Device: {device}
 - IP Address: {ip_address}
 
-✅ ACCOUNT SECURED: If you made this change, no further action is needed. Your account is now protected with your new password.
+If you made this change, no further action is needed.
 
-⚠️ DIDN'T MAKE THIS CHANGE? If you didn't update your password, please contact our support team immediately and reset your password to secure your account.
+If you did not make this change, please reset your password immediately and contact our support team.
 
 Sign in to CineBrain: {FRONTEND_URL}/login
 
-Thank you for keeping your CineBrain account secure. We're committed to protecting your privacy and providing you with the best entertainment discovery experience.
+Best regards,
+The CineBrain Team
 
----
+© {datetime.now().year} CineBrain. All rights reserved.
 
-© {datetime.now().year} CineBrain
-The Mind Behind Your Next Favorite
-
-Visit CineBrain: {FRONTEND_URL}
-Privacy Policy: {FRONTEND_URL}/privacy
-Terms of Service: {FRONTEND_URL}/terms
-Support: {FRONTEND_URL}/support
-
-CineBrain is committed to protecting your account security and privacy.
+This is a security notification for {user_email}
     """
     
     return html, text
 
 def _get_generic_template(base_css: str, **kwargs) -> tuple:
-    """Generate enterprise-level generic email template"""
+    """Generate generic email template"""
     subject = kwargs.get('subject', 'CineBrain')
     content = kwargs.get('content', '')
-    user_name = kwargs.get('user_name', 'there')
     
     html = f"""
     <!DOCTYPE html>
-    <html lang="en" xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+    <html lang="en">
     <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <meta http-equiv="X-UA-Compatible" content="IE=edge">
-        <meta name="x-apple-disable-message-reformatting">
-        <meta name="format-detection" content="telephone=no,address=no,email=no,date=no,url=no">
-        <meta name="color-scheme" content="light dark">
-        <meta name="supported-color-schemes" content="light dark">
         <title>{subject}</title>
         {base_css}
     </head>
     <body>
-        <div role="article" aria-roledescription="email" aria-label="CineBrain Email" lang="en">
-            <div class="email-wrapper">
-                <div class="email-container">
-                    <div class="header">
-                        <h1 class="brand-logo">CineBrain</h1>
-                        <p class="brand-subtitle">The Mind Behind Your Next Favorite</p>
-                    </div>
-                    
-                    <div class="content">
-                        <div class="content-header">
-                            <h2 class="content-title">{subject}</h2>
-                        </div>
-                        
-                        <div class="content-body">
-                            <p class="greeting">Hello {user_name},</p>
-                            <div class="message-text">{content}</div>
-                        </div>
-                    </div>
-                    
-                    <div class="footer">
-                        <div class="footer-content">
-                            <p class="footer-brand">© {datetime.now().year} CineBrain</p>
-                            <p class="footer-text">
-                                The Mind Behind Your Next Favorite - Discover personalized entertainment recommendations.
-                            </p>
-                            <div class="footer-links">
-                                <a href="{FRONTEND_URL}" class="footer-link">Visit CineBrain</a>
-                                <a href="{FRONTEND_URL}/privacy" class="footer-link">Privacy Policy</a>
-                                <a href="{FRONTEND_URL}/terms" class="footer-link">Terms of Service</a>
-                                <a href="{FRONTEND_URL}/support" class="footer-link">Support</a>
-                            </div>
-                        </div>
-                    </div>
+        <div class="email-wrapper">
+            <div class="email-container">
+                <div class="header">
+                    <h1 class="brand-logo">CineBrain</h1>
+                </div>
+                <div class="content">
+                    <div class="content-body">{content}</div>
+                </div>
+                <div class="footer">
+                    <p class="footer-text">© {datetime.now().year} CineBrain. All rights reserved.</p>
                 </div>
             </div>
         </div>
@@ -857,24 +338,6 @@ def _get_generic_template(base_css: str, **kwargs) -> tuple:
     </html>
     """
     
-    text = f"""
-CineBrain - {subject}
-
-Hello {user_name},
-
-{content}
-
----
-
-© {datetime.now().year} CineBrain
-The Mind Behind Your Next Favorite
-
-Visit CineBrain: {FRONTEND_URL}
-Privacy Policy: {FRONTEND_URL}/privacy
-Terms of Service: {FRONTEND_URL}/terms
-Support: {FRONTEND_URL}/support
-
-Discover personalized entertainment recommendations at CineBrain.
-    """
+    text = f"{subject}\n\n{content}\n\n© {datetime.now().year} CineBrain. All rights reserved."
     
     return html, text
