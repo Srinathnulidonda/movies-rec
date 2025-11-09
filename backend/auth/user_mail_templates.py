@@ -11,6 +11,14 @@ def get_professional_template(content_type: str, **kwargs) -> tuple:
     <style type="text/css">
         @import url('https://fonts.googleapis.com/css2?family=Bangers&family=Inter:wght@300;400;500;600;700;800&display=swap');
         
+        /* CSS Variables matching login page */
+        :root {
+            --cinebrain-primary: #113CCF;
+            --cinebrain-primary-light: #1E4FE5;
+            --cinebrain-accent: #1E4FE5;
+            --text-secondary: #9CA3AF;
+        }
+        
         /* Reset and base styles */
         body, table, td, th, p, a {
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
@@ -50,6 +58,16 @@ def get_professional_template(content_type: str, **kwargs) -> tuple:
             display: block;
         }
         
+        /* Glow animation matching login page */
+        @keyframes glow {
+            from {
+                filter: drop-shadow(0 0 10px rgba(17, 60, 207, 0.3));
+            }
+            to {
+                filter: drop-shadow(0 0 20px rgba(30, 79, 229, 0.5));
+            }
+        }
+        
         /* Main container */
         .email-wrapper {
             width: 100% !important;
@@ -80,24 +98,27 @@ def get_professional_template(content_type: str, **kwargs) -> tuple:
         .brand-logo {
             font-family: 'Bangers', cursive;
             font-size: clamp(36px, 8vw, 48px);
-            font-weight: 400;
-            background: linear-gradient(135deg, #113CCF 0%, #1E4FE5 50%, #2563EB 100%);
+            background: linear-gradient(135deg,
+                var(--cinebrain-primary) 0%,
+                var(--cinebrain-primary-light) 50%,
+                var(--cinebrain-accent) 100%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
+            letter-spacing: 2px;
             margin: 0;
             text-decoration: none;
-            letter-spacing: 2px;
             position: relative;
             z-index: 2;
             display: inline-block;
             line-height: 1.2;
+            animation: glow 3s ease-in-out infinite alternate;
             text-shadow: 0 2px 10px rgba(17, 60, 207, 0.3);
         }
         
         .brand-subtitle {
-            font-size: 12px;
-            color: #9CA3AF;
+            font-size: clamp(12px, 3vw, 14px);
+            color: var(--text-secondary);
             font-weight: 400;
             margin: 4px 0 0 0;
             letter-spacing: 0.5px;
@@ -119,14 +140,17 @@ def get_professional_template(content_type: str, **kwargs) -> tuple:
         .content-title {
             font-family: 'Bangers', cursive;
             font-size: clamp(24px, 6vw, 36px);
-            font-weight: 400;
-            background: linear-gradient(135deg, #113CCF 0%, #1E4FE5 50%, #2563EB 100%);
+            background: linear-gradient(135deg,
+                var(--cinebrain-primary) 0%,
+                var(--cinebrain-primary-light) 50%,
+                var(--cinebrain-accent) 100%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
             margin: 0 0 8px 0;
             letter-spacing: 2px;
             line-height: 1.2;
+            animation: glow 3s ease-in-out infinite alternate;
             text-shadow: 0 2px 10px rgba(17, 60, 207, 0.3);
         }
         
@@ -167,7 +191,7 @@ def get_professional_template(content_type: str, **kwargs) -> tuple:
             background: linear-gradient(135deg, rgba(17, 60, 207, 0.08) 0%, rgba(30, 79, 229, 0.06) 100%);
             padding: 16px 20px;
             border-radius: 12px;
-            border-left: 4px solid #113CCF;
+            border-left: 4px solid var(--cinebrain-primary);
             margin: 20px 0;
         }
         
@@ -179,7 +203,7 @@ def get_professional_template(content_type: str, **kwargs) -> tuple:
         
         .btn-primary {
             display: inline-block;
-            background: linear-gradient(135deg, #113CCF 0%, #1E4FE5 100%);
+            background: linear-gradient(135deg, var(--cinebrain-primary) 0%, var(--cinebrain-primary-light) 100%);
             color: #ffffff !important;
             text-decoration: none;
             font-size: 16px;
@@ -189,12 +213,12 @@ def get_professional_template(content_type: str, **kwargs) -> tuple:
             letter-spacing: 0.5px;
             box-shadow: 0 4px 12px rgba(17, 60, 207, 0.3), 0 2px 6px rgba(17, 60, 207, 0.2);
             transition: all 0.3s ease;
-            border: 2px solid #113CCF;
+            border: 2px solid var(--cinebrain-primary);
             line-height: 1.4;
         }
         
         .btn-primary:hover {
-            background: linear-gradient(135deg, #0A2A9F 0%, #113CCF 100%);
+            background: linear-gradient(135deg, #0A2A9F 0%, var(--cinebrain-primary) 100%);
             box-shadow: 0 6px 20px rgba(17, 60, 207, 0.4), 0 3px 8px rgba(17, 60, 207, 0.3);
             transform: translateY(-1px);
         }
@@ -206,7 +230,7 @@ def get_professional_template(content_type: str, **kwargs) -> tuple:
             border-radius: 12px;
             padding: 20px;
             margin: 24px 0;
-            border-left: 4px solid #113CCF;
+            border-left: 4px solid var(--cinebrain-primary);
         }
         
         .info-title {
@@ -298,7 +322,7 @@ def get_professional_template(content_type: str, **kwargs) -> tuple:
         }
         
         .footer-link {
-            color: #113CCF;
+            color: var(--cinebrain-primary);
             text-decoration: none;
             margin: 0 12px;
             font-size: 12px;
@@ -316,7 +340,7 @@ def get_professional_template(content_type: str, **kwargs) -> tuple:
         }
         
         /* Mobile optimizations */
-        @media only screen and (max-width: 600px) {
+        @media only screen and (max-width: 480px) {
             .email-wrapper {
                 padding: 15px 0;
             }
@@ -379,16 +403,41 @@ def get_professional_template(content_type: str, **kwargs) -> tuple:
             }
         }
         
+        @media only screen and (max-width: 360px) {
+            .brand-logo {
+                font-size: 28px;
+                letter-spacing: 1px;
+            }
+        }
+        
         /* Fallback for email clients that don't support background-clip */
         @supports not (-webkit-background-clip: text) {
             .brand-logo,
             .content-title {
                 background: none !important;
                 -webkit-background-clip: inherit !important;
-                -webkit-text-fill-color: #113CCF !important;
+                -webkit-text-fill-color: var(--cinebrain-primary) !important;
                 background-clip: inherit !important;
-                color: #113CCF !important;
+                color: var(--cinebrain-primary) !important;
+                animation: none !important;
             }
+        }
+        
+        /* Email client compatibility - disable animations */
+        @media screen and (-webkit-min-device-pixel-ratio:0) {
+            /* Keep animations for WebKit browsers */
+        }
+        
+        /* Outlook and other email clients - disable animations and use solid colors */
+        .outlook .brand-logo,
+        .outlook .content-title {
+            background: none !important;
+            -webkit-background-clip: inherit !important;
+            -webkit-text-fill-color: var(--cinebrain-primary) !important;
+            background-clip: inherit !important;
+            color: var(--cinebrain-primary) !important;
+            animation: none !important;
+            filter: none !important;
         }
         
         /* Dark mode support */
@@ -422,9 +471,10 @@ def get_professional_template(content_type: str, **kwargs) -> tuple:
             .content-title {
                 background: none !important;
                 -webkit-background-clip: inherit !important;
-                -webkit-text-fill-color: #113CCF !important;
+                -webkit-text-fill-color: var(--cinebrain-primary) !important;
                 background-clip: inherit !important;
-                color: #113CCF !important;
+                color: var(--cinebrain-primary) !important;
+                animation: none !important;
             }
         }
         
@@ -447,8 +497,8 @@ def get_professional_template(content_type: str, **kwargs) -> tuple:
             }
             
             .btn-primary {
-                background: #113CCF !important;
-                border: 2px solid #113CCF !important;
+                background: var(--cinebrain-primary) !important;
+                border: 2px solid var(--cinebrain-primary) !important;
                 -webkit-print-color-adjust: exact;
                 print-color-adjust: exact;
             }
@@ -457,9 +507,10 @@ def get_professional_template(content_type: str, **kwargs) -> tuple:
             .content-title {
                 background: none !important;
                 -webkit-background-clip: inherit !important;
-                -webkit-text-fill-color: #113CCF !important;
+                -webkit-text-fill-color: var(--cinebrain-primary) !important;
                 background-clip: inherit !important;
-                color: #113CCF !important;
+                color: var(--cinebrain-primary) !important;
+                animation: none !important;
             }
         }
     </style>
@@ -547,9 +598,6 @@ def _get_password_reset_template(base_css: str, **kwargs) -> tuple:
                         <div class="footer-content">
                             <p class="footer-brand">© {datetime.now().year} CineBrain</p>
                             <p class="footer-text">
-                                This security email was sent to {user_email} because a password reset was requested for your CineBrain account.
-                            </p>
-                            <p class="footer-text">
                                 CineBrain is committed to protecting your account security and privacy.
                             </p>
                             <div class="footer-links">
@@ -587,8 +635,6 @@ For your security, this link can only be used once and will expire automatically
 
 © {datetime.now().year} CineBrain
 The Mind Behind Your Next Favorite
-
-This security email was sent to {user_email} because a password reset was requested for your CineBrain account.
 
 Visit CineBrain: {FRONTEND_URL}
 Privacy Policy: {FRONTEND_URL}/privacy
@@ -697,9 +743,6 @@ def _get_password_changed_template(base_css: str, **kwargs) -> tuple:
                         <div class="footer-content">
                             <p class="footer-brand">© {datetime.now().year} CineBrain</p>
                             <p class="footer-text">
-                                This security notification was sent to {user_email} to confirm your password change.
-                            </p>
-                            <p class="footer-text">
                                 CineBrain is committed to protecting your account security and privacy.
                             </p>
                             <div class="footer-links">
@@ -742,8 +785,6 @@ Thank you for keeping your CineBrain account secure. We're committed to protecti
 
 © {datetime.now().year} CineBrain
 The Mind Behind Your Next Favorite
-
-This security notification was sent to {user_email} to confirm your password change.
 
 Visit CineBrain: {FRONTEND_URL}
 Privacy Policy: {FRONTEND_URL}/privacy
