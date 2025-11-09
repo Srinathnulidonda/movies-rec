@@ -58,11 +58,11 @@ def get_professional_template(content_type: str, **kwargs) -> tuple:
             display: block;
         }
         
-        /* Main container */
+        /* Main container - Fully responsive */
         .email-wrapper {
             width: 100% !important;
             background-color: #ffffff;
-            padding: 20px 0;
+            padding: clamp(15px, 4vw, 20px) 0;
             min-height: auto;
         }
         
@@ -71,15 +71,16 @@ def get_professional_template(content_type: str, **kwargs) -> tuple:
             margin: 0 auto;
             background-color: #ffffff;
             box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1), 0 4px 15px rgba(0, 0, 0, 0.08);
-            border-radius: 16px;
+            border-radius: clamp(12px, 3vw, 16px);
             overflow: hidden;
             border: 1px solid #e5e7eb;
+            width: calc(100% - clamp(20px, 5vw, 40px));
         }
         
-        /* Header section */
+        /* Header section - Mobile responsive */
         .header {
             background-color: #ffffff;
-            padding: 20px 40px;
+            padding: clamp(16px, 4vw, 20px) clamp(20px, 6vw, 40px);
             text-align: center;
             position: relative;
             overflow: hidden;
@@ -87,51 +88,46 @@ def get_professional_template(content_type: str, **kwargs) -> tuple:
         }
         
         .brand-logo {
-            max-width: 200px;
+            max-width: clamp(140px, 35vw, 200px);
             height: auto;
             margin: 0 auto;
             display: block;
         }
         
         .brand-subtitle {
-            font-size: clamp(12px, 3vw, 14px);
+            font-size: clamp(10px, 2.5vw, 14px);
             color: var(--text-secondary);
             font-weight: 400;
-            margin: 8px 0 0 0;
-            letter-spacing: 0.5px;
+            margin: clamp(4px, 2vw, 8px) 0 0 0;
+            letter-spacing: clamp(0.3px, 0.1vw, 0.5px);
             position: relative;
             z-index: 2;
+            line-height: 1.4;
         }
         
-        /* Content section */
+        /* Content section - Fully responsive */
         .content {
-            padding: 30px 40px;
+            padding: clamp(20px, 6vw, 30px) clamp(20px, 6vw, 40px);
             background-color: #ffffff;
         }
         
         .content-header {
             text-align: center;
-            margin-bottom: 24px;
+            margin-bottom: clamp(20px, 5vw, 24px);
         }
         
         .content-title {
-            font-family: 'Bangers', cursive;
-            font-size: clamp(24px, 6vw, 36px);
-            background: linear-gradient(135deg,
-                var(--cinebrain-primary) 0%,
-                var(--cinebrain-primary-light) 50%,
-                var(--cinebrain-accent) 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-            margin: 0 0 8px 0;
-            letter-spacing: 2px;
-            line-height: 1.2;
-            text-shadow: 0 2px 10px rgba(17, 60, 207, 0.3);
+            font-family: 'Inter', sans-serif;
+            font-size: clamp(20px, 5vw, 28px);
+            font-weight: 600;
+            color: #111827;
+            margin: 0 0 clamp(6px, 2vw, 8px) 0;
+            letter-spacing: clamp(0.3px, 0.1vw, 0.5px);
+            line-height: 1.3;
         }
         
         .content-subtitle {
-            font-size: 16px;
+            font-size: clamp(14px, 3.5vw, 16px);
             color: #6b7280;
             font-weight: 400;
             margin: 0;
@@ -139,22 +135,22 @@ def get_professional_template(content_type: str, **kwargs) -> tuple:
         }
         
         .content-body {
-            margin-bottom: 20px;
+            margin-bottom: clamp(16px, 4vw, 20px);
         }
         
         .greeting {
-            font-size: 18px;
+            font-size: clamp(16px, 4vw, 18px);
             font-weight: 600;
             color: #111827;
-            margin: 0 0 20px 0;
+            margin: 0 0 clamp(16px, 4vw, 20px) 0;
             line-height: 1.4;
         }
         
         .message-text {
-            font-size: 16px;
+            font-size: clamp(14px, 3.5vw, 16px);
             color: #374151;
             line-height: 1.65;
-            margin: 0 0 16px 0;
+            margin: 0 0 clamp(14px, 3.5vw, 16px) 0;
             font-weight: 400;
         }
         
@@ -165,16 +161,16 @@ def get_professional_template(content_type: str, **kwargs) -> tuple:
         
         .message-text.highlight {
             background: linear-gradient(135deg, rgba(17, 60, 207, 0.08) 0%, rgba(30, 79, 229, 0.06) 100%);
-            padding: 16px 20px;
-            border-radius: 12px;
+            padding: clamp(12px, 4vw, 16px) clamp(16px, 4vw, 20px);
+            border-radius: clamp(8px, 2vw, 12px);
             border-left: 4px solid var(--cinebrain-primary);
-            margin: 20px 0;
+            margin: clamp(16px, 4vw, 20px) 0;
         }
         
-        /* Button section */
+        /* Button section - Mobile responsive */
         .btn-container {
             text-align: center;
-            margin: 30px 0;
+            margin: clamp(24px, 6vw, 30px) 0;
         }
         
         .btn-primary {
@@ -182,68 +178,102 @@ def get_professional_template(content_type: str, **kwargs) -> tuple:
             background: linear-gradient(135deg, var(--cinebrain-primary) 0%, var(--cinebrain-primary-light) 100%);
             color: #ffffff !important;
             text-decoration: none;
-            font-size: 16px;
+            font-size: clamp(14px, 3.5vw, 16px);
             font-weight: 600;
-            padding: 14px 30px;
-            border-radius: 12px;
-            letter-spacing: 0.5px;
-            box-shadow: 0 4px 12px rgba(17, 60, 207, 0.3), 0 2px 6px rgba(17, 60, 207, 0.2);
-            transition: all 0.3s ease;
-            border: 2px solid var(--cinebrain-primary);
+            padding: clamp(14px, 3.5vw, 16px) clamp(24px, 6vw, 32px);
+            border-radius: clamp(8px, 2vw, 12px);
+            letter-spacing: clamp(0.3px, 0.1vw, 0.5px);
+            box-shadow: 0 10px 30px rgba(17, 60, 207, 0.3);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            border: none;
             line-height: 1.4;
+            position: relative;
+            overflow: hidden;
+            min-height: clamp(44px, 12vw, 54px);
+            width: auto;
+            max-width: 100%;
+            box-sizing: border-box;
+        }
+        
+        .btn-primary::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(135deg, var(--cinebrain-primary-light) 0%, var(--cinebrain-accent) 100%);
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+        
+        .btn-primary:hover::before {
+            opacity: 1;
         }
         
         .btn-primary:hover {
-            background: linear-gradient(135deg, #0A2A9F 0%, var(--cinebrain-primary) 100%);
-            box-shadow: 0 6px 20px rgba(17, 60, 207, 0.4), 0 3px 8px rgba(17, 60, 207, 0.3);
-            transform: translateY(-1px);
+            transform: translateY(-2px);
+            box-shadow: 0 15px 40px rgba(17, 60, 207, 0.4);
+            color: #ffffff !important;
         }
         
-        /* Info box */
+        .btn-primary span {
+            position: relative;
+            z-index: 1;
+        }
+        
+        /* Info box - Mobile responsive */
         .info-box {
             background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
             border: 1px solid #e2e8f0;
-            border-radius: 12px;
-            padding: 20px;
-            margin: 24px 0;
+            border-radius: clamp(8px, 2vw, 12px);
+            padding: clamp(16px, 4vw, 20px);
+            margin: clamp(20px, 5vw, 24px) 0;
             border-left: 4px solid var(--cinebrain-primary);
         }
         
         .info-title {
-            font-size: 13px;
+            font-size: clamp(11px, 2.8vw, 13px);
             font-weight: 700;
             color: #374151;
-            margin: 0 0 12px 0;
+            margin: 0 0 clamp(10px, 2.5vw, 12px) 0;
             text-transform: uppercase;
-            letter-spacing: 0.8px;
+            letter-spacing: clamp(0.6px, 0.15vw, 0.8px);
         }
         
         .info-item {
             display: flex;
             justify-content: space-between;
-            align-items: center;
-            margin: 8px 0;
-            font-size: 14px;
+            align-items: flex-start;
+            margin: clamp(6px, 2vw, 8px) 0;
+            font-size: clamp(12px, 3vw, 14px);
+            flex-wrap: wrap;
+            gap: clamp(4px, 1vw, 8px);
         }
         
         .info-label {
             color: #6b7280;
             font-weight: 500;
+            flex: 0 0 auto;
+            min-width: clamp(80px, 20vw, 120px);
         }
         
         .info-value {
             color: #111827;
             font-weight: 600;
             font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
+            word-break: break-word;
+            text-align: right;
+            flex: 1;
         }
         
-        /* Security notice */
+        /* Security notice - Mobile responsive */
         .security-notice {
             background: linear-gradient(135deg, rgba(16, 185, 129, 0.08) 0%, rgba(5, 150, 105, 0.06) 100%);
             border: 1px solid rgba(16, 185, 129, 0.2);
-            border-radius: 12px;
-            padding: 16px;
-            margin: 20px 0;
+            border-radius: clamp(8px, 2vw, 12px);
+            padding: clamp(12px, 3vw, 16px);
+            margin: clamp(16px, 4vw, 20px) 0;
             border-left: 4px solid #10b981;
         }
         
@@ -254,23 +284,24 @@ def get_professional_template(content_type: str, **kwargs) -> tuple:
         }
         
         .security-icon {
-            font-size: 18px;
-            margin-bottom: 6px;
+            font-size: clamp(16px, 4vw, 18px);
+            margin-bottom: clamp(4px, 1.5vw, 6px);
             display: block;
+            line-height: 1;
         }
         
         .security-text {
-            font-size: 14px;
+            font-size: clamp(12px, 3vw, 14px);
             line-height: 1.5;
             color: #374151;
             margin: 0;
             font-weight: 500;
         }
         
-        /* Footer - Compact design */
+        /* Footer - Mobile responsive and compact */
         .footer {
             background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
-            padding: 16px 40px;
+            padding: clamp(12px, 3vw, 16px) clamp(20px, 5vw, 40px);
             border-top: 1px solid #e5e7eb;
         }
         
@@ -279,32 +310,37 @@ def get_professional_template(content_type: str, **kwargs) -> tuple:
         }
         
         .footer-text {
-            font-size: 12px;
+            font-size: clamp(10px, 2.5vw, 12px);
             color: #6b7280;
-            margin: 0 0 8px 0;
+            margin: 0 0 clamp(6px, 2vw, 8px) 0;
             line-height: 1.4;
             font-weight: 400;
         }
         
         .footer-brand {
-            font-size: 13px;
+            font-size: clamp(11px, 2.8vw, 13px);
             color: #374151;
-            margin: 0 0 8px 0;
+            margin: 0 0 clamp(6px, 2vw, 8px) 0;
             font-weight: 600;
         }
         
         .footer-links {
             margin: 0;
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: clamp(6px, 2vw, 8px);
         }
         
         .footer-link {
             color: var(--cinebrain-primary);
             text-decoration: none;
-            margin: 0 8px;
-            font-size: 12px;
+            font-size: clamp(10px, 2.5vw, 12px);
             font-weight: 500;
             transition: color 0.3s ease;
-            display: inline;
+            display: inline-block;
+            padding: clamp(2px, 0.5vw, 4px) 0;
+            white-space: nowrap;
         }
         
         .footer-link:hover {
@@ -312,92 +348,111 @@ def get_professional_template(content_type: str, **kwargs) -> tuple:
             text-decoration: underline;
         }
         
-        .footer-link:last-child {
-            margin-right: 0;
-        }
-        
-        .footer-link:first-child {
-            margin-left: 0;
-        }
-        
-        /* Mobile optimizations */
+        /* Mobile specific adjustments */
         @media only screen and (max-width: 480px) {
-            .email-wrapper {
-                padding: 15px 0;
-            }
-            
             .email-container {
+                width: calc(100% - 20px);
                 margin: 0 10px;
                 border-radius: 12px;
             }
             
-            .header {
-                padding: 16px 20px;
-            }
-            
-            .brand-logo {
-                max-width: 160px;
-            }
-            
-            .brand-subtitle {
-                font-size: 11px;
-            }
-            
-            .content {
-                padding: 24px 20px;
-            }
-            
-            .content-title {
-                font-size: 24px;
-                letter-spacing: 1.5px;
-            }
-            
-            .content-subtitle {
-                font-size: 14px;
-            }
-            
             .btn-primary {
-                display: block;
                 width: 100%;
-                box-sizing: border-box;
-                text-align: center;
                 padding: 16px 20px;
-            }
-            
-            .footer {
-                padding: 12px 20px;
-            }
-            
-            .footer-link {
-                display: block;
-                margin: 4px 0;
-                font-size: 11px;
+                min-height: 48px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
             }
             
             .info-item {
                 flex-direction: column;
                 align-items: flex-start;
+                gap: 2px;
+            }
+            
+            .info-label {
+                min-width: auto;
             }
             
             .info-value {
-                margin-top: 4px;
+                text-align: left;
+                margin-top: 2px;
+            }
+            
+            .footer-links {
+                flex-direction: column;
+                gap: 4px;
+            }
+            
+            .footer-link {
+                display: block;
+                margin: 2px 0;
             }
         }
         
+        /* Small mobile devices */
         @media only screen and (max-width: 360px) {
-            .brand-logo {
-                max-width: 140px;
+            .email-container {
+                width: calc(100% - 16px);
+                margin: 0 8px;
+            }
+            
+            .content-title {
+                font-size: 20px;
+                letter-spacing: 0.3px;
+            }
+            
+            .btn-primary {
+                padding: 14px 16px;
+                min-height: 44px;
+                font-size: 14px;
             }
         }
         
-        /* Fallback for email clients that don't support background-clip */
-        @supports not (-webkit-background-clip: text) {
-            .content-title {
-                background: none !important;
-                -webkit-background-clip: inherit !important;
-                -webkit-text-fill-color: var(--cinebrain-primary) !important;
-                background-clip: inherit !important;
-                color: var(--cinebrain-primary) !important;
+        /* Large screens - maintain desktop design */
+        @media only screen and (min-width: 769px) {
+            .email-wrapper {
+                padding: 20px 0;
+            }
+            
+            .email-container {
+                width: 600px;
+            }
+            
+            .header {
+                padding: 20px 40px;
+            }
+            
+            .content {
+                padding: 30px 40px;
+            }
+            
+            .footer {
+                padding: 16px 40px;
+            }
+            
+            .btn-primary {
+                width: auto;
+                display: inline-block;
+            }
+            
+            .footer-links {
+                flex-direction: row;
+            }
+            
+            .footer-link {
+                display: inline;
+                margin: 0 8px;
+            }
+            
+            .info-item {
+                flex-direction: row;
+                align-items: center;
+            }
+            
+            .info-value {
+                text-align: right;
             }
         }
         
@@ -424,7 +479,7 @@ def get_professional_template(content_type: str, **kwargs) -> tuple:
         /* High contrast mode */
         @media (prefers-contrast: high) {
             .btn-primary {
-                border-width: 3px;
+                border: 3px solid var(--cinebrain-primary);
             }
             
             .info-box,
@@ -433,10 +488,6 @@ def get_professional_template(content_type: str, **kwargs) -> tuple:
             }
             
             .content-title {
-                background: none !important;
-                -webkit-background-clip: inherit !important;
-                -webkit-text-fill-color: var(--cinebrain-primary) !important;
-                background-clip: inherit !important;
                 color: var(--cinebrain-primary) !important;
             }
         }
@@ -467,11 +518,26 @@ def get_professional_template(content_type: str, **kwargs) -> tuple:
             }
             
             .content-title {
-                background: none !important;
-                -webkit-background-clip: inherit !important;
-                -webkit-text-fill-color: var(--cinebrain-primary) !important;
-                background-clip: inherit !important;
-                color: var(--cinebrain-primary) !important;
+                color: #111827 !important;
+            }
+        }
+        
+        /* Accessibility improvements */
+        @media (prefers-reduced-motion: reduce) {
+            .btn-primary,
+            .btn-primary::before {
+                transition: none;
+            }
+            
+            .btn-primary:hover {
+                transform: none;
+            }
+        }
+        
+        /* Ultra-wide screens */
+        @media only screen and (min-width: 1200px) {
+            .email-container {
+                max-width: 640px;
             }
         }
     </style>
@@ -495,7 +561,7 @@ def _get_password_reset_template(base_css: str, **kwargs) -> tuple:
     <html lang="en" xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
     <head>
         <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes, minimum-scale=1.0, maximum-scale=5.0">
         <meta http-equiv="X-UA-Compatible" content="IE=edge">
         <meta name="x-apple-disable-message-reformatting">
         <meta name="format-detection" content="telephone=no,address=no,email=no,date=no,url=no">
@@ -519,7 +585,7 @@ def _get_password_reset_template(base_css: str, **kwargs) -> tuple:
             <div class="email-wrapper">
                 <div class="email-container">
                     <div class="header">
-                        <img src="{FRONTEND_URL}/assets/images/brand.svg" alt="CineBrain" class="brand-logo">
+                        <img src="https://i.postimg.cc/2S7RfBJR/cinebrain-brand-4k.png" alt="CineBrain" class="brand-logo">
                         <p class="brand-subtitle">The Mind Behind Your Next Favorite</p>
                     </div>
                     
@@ -538,7 +604,7 @@ def _get_password_reset_template(base_css: str, **kwargs) -> tuple:
                             
                             <div class="btn-container">
                                 <a href="{reset_url}" class="btn-primary" role="button" aria-label="Reset your password">
-                                    Reset My Password
+                                    <span>Reset My Password</span>
                                 </a>
                             </div>
                             
@@ -621,7 +687,7 @@ def _get_password_changed_template(base_css: str, **kwargs) -> tuple:
     <html lang="en" xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
     <head>
         <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes, minimum-scale=1.0, maximum-scale=5.0">
         <meta http-equiv="X-UA-Compatible" content="IE=edge">
         <meta name="x-apple-disable-message-reformatting">
         <meta name="format-detection" content="telephone=no,address=no,email=no,date=no,url=no">
@@ -635,13 +701,13 @@ def _get_password_changed_template(base_css: str, **kwargs) -> tuple:
             <div class="email-wrapper">
                 <div class="email-container">
                     <div class="header">
-                        <img src="{FRONTEND_URL}/assets/images/brand.svg" alt="CineBrain" class="brand-logo">
+                        <img src="https://i.postimg.cc/2S7RfBJR/cinebrain-brand-4k.png" alt="CineBrain" class="brand-logo">
                         <p class="brand-subtitle">The Mind Behind Your Next Favorite</p>
                     </div>
                     
                     <div class="content">
                         <div class="content-header">
-                            <h2 class="content-title" style="background: linear-gradient(135deg, #10b981 0%, #059669 50%, #047857 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;">Password Updated Successfully</h2>
+                            <h2 class="content-title" style="color: #10b981;">Password Updated Successfully</h2>
                             <p class="content-subtitle">Your CineBrain account is now more secure</p>
                         </div>
                         
@@ -688,7 +754,7 @@ def _get_password_changed_template(base_css: str, **kwargs) -> tuple:
                             
                             <div class="btn-container">
                                 <a href="{FRONTEND_URL}/login" class="btn-primary" role="button" aria-label="Sign in to CineBrain">
-                                    Sign In to CineBrain
+                                    <span>Sign In to CineBrain</span>
                                 </a>
                             </div>
                             
@@ -764,7 +830,7 @@ def _get_generic_template(base_css: str, **kwargs) -> tuple:
     <html lang="en" xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
     <head>
         <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes, minimum-scale=1.0, maximum-scale=5.0">
         <meta http-equiv="X-UA-Compatible" content="IE=edge">
         <meta name="x-apple-disable-message-reformatting">
         <meta name="format-detection" content="telephone=no,address=no,email=no,date=no,url=no">
@@ -778,7 +844,7 @@ def _get_generic_template(base_css: str, **kwargs) -> tuple:
             <div class="email-wrapper">
                 <div class="email-container">
                     <div class="header">
-                        <img src="{FRONTEND_URL}/assets/images/brand.svg" alt="CineBrain" class="brand-logo">
+                        <img src="https://i.postimg.cc/2S7RfBJR/cinebrain-brand-4k.png" alt="CineBrain" class="brand-logo">
                         <p class="brand-subtitle">The Mind Behind Your Next Favorite</p>
                     </div>
                     
