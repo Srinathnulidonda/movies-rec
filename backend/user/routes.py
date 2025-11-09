@@ -13,7 +13,6 @@ from . import profile
 from . import watchlist
 from . import favorites
 from . import activity
-from . import ratings
 from . import dashboard
 from . import settings
 
@@ -46,7 +45,7 @@ def init_user_routes(flask_app, database, models, services):
 
 @user_bp.route('/api/register', methods=['POST', 'OPTIONS'])
 def register():
-    """User registration"""
+    """User registration with welcome email"""
     if request.method == 'OPTIONS':
         return '', 200
     
@@ -66,7 +65,7 @@ def register():
             username=data['username'],
             email=data['email'],
             password_hash=generate_password_hash(data['password']),
-            preferred_languages=json.dumps(data.get('preferred_languages', ['english', 'telugu'])),
+            preferred_languages=json.dumps(data.get('preferred_languages', ['Telugu', 'English'])),
             preferred_genres=json.dumps(data.get('preferred_genres', [])),
             location=data.get('location', ''),
             avatar_url=data.get('avatar_url', '')
@@ -80,10 +79,45 @@ def register():
             'exp': datetime.utcnow() + timedelta(days=30)
         }, app.secret_key, algorithm='HS256')
         
+        # Send welcome email
+        welcome_email_sent = False
+        try:
+            from auth.user_mail_templates import get_professional_template
+            from auth.service import email_service
+            
+            if email_service and email_service.email_enabled:
+                # Prepare user languages for email
+                user_languages = json.loads(user.preferred_languages or '["Telugu", "English"]')
+                
+                html_content, text_content = get_professional_template(
+                    'registration',
+                    user_name=user.username,
+                    user_email=user.email,
+                    preferred_languages=user_languages
+                )
+                
+                email_service.queue_email(
+                    to=user.email,
+                    subject="Welcome to CineBrain! 🎬",
+                    html=html_content,
+                    text=text_content,
+                    priority='normal',
+                    to_name=user.username
+                )
+                
+                welcome_email_sent = True
+                logger.info(f"✅ Welcome email queued for user {user.username} ({user.email})")
+            else:
+                logger.warning("⚠️ Email service not available for welcome email")
+                
+        except Exception as e:
+            logger.error(f"❌ Failed to send welcome email to {user.email}: {e}")
+            # Don't fail registration if email fails - user experience is priority
+        
         from .utils import get_enhanced_user_stats
         stats = get_enhanced_user_stats(user.id)
         
-        return jsonify({
+        response_data = {
             'message': 'CineBrain user registered successfully',
             'token': token,
             'user': {
@@ -97,8 +131,11 @@ def register():
                 'avatar_url': user.avatar_url,
                 'created_at': user.created_at.isoformat(),
                 'stats': stats
-            }
-        }), 201
+            },
+            'welcome_email_sent': welcome_email_sent
+        }
+        
+        return jsonify(response_data), 201
         
     except Exception as e:
         logger.error(f"CineBrain registration error: {e}")
@@ -279,32 +316,320 @@ def check_favorite_status_route(content_id):
     return wrapper()
 
 # ============================================================================
-# RATINGS ROUTES
+# RATINGS ROUTES (Delegated to Reviews Module for Compatibility)
 # ============================================================================
 
 @user_bp.route('/api/user/ratings', methods=['GET', 'OPTIONS'])
-def get_ratings_route():
-    return ratings.get_user_ratings()
+def get_user_ratings_route():
+    """Get user's ratings (delegates to reviews module for compatibility)"""
+    try:
+        from .utils import require_auth
+        
+        @require_auth
+        def wrapper(current_user):
+            if request.method == 'OPTIONS':
+                return '', 200
+            
+            try:
+                # Delegate to reviews service for ratings
+                if hasattr(app, 'review_service') and app.review_service:
+                    result = app.review_service.get_user_reviews(current_user.id, include_drafts=True)
+                    
+                    if result['success']:
+                        # Filter to only show ratings and format for compatibility
+                        ratings = []
+                        for review_data in result['reviews']:
+                            content_data = review_data.get('content', {})
+                            ratings.append({
+                                'id': content_data.get('id'),
+                                'slug': content_data.get('slug'),
+                                'title': content_data.get('title'),
+                                'content_type': content_data.get('content_type'),
+                                'poster_path': content_data.get('poster_url'),
+                                'user_rating': review_data.get('rating'),
+                                'imdb_rating': None,  # Would need to be fetched separately
+                                'rated_at': review_data.get('created_at'),
+                                'has_review': bool(review_data.get('review_text', '').strip()),
+                                'review_id': review_data.get('id')
+                            })
+                        
+                        # Calculate rating stats
+                        rating_values = [r['user_rating'] for r in ratings if r['user_rating'] is not None]
+                        stats = {
+                            'total_ratings': len(rating_values),
+                            'average_rating': round(sum(rating_values) / len(rating_values), 1) if rating_values else 0,
+                            'highest_rating': max(rating_values) if rating_values else 0,
+                            'lowest_rating': min(rating_values) if rating_values else 0
+                        }
+                        
+                        return jsonify({
+                            'ratings': ratings,
+                            'stats': stats,
+                            'last_updated': datetime.utcnow().isoformat()
+                        }), 200
+                    else:
+                        return jsonify({
+                            'ratings': [],
+                            'stats': {'total_ratings': 0, 'average_rating': 0, 'highest_rating': 0, 'lowest_rating': 0},
+                            'last_updated': datetime.utcnow().isoformat()
+                        }), 200
+                else:
+                    # Fallback if reviews service not available
+                    from .utils import UserInteraction, Content
+                    
+                    rating_interactions = UserInteraction.query.filter_by(
+                        user_id=current_user.id,
+                        interaction_type='rating'
+                    ).filter(UserInteraction.rating.isnot(None)).order_by(
+                        UserInteraction.timestamp.desc()
+                    ).all()
+                    
+                    content_ids = [interaction.content_id for interaction in rating_interactions]
+                    contents = Content.query.filter(Content.id.in_(content_ids)).all()
+                    content_map = {content.id: content for content in contents}
+                    
+                    ratings = []
+                    for interaction in rating_interactions:
+                        content = content_map.get(interaction.content_id)
+                        if content:
+                            ratings.append({
+                                'id': content.id,
+                                'slug': content.slug,
+                                'title': content.title,
+                                'content_type': content.content_type,
+                                'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
+                                'user_rating': interaction.rating,
+                                'imdb_rating': content.rating,
+                                'rated_at': interaction.timestamp.isoformat(),
+                                'has_review': False,
+                                'review_id': None
+                            })
+                    
+                    rating_values = [interaction.rating for interaction in rating_interactions]
+                    stats = {
+                        'total_ratings': len(rating_values),
+                        'average_rating': round(sum(rating_values) / len(rating_values), 1) if rating_values else 0,
+                        'highest_rating': max(rating_values) if rating_values else 0,
+                        'lowest_rating': min(rating_values) if rating_values else 0
+                    }
+                    
+                    return jsonify({
+                        'ratings': ratings,
+                        'stats': stats,
+                        'last_updated': datetime.utcnow().isoformat()
+                    }), 200
+                    
+            except Exception as e:
+                logger.error(f"CineBrain user ratings error: {e}")
+                return jsonify({'error': 'Failed to get CineBrain user ratings'}), 500
+        
+        return wrapper()
+        
+    except Exception as e:
+        logger.error(f"Error in get_user_ratings_route: {e}")
+        return jsonify({'error': 'Failed to get user ratings'}), 500
 
 @user_bp.route('/api/user/ratings', methods=['POST', 'OPTIONS'])
 def add_rating_route():
-    return ratings.add_rating()
+    """Add or update a rating (delegates to reviews module)"""
+    try:
+        from .utils import require_auth
+        
+        @require_auth
+        def wrapper(current_user):
+            if request.method == 'OPTIONS':
+                return '', 200
+            
+            try:
+                data = request.get_json()
+                content_id = data.get('content_id')
+                rating = data.get('rating')
+                
+                if not content_id or rating is None:
+                    return jsonify({'error': 'Content ID and rating required'}), 400
+                
+                if not (1 <= rating <= 10):
+                    return jsonify({'error': 'Rating must be between 1 and 10'}), 400
+                
+                # Get content slug for reviews service
+                from .utils import Content
+                content = Content.query.get(content_id)
+                if not content:
+                    return jsonify({'error': 'Content not found'}), 404
+                
+                # Delegate to reviews service if available
+                if hasattr(app, 'review_service') and app.review_service:
+                    result = app.review_service.add_rating(content.slug, current_user.id, rating)
+                    return jsonify(result), 201 if result['success'] else 400
+                else:
+                    # Fallback to direct UserInteraction
+                    from .utils import UserInteraction
+                    
+                    # Check if rating already exists
+                    existing = UserInteraction.query.filter_by(
+                        user_id=current_user.id,
+                        content_id=content_id,
+                        interaction_type='rating'
+                    ).first()
+                    
+                    if existing:
+                        existing.rating = rating
+                        existing.timestamp = datetime.utcnow()
+                        message = 'Rating updated successfully'
+                    else:
+                        interaction = UserInteraction(
+                            user_id=current_user.id,
+                            content_id=content_id,
+                            interaction_type='rating',
+                            rating=rating
+                        )
+                        db.session.add(interaction)
+                        message = 'Rating added successfully'
+                    
+                    db.session.commit()
+                    
+                    return jsonify({
+                        'success': True,
+                        'message': message,
+                        'rating': rating
+                    }), 201
+                    
+            except Exception as e:
+                logger.error(f"CineBrain add rating error: {e}")
+                db.session.rollback()
+                return jsonify({'error': 'Failed to add rating'}), 500
+        
+        return wrapper()
+        
+    except Exception as e:
+        logger.error(f"Error in add_rating_route: {e}")
+        return jsonify({'error': 'Failed to add rating'}), 500
 
 @user_bp.route('/api/user/ratings/<int:content_id>', methods=['DELETE', 'OPTIONS'])
 def remove_rating_route(content_id):
-    from .utils import require_auth
-    @require_auth
-    def wrapper(current_user):
-        return ratings.remove_rating(current_user, content_id)
-    return wrapper()
+    """Remove a rating (delegates to reviews module)"""
+    try:
+        from .utils import require_auth
+        
+        @require_auth
+        def wrapper(current_user):
+            if request.method == 'OPTIONS':
+                return '', 200
+            
+            try:
+                # Get content slug for reviews service
+                from .utils import Content
+                content = Content.query.get(content_id)
+                if not content:
+                    return jsonify({'error': 'Content not found'}), 404
+                
+                # Delegate to reviews service if available
+                if hasattr(app, 'review_service') and app.review_service:
+                    # First check if user has a review/rating
+                    result = app.review_service.get_user_rating(content.slug, current_user.id)
+                    if result['success'] and result['has_rating']:
+                        # Delete the review (which includes the rating)
+                        if result['review_id']:
+                            delete_result = app.review_service.delete_review(result['review_id'], current_user.id)
+                            return jsonify(delete_result), 200 if delete_result['success'] else 400
+                    
+                    return jsonify({
+                        'success': False,
+                        'message': 'No rating found for this content'
+                    }), 404
+                else:
+                    # Fallback to direct UserInteraction
+                    from .utils import UserInteraction
+                    
+                    interaction = UserInteraction.query.filter_by(
+                        user_id=current_user.id,
+                        content_id=content_id,
+                        interaction_type='rating'
+                    ).first()
+                    
+                    if interaction:
+                        db.session.delete(interaction)
+                        db.session.commit()
+                        
+                        return jsonify({
+                            'success': True,
+                            'message': 'Rating removed successfully'
+                        }), 200
+                    else:
+                        return jsonify({
+                            'success': False,
+                            'message': 'No rating found for this content'
+                        }), 404
+                        
+            except Exception as e:
+                logger.error(f"Remove rating error: {e}")
+                db.session.rollback()
+                return jsonify({'error': 'Failed to remove rating'}), 500
+        
+        return wrapper()
+        
+    except Exception as e:
+        logger.error(f"Error in remove_rating_route: {e}")
+        return jsonify({'error': 'Failed to remove rating'}), 500
 
 @user_bp.route('/api/user/ratings/<int:content_id>', methods=['GET', 'OPTIONS'])
 def get_rating_for_content_route(content_id):
-    from .utils import require_auth
-    @require_auth
-    def wrapper(current_user):
-        return ratings.get_rating_for_content(current_user, content_id)
-    return wrapper()
+    """Get user's rating for specific content (delegates to reviews module)"""
+    try:
+        from .utils import require_auth
+        
+        @require_auth
+        def wrapper(current_user):
+            if request.method == 'OPTIONS':
+                return '', 200
+            
+            try:
+                # Get content slug for reviews service
+                from .utils import Content
+                content = Content.query.get(content_id)
+                if not content:
+                    return jsonify({'error': 'Content not found'}), 404
+                
+                # Delegate to reviews service if available
+                if hasattr(app, 'review_service') and app.review_service:
+                    result = app.review_service.get_user_rating(content.slug, current_user.id)
+                    if result['success']:
+                        return jsonify({
+                            'has_rating': result['has_rating'],
+                            'rating': result['rating'],
+                            'rated_at': result['created_at']
+                        }), 200
+                    else:
+                        return jsonify({
+                            'has_rating': False,
+                            'rating': None,
+                            'rated_at': None
+                        }), 200
+                else:
+                    # Fallback to direct UserInteraction
+                    from .utils import UserInteraction
+                    
+                    interaction = UserInteraction.query.filter_by(
+                        user_id=current_user.id,
+                        content_id=content_id,
+                        interaction_type='rating'
+                    ).first()
+                    
+                    return jsonify({
+                        'has_rating': interaction is not None,
+                        'rating': interaction.rating if interaction else None,
+                        'rated_at': interaction.timestamp.isoformat() if interaction else None
+                    }), 200
+                    
+            except Exception as e:
+                logger.error(f"Get rating error: {e}")
+                return jsonify({'error': 'Failed to get rating'}), 500
+        
+        return wrapper()
+        
+    except Exception as e:
+        logger.error(f"Error in get_rating_for_content_route: {e}")
+        return jsonify({'error': 'Failed to get rating'}), 500
 
 # ============================================================================
 # ACTIVITY ROUTES
@@ -635,6 +960,20 @@ def users_health():
         from .utils import recommendation_engine
         health_info['recommendation_engine'] = 'connected' if recommendation_engine else 'not_available'
         
+        # Check reviews service integration
+        health_info['reviews_integration'] = 'connected' if hasattr(app, 'review_service') and app.review_service else 'not_available'
+        
+        # Check email service status
+        try:
+            from auth.service import email_service
+            health_info['email_service'] = {
+                'enabled': email_service.email_enabled if email_service else False,
+                'smtp_enabled': email_service.smtp_enabled if email_service else False,
+                'api_enabled': email_service.api_enabled if email_service else False
+            }
+        except:
+            health_info['email_service'] = {'enabled': False}
+        
         try:
             total_users = User.query.count()
             active_users = User.query.filter(
@@ -660,7 +999,10 @@ def users_health():
             'real_time_updates': True,
             'email_username_login': True,
             'avatar_service': True,
-            'modular_architecture': True
+            'modular_architecture': True,
+            'welcome_emails': True,
+            'reviews_integration': hasattr(app, 'review_service') and bool(app.review_service),
+            'ratings_delegation': True
         }
         
         return jsonify(health_info), 200

@@ -10,6 +10,7 @@ __all__ = ['user_bp']
 __version__ = '1.0.0'
 
 
+
 2. # user/activity.py
 from flask import request, jsonify
 from datetime import datetime
@@ -271,6 +272,7 @@ def get_public_stats(username):
         return jsonify({'error': 'Failed to get stats'}), 500
 
 
+
 3. # user/avatar.py
 from flask import request, jsonify
 from datetime import datetime
@@ -498,7 +500,8 @@ def get_avatar_url(current_user):
     except Exception as e:
         logger.error(f"CineBrain get avatar URL error: {e}")
         return jsonify({'error': 'Failed to get avatar URL'}), 500
- 
+
+
 
 4. # user/dashboard.py
 from flask import request, jsonify
@@ -759,6 +762,7 @@ def _get_available_strategies(user_profile: Dict[str, Any]) -> List[str]:
         strategies.append('preference_embedding_similarity')
     
     return strategies
+
 
 
 5. # user/favorites.py
@@ -1191,6 +1195,7 @@ def update_user_preferences(current_user):
         return jsonify({'error': 'Failed to update CineBrain preferences'}), 500
 
 
+
 7. # user/ratings.py
 from flask import request, jsonify
 from datetime import datetime
@@ -1347,6 +1352,7 @@ def get_rating_for_content(current_user, content_id):
         return jsonify({'error': 'Failed to get rating'}), 500
 
 
+
 8. # user/routes.py
 from flask import Blueprint, request, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -1395,7 +1401,7 @@ def init_user_routes(flask_app, database, models, services):
 
 @user_bp.route('/api/register', methods=['POST', 'OPTIONS'])
 def register():
-    """User registration"""
+    """User registration with welcome email"""
     if request.method == 'OPTIONS':
         return '', 200
     
@@ -1415,7 +1421,7 @@ def register():
             username=data['username'],
             email=data['email'],
             password_hash=generate_password_hash(data['password']),
-            preferred_languages=json.dumps(data.get('preferred_languages', ['english', 'telugu'])),
+            preferred_languages=json.dumps(data.get('preferred_languages', ['Telugu', 'English'])),
             preferred_genres=json.dumps(data.get('preferred_genres', [])),
             location=data.get('location', ''),
             avatar_url=data.get('avatar_url', '')
@@ -1429,10 +1435,45 @@ def register():
             'exp': datetime.utcnow() + timedelta(days=30)
         }, app.secret_key, algorithm='HS256')
         
+        # Send welcome email
+        welcome_email_sent = False
+        try:
+            from auth.user_mail_templates import get_professional_template
+            from auth.service import email_service
+            
+            if email_service and email_service.email_enabled:
+                # Prepare user languages for email
+                user_languages = json.loads(user.preferred_languages or '["Telugu", "English"]')
+                
+                html_content, text_content = get_professional_template(
+                    'registration',
+                    user_name=user.username,
+                    user_email=user.email,
+                    preferred_languages=user_languages
+                )
+                
+                email_service.queue_email(
+                    to=user.email,
+                    subject="Welcome to CineBrain! 🎬",
+                    html=html_content,
+                    text=text_content,
+                    priority='normal',
+                    to_name=user.username
+                )
+                
+                welcome_email_sent = True
+                logger.info(f"✅ Welcome email queued for user {user.username} ({user.email})")
+            else:
+                logger.warning("⚠️ Email service not available for welcome email")
+                
+        except Exception as e:
+            logger.error(f"❌ Failed to send welcome email to {user.email}: {e}")
+            # Don't fail registration if email fails - user experience is priority
+        
         from .utils import get_enhanced_user_stats
         stats = get_enhanced_user_stats(user.id)
         
-        return jsonify({
+        response_data = {
             'message': 'CineBrain user registered successfully',
             'token': token,
             'user': {
@@ -1446,8 +1487,11 @@ def register():
                 'avatar_url': user.avatar_url,
                 'created_at': user.created_at.isoformat(),
                 'stats': stats
-            }
-        }), 201
+            },
+            'welcome_email_sent': welcome_email_sent
+        }
+        
+        return jsonify(response_data), 201
         
     except Exception as e:
         logger.error(f"CineBrain registration error: {e}")
@@ -1984,6 +2028,17 @@ def users_health():
         from .utils import recommendation_engine
         health_info['recommendation_engine'] = 'connected' if recommendation_engine else 'not_available'
         
+        # Check email service status
+        try:
+            from auth.service import email_service
+            health_info['email_service'] = {
+                'enabled': email_service.email_enabled if email_service else False,
+                'smtp_enabled': email_service.smtp_enabled if email_service else False,
+                'api_enabled': email_service.api_enabled if email_service else False
+            }
+        except:
+            health_info['email_service'] = {'enabled': False}
+        
         try:
             total_users = User.query.count()
             active_users = User.query.filter(
@@ -2009,7 +2064,8 @@ def users_health():
             'real_time_updates': True,
             'email_username_login': True,
             'avatar_service': True,
-            'modular_architecture': True
+            'modular_architecture': True,
+            'welcome_emails': True
         }
         
         return jsonify(health_info), 200
@@ -2029,6 +2085,7 @@ def after_request(response):
 
 # Export the initialization function
 __all__ = ['user_bp', 'init_user_routes']
+
 
 
 9. # user/settings.py
@@ -2236,6 +2293,7 @@ def export_user_data(current_user):
         return jsonify({'error': 'Failed to export user data'}), 500
 
 
+
 10. # user/utils.py
 from flask import request, jsonify
 from datetime import datetime, timedelta
@@ -2332,7 +2390,8 @@ def get_enhanced_user_stats(user_id):
     """Get comprehensive user statistics"""
     try:
         try:
-            from services.auth import EnhancedUserAnalytics
+            # Updated import to use new auth folder structure
+            from auth.service import EnhancedUserAnalytics
             return EnhancedUserAnalytics.get_comprehensive_user_stats(user_id)
         except ImportError:
             logger.warning("CineBrain enhanced analytics not available, using basic stats")
@@ -2506,6 +2565,7 @@ def add_cors_headers(response):
 __all__ = ['require_auth', 'get_enhanced_user_stats', 'get_basic_user_stats', 
            'create_minimal_content_record', 'format_content_for_response',
            'add_cors_headers', 'get_cinematic_dna_summary']
+
 
 
 11. # user/watchlist.py
