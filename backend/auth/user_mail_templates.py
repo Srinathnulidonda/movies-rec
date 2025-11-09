@@ -54,15 +54,15 @@ def get_professional_template(content_type: str, **kwargs) -> tuple:
         .email-wrapper {
             width: 100% !important;
             background-color: #ffffff;
-            padding: 40px 0;
-            min-height: 100vh;
+            padding: 20px 0;
+            min-height: auto;
         }
         
         .email-container {
-            max-width: 640px;
+            max-width: 600px;
             margin: 0 auto;
             background-color: #ffffff;
-            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.08), 0 8px 20px rgba(0, 0, 0, 0.06);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1), 0 4px 15px rgba(0, 0, 0, 0.08);
             border-radius: 16px;
             overflow: hidden;
             border: 1px solid #e5e7eb;
@@ -70,63 +70,68 @@ def get_professional_template(content_type: str, **kwargs) -> tuple:
         
         /* Header section */
         .header {
-            background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
-            padding: 32px 40px;
+            background-color: #1A1D29;
+            padding: 20px 40px;
             text-align: center;
             position: relative;
             overflow: hidden;
-            border-bottom: 1px solid #e5e7eb;
         }
         
         .brand-logo {
             font-family: 'Bangers', cursive;
-            font-size: 48px;
+            font-size: clamp(36px, 8vw, 48px);
             font-weight: 400;
-            color: #113CCF;
+            background: linear-gradient(135deg, #113CCF 0%, #1E4FE5 50%, #2563EB 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
             margin: 0;
             text-decoration: none;
-            letter-spacing: 2.5px;
-            text-shadow: 0 2px 10px rgba(17, 60, 207, 0.2);
+            letter-spacing: 2px;
             position: relative;
             z-index: 2;
             display: inline-block;
             line-height: 1.2;
+            text-shadow: 0 2px 10px rgba(17, 60, 207, 0.3);
         }
         
         .brand-subtitle {
-            font-size: 14px;
-            color: #6b7280;
+            font-size: 12px;
+            color: #9CA3AF;
             font-weight: 400;
-            margin: 8px 0 0 0;
-            letter-spacing: 0.8px;
+            margin: 4px 0 0 0;
+            letter-spacing: 0.5px;
             position: relative;
             z-index: 2;
         }
         
         /* Content section */
         .content {
-            padding: 50px 40px;
+            padding: 30px 40px;
             background-color: #ffffff;
         }
         
         .content-header {
             text-align: center;
-            margin-bottom: 40px;
+            margin-bottom: 24px;
         }
         
         .content-title {
             font-family: 'Bangers', cursive;
-            font-size: 36px;
+            font-size: clamp(24px, 6vw, 36px);
             font-weight: 400;
-            color: #113CCF;
-            margin: 0 0 12px 0;
-            letter-spacing: 1.8px;
+            background: linear-gradient(135deg, #113CCF 0%, #1E4FE5 50%, #2563EB 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin: 0 0 8px 0;
+            letter-spacing: 2px;
             line-height: 1.2;
-            text-shadow: 0 1px 3px rgba(17, 60, 207, 0.1);
+            text-shadow: 0 2px 10px rgba(17, 60, 207, 0.3);
         }
         
         .content-subtitle {
-            font-size: 18px;
+            font-size: 16px;
             color: #6b7280;
             font-weight: 400;
             margin: 0;
@@ -134,14 +139,14 @@ def get_professional_template(content_type: str, **kwargs) -> tuple:
         }
         
         .content-body {
-            margin-bottom: 35px;
+            margin-bottom: 20px;
         }
         
         .greeting {
             font-size: 18px;
             font-weight: 600;
             color: #111827;
-            margin: 0 0 24px 0;
+            margin: 0 0 20px 0;
             line-height: 1.4;
         }
         
@@ -149,7 +154,7 @@ def get_professional_template(content_type: str, **kwargs) -> tuple:
             font-size: 16px;
             color: #374151;
             line-height: 1.65;
-            margin: 0 0 20px 0;
+            margin: 0 0 16px 0;
             font-weight: 400;
         }
         
@@ -163,13 +168,13 @@ def get_professional_template(content_type: str, **kwargs) -> tuple:
             padding: 16px 20px;
             border-radius: 12px;
             border-left: 4px solid #113CCF;
-            margin: 24px 0;
+            margin: 20px 0;
         }
         
         /* Button section */
         .btn-container {
             text-align: center;
-            margin: 40px 0;
+            margin: 30px 0;
         }
         
         .btn-primary {
@@ -179,7 +184,7 @@ def get_professional_template(content_type: str, **kwargs) -> tuple:
             text-decoration: none;
             font-size: 16px;
             font-weight: 600;
-            padding: 16px 32px;
+            padding: 14px 30px;
             border-radius: 12px;
             letter-spacing: 0.5px;
             box-shadow: 0 4px 12px rgba(17, 60, 207, 0.3), 0 2px 6px rgba(17, 60, 207, 0.2);
@@ -199,13 +204,13 @@ def get_professional_template(content_type: str, **kwargs) -> tuple:
             background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
             border: 1px solid #e2e8f0;
             border-radius: 12px;
-            padding: 24px;
-            margin: 30px 0;
+            padding: 20px;
+            margin: 24px 0;
             border-left: 4px solid #113CCF;
         }
         
         .info-title {
-            font-size: 14px;
+            font-size: 13px;
             font-weight: 700;
             color: #374151;
             margin: 0 0 12px 0;
@@ -237,8 +242,8 @@ def get_professional_template(content_type: str, **kwargs) -> tuple:
             background: linear-gradient(135deg, rgba(16, 185, 129, 0.08) 0%, rgba(5, 150, 105, 0.06) 100%);
             border: 1px solid rgba(16, 185, 129, 0.2);
             border-radius: 12px;
-            padding: 20px;
-            margin: 30px 0;
+            padding: 16px;
+            margin: 20px 0;
             border-left: 4px solid #10b981;
         }
         
@@ -249,8 +254,8 @@ def get_professional_template(content_type: str, **kwargs) -> tuple:
         }
         
         .security-icon {
-            font-size: 20px;
-            margin-bottom: 8px;
+            font-size: 18px;
+            margin-bottom: 6px;
             display: block;
         }
         
@@ -265,7 +270,7 @@ def get_professional_template(content_type: str, **kwargs) -> tuple:
         /* Footer */
         .footer {
             background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
-            padding: 40px;
+            padding: 20px 40px;
             border-top: 1px solid #e5e7eb;
         }
         
@@ -274,29 +279,29 @@ def get_professional_template(content_type: str, **kwargs) -> tuple:
         }
         
         .footer-text {
-            font-size: 13px;
+            font-size: 12px;
             color: #6b7280;
-            margin: 8px 0;
+            margin: 6px 0;
             line-height: 1.5;
             font-weight: 400;
         }
         
         .footer-brand {
-            font-size: 14px;
+            font-size: 13px;
             color: #374151;
-            margin: 0 0 16px 0;
+            margin: 0 0 12px 0;
             font-weight: 600;
         }
         
         .footer-links {
-            margin: 20px 0 0 0;
+            margin: 12px 0 0 0;
         }
         
         .footer-link {
             color: #113CCF;
             text-decoration: none;
-            margin: 0 16px;
-            font-size: 13px;
+            margin: 0 12px;
+            font-size: 12px;
             font-weight: 500;
             transition: color 0.3s ease;
         }
@@ -313,7 +318,7 @@ def get_professional_template(content_type: str, **kwargs) -> tuple:
         /* Mobile optimizations */
         @media only screen and (max-width: 600px) {
             .email-wrapper {
-                padding: 20px 0;
+                padding: 15px 0;
             }
             
             .email-container {
@@ -322,25 +327,29 @@ def get_professional_template(content_type: str, **kwargs) -> tuple:
             }
             
             .header {
-                padding: 24px 30px;
+                padding: 16px 20px;
             }
             
             .brand-logo {
-                font-size: 40px;
+                font-size: 32px;
                 letter-spacing: 2px;
             }
             
+            .brand-subtitle {
+                font-size: 11px;
+            }
+            
             .content {
-                padding: 40px 30px;
+                padding: 24px 20px;
             }
             
             .content-title {
-                font-size: 30px;
+                font-size: 24px;
                 letter-spacing: 1.5px;
             }
             
             .content-subtitle {
-                font-size: 16px;
+                font-size: 14px;
             }
             
             .btn-primary {
@@ -348,16 +357,16 @@ def get_professional_template(content_type: str, **kwargs) -> tuple:
                 width: 100%;
                 box-sizing: border-box;
                 text-align: center;
-                padding: 18px 24px;
+                padding: 16px 20px;
             }
             
             .footer {
-                padding: 30px 20px;
+                padding: 16px 20px;
             }
             
             .footer-link {
                 display: block;
-                margin: 8px 0;
+                margin: 6px 0;
             }
             
             .info-item {
@@ -367,6 +376,18 @@ def get_professional_template(content_type: str, **kwargs) -> tuple:
             
             .info-value {
                 margin-top: 4px;
+            }
+        }
+        
+        /* Fallback for email clients that don't support background-clip */
+        @supports not (-webkit-background-clip: text) {
+            .brand-logo,
+            .content-title {
+                background: none !important;
+                -webkit-background-clip: inherit !important;
+                -webkit-text-fill-color: #113CCF !important;
+                background-clip: inherit !important;
+                color: #113CCF !important;
             }
         }
         
@@ -396,6 +417,15 @@ def get_professional_template(content_type: str, **kwargs) -> tuple:
             .security-notice {
                 border-width: 2px;
             }
+            
+            .brand-logo,
+            .content-title {
+                background: none !important;
+                -webkit-background-clip: inherit !important;
+                -webkit-text-fill-color: #113CCF !important;
+                background-clip: inherit !important;
+                color: #113CCF !important;
+            }
         }
         
         /* Print styles */
@@ -411,7 +441,7 @@ def get_professional_template(content_type: str, **kwargs) -> tuple:
             }
             
             .header {
-                background: #f8fafc !important;
+                background: #1A1D29 !important;
                 -webkit-print-color-adjust: exact;
                 print-color-adjust: exact;
             }
@@ -421,6 +451,15 @@ def get_professional_template(content_type: str, **kwargs) -> tuple:
                 border: 2px solid #113CCF !important;
                 -webkit-print-color-adjust: exact;
                 print-color-adjust: exact;
+            }
+            
+            .brand-logo,
+            .content-title {
+                background: none !important;
+                -webkit-background-clip: inherit !important;
+                -webkit-text-fill-color: #113CCF !important;
+                background-clip: inherit !important;
+                color: #113CCF !important;
             }
         }
     </style>
@@ -597,7 +636,7 @@ def _get_password_changed_template(base_css: str, **kwargs) -> tuple:
                     
                     <div class="content">
                         <div class="content-header">
-                            <h2 class="content-title" style="color: #10b981;">Password Updated Successfully</h2>
+                            <h2 class="content-title" style="background: linear-gradient(135deg, #10b981 0%, #059669 50%, #047857 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;">Password Updated Successfully</h2>
                             <p class="content-subtitle">Your CineBrain account is now more secure</p>
                         </div>
                         
