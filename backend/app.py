@@ -202,6 +202,7 @@ def auth_required(f):
     
     return decorated_function
 
+# Database Models
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
@@ -465,6 +466,67 @@ class IssueReport(db.Model):
     
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     resolved_at = db.Column(db.DateTime)
+
+# Admin System Models
+class AdminNotification(db.Model):
+    __tablename__ = 'admin_notifications'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    notification_type = db.Column(db.String(50), nullable=False)
+    title = db.Column(db.String(255), nullable=False)
+    message = db.Column(db.Text, nullable=False)
+    
+    admin_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    related_ticket_id = db.Column(db.Integer, nullable=True)
+    related_content_id = db.Column(db.Integer, db.ForeignKey('content.id'), nullable=True)
+    
+    is_read = db.Column(db.Boolean, default=False)
+    is_urgent = db.Column(db.Boolean, default=False)
+    action_required = db.Column(db.Boolean, default=False)
+    action_url = db.Column(db.String(500))
+    
+    notification_metadata = db.Column(db.JSON)
+    
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    read_at = db.Column(db.DateTime)
+
+class CannedResponse(db.Model):
+    __tablename__ = 'canned_responses'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(255), nullable=False)
+    content = db.Column(db.Text, nullable=False)
+    
+    category_id = db.Column(db.Integer, nullable=True)
+    tags = db.Column(db.JSON)
+    
+    is_active = db.Column(db.Boolean, default=True)
+    usage_count = db.Column(db.Integer, default=0)
+    
+    created_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+class SupportMetrics(db.Model):
+    __tablename__ = 'support_metrics'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    date = db.Column(db.Date, nullable=False)
+    
+    tickets_created = db.Column(db.Integer, default=0)
+    tickets_resolved = db.Column(db.Integer, default=0)
+    tickets_closed = db.Column(db.Integer, default=0)
+    
+    avg_first_response_time = db.Column(db.Float)
+    avg_resolution_time = db.Column(db.Float)
+    
+    sla_breaches = db.Column(db.Integer, default=0)
+    escalations = db.Column(db.Integer, default=0)
+    
+    customer_satisfaction = db.Column(db.Float)
+    feedback_count = db.Column(db.Integer, default=0)
+    
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 def get_session_id():
     if 'cinebrain_session_id' not in session:
@@ -790,6 +852,7 @@ class CineBrainAnonymousRecommendationEngine:
             logger.error(f"CineBrain error getting anonymous recommendations: {e}")
             return []
 
+# Updated models dictionary to include admin models
 models = {
     'User': User,
     'Content': Content,
@@ -803,7 +866,11 @@ models = {
     'SupportTicket': SupportTicket,
     'TicketActivity': TicketActivity,
     'ContactMessage': ContactMessage,
-    'IssueReport': IssueReport
+    'IssueReport': IssueReport,
+    # Admin models
+    'AdminNotification': AdminNotification,
+    'CannedResponse': CannedResponse,
+    'SupportMetrics': SupportMetrics
 }
 
 details_service = None
@@ -1691,6 +1758,8 @@ if __name__ == '__main__':
     print("  ✅ Automated Cache Refresh System")
     print("  ✅ Background Operations Management")
     print("  ✅ Advanced Reviews & Rating System")
+    print("  ✅ Admin Notification System")
+    print("  ✅ Canned Responses & Support Metrics")
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('FLASK_ENV') == 'development'
     app.run(host='0.0.0.0', port=port, debug=debug)
@@ -1716,6 +1785,7 @@ else:
     print(f"   Personalized System: {'Active' if 'profile_analyzer' in services else 'Not Initialized'}")
     print(f"   Cloudinary Integration: {'Configured' if os.environ.get('CLOUDINARY_CLOUD_NAME') else 'Not Configured'}")
     print(f"   Email Service: {'Active' if email_service else 'Not Initialized'}")
+    print(f"   Admin Models: {'Integrated' if 'AdminNotification' in models else 'Not Integrated'}")
     
     print("\n=== CineBrain Advanced Features ===")
     print("✅ Modular recommendation architecture")
@@ -1746,6 +1816,9 @@ else:
     print("✅ Issue Reporting with Cloudinary File Uploads")
     print("✅ Admin Dashboard Integration")
     print("✅ Email Automation for All Support Activities")
+    print("✅ Admin Notification System with Redis & Telegram")
+    print("✅ Canned Responses & Support Metrics")
+    print("✅ Multi-channel Admin Alerts (Email + Telegram + Database)")
     
     print(f"\n=== CineBrain Registered Routes ===")
     for rule in app.url_map.iter_rules():
