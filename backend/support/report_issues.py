@@ -28,17 +28,38 @@ class IssueReportService:
         self.app = app
         self.db = db
         self.User = models['User']
-        self.IssueReport = models.get('IssueReport')  # Will create this model
+        self.IssueReport = models.get('IssueReport')
         self.SupportTicket = models['SupportTicket']
         self.SupportCategory = models['SupportCategory']
         self.TicketActivity = models['TicketActivity']
-        self.email_service = services.get('email_service')  # Brevo from auth
+        
+        # Enhanced email service initialization
+        self.email_service = self._initialize_email_service(services)
         self.redis_client = services.get('redis_client')
         
         # Cloudinary settings
         self.cloudinary_folder = "report_issues"
         self.max_file_size = 10 * 1024 * 1024  # 10MB
         self.allowed_extensions = {'png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'pdf'}
+        
+        logger.info("✅ IssueReportService initialized successfully")
+    
+    def _initialize_email_service(self, services):
+        """Initialize email service with fallbacks"""
+        email_service = services.get('email_service')
+        if email_service:
+            return email_service
+        
+        try:
+            from auth.service import email_service as auth_email_service
+            if auth_email_service and hasattr(auth_email_service, 'queue_email'):
+                logger.info("✅ Email service loaded from auth module for issues")
+                return auth_email_service
+        except Exception as e:
+            logger.warning(f"Could not load auth email service for issues: {e}")
+        
+        logger.warning("⚠️ No email service available for issues")
+        return None
     
     def get_user_from_token(self):
         """Extract user from JWT token"""
@@ -119,7 +140,7 @@ class IssueReportService:
             raise e
     
     def report_issue(self):
-        """Handle issue report submission"""
+        """Handle issue report submission with enhanced processing"""
         try:
             # Handle form data (multipart/form-data for file uploads)
             data = {}
@@ -156,7 +177,7 @@ class IssueReportService:
             user = self.get_user_from_token()
             request_info = self.get_request_info()
             
-            # Generate unique issue ID for file uploads
+            # Generate unique issue ID
             issue_id = f"issue_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
             
             # Handle file uploads
@@ -172,7 +193,6 @@ class IssueReportService:
                                 uploaded_files.append(file_info)
                         except Exception as e:
                             logger.warning(f"File upload failed: {e}")
-                            # Continue with other files
                             continue
             
             # Get or create Technical Issues category
@@ -202,8 +222,8 @@ class IssueReportService:
             self.db.session.add(issue_report)
             self.db.session.flush()
             
-            # Also create a support ticket for tracking
-            from .tickets import TicketService, TicketStatus, TicketPriority
+            # Create corresponding support ticket
+            ticket_number = self._generate_ticket_number()
             
             # Map severity to priority
             priority_mapping = {
@@ -213,7 +233,7 @@ class IssueReportService:
                 'critical': 'urgent'
             }
             
-            priority = TicketPriority(priority_mapping.get(data['severity'], 'normal'))
+            priority = priority_mapping.get(data['severity'], 'normal')
             
             # Create detailed description for ticket
             detailed_description = f"""
@@ -239,12 +259,9 @@ ISSUE REPORT DETAILS:
 • IP Address: {request_info['ip_address']}
 
 📎 Screenshots: {len(uploaded_files)} file(s) attached
-""".strip()
+            """.strip()
             
-            # Generate ticket number
-            ticket_service = TicketService(self.app, self.db, {'User': self.User, 'SupportTicket': self.SupportTicket, 'SupportCategory': self.SupportCategory, 'TicketActivity': self.TicketActivity}, {})
-            ticket_number = ticket_service.generate_ticket_number()
-            
+            # Create support ticket
             ticket = self.SupportTicket(
                 ticket_number=ticket_number,
                 subject=f"[BUG REPORT] {data['issue_title']}",
@@ -255,8 +272,8 @@ ISSUE REPORT DETAILS:
                 category_id=tech_category.id if tech_category else 1,
                 ticket_type='bug_report',
                 priority=priority,
-                status=TicketStatus.OPEN,
-                sla_deadline=ticket_service.calculate_sla_deadline(priority),
+                status='open',
+                sla_deadline=self._calculate_sla_deadline(priority),
                 **request_info
             )
             
@@ -279,13 +296,11 @@ ISSUE REPORT DETAILS:
             
             self.db.session.commit()
             
-            # Send user confirmation
+            # Send notifications
             self._send_user_confirmation(issue_report, ticket, data)
-            
-            # Send admin notification
             self._send_admin_notification(issue_report, ticket, data)
             
-            logger.info(f"Issue report {issue_id} submitted by {data['email']}")
+            logger.info(f"✅ Issue report {issue_id} submitted by {data['email']}")
             
             return jsonify({
                 'success': True,
@@ -297,8 +312,39 @@ ISSUE REPORT DETAILS:
             
         except Exception as e:
             self.db.session.rollback()
-            logger.error(f"Error processing issue report: {e}")
+            logger.error(f"❌ Error processing issue report: {e}")
             return jsonify({'error': 'Failed to submit issue report. Please try again.'}), 500
+    
+    def _generate_ticket_number(self):
+        """Generate unique ticket number"""
+        import random
+        import string
+        
+        date_str = datetime.now().strftime('%Y%m%d')
+        random_str = ''.join(random.choices(string.digits, k=4))
+        ticket_number = f"CB-{date_str}-{random_str}"
+        
+        # Ensure uniqueness
+        while self.SupportTicket.query.filter_by(ticket_number=ticket_number).first():
+            random_str = ''.join(random.choices(string.digits, k=4))
+            ticket_number = f"CB-{date_str}-{random_str}"
+        
+        return ticket_number
+    
+    def _calculate_sla_deadline(self, priority_str):
+        """Calculate SLA deadline based on priority string"""
+        from datetime import timedelta
+        
+        now = datetime.utcnow()
+        sla_hours = {
+            'urgent': 4,
+            'high': 24,
+            'normal': 48,
+            'low': 72
+        }
+        
+        hours = sla_hours.get(priority_str, 48)
+        return now + timedelta(hours=hours)
     
     def _check_rate_limit(self, email: str) -> bool:
         """Check rate limit for issue reports"""
@@ -327,6 +373,7 @@ ISSUE REPORT DETAILS:
         """Send confirmation email to user"""
         try:
             if not self.email_service:
+                logger.warning("Email service not available - cannot send user confirmation")
                 return
             
             from auth.support_mail_templates import get_support_template
@@ -349,19 +396,20 @@ ISSUE REPORT DETAILS:
                 to_name=data['name']
             )
             
-            logger.info(f"Issue confirmation email queued for {data['email']}")
+            logger.info(f"✅ Issue confirmation email queued for {data['email']}")
             
         except Exception as e:
-            logger.error(f"Error sending issue confirmation: {e}")
+            logger.error(f"❌ Error sending issue confirmation: {e}")
     
     def _send_admin_notification(self, issue_report, ticket, data):
         """Send admin notification email"""
         try:
             if not self.email_service:
+                logger.warning("Email service not available - cannot send admin notification")
                 return
             
-            import os
             admin_email = os.environ.get('ADMIN_EMAIL', 'srinathnulidonda.dev@gmail.com')
+            admin_link = f"{os.environ.get('FRONTEND_URL', 'https://cinebrain.vercel.app')}/admin/support/issue/{issue_report.issue_id}"
             
             from auth.support_mail_templates import get_support_template
             
@@ -416,24 +464,32 @@ ISSUE REPORT DETAILS:
                 ''' if data.get('expected_behavior') else ''}
                 
                 {screenshot_info}
+                
+                <p style="margin-top: 20px;">
+                    <a href="{admin_link}" style="background: #113CCF; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block;">
+                        View in Admin Dashboard
+                    </a>
+                </p>
                 """,
                 ticket_number=ticket.ticket_number,
                 user_email=data['email']
             )
+            
+            priority = 'urgent' if data['severity'] in ['critical', 'high'] else 'high'
             
             self.email_service.queue_email(
                 to=admin_email,
                 subject=f"🚨 New Issue Report: {data['issue_title']} - CineBrain Admin",
                 html=html,
                 text=text,
-                priority='urgent' if data['severity'] in ['critical', 'high'] else 'high',
+                priority=priority,
                 to_name='CineBrain Admin'
             )
             
-            logger.info(f"Admin notification email queued for issue {issue_report.issue_id}")
+            logger.info(f"✅ Admin notification email queued for issue {issue_report.issue_id}")
             
         except Exception as e:
-            logger.error(f"Error sending admin notification: {e}")
+            logger.error(f"❌ Error sending admin notification: {e}")
 
 def init_issue_service(app, db, models, services):
     """Initialize issue service"""

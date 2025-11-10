@@ -1,4 +1,3 @@
-#backend/app.py 
 from typing import Optional
 from flask import Flask, request, jsonify, session, render_template
 from flask_sqlalchemy import SQLAlchemy
@@ -30,7 +29,7 @@ from flask_mail import Mail
 from services.upcoming import UpcomingContentService, ContentType, LanguagePriority
 import asyncio
 from auth.routes import auth_bp
-from services.admin import admin_bp, init_admin
+from admin import admin_bp, init_admin
 from support import support_bp, init_support
 from services.critics_choice import critics_choice_bp, init_critics_choice_service
 from services.algorithms import (
@@ -59,7 +58,6 @@ import traceback
 from dotenv import load_dotenv
 import cloudinary
 import cloudinary.uploader
-import enum
 
 load_dotenv()
 
@@ -120,28 +118,6 @@ app.config['SECRET_KEY'] = app.secret_key
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-# Define Enums for Support System
-class TicketStatusEnum(enum.Enum):
-    OPEN = "open"
-    IN_PROGRESS = "in_progress"
-    WAITING_FOR_USER = "waiting_for_user"
-    RESOLVED = "resolved"
-    CLOSED = "closed"
-
-class TicketPriorityEnum(enum.Enum):
-    LOW = "low"
-    NORMAL = "normal"
-    HIGH = "high"
-    URGENT = "urgent"
-
-class TicketTypeEnum(enum.Enum):
-    GENERAL = "general"
-    TECHNICAL = "technical"
-    ACCOUNT = "account"
-    BILLING = "billing"
-    FEATURE_REQUEST = "feature_request"
-    BUG_REPORT = "bug_report"
 
 def create_http_session():
     session = requests.Session()
@@ -365,7 +341,7 @@ class Review(db.Model):
         db.UniqueConstraint('content_id', 'user_id'),
     )
 
-# Support System Models with Proper Enums
+# Support System Models
 class SupportCategory(db.Model):
     __tablename__ = 'support_categories'
     
@@ -393,10 +369,10 @@ class SupportTicket(db.Model):
     
     category_id = db.Column(db.Integer, db.ForeignKey('support_categories.id'), nullable=False)
     
-    # Use proper ENUM columns for PostgreSQL
-    ticket_type = db.Column(db.Enum(TicketTypeEnum), nullable=False, default=TicketTypeEnum.GENERAL)
-    priority = db.Column(db.Enum(TicketPriorityEnum), default=TicketPriorityEnum.NORMAL)
-    status = db.Column(db.Enum(TicketStatusEnum), default=TicketStatusEnum.OPEN)
+    # Use string columns instead of enums to avoid conflicts
+    ticket_type = db.Column(db.String(20), nullable=False, default='general')
+    priority = db.Column(db.String(20), default='normal')
+    status = db.Column(db.String(20), default='open')
     
     browser_info = db.Column(db.Text)
     device_info = db.Column(db.Text)
@@ -462,19 +438,17 @@ class IssueReport(db.Model):
     
     name = db.Column(db.String(255), nullable=False)
     email = db.Column(db.String(255), nullable=False)
-    issue_type = db.Column(db.String(50), nullable=False)  # bug_error, feature_request, etc.
-    severity = db.Column(db.String(20), nullable=False)  # low, normal, high, critical
+    issue_type = db.Column(db.String(50), nullable=False)
+    severity = db.Column(db.String(20), nullable=False)
     issue_title = db.Column(db.String(255), nullable=False)
     description = db.Column(db.Text, nullable=False)
     
-    # Additional details
     browser_version = db.Column(db.String(255))
     device_os = db.Column(db.String(255))
     page_url_reported = db.Column(db.String(500))
     steps_to_reproduce = db.Column(db.Text)
     expected_behavior = db.Column(db.Text)
     
-    # Screenshots/files stored as JSON
     screenshots = db.Column(db.JSON)
     
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
@@ -833,6 +807,7 @@ models = {
 details_service = None
 content_service = None
 cinebrain_new_releases_service = None
+email_service = None
 
 try:
     with app.app_context():
@@ -873,8 +848,28 @@ try:
 except Exception as e:
     logger.error(f"Failed to initialize CineBrain new releases service: {e}")
 
+# Initialize the new modular auth system with email service
+try:
+    from auth.service import init_auth, email_service as auth_email_service
+    from auth.routes import auth_bp
+    
+    init_auth(app, db, User)
+    app.register_blueprint(auth_bp)
+    
+    # Make email service globally available
+    email_service = auth_email_service
+    services['email_service'] = email_service
+    
+    logger.info("✅ CineBrain authentication service with Brevo email initialized successfully")
+except Exception as e:
+    logger.error(f"❌ Failed to initialize CineBrain authentication service: {e}")
+
 # Initialize the new modular support system
 try:
+    # Ensure email service is in services dict
+    if 'email_service' not in services and email_service:
+        services['email_service'] = email_service
+    
     support_models = init_support(app, db, models, services)
     app.register_blueprint(support_bp)
     if support_models:
@@ -894,6 +889,19 @@ try:
 except Exception as e:
     logger.error(f"❌ Failed to initialize CineBrain Support System: {e}")
     logger.error(f"Support initialization error traceback: {traceback.format_exc()}")
+
+# Initialize the modular admin system
+try:
+    # Ensure email service is available for admin
+    if email_service:
+        services['email_service'] = email_service
+    
+    # Initialize modular admin
+    init_admin(app, db, models, services)
+    app.register_blueprint(admin_bp)
+    logger.info("✅ CineBrain modular admin service initialized successfully")
+except Exception as e:
+    logger.error(f"❌ Failed to initialize CineBrain modular admin service: {e}")
 
 # Replace the existing personalized initialization block with the new advanced system
 try:
@@ -921,24 +929,6 @@ try:
 except Exception as e:
     logger.error(f"❌ Failed to initialize CineBrain Personalized Recommendation System: {e}")
     logger.error(f"Traceback: {traceback.format_exc()}")
-
-# Initialize the new modular auth system with Resend
-try:
-    from auth.service import init_auth
-    from auth.routes import auth_bp
-    
-    init_auth(app, db, User)
-    app.register_blueprint(auth_bp)
-    logger.info("✅ CineBrain authentication service with Brevo email initialized successfully")
-except Exception as e:
-    logger.error(f"❌ Failed to initialize CineBrain authentication service: {e}")
-
-try:
-    init_admin(app, db, models, services)
-    app.register_blueprint(admin_bp)
-    logger.info("CineBrain admin service initialized successfully")
-except Exception as e:
-    logger.error(f"Failed to initialize CineBrain admin service: {e}")
 
 try:
     init_user_routes(app, db, models, {**services, 'cache': cache})
@@ -1003,20 +993,17 @@ def setup_support_monitoring():
                 
                 with app.app_context():
                     try:
-                        from services.admin import AdminNotificationService
-                        from support.tickets import TicketStatusEnum, TicketPriorityEnum
-                        
-                        # Check for SLA breaches in tickets - Use enum values
+                        # Use string comparisons instead of enum comparisons
                         overdue_tickets = SupportTicket.query.filter(
                             SupportTicket.sla_deadline < datetime.utcnow(),
                             SupportTicket.sla_breached == False,
-                            SupportTicket.status.in_([TicketStatusEnum.OPEN, TicketStatusEnum.IN_PROGRESS])
+                            SupportTicket.status.in_(['open', 'in_progress'])
                         ).all()
                         
                         for ticket in overdue_tickets:
                             ticket.sla_breached = True
                             try:
-                                AdminNotificationService.notify_sla_breach(ticket)
+                                logger.warning(f"SLA breached for ticket #{ticket.ticket_number}")
                             except Exception as e:
                                 logger.error(f"CineBrain error handling SLA breach notification: {e}")
                         
@@ -1024,23 +1011,16 @@ def setup_support_monitoring():
                             db.session.commit()
                             logger.info(f"Marked {len(overdue_tickets)} tickets as SLA breached")
                         
-                        # Check for urgent tickets without response - Use enum values
+                        # Check for urgent tickets without response
                         urgent_tickets = SupportTicket.query.filter(
-                            SupportTicket.priority == TicketPriorityEnum.URGENT,
+                            SupportTicket.priority == 'urgent',
                             SupportTicket.first_response_at.is_(None),
                             SupportTicket.created_at < datetime.utcnow() - timedelta(hours=1)
                         ).all()
                         
                         for ticket in urgent_tickets:
                             try:
-                                AdminNotificationService.create_notification(
-                                    'urgent_ticket',
-                                    f"CineBrain Urgent Ticket Needs Attention",
-                                    f"Ticket #{ticket.ticket_number} has been open for over 1 hour without response",
-                                    related_ticket_id=ticket.id,
-                                    is_urgent=True,
-                                    action_required=True
-                                )
+                                logger.warning(f"Urgent ticket #{ticket.ticket_number} needs attention")
                             except Exception as e:
                                 logger.error(f"CineBrain error handling urgent ticket notification: {e}")
                         
@@ -1053,14 +1033,7 @@ def setup_support_monitoring():
                         
                         for issue in critical_issues:
                             try:
-                                AdminNotificationService.create_notification(
-                                    'critical_issue',
-                                    f"Critical Issue Unresolved",
-                                    f"Critical issue {issue.issue_id} has been unresolved for over 2 hours",
-                                    related_issue_id=issue.id,
-                                    is_urgent=True,
-                                    action_required=True
-                                )
+                                logger.warning(f"Critical issue {issue.issue_id} needs attention")
                             except Exception as e:
                                 logger.error(f"CineBrain error handling critical issue notification: {e}")
                         
@@ -1383,56 +1356,6 @@ def get_person_details(slug):
         logger.error(f"CineBrain error getting person details for slug {slug}: {e}")
         return jsonify({'error': 'Failed to get CineBrain person details'}), 500
 
-@app.route('/api/admin/slugs/migrate', methods=['POST'])
-@auth_required
-def migrate_all_slugs():
-    try:
-        user = User.query.get(request.user_id)
-        if not user or not user.is_admin:
-            return jsonify({'error': 'CineBrain admin access required'}), 403
-        
-        if details_service:
-            batch_size = int(request.json.get('batch_size', 50))
-            stats = details_service.migrate_all_slugs(batch_size)
-            return jsonify({
-                'success': True,
-                'migration_stats': stats,
-                'cinebrain_service': 'slug_migration'
-            }), 200
-        else:
-            return jsonify({'error': 'CineBrain service unavailable'}), 503
-            
-    except Exception as e:
-        logger.error(f"CineBrain error migrating slugs: {e}")
-        return jsonify({'error': 'Failed to migrate CineBrain slugs'}), 500
-
-@app.route('/api/admin/content/<int:content_id>/slug', methods=['PUT'])
-@auth_required
-def update_content_slug(content_id):
-    try:
-        user = User.query.get(request.user_id)
-        if not user or not user.is_admin:
-            return jsonify({'error': 'CineBrain admin access required'}), 403
-        
-        if details_service:
-            force_update = request.json.get('force_update', False)
-            new_slug = details_service.update_content_slug(content_id, force_update)
-            
-            if new_slug:
-                return jsonify({
-                    'success': True,
-                    'new_slug': new_slug,
-                    'cinebrain_service': 'slug_update'
-                }), 200
-            else:
-                return jsonify({'error': 'CineBrain content not found or update failed'}), 404
-        else:
-            return jsonify({'error': 'CineBrain service unavailable'}), 503
-            
-    except Exception as e:
-        logger.error(f"CineBrain error updating content slug: {e}")
-        return jsonify({'error': 'Failed to update CineBrain slug'}), 500
-
 @app.route('/api/content/<int:content_id>/refresh-cast-crew', methods=['POST'])
 def refresh_cast_crew(content_id):
     try:
@@ -1455,49 +1378,6 @@ def refresh_cast_crew(content_id):
     except Exception as e:
         logger.error(f"CineBrain error refreshing cast/crew: {e}")
         return jsonify({'error': 'Failed to refresh CineBrain cast/crew data'}), 500
-
-@app.route('/api/admin/populate-cast-crew', methods=['POST'])
-@auth_required
-def populate_all_cast_crew():
-    try:
-        user = User.query.get(request.user_id)
-        if not user or not user.is_admin:
-            return jsonify({'error': 'CineBrain admin access required'}), 403
-        
-        batch_size = int(request.json.get('batch_size', 10))
-        
-        content_items = Content.query.filter(
-            Content.tmdb_id.isnot(None),
-            ~Content.id.in_(
-                db.session.query(ContentPerson.content_id).distinct()
-            )
-        ).limit(batch_size).all()
-        
-        processed = 0
-        errors = 0
-        
-        for content in content_items:
-            try:
-                if details_service:
-                    cast_crew = details_service._fetch_and_save_all_cast_crew(content)
-                    processed += 1
-                    logger.info(f"CineBrain populated cast/crew for {content.title}")
-            except Exception as e:
-                logger.error(f"CineBrain error processing {content.title}: {e}")
-                errors += 1
-        
-        return jsonify({
-            'success': True,
-            'processed': processed,
-            'errors': errors,
-            'total_available': len(content_items),
-            'message': f"Successfully populated CineBrain cast/crew for {processed} content items",
-            'cinebrain_service': 'cast_crew_population'
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"CineBrain error in bulk cast/crew population: {e}")
-        return jsonify({'error': 'Failed to populate CineBrain cast/crew'}), 500
 
 # CLI Commands
 
@@ -1742,14 +1622,16 @@ create_tables()
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
-    print("=== Running CineBrain Flask with Modular Support System & Advanced Features ===")
+    print("=== Running CineBrain Flask with Modular Admin System & Advanced Features ===")
     print("Features:")
+    print("  ✅ Modular Admin System")
     print("  ✅ Modular Support System")
     print("  ✅ Ticket Management with SLA Tracking")
     print("  ✅ Contact Forms with Admin Notifications") 
     print("  ✅ Issue Reporting with Cloudinary File Uploads")
     print("  ✅ Brevo Email Integration")
     print("  ✅ Advanced Admin Dashboard")
+    print("  ✅ Telegram Integration")
     print("  ✅ Cinematic DNA Analysis")
     print("  ✅ Advanced Behavioral Analysis") 
     print("  ✅ Preference Embedding Engine")
@@ -1765,7 +1647,7 @@ if __name__ == '__main__':
     debug = os.environ.get('FLASK_ENV') == 'development'
     app.run(host='0.0.0.0', port=port, debug=debug)
 else:
-    print("=== CineBrain Flask app with Modular Support System ===")
+    print("=== CineBrain Flask app with Modular Admin & Support System ===")
     print(f"App name: {app.name}")
     print(f"Python version: 3.13.4")
     print(f"CineBrain brand: CineBrain Entertainment Platform")
@@ -1777,6 +1659,7 @@ else:
     print(f"CineBrain new releases service status: {'Integrated' if cinebrain_new_releases_service else 'Failed to initialize'}")
     print(f"CineBrain critics choice service status: {'Integrated' if 'critics_choice_service' in services else 'Failed to initialize'}")
     print(f"CineBrain modular support status: {'Integrated' if 'support_models' in services else 'Failed to initialize'}")
+    print(f"CineBrain modular admin status: {'Integrated' if 'admin' in app.blueprints else 'Not integrated'}")
     print(f"CineBrain auth service status: {'Integrated with Brevo' if 'auth' in app.blueprints else 'Not integrated'}")
     print(f"CineBrain user service status: {'Integrated' if 'user_bp' in app.blueprints else 'Not integrated'}")
     print(f"CineBrain recommendation service status: {'Integrated' if 'recommendations' in app.blueprints else 'Not integrated'}")
@@ -1784,6 +1667,7 @@ else:
     print(f"CineBrain operations service status: {'Integrated' if 'operations_bp' in app.blueprints else 'Not integrated'}")
     print(f"   Personalized System: {'Active' if 'profile_analyzer' in services else 'Not Initialized'}")
     print(f"   Cloudinary Integration: {'Configured' if os.environ.get('CLOUDINARY_CLOUD_NAME') else 'Not Configured'}")
+    print(f"   Email Service: {'Active' if email_service else 'Not Initialized'}")
     
     print("\n=== CineBrain Advanced Features ===")
     print("✅ Modular recommendation architecture")
