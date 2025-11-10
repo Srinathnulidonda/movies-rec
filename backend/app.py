@@ -66,16 +66,20 @@ load_dotenv()
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'your-secret-key-change-in-production')
 DATABASE_URL = os.environ.get('DATABASE_URL')
-if os.environ.get('DATABASE_URL'):
-    app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL').replace('postgres://', 'postgresql://')
-else:
-    if not DATABASE_URL:
-        raise ValueError("DATABASE_URL environment variable is required")
+
+# Database Configuration - Fixed
+if DATABASE_URL:
+    # Handle both postgres:// and postgresql:// formats
+    if DATABASE_URL.startswith('postgres://'):
+        DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
     app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
+else:
+    raise ValueError("DATABASE_URL environment variable is required")
 
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-REDIS_URL = os.environ.get('REDIS_URL')
 
+# Redis Configuration - Fixed
+REDIS_URL = os.environ.get('REDIS_URL')
 if REDIS_URL and REDIS_URL.startswith(('redis://', 'rediss://')):
     app.config['CACHE_TYPE'] = 'redis'
     app.config['CACHE_REDIS_URL'] = REDIS_URL
@@ -84,13 +88,15 @@ else:
     app.config['CACHE_TYPE'] = 'simple'
     app.config['CACHE_DEFAULT_TIMEOUT'] = 1800
 
-if DATABASE_URL and DATABASE_URL.startswith('postgresql://'):
-    app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL + '?sslmode=require'
+# PostgreSQL SSL Configuration - Fixed
+if DATABASE_URL and 'postgresql://' in DATABASE_URL:
     app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
         'pool_pre_ping': True,
         'pool_recycle': 300,
+        'pool_timeout': 20,
+        'max_overflow': 0,
         'connect_args': {
-            'sslmode': 'require',
+            'sslmode': 'prefer',  # Changed from 'require' to 'prefer'
             'connect_timeout': 10
         }
     }
@@ -98,6 +104,8 @@ if DATABASE_URL and DATABASE_URL.startswith('postgresql://'):
 db = SQLAlchemy(app)
 CORS(app)
 cache = Cache(app)
+
+# API Keys
 TMDB_API_KEY = os.environ.get('TMDB_API_KEY')
 YOUTUBE_API_KEY = os.environ.get('YOUTUBE_API_KEY')
 
@@ -106,7 +114,7 @@ if not TMDB_API_KEY:
 if not YOUTUBE_API_KEY:
     raise ValueError("YOUTUBE_API_KEY environment variable is required")
 
-# Configure Cloudinary for support system file uploads
+# Configure Cloudinary
 cloudinary.config(
     cloud_name=os.environ.get('CLOUDINARY_CLOUD_NAME'),
     api_key=os.environ.get('CLOUDINARY_API_KEY'),
@@ -202,7 +210,7 @@ def auth_required(f):
     
     return decorated_function
 
-# Database Models
+# Database Models - Fixed with String-based Enums
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
@@ -344,7 +352,7 @@ class Review(db.Model):
         db.UniqueConstraint('content_id', 'user_id'),
     )
 
-# Support System Models - Fixed to use string columns instead of enums
+# Support System Models - Fixed to use strings instead of enums
 class SupportCategory(db.Model):
     __tablename__ = 'support_categories'
     
@@ -372,7 +380,7 @@ class SupportTicket(db.Model):
     
     category_id = db.Column(db.Integer, db.ForeignKey('support_categories.id'), nullable=False)
     
-    # Use string columns instead of enums to avoid conflicts
+    # Fixed: Use string columns instead of enums
     ticket_type = db.Column(db.String(20), nullable=False, default='general')
     priority = db.Column(db.String(20), default='normal')
     status = db.Column(db.String(20), default='open')
@@ -467,7 +475,7 @@ class IssueReport(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     resolved_at = db.Column(db.DateTime)
 
-# Admin System Models
+# Admin System Models - Fixed
 class AdminNotification(db.Model):
     __tablename__ = 'admin_notifications'
     
@@ -852,7 +860,7 @@ class CineBrainAnonymousRecommendationEngine:
             logger.error(f"CineBrain error getting anonymous recommendations: {e}")
             return []
 
-# Updated models dictionary to include admin models
+# Updated models dictionary
 models = {
     'User': User,
     'Content': Content,
@@ -867,25 +875,26 @@ models = {
     'TicketActivity': TicketActivity,
     'ContactMessage': ContactMessage,
     'IssueReport': IssueReport,
-    # Admin models
     'AdminNotification': AdminNotification,
     'CannedResponse': CannedResponse,
     'SupportMetrics': SupportMetrics
 }
 
+# Initialize services
 details_service = None
 content_service = None
 cinebrain_new_releases_service = None
 email_service = None
 admin_notification_service = None
 
+# Details and Content Services
 try:
     with app.app_context():
         details_service = init_details_service(app, db, models, cache)
         content_service = ContentService(db, models)
-        logger.info("CineBrain details and content services initialized successfully")
+        logger.info("✅ CineBrain details and content services initialized successfully")
 except Exception as e:
-    logger.error(f"Failed to initialize CineBrain details/content services: {e}")
+    logger.error(f"❌ Failed to initialize CineBrain details/content services: {e}")
 
 services = {
     'TMDBService': CineBrainTMDBService,
@@ -895,10 +904,8 @@ services = {
     'cache': cache
 }
 
-# Initialize the new modular reviews system
+# Initialize Reviews System
 try:
-    from reviews import init_reviews_service
-    
     review_services = init_reviews_service(app, db, models, cache)
     if review_services:
         logger.info("✅ CineBrain Reviews system initialized successfully")
@@ -908,25 +915,25 @@ try:
 except Exception as e:
     logger.error(f"❌ Failed to initialize CineBrain Reviews system: {e}")
 
+# Initialize New Releases Service
 try:
     cinebrain_new_releases_service = init_cinebrain_new_releases_service(app, db, models, services)
     if cinebrain_new_releases_service:
-        logger.info("CineBrain new releases service integrated successfully")
+        logger.info("✅ CineBrain new releases service integrated successfully")
         services['new_releases_service'] = cinebrain_new_releases_service
     else:
-        logger.warning("CineBrain new releases service failed to initialize")
+        logger.warning("⚠️ CineBrain new releases service failed to initialize")
 except Exception as e:
-    logger.error(f"Failed to initialize CineBrain new releases service: {e}")
+    logger.error(f"❌ Failed to initialize CineBrain new releases service: {e}")
 
-# Initialize the new modular auth system with email service
+# Initialize Authentication System - FIXED
 try:
     from auth.service import init_auth, email_service as auth_email_service
     from auth.routes import auth_bp
     
     init_auth(app, db, User)
-    app.register_blueprint(auth_bp)
+    app.register_blueprint(auth_bp, url_prefix='/api/auth')  # FIXED: Added url_prefix
     
-    # Make email service globally available
     email_service = auth_email_service
     services['email_service'] = email_service
     
@@ -934,43 +941,31 @@ try:
 except Exception as e:
     logger.error(f"❌ Failed to initialize CineBrain authentication service: {e}")
 
-# Initialize the new modular support system
+# Initialize Support System - FIXED
 try:
-    # Ensure email service is in services dict
     if 'email_service' not in services and email_service:
         services['email_service'] = email_service
     
     support_models = init_support(app, db, models, services)
-    app.register_blueprint(support_bp)
+    app.register_blueprint(support_bp, url_prefix='/api/support')  # FIXED: Added url_prefix
+    
     if support_models:
-        logger.info("✅ CineBrain Modular Support System initialized successfully")
-        logger.info("   - Ticket Management: Active")
-        logger.info("   - Contact Forms: Active") 
-        logger.info("   - Issue Reporting: Active with Cloudinary")
-        logger.info("   - Email Notifications: Brevo Integration")
-        logger.info("   - Admin Dashboard: Integrated")
-        logger.info("   - File Uploads: Cloudinary Storage")
-        
-        # Update models dict with support models
+        logger.info("✅ CineBrain Support System initialized successfully")
         models.update(support_models)
         services['support_models'] = support_models
     else:
         logger.warning("⚠️ CineBrain Support System failed to initialize")
 except Exception as e:
     logger.error(f"❌ Failed to initialize CineBrain Support System: {e}")
-    logger.error(f"Support initialization error traceback: {traceback.format_exc()}")
 
-# Initialize the modular admin system with fixed initialization
+# Initialize Admin System - FIXED (No Telegram for Support)
 try:
-    # Ensure email service is available for admin
     if email_service:
         services['email_service'] = email_service
     
-    # Initialize modular admin
     admin_models = init_admin(app, db, models, services)
-    app.register_blueprint(admin_bp)
+    app.register_blueprint(admin_bp, url_prefix='/api/admin')  # FIXED: Added url_prefix
     
-    # Store admin notification service for monitoring
     if 'admin_notification_service' not in services:
         try:
             from admin.service import AdminNotificationService
@@ -981,91 +976,85 @@ try:
         except Exception as e:
             logger.error(f"❌ Failed to create admin notification service: {e}")
     
-    logger.info("✅ CineBrain modular admin service initialized successfully")
+    logger.info("✅ CineBrain admin service initialized successfully")
 except Exception as e:
-    logger.error(f"❌ Failed to initialize CineBrain modular admin service: {e}")
+    logger.error(f"❌ Failed to initialize CineBrain admin service: {e}")
 
-# Replace the existing personalized initialization block with the new advanced system
+# Initialize Personalized System
 try:
-    # Initialize the new modular personalized recommendation system
     profile_analyzer, personalized_recommendation_engine = init_personalized_system(
         app, db, models, services, cache
     )
     
     if profile_analyzer and personalized_recommendation_engine:
         logger.info("✅ CineBrain Advanced Personalized Recommendation System initialized successfully")
-        logger.info(f"   - Profile Analyzer: Active")
-        logger.info(f"   - Recommendation Engine: Active with Telugu-first priority")
-        logger.info(f"   - Real-time Learning: Enabled")
-        
-        # Add to services dictionary
         services['profile_analyzer'] = profile_analyzer
         services['personalized_recommendation_engine'] = personalized_recommendation_engine
-        
-        # Register the personalized blueprint
-        app.register_blueprint(personalized_bp, url_prefix='/api')
-        logger.info("✅ CineBrain Personalized routes registered at /api/personalized/*")
+        app.register_blueprint(personalized_bp, url_prefix='/api/personalized')
+        logger.info("✅ CineBrain Personalized routes registered")
     else:
         logger.warning("⚠️ CineBrain Personalized Recommendation System failed to initialize fully")
         
 except Exception as e:
     logger.error(f"❌ Failed to initialize CineBrain Personalized Recommendation System: {e}")
-    logger.error(f"Traceback: {traceback.format_exc()}")
 
+# Initialize User Routes
 try:
     init_user_routes(app, db, models, {**services, 'cache': cache})
-    app.register_blueprint(user_bp)
-    logger.info("CineBrain user module initialized successfully")
+    app.register_blueprint(user_bp, url_prefix='/api/user')
+    logger.info("✅ CineBrain user module initialized successfully")
 except Exception as e:
-    logger.error(f"Failed to initialize CineBrain user module: {e}")
+    logger.error(f"❌ Failed to initialize CineBrain user module: {e}")
 
+# Initialize Critics Choice Service
 try:
     critics_choice_service = init_critics_choice_service(app, db, models, services, cache)
-    app.register_blueprint(critics_choice_bp)
+    app.register_blueprint(critics_choice_bp, url_prefix='/api/critics-choice')
     if critics_choice_service:
-        logger.info("CineBrain Critics Choice service integrated successfully")
+        logger.info("✅ CineBrain Critics Choice service integrated successfully")
         services['critics_choice_service'] = critics_choice_service
     else:
-        logger.warning("CineBrain Critics Choice service failed to initialize")
+        logger.warning("⚠️ CineBrain Critics Choice service failed to initialize")
 except Exception as e:
-    logger.error(f"Failed to initialize CineBrain Critics Choice service: {e}")
+    logger.error(f"❌ Failed to initialize CineBrain Critics Choice service: {e}")
 
-# Add RecommendationOrchestrator to services
+# Add RecommendationOrchestrator
 try:
     cinebrain_recommendation_orchestrator = RecommendationOrchestrator()
     services['recommendation_orchestrator'] = cinebrain_recommendation_orchestrator
-    logger.info("CineBrain RecommendationOrchestrator initialized successfully")
+    logger.info("✅ CineBrain RecommendationOrchestrator initialized successfully")
 except Exception as e:
-    logger.error(f"Failed to initialize CineBrain RecommendationOrchestrator: {e}")
+    logger.error(f"❌ Failed to initialize CineBrain RecommendationOrchestrator: {e}")
 
-# Initialize recommendation routes
+# Initialize Recommendation Routes
 try:
     init_recommendation_routes(app, db, models, services, cache)
-    app.register_blueprint(recommendation_bp)
-    logger.info("CineBrain recommendation routes initialized successfully")
+    app.register_blueprint(recommendation_bp, url_prefix='/api/recommendations')
+    logger.info("✅ CineBrain recommendation routes initialized successfully")
 except Exception as e:
-    logger.error(f"Failed to initialize CineBrain recommendation routes: {e}")
+    logger.error(f"❌ Failed to initialize CineBrain recommendation routes: {e}")
 
-# Initialize system routes
+# Initialize System Routes
 try:
     init_system_routes(app, db, models, services)
-    app.register_blueprint(system_bp)
+    app.register_blueprint(system_bp, url_prefix='/api/system')
     logger.info("✅ CineBrain system monitoring service initialized successfully")
     services['system_service'] = True
 except Exception as e:
     logger.error(f"❌ Failed to initialize CineBrain system monitoring service: {e}")
 
-# Initialize operations routes
+# Initialize Operations Routes
 try:
     init_operations_routes(app, db, models, services)
-    app.register_blueprint(operations_bp)
+    app.register_blueprint(operations_bp, url_prefix='/api/operations')
     logger.info("✅ CineBrain operations service initialized successfully")
     services['operations_service'] = True
 except Exception as e:
     logger.error(f"❌ Failed to initialize CineBrain operations service: {e}")
 
+# Fixed Support Monitoring - No Telegram Integration
 def setup_support_monitoring():
-    """Enhanced support monitoring for the new modular system - Fixed for enum issues"""
+    """Enhanced support monitoring - EMAIL ONLY, NO TELEGRAM"""
     def support_monitor():
         while True:
             try:
@@ -1075,12 +1064,12 @@ def setup_support_monitoring():
                 
                 with app.app_context():
                     try:
-                        # Build the query using SQLAlchemy text to avoid enum conversion issues
+                        # Check for SLA breaches using direct SQL to avoid enum issues
                         overdue_query = text("""
                             SELECT * FROM support_tickets 
                             WHERE sla_deadline < :current_time 
                             AND sla_breached = false 
-                            AND status::text IN ('open', 'in_progress')
+                            AND status IN ('open', 'in_progress')
                         """)
                         
                         result = db.session.execute(
@@ -1091,7 +1080,7 @@ def setup_support_monitoring():
                         overdue_tickets = result.fetchall()
                         
                         for ticket_row in overdue_tickets:
-                            # Update using direct SQL to avoid enum issues
+                            # Update using direct SQL
                             update_query = text("""
                                 UPDATE support_tickets 
                                 SET sla_breached = true 
@@ -1104,10 +1093,9 @@ def setup_support_monitoring():
                             
                             logger.warning(f"SLA breached for ticket #{ticket_row.ticket_number}")
                             
-                            # Try to send notification if admin service is available
+                            # ONLY EMAIL notification to admin - NO TELEGRAM
                             try:
                                 if admin_notification_service:
-                                    # Create a simple object to pass to notification
                                     class TicketObj:
                                         def __init__(self, row):
                                             self.id = row.id
@@ -1118,54 +1106,27 @@ def setup_support_monitoring():
                                     
                                     admin_notification_service.notify_sla_breach(TicketObj(ticket_row))
                             except Exception as e:
-                                logger.error(f"CineBrain error handling SLA breach notification: {e}")
+                                logger.error(f"Error handling SLA breach notification: {e}")
                         
                         if overdue_tickets:
                             db.session.commit()
                             logger.info(f"Marked {len(overdue_tickets)} tickets as SLA breached")
                         
-                        # Check for urgent tickets without response using text query
-                        urgent_query = text("""
-                            SELECT * FROM support_tickets 
-                            WHERE priority::text = 'urgent' 
-                            AND first_response_at IS NULL 
-                            AND created_at < :hour_ago
-                        """)
-                        
-                        urgent_result = db.session.execute(
-                            urgent_query,
-                            {'hour_ago': datetime.utcnow() - timedelta(hours=1)}
-                        )
-                        
-                        urgent_tickets = urgent_result.fetchall()
-                        
-                        for ticket_row in urgent_tickets:
-                            logger.warning(f"Urgent ticket #{ticket_row.ticket_number} needs attention")
-                        
-                        # Check for critical unresolved issues
-                        critical_issues = IssueReport.query.filter(
-                            IssueReport.severity == 'critical',
-                            IssueReport.is_resolved == False,
-                            IssueReport.created_at < datetime.utcnow() - timedelta(hours=2)
-                        ).all()
-                        
-                        for issue in critical_issues:
-                            logger.warning(f"Critical issue {issue.issue_id} needs attention")
-                        
                     except Exception as e:
-                        logger.error(f"CineBrain support monitoring inner error: {e}")
+                        logger.error(f"Support monitoring inner error: {e}")
                 
                 # Sleep for 5 minutes
                 time.sleep(300)
                 
             except Exception as e:
-                logger.error(f"CineBrain support monitoring error: {e}")
+                logger.error(f"Support monitoring error: {e}")
                 time.sleep(300)
     
     monitor_thread = threading.Thread(target=support_monitor, daemon=True)
     monitor_thread.start()
-    logger.info("CineBrain enhanced support monitoring thread started")
+    logger.info("✅ CineBrain support monitoring (EMAIL ONLY) started")
 
+# Core API Routes
 @app.route('/api/details/<slug>', methods=['GET'])
 def get_content_details_by_slug(slug):
     try:
@@ -1495,7 +1456,6 @@ def refresh_cast_crew(content_id):
         return jsonify({'error': 'Failed to refresh CineBrain cast/crew data'}), 500
 
 # CLI Commands
-
 @app.cli.command('generate-slugs')
 def generate_slugs():
     try:
@@ -1573,7 +1533,522 @@ def populate_cast_crew_cli():
     except Exception as e:
         print(f"Failed to populate CineBrain cast/crew: {e}")
         logger.error(f"CineBrain CLI cast/crew population error: {e}")
+# Add these CLI commands after the existing ones in app.py
 
+# ===== BREVO EMAIL SERVICE CLI COMMANDS =====
+
+@app.cli.command('test-brevo')
+@click.option('--email', default=None, help='Email address to send test to')
+def test_brevo_connection(email):
+    """Test Brevo email service connection and configuration"""
+    try:
+        print("🔧 Testing Brevo Email Service...")
+        print("-" * 50)
+        
+        # Check environment variables
+        api_key = os.environ.get('BREVO_API_KEY')
+        sender_email = os.environ.get('BREVO_SENDER_EMAIL')
+        sender_name = os.environ.get('BREVO_SENDER_NAME')
+        
+        print("📋 Configuration Check:")
+        print(f"   API Key: {'✅ Set' if api_key else '❌ Missing'}")
+        print(f"   Sender Email: {sender_email or '❌ Missing'}")
+        print(f"   Sender Name: {sender_name or '❌ Missing'}")
+        
+        if not all([api_key, sender_email]):
+            print("\n❌ Missing required Brevo configuration!")
+            return
+        
+        # Test email service
+        if email_service:
+            print(f"\n📧 Email Service Status: {'✅ Active' if email_service.email_enabled else '❌ Disabled'}")
+            
+            # Send test email if address provided
+            if email and email_service.email_enabled:
+                print(f"\n📮 Sending test email to {email}...")
+                
+                from auth.admin_mail_templates import get_admin_template
+                html, text = get_admin_template(
+                    'admin_notification',
+                    subject='CineBrain Email Test',
+                    content='This is a test email from CineBrain admin CLI to verify Brevo integration.',
+                    is_urgent=False
+                )
+                
+                try:
+                    email_service.queue_email(
+                        to=email,
+                        subject='CineBrain - Brevo Test Email',
+                        html=html,
+                        text=text,
+                        priority='high',
+                        to_name='Test Recipient'
+                    )
+                    
+                    # Process queue immediately for testing
+                    email_service.process_email_queue()
+                    print("✅ Test email sent successfully!")
+                    print("   Check your inbox (and spam folder)")
+                    
+                except Exception as e:
+                    print(f"❌ Failed to send test email: {e}")
+            
+            # Show email queue stats
+            if hasattr(email_service, 'email_queue'):
+                print(f"\n📊 Email Queue Stats:")
+                print(f"   Pending: {len(email_service.email_queue)}")
+                print(f"   Processed Today: {email_service.emails_sent_today if hasattr(email_service, 'emails_sent_today') else 'N/A'}")
+        else:
+            print("\n❌ Email service not initialized!")
+            
+    except Exception as e:
+        print(f"❌ Error testing Brevo: {e}")
+        logger.error(f"Brevo test error: {e}")
+
+@app.cli.command('process-email-queue')
+def process_email_queue_cli():
+    """Manually process pending emails in Brevo queue"""
+    try:
+        print("📧 Processing Email Queue...")
+        
+        if not email_service:
+            print("❌ Email service not available!")
+            return
+        
+        if hasattr(email_service, 'process_email_queue'):
+            processed = email_service.process_email_queue()
+            print(f"✅ Processed {processed} emails")
+        else:
+            print("❌ Email queue processing not available")
+            
+    except Exception as e:
+        print(f"❌ Error processing email queue: {e}")
+        logger.error(f"Email queue processing error: {e}")
+
+# ===== ADMIN MANAGEMENT CLI COMMANDS =====
+
+@app.cli.command('create-admin')
+@click.option('--username', prompt=True, help='Admin username')
+@click.option('--email', prompt=True, help='Admin email address')
+@click.option('--password', prompt=True, hide_input=True, confirmation_prompt=True, help='Admin password')
+def create_admin_user(username, email, password):
+    """Create a new admin user"""
+    try:
+        print(f"\n🔐 Creating admin user: {username}")
+        
+        # Check if user already exists
+        existing = User.query.filter(
+            or_(User.username == username, User.email == email)
+        ).first()
+        
+        if existing:
+            print(f"❌ User already exists with username '{username}' or email '{email}'")
+            return
+        
+        # Create admin user
+        admin = User(
+            username=username,
+            email=email,
+            password_hash=generate_password_hash(password),
+            is_admin=True,
+            created_at=datetime.utcnow()
+        )
+        
+        db.session.add(admin)
+        db.session.commit()
+        
+        print(f"✅ Admin user created successfully!")
+        print(f"   Username: {username}")
+        print(f"   Email: {email}")
+        print(f"   Admin ID: {admin.id}")
+        
+        # Send welcome email
+        if email_service:
+            try:
+                from auth.admin_mail_templates import get_admin_template
+                html, text = get_admin_template(
+                    'admin_notification',
+                    subject='Welcome to CineBrain Admin',
+                    content=f'Admin account created for {username}. You now have full admin access to CineBrain.',
+                    is_urgent=False
+                )
+                
+                email_service.queue_email(
+                    to=email,
+                    subject='Welcome to CineBrain Admin',
+                    html=html,
+                    text=text,
+                    priority='high',
+                    to_name=username
+                )
+                print("📧 Welcome email queued")
+            except:
+                pass
+                
+    except Exception as e:
+        db.session.rollback()
+        print(f"❌ Error creating admin: {e}")
+        logger.error(f"Admin creation error: {e}")
+
+@app.cli.command('list-admins')
+def list_admin_users():
+    """List all admin users"""
+    try:
+        print("\n👥 CineBrain Admin Users:")
+        print("-" * 60)
+        
+        admins = User.query.filter_by(is_admin=True).order_by(User.created_at).all()
+        
+        if not admins:
+            print("❌ No admin users found!")
+            return
+        
+        for admin in admins:
+            print(f"\n🔐 Admin ID: {admin.id}")
+            print(f"   Username: {admin.username}")
+            print(f"   Email: {admin.email}")
+            print(f"   Created: {admin.created_at.strftime('%Y-%m-%d %H:%M UTC')}")
+            print(f"   Last Active: {admin.last_active.strftime('%Y-%m-%d %H:%M UTC') if admin.last_active else 'Never'}")
+            
+        print(f"\n📊 Total Admins: {len(admins)}")
+        
+    except Exception as e:
+        print(f"❌ Error listing admins: {e}")
+        logger.error(f"Admin list error: {e}")
+
+@app.cli.command('toggle-admin')
+@click.argument('username')
+def toggle_admin_status(username):
+    """Toggle admin status for a user"""
+    try:
+        user = User.query.filter_by(username=username).first()
+        
+        if not user:
+            print(f"❌ User '{username}' not found!")
+            return
+        
+        # Toggle admin status
+        user.is_admin = not user.is_admin
+        db.session.commit()
+        
+        status = "granted" if user.is_admin else "revoked"
+        print(f"✅ Admin access {status} for user '{username}'")
+        
+        # Send notification
+        if admin_notification_service:
+            try:
+                admin_notification_service.create_notification(
+                    'user_activity',
+                    f'Admin Status Changed: {username}',
+                    f'Admin access {status} for user {username} (ID: {user.id})',
+                    admin_id=user.id if user.is_admin else None
+                )
+            except:
+                pass
+                
+    except Exception as e:
+        db.session.rollback()
+        print(f"❌ Error toggling admin status: {e}")
+        logger.error(f"Admin toggle error: {e}")
+
+# ===== SUPPORT SYSTEM CLI COMMANDS =====
+
+@app.cli.command('support-stats')
+def show_support_stats():
+    """Show support system statistics"""
+    try:
+        print("\n📊 CineBrain Support System Statistics")
+        print("=" * 60)
+        
+        # Ticket stats
+        total_tickets = SupportTicket.query.count()
+        open_tickets = SupportTicket.query.filter_by(status='open').count()
+        urgent_tickets = SupportTicket.query.filter_by(priority='urgent', status='open').count()
+        sla_breached = SupportTicket.query.filter_by(sla_breached=True, status='open').count()
+        
+        print(f"\n🎫 Support Tickets:")
+        print(f"   Total: {total_tickets}")
+        print(f"   Open: {open_tickets}")
+        print(f"   Urgent: {urgent_tickets}")
+        print(f"   SLA Breached: {sla_breached}")
+        
+        # Contact messages
+        total_contacts = ContactMessage.query.count()
+        unread_contacts = ContactMessage.query.filter_by(is_read=False).count()
+        
+        print(f"\n💌 Contact Messages:")
+        print(f"   Total: {total_contacts}")
+        print(f"   Unread: {unread_contacts}")
+        
+        # Issue reports
+        total_issues = IssueReport.query.count()
+        unresolved_issues = IssueReport.query.filter_by(is_resolved=False).count()
+        critical_issues = IssueReport.query.filter_by(severity='critical', is_resolved=False).count()
+        
+        print(f"\n🐛 Issue Reports:")
+        print(f"   Total: {total_issues}")
+        print(f"   Unresolved: {unresolved_issues}")
+        print(f"   Critical: {critical_issues}")
+        
+        # Recent activity
+        print(f"\n📈 Recent Activity (Last 24 Hours):")
+        yesterday = datetime.utcnow() - timedelta(days=1)
+        
+        recent_tickets = SupportTicket.query.filter(
+            SupportTicket.created_at >= yesterday
+        ).count()
+        recent_contacts = ContactMessage.query.filter(
+            ContactMessage.created_at >= yesterday
+        ).count()
+        recent_issues = IssueReport.query.filter(
+            IssueReport.created_at >= yesterday
+        ).count()
+        
+        print(f"   New Tickets: {recent_tickets}")
+        print(f"   New Contacts: {recent_contacts}")
+        print(f"   New Issues: {recent_issues}")
+        
+        # Categories
+        print(f"\n📁 Support Categories:")
+        categories = SupportCategory.query.filter_by(is_active=True).all()
+        for cat in categories:
+            ticket_count = cat.tickets.count()
+            print(f"   {cat.icon} {cat.name}: {ticket_count} tickets")
+            
+    except Exception as e:
+        print(f"❌ Error getting support stats: {e}")
+        logger.error(f"Support stats error: {e}")
+
+@app.cli.command('test-admin-notification')
+@click.option('--type', default='test', help='Notification type')
+@click.option('--urgent', is_flag=True, help='Mark as urgent')
+def test_admin_notification(type, urgent):
+    """Send a test notification to all admins"""
+    try:
+        print(f"\n📢 Sending test notification to admins...")
+        
+        if not admin_notification_service:
+            print("❌ Admin notification service not available!")
+            return
+        
+        # Create test notification
+        notification = admin_notification_service.create_notification(
+            notification_type=type,
+            title='Test Notification from CLI',
+            message=f'This is a test {type} notification sent from CineBrain CLI at {datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")}',
+            is_urgent=urgent,
+            action_required=urgent,
+            action_url='/admin'
+        )
+        
+        if notification:
+            print("✅ Notification created successfully!")
+            print("   Check admin emails and dashboard")
+        else:
+            print("❌ Failed to create notification")
+            
+    except Exception as e:
+        print(f"❌ Error sending test notification: {e}")
+        logger.error(f"Test notification error: {e}")
+
+@app.cli.command('cleanup-notifications')
+@click.option('--days', default=30, help='Delete notifications older than X days')
+def cleanup_old_notifications(days):
+    """Clean up old admin notifications"""
+    try:
+        print(f"\n🧹 Cleaning up notifications older than {days} days...")
+        
+        cutoff_date = datetime.utcnow() - timedelta(days=days)
+        
+        # Count notifications to delete
+        old_notifications = AdminNotification.query.filter(
+            AdminNotification.created_at < cutoff_date,
+            AdminNotification.is_read == True
+        ).count()
+        
+        if old_notifications == 0:
+            print("✅ No old notifications to clean up")
+            return
+        
+        # Confirm deletion
+        if click.confirm(f"Delete {old_notifications} read notifications older than {days} days?"):
+            AdminNotification.query.filter(
+                AdminNotification.created_at < cutoff_date,
+                AdminNotification.is_read == True
+            ).delete()
+            
+            db.session.commit()
+            print(f"✅ Deleted {old_notifications} old notifications")
+        else:
+            print("❌ Cleanup cancelled")
+            
+    except Exception as e:
+        db.session.rollback()
+        print(f"❌ Error cleaning up notifications: {e}")
+        logger.error(f"Notification cleanup error: {e}")
+
+# ===== DATABASE MAINTENANCE COMMANDS =====
+
+@app.cli.command('reset-support-categories')
+def reset_support_categories():
+    """Reset support categories to defaults"""
+    try:
+        print("\n🔧 Resetting support categories...")
+        
+        # Default categories
+        default_categories = [
+            {'name': 'Account & Login', 'description': 'Issues with account creation, login, password reset', 'icon': '👤', 'sort_order': 1},
+            {'name': 'Technical Issues', 'description': 'App crashes, loading issues, performance problems', 'icon': '🔧', 'sort_order': 2},
+            {'name': 'Features & Functions', 'description': 'How to use features, feature requests', 'icon': '⚡', 'sort_order': 3},
+            {'name': 'Content & Recommendations', 'description': 'Issues with movies, shows, recommendations', 'icon': '🎬', 'sort_order': 4},
+            {'name': 'Billing & Subscription', 'description': 'Payment issues, subscription questions', 'icon': '💳', 'sort_order': 5},
+            {'name': 'General Support', 'description': 'Other questions and general inquiries', 'icon': '❓', 'sort_order': 6}
+        ]
+        
+        # Update or create categories
+        for cat_data in default_categories:
+            category = SupportCategory.query.filter_by(name=cat_data['name']).first()
+            if category:
+                category.description = cat_data['description']
+                category.icon = cat_data['icon']
+                category.sort_order = cat_data['sort_order']
+                category.is_active = True
+                print(f"   ✅ Updated: {cat_data['name']}")
+            else:
+                category = SupportCategory(**cat_data)
+                db.session.add(category)
+                print(f"   ✅ Created: {cat_data['name']}")
+        
+        db.session.commit()
+        print("\n✅ Support categories reset successfully!")
+        
+    except Exception as e:
+        db.session.rollback()
+        print(f"❌ Error resetting categories: {e}")
+        logger.error(f"Category reset error: {e}")
+
+@app.cli.command('check-sla-breaches')
+def check_sla_breaches():
+    """Check and report SLA breaches"""
+    try:
+        print("\n⏰ Checking SLA Breaches...")
+        print("-" * 50)
+        
+        # Find breached tickets
+        breached_tickets = SupportTicket.query.filter(
+            SupportTicket.sla_deadline < datetime.utcnow(),
+            SupportTicket.sla_breached == False,
+            SupportTicket.status.in_(['open', 'in_progress'])
+        ).all()
+        
+        if not breached_tickets:
+            print("✅ No SLA breaches found!")
+            return
+        
+        print(f"❌ Found {len(breached_tickets)} SLA breaches:")
+        
+        for ticket in breached_tickets:
+            # Mark as breached
+            ticket.sla_breached = True
+            
+            print(f"\n🎫 Ticket #{ticket.ticket_number}")
+            print(f"   Subject: {ticket.subject}")
+            print(f"   Priority: {ticket.priority}")
+            print(f"   Created: {ticket.created_at.strftime('%Y-%m-%d %H:%M UTC')}")
+            print(f"   Deadline: {ticket.sla_deadline.strftime('%Y-%m-%d %H:%M UTC')}")
+            print(f"   Overdue: {(datetime.utcnow() - ticket.sla_deadline).total_seconds() / 3600:.1f} hours")
+            
+            # Send notification
+            if admin_notification_service:
+                try:
+                    admin_notification_service.notify_sla_breach(ticket)
+                except:
+                    pass
+        
+        db.session.commit()
+        print(f"\n✅ Updated {len(breached_tickets)} tickets and sent notifications")
+        
+    except Exception as e:
+        db.session.rollback()
+        print(f"❌ Error checking SLA breaches: {e}")
+        logger.error(f"SLA check error: {e}")
+
+@app.cli.command('send-daily-summary')
+def send_daily_summary():
+    """Send daily summary email to admins"""
+    try:
+        print("\n📊 Sending daily summary to admins...")
+        
+        # Gather statistics
+        today = datetime.utcnow().date()
+        yesterday = today - timedelta(days=1)
+        
+        # Today's tickets
+        today_tickets = SupportTicket.query.filter(
+            func.date(SupportTicket.created_at) == today
+        ).count()
+        
+        # Yesterday's comparison
+        yesterday_tickets = SupportTicket.query.filter(
+            func.date(SupportTicket.created_at) == yesterday
+        ).count()
+        
+        # Open tickets by priority
+        urgent_open = SupportTicket.query.filter_by(priority='urgent', status='open').count()
+        high_open = SupportTicket.query.filter_by(priority='high', status='open').count()
+        
+        # Content stats
+        total_content = Content.query.count()
+        new_content = Content.query.filter(
+            func.date(Content.created_at) == today
+        ).count()
+        
+        # User stats
+        total_users = User.query.count()
+        active_today = User.query.filter(
+            func.date(User.last_active) == today
+        ).count()
+        
+        # Create summary message
+        summary = f"""
+📊 DAILY SUMMARY - {today.strftime('%B %d, %Y')}
+
+SUPPORT METRICS:
+• New Tickets Today: {today_tickets} {'↑' if today_tickets > yesterday_tickets else '↓' if today_tickets < yesterday_tickets else '→'} (Yesterday: {yesterday_tickets})
+• Urgent Open: {urgent_open}
+• High Priority Open: {high_open}
+
+PLATFORM STATS:
+• Total Content: {total_content:,} items
+• New Content Today: {new_content}
+• Total Users: {total_users:,}
+• Active Today: {active_today}
+
+SYSTEM HEALTH: {'🟢 All Systems Operational' if urgent_open < 5 else '🟡 Attention Required' if urgent_open < 10 else '🔴 Critical'}
+"""
+        
+        # Send to admins
+        if admin_notification_service:
+            notification = admin_notification_service.create_notification(
+                notification_type='daily_summary',
+                title='Daily Platform Summary',
+                message=summary,
+                is_urgent=False,
+                action_url='/admin/dashboard'
+            )
+            
+            if notification:
+                print("✅ Daily summary sent to all admins!")
+                print(summary)
+            else:
+                print("❌ Failed to send daily summary")
+        else:
+            print("❌ Admin notification service not available")
+            
+    except Exception as e:
+        print(f"❌ Error sending daily summary: {e}")
+        logger.error(f"Daily summary error: {e}")
+        
 @app.cli.command('cinebrain-new-releases-refresh')
 def cinebrain_new_releases_refresh_cli():
     try:
@@ -1597,106 +2072,6 @@ def cinebrain_new_releases_refresh_cli():
         print(f"Failed to refresh CineBrain new releases: {e}")
         logger.error(f"CineBrain CLI new releases refresh error: {e}")
 
-@app.cli.command('analyze-user-profiles')
-def analyze_user_profiles_cli():
-    """Analyze all user profiles and generate Cinematic DNA"""
-    try:
-        print("Starting CineBrain user profile analysis...")
-        
-        if 'profile_analyzer' not in services or not services['profile_analyzer']:
-            print("Error: Profile Analyzer not available")
-            return
-        
-        profile_analyzer = services['profile_analyzer']
-        
-        users = User.query.all()
-        print(f"Found {len(users)} users to analyze")
-        
-        successful = 0
-        failed = 0
-        
-        for i, user in enumerate(users, 1):
-            try:
-                print(f"\nAnalyzing user {i}/{len(users)}: {user.username} (ID: {user.id})")
-                
-                profile = profile_analyzer.build_comprehensive_profile(user.id)
-                
-                if profile:
-                    print(f"  ✓ Profile built successfully")
-                    print(f"  - Cinematic Sophistication: {profile['cinematic_dna']['cinematic_sophistication_score']:.2f}")
-                    print(f"  - Telugu Affinity: {profile['cinematic_dna']['telugu_cultural_affinity']:.2f}")
-                    print(f"  - Profile Confidence: {profile['profile_confidence']:.2f}")
-                    print(f"  - Recommendation Strategy: {profile['recommendations_strategy']}")
-                    successful += 1
-                else:
-                    print(f"  ✗ Failed to build profile")
-                    failed += 1
-                    
-            except Exception as e:
-                print(f"  ✗ Error: {e}")
-                failed += 1
-        
-        print(f"\nCineBrain Profile Analysis Complete!")
-        print(f"Successful: {successful}")
-        print(f"Failed: {failed}")
-        
-    except Exception as e:
-        print(f"Failed to analyze user profiles: {e}")
-        logger.error(f"CineBrain CLI profile analysis error: {e}")
-
-@app.cli.command('test-personalized-recommendations')
-@click.argument('username')
-def test_personalized_recommendations_cli(username):
-    """Test personalized recommendations for a specific user"""
-    try:
-        print(f"Testing CineBrain personalized recommendations for user: {username}")
-        
-        user = User.query.filter_by(username=username).first()
-        if not user:
-            print(f"Error: User '{username}' not found")
-            return
-        
-        if 'personalized_recommendation_engine' not in services:
-            print("Error: Personalized Recommendation Engine not available")
-            return
-        
-        engine = services['personalized_recommendation_engine']
-        
-        print(f"\nGenerating recommendations for {username} (ID: {user.id})...")
-        
-        recommendations = engine.get_personalized_recommendations(
-            user_id=user.id,
-            recommendation_type='for_you',
-            limit=10
-        )
-        
-        if recommendations['success']:
-            print(f"\n✅ Successfully generated {len(recommendations['recommendations'])} recommendations")
-            
-            print("\nTop 5 Recommendations:")
-            for i, rec in enumerate(recommendations['recommendations'][:5], 1):
-                print(f"{i}. {rec['title']}")
-                print(f"   - Type: {rec['content_type']}")
-                print(f"   - Languages: {', '.join(rec['languages'])}")
-                print(f"   - Personalization Score: {rec['personalization_score']:.3f}")
-                print(f"   - Recommendation Strength: {rec['recommendation_strength']}")
-                print(f"   - Why: {rec['personalized_explanation']}")
-                print()
-            
-            insights = recommendations.get('profile_insights', {})
-            print("User Profile Insights:")
-            print(f"- Profile Strength: {insights.get('profile_strength', 'unknown')}")
-            print(f"- Cinematic Sophistication: {insights.get('cinematic_sophistication', 0):.2f}")
-            print(f"- Dominant Themes: {', '.join(insights.get('dominant_themes', []))}")
-            print(f"- Language Priority: {', '.join(insights.get('language_priority', []))}")
-            
-        else:
-            print(f"❌ Failed to generate recommendations")
-            
-    except Exception as e:
-        print(f"Error testing recommendations: {e}")
-        logger.error(f"CineBrain CLI recommendation test error: {e}")
-
 def create_tables():
     try:
         with app.app_context():
@@ -1718,109 +2093,42 @@ def create_tables():
                 print(f"Admin password: admin123")
             else:
                 print("CineBrain admin user already exists")
-                print(f"Admin ID: {admin.id}")
-                print(f"Admin username: {admin.username}")
-                print(f"Admin email: {admin.email}")
-                print(f"Password hash exists: {bool(admin.password_hash)}")
             
-            test_check = check_password_hash(admin.password_hash, 'admin123')
-            print(f"Password verification test: {test_check}")
+            # Create default support categories
+            try:
+                categories = [
+                    {'name': 'Account & Login', 'description': 'Issues with account creation, login, password reset', 'icon': '👤'},
+                    {'name': 'Technical Issues', 'description': 'App crashes, loading issues, performance problems', 'icon': '🔧'},
+                    {'name': 'Features & Functions', 'description': 'How to use features, feature requests', 'icon': '⚡'},
+                    {'name': 'Content & Recommendations', 'description': 'Issues with movies, shows, recommendations', 'icon': '🎬'},
+                    {'name': 'General Support', 'description': 'Other questions and general inquiries', 'icon': '❓'}
+                ]
+                
+                for i, cat_data in enumerate(categories):
+                    existing = SupportCategory.query.filter_by(name=cat_data['name']).first()
+                    if not existing:
+                        category = SupportCategory(
+                            name=cat_data['name'],
+                            description=cat_data['description'],
+                            icon=cat_data['icon'],
+                            sort_order=i+1
+                        )
+                        db.session.add(category)
+                
+                db.session.commit()
+                print("✅ Default support categories created")
+            except Exception as e:
+                logger.warning(f"Failed to create support categories: {e}")
             
             setup_support_monitoring()
             
-            logger.info("CineBrain database tables created successfully")
+            logger.info("✅ CineBrain database tables created successfully")
     except Exception as e:
-        logger.error(f"CineBrain database initialization error: {e}")
+        logger.error(f"❌ CineBrain database initialization error: {e}")
 
 create_tables()
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=False)
-    print("=== Running CineBrain Flask with Modular Admin System & Advanced Features ===")
-    print("Features:")
-    print("  ✅ Modular Admin System")
-    print("  ✅ Modular Support System")
-    print("  ✅ Ticket Management with SLA Tracking")
-    print("  ✅ Contact Forms with Admin Notifications") 
-    print("  ✅ Issue Reporting with Cloudinary File Uploads")
-    print("  ✅ Brevo Email Integration")
-    print("  ✅ Advanced Admin Dashboard")
-    print("  ✅ Telegram Integration")
-    print("  ✅ Cinematic DNA Analysis")
-    print("  ✅ Advanced Behavioral Analysis") 
-    print("  ✅ Preference Embedding Engine")
-    print("  ✅ Telugu-first Cultural Priority")
-    print("  ✅ Real-time Learning")
-    print("  ✅ Multi-strategy Recommendations")
-    print("  ✅ Comprehensive System Monitoring")
-    print("  ✅ Performance Analytics")
-    print("  ✅ Automated Cache Refresh System")
-    print("  ✅ Background Operations Management")
-    print("  ✅ Advanced Reviews & Rating System")
-    print("  ✅ Admin Notification System")
-    print("  ✅ Canned Responses & Support Metrics")
-    port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('FLASK_ENV') == 'development'
     app.run(host='0.0.0.0', port=port, debug=debug)
-else:
-    print("=== CineBrain Flask app with Modular Admin & Support System ===")
-    print(f"App name: {app.name}")
-    print(f"Python version: 3.13.4")
-    print(f"CineBrain brand: CineBrain Entertainment Platform")
-    print(f"Database URI configured: {'Yes' if app.config.get('SQLALCHEMY_DATABASE_URI') else 'No'}")
-    print(f"Cache type: {app.config.get('CACHE_TYPE', 'Not configured')}")
-    print(f"CineBrain details service status: {'Initialized' if details_service else 'Failed to initialize'}")
-    print(f"CineBrain content service status: {'Initialized' if content_service else 'Failed to initialize'}")
-    print(f"CineBrain reviews system status: {'Integrated' if 'review_service' in services else 'Failed to initialize'}")
-    print(f"CineBrain new releases service status: {'Integrated' if cinebrain_new_releases_service else 'Failed to initialize'}")
-    print(f"CineBrain critics choice service status: {'Integrated' if 'critics_choice_service' in services else 'Failed to initialize'}")
-    print(f"CineBrain modular support status: {'Integrated' if 'support_models' in services else 'Failed to initialize'}")
-    print(f"CineBrain modular admin status: {'Integrated' if 'admin' in app.blueprints else 'Not integrated'}")
-    print(f"CineBrain auth service status: {'Integrated with Brevo' if 'auth' in app.blueprints else 'Not integrated'}")
-    print(f"CineBrain user service status: {'Integrated' if 'user_bp' in app.blueprints else 'Not integrated'}")
-    print(f"CineBrain recommendation service status: {'Integrated' if 'recommendations' in app.blueprints else 'Not integrated'}")
-    print(f"CineBrain system monitoring service status: {'Integrated' if 'system_bp' in app.blueprints else 'Not integrated'}")
-    print(f"CineBrain operations service status: {'Integrated' if 'operations_bp' in app.blueprints else 'Not integrated'}")
-    print(f"   Personalized System: {'Active' if 'profile_analyzer' in services else 'Not Initialized'}")
-    print(f"   Cloudinary Integration: {'Configured' if os.environ.get('CLOUDINARY_CLOUD_NAME') else 'Not Configured'}")
-    print(f"   Email Service: {'Active' if email_service else 'Not Initialized'}")
-    print(f"   Admin Models: {'Integrated' if 'AdminNotification' in models else 'Not Integrated'}")
-    
-    print("\n=== CineBrain Advanced Features ===")
-    print("✅ Modular recommendation architecture")
-    print("✅ All original endpoints preserved")
-    print("✅ Advanced algorithms integration")
-    print("✅ Telugu-first priority system")
-    print("✅ Ultra-powerful similarity engine")
-    print("✅ Critics choice with auto-refresh")
-    print("✅ New releases with 45-day strict filter")
-    print("✅ Upcoming content with Telugu focus")
-    print("✅ Anonymous recommendation engine")
-    print("✅ Admin recommendation system")
-    print("✅ Advanced Personalized System with Cinematic DNA")
-    print("✅ Real-time Learning and Profile Analysis")
-    print("✅ Multi-strategy Recommendation Engine")
-    print("✅ Behavioral Analysis and Preference Embeddings")
-    print("✅ Comprehensive System Monitoring & Health Checks")
-    print("✅ Performance Analytics & Alerts")
-    print("✅ Real-time Metrics & Database Statistics")
-    print("✅ Automated Cache Refresh with UptimeRobot Support")
-    print("✅ Background Operations & Maintenance Tasks")
-    print("✅ Brevo Email Service with Professional Templates")
-    print("✅ Modular Authentication System")
-    print("✅ Advanced Reviews & Rating System with Moderation")
-    print("✅ Complete Modular Support System")
-    print("✅ Ticket Management with SLA Tracking")
-    print("✅ Contact Forms with Rate Limiting")
-    print("✅ Issue Reporting with Cloudinary File Uploads")
-    print("✅ Admin Dashboard Integration")
-    print("✅ Email Automation for All Support Activities")
-    print("✅ Admin Notification System with Redis & Telegram")
-    print("✅ Canned Responses & Support Metrics")
-    print("✅ Multi-channel Admin Alerts (Email + Telegram + Database)")
-    
-    print(f"\n=== CineBrain Registered Routes ===")
-    for rule in app.url_map.iter_rules():
-        print(f"{rule.endpoint}: {rule.rule} [{', '.join(rule.methods)}]")
-    print("=== End of CineBrain Routes ===\n")

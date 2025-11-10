@@ -108,7 +108,7 @@ class AdminEmailService:
             return False
 
 class AdminNotificationService:
-    """Service for managing admin notifications"""
+    """Service for managing admin notifications - EMAIL ONLY, NO TELEGRAM"""
     
     def __init__(self, app, db, models, services):
         self.app = app
@@ -130,15 +130,8 @@ class AdminNotificationService:
         if not self.SupportMetrics:
             logger.warning("⚠️ SupportMetrics model not available")
         
-        # Telegram service
-        try:
-            from admin.telegram import TelegramAdminService
-            self.telegram_service = TelegramAdminService
-        except ImportError:
-            self.telegram_service = None
-            logger.warning("Telegram service not available for admin notifications")
-        
-        logger.info("✅ Admin notification service initialized")
+        # REMOVED: Telegram service integration for support
+        logger.info("✅ Admin notification service initialized (EMAIL ONLY)")
     
     def _init_redis(self):
         """Initialize Redis connection for admin notifications"""
@@ -171,11 +164,10 @@ class AdminNotificationService:
                           related_content_id: int = None, is_urgent: bool = False,
                           action_required: bool = False, action_url: str = None,
                           metadata: dict = None):
-        """Create a new admin notification"""
+        """Create a new admin notification - EMAIL ONLY"""
         try:
             if not self.AdminNotification:
                 logger.warning("AdminNotification model not available, skipping database notification")
-                # Still proceed with other notification methods
             else:
                 # Create database notification
                 notification = self.AdminNotification(
@@ -195,19 +187,10 @@ class AdminNotificationService:
                 self.db.session.commit()
                 logger.info(f"✅ Database notification created: {title}")
             
-            # Send Telegram notification
-            if self.telegram_service:
-                try:
-                    self.telegram_service.send_admin_notification(
-                        notification_type, 
-                        f"{title}\n\n{message}", 
-                        is_urgent
-                    )
-                    logger.info(f"✅ Telegram notification sent: {title}")
-                except Exception as e:
-                    logger.warning(f"Telegram notification failed: {e}")
+            # REMOVED: Telegram notification for support
+            # Support notifications should ONLY go to email
             
-            # Send email notification
+            # ✅ KEEP ONLY EMAIL notifications for admin support
             if self.email_service and self.email_service.is_configured:
                 try:
                     # Get admin emails
@@ -221,11 +204,11 @@ class AdminNotificationService:
                     
                     if admin_emails:
                         self.email_service.send_admin_notification(title, message, admin_emails, is_urgent)
-                        logger.info(f"✅ Email notifications sent to {len(admin_emails)} admins")
+                        logger.info(f"✅ Email notifications sent to {len(admin_emails)} admins: {title}")
                 except Exception as e:
                     logger.warning(f"Admin email notification failed: {e}")
             
-            # Store in Redis for real-time updates
+            # Store in Redis for real-time dashboard updates only
             if self.redis_client:
                 try:
                     notification_data = {
@@ -245,7 +228,7 @@ class AdminNotificationService:
                 except Exception as e:
                     logger.error(f"Redis notification error: {e}")
             
-            logger.info(f"✅ Admin notification created successfully: {title}")
+            logger.info(f"✅ Admin notification created successfully (EMAIL ONLY): {title}")
             return notification if self.AdminNotification else True
             
         except Exception as e:
@@ -255,7 +238,7 @@ class AdminNotificationService:
             return None
     
     def notify_new_ticket(self, ticket):
-        """Notify admins about new support ticket"""
+        """Notify admins about new support ticket - EMAIL ONLY"""
         try:
             is_urgent = ticket.priority == 'urgent'
             
@@ -276,12 +259,12 @@ class AdminNotificationService:
                     'user_email': ticket.user_email
                 }
             )
-            logger.info(f"✅ New ticket notification sent for #{ticket.ticket_number}")
+            logger.info(f"✅ New ticket notification sent (EMAIL): #{ticket.ticket_number}")
         except Exception as e:
             logger.error(f"❌ Error notifying new ticket: {e}")
     
     def notify_sla_breach(self, ticket):
-        """Notify admins about SLA breach"""
+        """Notify admins about SLA breach - EMAIL ONLY"""
         try:
             self.create_notification(
                 NotificationType.SLA_BREACH,
@@ -299,12 +282,12 @@ class AdminNotificationService:
                     'sla_deadline': ticket.sla_deadline.isoformat() if ticket.sla_deadline else None
                 }
             )
-            logger.info(f"✅ SLA breach notification sent for #{ticket.ticket_number}")
+            logger.info(f"✅ SLA breach notification sent (EMAIL): #{ticket.ticket_number}")
         except Exception as e:
             logger.error(f"❌ Error notifying SLA breach: {e}")
     
     def notify_feedback_received(self, feedback):
-        """Notify admins about new feedback"""
+        """Notify admins about new feedback - EMAIL ONLY"""
         try:
             feedback_type = getattr(feedback, 'feedback_type', 'general')
             rating = getattr(feedback, 'rating', 0)
@@ -324,12 +307,12 @@ class AdminNotificationService:
                     'rating': rating
                 }
             )
-            logger.info(f"✅ Feedback notification sent for feedback #{feedback.id}")
+            logger.info(f"✅ Feedback notification sent (EMAIL): feedback #{feedback.id}")
         except Exception as e:
             logger.error(f"❌ Error notifying feedback: {e}")
     
     def notify_system_alert(self, alert_type: str, title: str, details: str, is_urgent: bool = False):
-        """Notify admins about system alerts"""
+        """Notify admins about system alerts - EMAIL ONLY"""
         try:
             self.create_notification(
                 NotificationType.SYSTEM_ALERT,
@@ -345,7 +328,7 @@ class AdminNotificationService:
                     'timestamp': datetime.utcnow().isoformat()
                 }
             )
-            logger.info(f"✅ System alert notification sent: {title}")
+            logger.info(f"✅ System alert notification sent (EMAIL): {title}")
         except Exception as e:
             logger.error(f"❌ Error notifying system alert: {e}")
 
@@ -370,14 +353,14 @@ class AdminService:
         self.ContentService = services.get('ContentService')
         self.cache = services.get('cache')
         
-        # Telegram service for recommendations
+        # ✅ KEEP: Telegram service for content recommendations ONLY
         try:
             from admin.telegram import TelegramService
             self.telegram_service = TelegramService
         except ImportError:
             self.telegram_service = None
         
-        # Notification service
+        # Notification service (EMAIL ONLY for support)
         self.notification_service = AdminNotificationService(app, db, models, services)
         
         logger.info("✅ Admin service initialized")
@@ -506,7 +489,7 @@ class AdminService:
             self.db.session.add(content)
             self.db.session.commit()
             
-            # Send notification
+            # Send notification (EMAIL ONLY)
             if self.notification_service:
                 try:
                     self.notification_service.create_notification(
@@ -534,7 +517,7 @@ class AdminService:
             raise e
     
     def create_recommendation(self, admin_user, content_id, recommendation_type, description):
-        """Create admin recommendation"""
+        """Create admin recommendation - TELEGRAM FOR PUBLIC CHANNEL ONLY"""
         try:
             # Get or find content
             content = self.Content.query.get(content_id)
@@ -556,7 +539,7 @@ class AdminService:
             self.db.session.add(admin_rec)
             self.db.session.commit()
             
-            # Send to Telegram channel
+            # ✅ KEEP: Send to Telegram channel for content recommendations
             telegram_success = False
             if self.telegram_service:
                 try:
@@ -567,7 +550,7 @@ class AdminService:
                 except Exception as e:
                     logger.warning(f"Telegram send failed: {e}")
             
-            # Create notification
+            # Create notification (EMAIL ONLY)
             if self.notification_service:
                 try:
                     self.notification_service.create_notification(

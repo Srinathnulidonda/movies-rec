@@ -7,7 +7,6 @@ import threading
 import time
 import telebot
 from datetime import datetime, timedelta
-from sqlalchemy import func, and_
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -31,168 +30,8 @@ if TELEGRAM_BOT_TOKEN:
 else:
     logger.warning("TELEGRAM_BOT_TOKEN not set - Telegram notifications disabled")
 
-class TelegramAdminService:
-    """Service for sending admin notifications via Telegram"""
-    
-    @staticmethod
-    def send_admin_notification(notification_type: str, message: str, is_urgent: bool = False):
-        """Send notification to admin chat"""
-        try:
-            if not bot or not TELEGRAM_ADMIN_CHAT_ID:
-                logger.warning("Telegram admin notification skipped - not configured")
-                return False
-            
-            icon_map = {
-                'new_ticket': '🎫',
-                'urgent_ticket': '🚨',
-                'sla_breach': '⚠️',
-                'feedback': '📝',
-                'system_alert': '🔔',
-                'recommendation': '🎬',
-                'user_activity': '👤',
-                'content_added': '🎭',
-                'daily_summary': '📊'
-            }
-            
-            icon = icon_map.get(notification_type, '📢')
-            priority = "🚨 URGENT" if is_urgent else "📋 NORMAL"
-            
-            formatted_message = f"""
-{icon} **CineBrain Admin Alert**
-
-**Priority:** {priority}
-**Type:** {notification_type.replace('_', ' ').title()}
-**Time:** {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}
-
-**Message:**
-{message}
-
-**Dashboard:** [View Admin Panel](https://cinebrain.vercel.app/admin)
-
-#AdminAlert #CineBrain #{notification_type}
-            """
-            
-            bot.send_message(
-                chat_id=TELEGRAM_ADMIN_CHAT_ID,
-                text=formatted_message,
-                parse_mode='Markdown'
-            )
-            
-            logger.info(f"✅ Telegram admin notification sent: {notification_type}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ Telegram admin notification error: {e}")
-            return False
-    
-    @staticmethod
-    def send_support_summary(support_ticket_model, feedback_model):
-        """Send daily support summary"""
-        try:
-            if not bot or not TELEGRAM_ADMIN_CHAT_ID:
-                logger.warning("Support summary skipped - Telegram not configured")
-                return False
-            
-            if not support_ticket_model:
-                logger.warning("Support summary skipped - support system not available")
-                return False
-            
-            today = datetime.utcnow().date()
-            
-            # Get ticket statistics
-            new_tickets = support_ticket_model.query.filter(
-                func.date(support_ticket_model.created_at) == today
-            ).count()
-            
-            resolved_tickets = support_ticket_model.query.filter(
-                func.date(support_ticket_model.resolved_at) == today
-            ).count()
-            
-            try:
-                from support.tickets import TicketStatus, TicketPriority
-                
-                open_tickets = support_ticket_model.query.filter(
-                    support_ticket_model.status.in_([TicketStatus.OPEN, TicketStatus.IN_PROGRESS])
-                ).count()
-                
-                urgent_tickets = support_ticket_model.query.filter(
-                    and_(
-                        support_ticket_model.priority == TicketPriority.URGENT,
-                        support_ticket_model.status.in_([TicketStatus.OPEN, TicketStatus.IN_PROGRESS])
-                    )
-                ).count()
-                
-            except ImportError:
-                open_tickets = 0
-                urgent_tickets = 0
-            
-            # Get feedback count
-            new_feedback = 0
-            if feedback_model:
-                new_feedback = feedback_model.query.filter(
-                    func.date(feedback_model.created_at) == today
-                ).count()
-            
-            message = f"""📊 **Daily Support Summary**
-
-**Today's Activity:**
-🎫 New Tickets: {new_tickets}
-✅ Resolved: {resolved_tickets}
-📋 Open Tickets: {open_tickets}
-🚨 Urgent: {urgent_tickets}
-💬 New Feedback: {new_feedback}
-
-**Status:** {'🟢 Good' if urgent_tickets == 0 else '🟡 Attention Needed' if urgent_tickets < 5 else '🔴 Critical'}
-
-#DailySummary #Support #CineBrain"""
-            
-            return TelegramAdminService.send_admin_notification('daily_summary', message)
-            
-        except Exception as e:
-            logger.error(f"❌ Support summary error: {e}")
-            return False
-    
-    @staticmethod
-    def send_system_alert(alert_type: str, title: str, details: str):
-        """Send system alert notification"""
-        try:
-            if not bot or not TELEGRAM_ADMIN_CHAT_ID:
-                logger.warning("System alert skipped - Telegram not configured")
-                return False
-            
-            alert_icons = {
-                'database_error': '🔴',
-                'cache_error': '🟡',
-                'api_error': '🔌',
-                'high_load': '📈',
-                'security_alert': '🔒',
-                'backup_failed': '💾'
-            }
-            
-            icon = alert_icons.get(alert_type, '⚠️')
-            
-            message = f"""
-{icon} **System Alert**
-
-**Alert Type:** {title}
-**Time:** {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}
-
-**Details:**
-{details}
-
-**Action Required:** Please check the admin dashboard for more details.
-
-#SystemAlert #CineBrain #{alert_type}
-            """
-            
-            return TelegramAdminService.send_admin_notification('system_alert', message, is_urgent=True)
-            
-        except Exception as e:
-            logger.error(f"❌ System alert error: {e}")
-            return False
-
 class TelegramService:
-    """Service for sending public content recommendations to Telegram channel"""
+    """Service for sending PUBLIC content recommendations to Telegram channel - CONTENT ONLY"""
     
     @staticmethod
     def send_admin_recommendation(content, admin_name, description):
@@ -256,10 +95,11 @@ class TelegramService:
             return False
     
     @staticmethod
-    def send_new_content_alert(content, content_count):
-        """Send alert about new content added"""
+    def send_new_content_alert(content, content_count=1):
+        """Send alert about new content added to the platform"""
         try:
             if not bot or not TELEGRAM_CHANNEL_ID:
+                logger.warning("New content alert skipped - channel not configured")
                 return False
             
             if content_count > 1:
@@ -292,16 +132,91 @@ Now available on CineBrain! 🍿
             logger.error(f"❌ New content alert error: {e}")
             return False
 
-class TelegramScheduler:
-    """Background scheduler for Telegram notifications"""
+class TelegramAdminService:
+    """Service for admin-related Telegram notifications - CONTENT MANAGEMENT ONLY"""
     
-    def __init__(self, support_models=None):
-        self.support_ticket_model = support_models.get('SupportTicket') if support_models else None
-        self.feedback_model = support_models.get('Feedback') if support_models else None
+    @staticmethod
+    def send_content_notification(content_title, admin_name, action_type="added"):
+        """Send notification about content management actions to admin chat"""
+        try:
+            if not bot or not TELEGRAM_ADMIN_CHAT_ID:
+                logger.warning("Telegram content notification skipped - admin chat not configured")
+                return False
+            
+            message = f"""
+🎬 **Content {action_type.title()}**
+
+**{content_title}**
+**Admin:** {admin_name}
+**Action:** {action_type}
+**Time:** {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}
+
+#ContentManagement #CineBrain
+            """
+            
+            bot.send_message(
+                chat_id=TELEGRAM_ADMIN_CHAT_ID,
+                text=message,
+                parse_mode='Markdown'
+            )
+            
+            logger.info(f"✅ Telegram content notification sent: {action_type} - {content_title}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Telegram content notification error: {e}")
+            return False
+    
+    @staticmethod
+    def send_content_milestone(milestone_type, count, details=""):
+        """Send milestone notifications for content achievements"""
+        try:
+            if not bot or not TELEGRAM_ADMIN_CHAT_ID:
+                return False
+            
+            milestone_icons = {
+                'content_count': '🎬',
+                'user_milestone': '👥',
+                'recommendation_milestone': '⭐',
+                'review_milestone': '📝'
+            }
+            
+            icon = milestone_icons.get(milestone_type, '🎉')
+            
+            message = f"""
+{icon} **Milestone Achieved!**
+
+**Type:** {milestone_type.replace('_', ' ').title()}
+**Count:** {count}
+**Details:** {details}
+**Time:** {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}
+
+#Milestone #CineBrain #{milestone_type}
+            """
+            
+            bot.send_message(
+                chat_id=TELEGRAM_ADMIN_CHAT_ID,
+                text=message,
+                parse_mode='Markdown'
+            )
+            
+            logger.info(f"✅ Milestone notification sent: {milestone_type} - {count}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Milestone notification error: {e}")
+            return False
+
+class TelegramScheduler:
+    """Background scheduler for Telegram notifications - CONTENT ONLY"""
+    
+    def __init__(self, app=None):
+        self.app = app
         self.running = False
+        # REMOVED: Support-related monitoring
     
     def start_scheduler(self):
-        """Start the background scheduler"""
+        """Start the background scheduler - CONTENT RECOMMENDATIONS ONLY"""
         if self.running:
             return
         
@@ -312,98 +227,91 @@ class TelegramScheduler:
                 try:
                     now = datetime.utcnow()
                     
-                    # Send daily summary at 9:00 UTC
-                    if now.hour == 9 and now.minute == 0:
-                        if self.support_ticket_model:
-                            TelegramAdminService.send_support_summary(
-                                self.support_ticket_model, 
-                                self.feedback_model
-                            )
+                    # Only content-related periodic tasks
+                    # Example: Daily content statistics (if needed)
+                    if now.hour == 9 and now.minute == 0:  # 9 AM UTC
+                        try:
+                            if self.app:
+                                with self.app.app_context():
+                                    self._send_daily_content_summary()
+                        except Exception as e:
+                            logger.error(f"Daily content summary error: {e}")
                     
-                    # Check for urgent tickets every 30 minutes during work hours
-                    if 8 <= now.hour <= 20 and now.minute % 30 == 0:
-                        self._check_urgent_tickets()
+                    # Content milestone checks every 6 hours
+                    if now.hour % 6 == 0 and now.minute == 0:
+                        try:
+                            if self.app:
+                                with self.app.app_context():
+                                    self._check_content_milestones()
+                        except Exception as e:
+                            logger.error(f"Content milestone check error: {e}")
                     
-                    time.sleep(60)  # Check every minute
+                    # Sleep for 1 hour
+                    time.sleep(3600)
                     
                 except Exception as e:
-                    logger.error(f"Telegram scheduler error: {e}")
+                    logger.error(f"Telegram content scheduler error: {e}")
                     time.sleep(300)  # Wait 5 minutes on error
         
-        thread = threading.Thread(target=scheduler_worker, daemon=True, name="TelegramScheduler")
+        thread = threading.Thread(target=scheduler_worker, daemon=True, name="TelegramContentScheduler")
         thread.start()
-        logger.info("✅ Telegram scheduler started")
+        logger.info("✅ Telegram content scheduler started")
     
     def stop_scheduler(self):
         """Stop the scheduler"""
         self.running = False
-        logger.info("🛑 Telegram scheduler stopped")
+        logger.info("🛑 Telegram content scheduler stopped")
     
-    def _check_urgent_tickets(self):
-        """Check for urgent tickets and send alerts"""
+    def _send_daily_content_summary(self):
+        """Send daily content statistics summary"""
         try:
-            if not self.support_ticket_model:
-                return
-            
-            from support.tickets import TicketStatus, TicketPriority
-            
-            # Check for urgent tickets without response in last hour
-            hour_ago = datetime.utcnow() - timedelta(hours=1)
-            urgent_tickets = self.support_ticket_model.query.filter(
-                and_(
-                    self.support_ticket_model.priority == TicketPriority.URGENT,
-                    self.support_ticket_model.status.in_([TicketStatus.OPEN, TicketStatus.IN_PROGRESS]),
-                    self.support_ticket_model.first_response_at.is_(None),
-                    self.support_ticket_model.created_at >= hour_ago
-                )
-            ).all()
-            
-            for ticket in urgent_tickets:
-                message = f"""Urgent ticket #{ticket.ticket_number} needs immediate attention!
-
-Subject: {ticket.subject}
-From: {ticket.user_name}
-Created: {ticket.created_at.strftime('%H:%M UTC')}
-
-No response yet - SLA deadline approaching!"""
-                
-                TelegramAdminService.send_admin_notification(
-                    'urgent_ticket', 
-                    message, 
-                    is_urgent=True
-                )
-            
-        except ImportError:
-            pass  # Support system not available
+            # This would query your content database for daily stats
+            # For now, just a placeholder
+            TelegramAdminService.send_content_notification(
+                "Daily Summary", 
+                "System", 
+                "generated daily content report"
+            )
+            logger.info("✅ Daily content summary sent")
         except Exception as e:
-            logger.error(f"Error checking urgent tickets: {e}")
+            logger.error(f"Daily content summary error: {e}")
+    
+    def _check_content_milestones(self):
+        """Check for content-related milestones"""
+        try:
+            # This would check for milestones like:
+            # - 1000th movie added
+            # - 100th admin recommendation
+            # - etc.
+            logger.debug("Content milestone check completed")
+        except Exception as e:
+            logger.error(f"Content milestone check error: {e}")
 
 # Global scheduler instance
 telegram_scheduler = None
 
 def init_telegram_service(app, db, models, services):
-    """Initialize Telegram service"""
+    """Initialize Telegram service - CONTENT ONLY"""
     global telegram_scheduler
     
     try:
-        # Initialize scheduler with support models
-        support_models = {
-            'SupportTicket': models.get('SupportTicket'),
-            'Feedback': models.get('Feedback')
-        }
-        
-        telegram_scheduler = TelegramScheduler(support_models)
+        # Initialize scheduler for content only
+        telegram_scheduler = TelegramScheduler(app)
         
         # Start scheduler if bot is configured
         if bot:
             telegram_scheduler.start_scheduler()
-            logger.info("✅ Telegram service initialized successfully")
+            logger.info("✅ Telegram content service initialized successfully")
+            logger.info("   - Content recommendations: Active")
+            logger.info("   - New content alerts: Active")
+            logger.info("   - Admin content notifications: Active")
+            logger.info("   - Support notifications: DISABLED (Email Only)")
         else:
             logger.warning("⚠️ Telegram service initialized but bot not configured")
         
         return {
-            'telegram_admin_service': TelegramAdminService,
-            'telegram_service': TelegramService,
+            'telegram_service': TelegramService,  # For content recommendations
+            'telegram_admin_service': TelegramAdminService,  # For admin content notifications
             'telegram_scheduler': telegram_scheduler
         }
         
@@ -416,3 +324,4 @@ def cleanup_telegram_service():
     global telegram_scheduler
     if telegram_scheduler:
         telegram_scheduler.stop_scheduler()
+        logger.info("✅ Telegram content service cleaned up")

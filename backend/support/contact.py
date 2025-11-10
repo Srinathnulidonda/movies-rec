@@ -22,6 +22,9 @@ class ContactService:
         self.email_service = self._initialize_email_service(services)
         self.redis_client = services.get('redis_client')
         
+        # Get admin notification service if available
+        self.admin_notification_service = services.get('admin_notification_service')
+        
         logger.info("✅ ContactService initialized successfully")
     
     def _initialize_email_service(self, services):
@@ -67,7 +70,7 @@ class ContactService:
         }
     
     def submit_contact(self):
-        """Handle contact form submission with enhanced notifications"""
+        """Handle contact form submission with enhanced notifications - FIXED"""
         try:
             data = request.get_json()
             
@@ -105,7 +108,7 @@ class ContactService:
             
             # Send notifications
             self._send_user_confirmation(data)
-            self._send_admin_notification(contact_message, data)
+            self._send_admin_notification_enhanced(contact_message, data)
             
             logger.info(f"✅ Contact form submitted by {data['email']}")
             
@@ -173,23 +176,75 @@ class ContactService:
             logger.error(f"❌ Error sending contact confirmation: {e}")
     
     def _send_admin_notification(self, contact_message, data):
-        """Send admin notification email"""
+        """Send admin notification email - DEPRECATED, use enhanced version"""
+        self._send_admin_notification_enhanced(contact_message, data)
+    
+    def _send_admin_notification_enhanced(self, contact_message, data):
+        """Send enhanced admin notification email - FIXED"""
         try:
+            # Check if the message is from a potential partner/business inquiry
+            is_business_inquiry = any([
+                data.get('company'),
+                'partnership' in data.get('subject', '').lower(),
+                'business' in data.get('subject', '').lower(),
+                'collaborate' in data.get('message', '').lower()
+            ])
+            
+            # Try using admin notification service first for general feedback
+            if self.admin_notification_service and hasattr(self.admin_notification_service, 'notify_feedback_received'):
+                try:
+                    # Create a feedback-like object for the notification service
+                    class ContactAsFeedback:
+                        def __init__(self, contact, data):
+                            self.id = contact.id
+                            self.user_name = data['name']
+                            self.user_email = data['email']
+                            self.subject = data['subject']
+                            self.feedback_type = 'business_inquiry' if is_business_inquiry else 'contact'
+                            self.rating = None
+                    
+                    feedback_obj = ContactAsFeedback(contact_message, data)
+                    self.admin_notification_service.notify_feedback_received(feedback_obj)
+                    logger.info(f"✅ Admin notification sent via notification service for contact from {data['email']}")
+                except Exception as e:
+                    logger.warning(f"Admin notification service failed, using direct email: {e}")
+            
+            # Always send direct email for contact forms (in addition to notification service)
             if not self.email_service:
                 logger.warning("Email service not available - cannot send admin notification")
                 return
             
-            admin_email = os.environ.get('ADMIN_EMAIL', 'srinathnulidonda.dev@gmail.com')
+            # Get admin email(s)
+            admin_emails = []
+            
+            # Add environment admin email
+            env_admin_email = os.environ.get('ADMIN_EMAIL', 'srinathnulidonda.dev@gmail.com')
+            if env_admin_email:
+                admin_emails.append(env_admin_email)
+            
+            # Add database admin emails
+            admin_users = self.User.query.filter_by(is_admin=True).all()
+            for admin_user in admin_users:
+                if admin_user.email and admin_user.email not in admin_emails:
+                    admin_emails.append(admin_user.email)
+            
+            if not admin_emails:
+                logger.warning("No admin emails configured for notifications")
+                return
+            
             admin_link = f"{os.environ.get('FRONTEND_URL', 'https://cinebrain.vercel.app')}/admin/support/contact/{contact_message.id}"
             
             from auth.support_mail_templates import get_support_template
             
+            # Determine priority based on content
+            priority = 'urgent' if is_business_inquiry else 'high'
+            
             html, text = get_support_template(
                 'admin_notification',
                 notification_type='contact',
-                title=f"New Contact Message: {data['subject']}",
+                title=f"{'🤝 Business Inquiry' if is_business_inquiry else '📧 New Contact'}: {data['subject']}",
                 message=f"""
-                <p><strong>New contact message received:</strong></p>
+                <p><strong>{'Business inquiry' if is_business_inquiry else 'New contact message'} received:</strong></p>
                 <ul>
                     <li><strong>From:</strong> {data['name']} ({data['email']})</li>
                     <li><strong>Subject:</strong> {data['subject']}</li>
@@ -197,10 +252,11 @@ class ContactService:
                     {f"<li><strong>Company:</strong> {data.get('company')}</li>" if data.get('company') else ''}
                     <li><strong>IP Address:</strong> {contact_message.ip_address}</li>
                     <li><strong>User Agent:</strong> {contact_message.user_agent}</li>
+                    <li><strong>Submitted:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M UTC')}</li>
                 </ul>
                 <p><strong>Message:</strong></p>
-                <div style="background: #f8f9fa; padding: 15px; border-left: 4px solid #28a745; margin: 15px 0;">
-                    {data['message']}
+                <div style="background: #f8f9fa; padding: 15px; border-left: 4px solid {'#10b981' if is_business_inquiry else '#28a745'}; margin: 15px 0;">
+                    {data['message'].replace(chr(10), '<br>')}
                 </div>
                 <p style="margin-top: 20px;">
                     <a href="{admin_link}" style="background: #113CCF; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block;">
@@ -211,16 +267,22 @@ class ContactService:
                 user_email=data['email']
             )
             
-            self.email_service.queue_email(
-                to=admin_email,
-                subject=f"📧 New Contact: {data['subject']} - CineBrain Admin",
-                html=html,
-                text=text,
-                priority='high',
-                to_name='CineBrain Admin'
-            )
+            # Send to all admin emails
+            for admin_email in admin_emails:
+                try:
+                    self.email_service.queue_email(
+                        to=admin_email,
+                        subject=f"{'🤝' if is_business_inquiry else '📧'} New Contact: {data['subject']} - CineBrain Admin",
+                        html=html,
+                        text=text,
+                        priority=priority,
+                        to_name='CineBrain Admin'
+                    )
+                    logger.info(f"✅ Admin notification email queued for {admin_email}")
+                except Exception as e:
+                    logger.error(f"Failed to queue email for admin {admin_email}: {e}")
             
-            logger.info(f"✅ Admin notification email queued for contact from {data['email']}")
+            logger.info(f"✅ Admin notifications sent for contact from {data['email']}")
             
         except Exception as e:
             logger.error(f"❌ Error sending admin notification: {e}")
