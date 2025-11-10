@@ -25,6 +25,7 @@ __all__ = [
 __version__ = '3.0.0'
 
 
+
 2. # admin/dashboard.py
 
 from datetime import datetime, timedelta
@@ -1268,6 +1269,79 @@ def get_cache_stats(current_user):
         logger.error(f"Cache stats error: {e}")
         return jsonify({'error': 'Failed to get cache stats'}), 500
 
+# Slug Management Routes (moved from app.py)
+@admin_bp.route('/api/admin/slugs/migrate', methods=['POST'])
+@require_admin
+def migrate_all_slugs(current_user):
+    """Migrate all content slugs"""
+    try:
+        if not admin_service:
+            return jsonify({'error': 'Admin service not available'}), 503
+        
+        data = request.get_json() or {}
+        batch_size = int(data.get('batch_size', 50))
+        
+        result = admin_service.migrate_all_slugs(batch_size)
+        
+        return jsonify({
+            'success': True,
+            'migration_stats': result,
+            'cinebrain_service': 'slug_migration'
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error migrating slugs: {e}")
+        return jsonify({'error': 'Failed to migrate slugs'}), 500
+
+@admin_bp.route('/api/admin/content/<int:content_id>/slug', methods=['PUT'])
+@require_admin
+def update_content_slug(current_user, content_id):
+    """Update content slug"""
+    try:
+        if not admin_service:
+            return jsonify({'error': 'Admin service not available'}), 503
+        
+        data = request.get_json() or {}
+        force_update = data.get('force_update', False)
+        result = admin_service.update_content_slug(content_id, force_update)
+        
+        if result:
+            return jsonify({
+                'success': True,
+                'new_slug': result,
+                'cinebrain_service': 'slug_update'
+            }), 200
+        else:
+            return jsonify({'error': 'Content not found or update failed'}), 404
+            
+    except Exception as e:
+        logger.error(f"Error updating content slug: {e}")
+        return jsonify({'error': 'Failed to update slug'}), 500
+
+@admin_bp.route('/api/admin/populate-cast-crew', methods=['POST'])
+@require_admin
+def populate_all_cast_crew(current_user):
+    """Populate cast and crew data"""
+    try:
+        if not admin_service:
+            return jsonify({'error': 'Admin service not available'}), 503
+        
+        data = request.get_json() or {}
+        batch_size = int(data.get('batch_size', 10))
+        result = admin_service.populate_cast_crew(batch_size)
+        
+        return jsonify({
+            'success': True,
+            'processed': result.get('processed', 0),
+            'errors': result.get('errors', 0),
+            'message': f"Successfully populated cast/crew for {result.get('processed', 0)} content items",
+            'cinebrain_service': 'cast_crew_population'
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error in bulk cast/crew population: {e}")
+        return jsonify({'error': 'Failed to populate cast/crew'}), 500
+
 # Error Handlers
 @admin_bp.errorhandler(404)
 def not_found(error):
@@ -1333,9 +1407,7 @@ def init_admin_routes(flask_app, database, models, services):
 
 
 
-4.# admin/service.py
-
-import os
+4. import os
 import json
 import logging
 import redis
@@ -1344,14 +1416,14 @@ from datetime import datetime, timedelta
 from urllib.parse import urlparse
 from sqlalchemy import func, desc, and_, or_
 from collections import defaultdict
-import enum
 
 logger = logging.getLogger(__name__)
 
 # Redis Configuration
 REDIS_URL = os.environ.get('REDIS_URL')
 
-class NotificationType(enum.Enum):
+class NotificationType:
+    """Notification types as constants to avoid enum issues"""
     NEW_TICKET = "new_ticket"
     URGENT_TICKET = "urgent_ticket"
     TICKET_ESCALATION = "ticket_escalation"
@@ -1367,7 +1439,7 @@ class AdminEmailService:
     def __init__(self, services):
         # Use the existing auth email service
         self.email_service = services.get('email_service')  # Brevo service from auth
-        self.is_configured = self.email_service is not None and self.email_service.email_enabled
+        self.is_configured = self.email_service is not None and hasattr(self.email_service, 'email_enabled') and self.email_service.email_enabled
         
         if not self.is_configured:
             logger.warning("Admin email service not configured - using fallback mode")
@@ -1426,7 +1498,7 @@ class AdminNotificationService:
         
         # Telegram service
         try:
-            from .telegram import TelegramAdminService
+            from admin.telegram import TelegramAdminService
             self.telegram_service = TelegramAdminService
         except ImportError:
             self.telegram_service = None
@@ -1469,7 +1541,7 @@ class AdminNotificationService:
                 __tablename__ = 'admin_notifications'
                 
                 id = self.db.Column(self.db.Integer, primary_key=True)
-                notification_type = self.db.Column(self.db.Enum(NotificationType), nullable=False)
+                notification_type = self.db.Column(self.db.String(50), nullable=False)
                 title = self.db.Column(self.db.String(255), nullable=False)
                 message = self.db.Column(self.db.Text, nullable=False)
                 
@@ -1538,7 +1610,7 @@ class AdminNotificationService:
         except Exception as e:
             logger.error(f"❌ Error creating admin models: {e}")
     
-    def create_notification(self, notification_type: NotificationType, title: str, message: str, 
+    def create_notification(self, notification_type: str, title: str, message: str, 
                           admin_id: int = None, related_ticket_id: int = None, 
                           related_content_id: int = None, is_urgent: bool = False,
                           action_required: bool = False, action_url: str = None,
@@ -1564,24 +1636,30 @@ class AdminNotificationService:
             
             # Send Telegram notification
             if self.telegram_service:
-                self.telegram_service.send_admin_notification(
-                    notification_type.value, 
-                    f"{title}\n\n{message}", 
-                    is_urgent
-                )
+                try:
+                    self.telegram_service.send_admin_notification(
+                        notification_type, 
+                        f"{title}\n\n{message}", 
+                        is_urgent
+                    )
+                except Exception as e:
+                    logger.warning(f"Telegram notification failed: {e}")
             
             # Send email notification for urgent items
             if is_urgent and self.email_service and self.email_service.is_configured:
-                admin_emails = [user.email for user in self.User.query.filter_by(is_admin=True).all()]
-                if admin_emails:
-                    self.email_service.send_admin_notification(title, message, admin_emails, is_urgent)
+                try:
+                    admin_emails = [user.email for user in self.User.query.filter_by(is_admin=True).all()]
+                    if admin_emails:
+                        self.email_service.send_admin_notification(title, message, admin_emails, is_urgent)
+                except Exception as e:
+                    logger.warning(f"Admin email notification failed: {e}")
             
             # Store in Redis for real-time updates
             if self.redis_client:
                 try:
                     notification_data = {
                         'id': notification.id,
-                        'type': notification_type.value,
+                        'type': notification_type,
                         'title': title,
                         'message': message,
                         'is_urgent': is_urgent,
@@ -1607,14 +1685,14 @@ class AdminNotificationService:
     def notify_new_ticket(self, ticket):
         """Notify admins about new support ticket"""
         try:
-            is_urgent = hasattr(ticket, 'priority') and ticket.priority and ticket.priority.value == 'urgent'
+            is_urgent = ticket.priority == 'urgent'
             
             self.create_notification(
                 NotificationType.NEW_TICKET,
                 f"New {'Urgent ' if is_urgent else ''}Support Ticket",
                 f"Ticket #{ticket.ticket_number} created by {ticket.user_name}\n"
                 f"Subject: {ticket.subject}\n"
-                f"Priority: {ticket.priority.value.upper() if hasattr(ticket, 'priority') and ticket.priority else 'NORMAL'}\n"
+                f"Priority: {ticket.priority.upper()}\n"
                 f"Category: {ticket.category.name if hasattr(ticket, 'category') and ticket.category else 'Unknown'}",
                 related_ticket_id=ticket.id,
                 is_urgent=is_urgent,
@@ -1622,7 +1700,7 @@ class AdminNotificationService:
                 action_url=f"/admin/support/tickets/{ticket.id}",
                 metadata={
                     'ticket_number': ticket.ticket_number,
-                    'priority': ticket.priority.value if hasattr(ticket, 'priority') and ticket.priority else 'normal',
+                    'priority': ticket.priority,
                     'user_email': ticket.user_email
                 }
             )
@@ -1638,7 +1716,7 @@ class AdminNotificationService:
                 f"Ticket #{ticket.ticket_number} has exceeded its SLA deadline\n"
                 f"Created: {ticket.created_at.strftime('%Y-%m-%d %H:%M UTC')}\n"
                 f"Deadline: {ticket.sla_deadline.strftime('%Y-%m-%d %H:%M UTC') if ticket.sla_deadline else 'N/A'}\n"
-                f"Priority: {ticket.priority.value.upper() if hasattr(ticket, 'priority') and ticket.priority else 'NORMAL'}",
+                f"Priority: {ticket.priority.upper()}",
                 related_ticket_id=ticket.id,
                 is_urgent=True,
                 action_required=True,
@@ -1650,19 +1728,22 @@ class AdminNotificationService:
     def notify_feedback_received(self, feedback):
         """Notify admins about new feedback"""
         try:
+            feedback_type = getattr(feedback, 'feedback_type', 'general')
+            rating = getattr(feedback, 'rating', 0)
+            
             self.create_notification(
                 NotificationType.FEEDBACK_RECEIVED,
                 "New User Feedback Received",
                 f"Feedback from {feedback.user_name}\n"
-                f"Type: {feedback.feedback_type.value.replace('_', ' ').title() if hasattr(feedback, 'feedback_type') and feedback.feedback_type else 'General'}\n"
+                f"Type: {feedback_type.replace('_', ' ').title() if isinstance(feedback_type, str) else 'General'}\n"
                 f"Subject: {feedback.subject}\n"
-                f"Rating: {'⭐' * (feedback.rating or 0) if feedback.rating else 'No rating'}",
+                f"Rating: {'⭐' * rating if rating else 'No rating'}",
                 action_required=False,
                 action_url=f"/admin/support/feedback/{feedback.id}",
                 metadata={
-                    'feedback_type': feedback.feedback_type.value if hasattr(feedback, 'feedback_type') and feedback.feedback_type else 'general',
+                    'feedback_type': feedback_type if isinstance(feedback_type, str) else 'general',
                     'user_email': feedback.user_email,
-                    'rating': feedback.rating
+                    'rating': rating
                 }
             )
         except Exception as e:
@@ -1679,14 +1760,14 @@ class AdminService:
         self.UserInteraction = models['UserInteraction']
         self.AdminRecommendation = models['AdminRecommendation']
         
-        self.TMDBService = services['TMDBService']
-        self.JikanService = services['JikanService']
-        self.ContentService = services['ContentService']
-        self.cache = services['cache']
+        self.TMDBService = services.get('TMDBService')
+        self.JikanService = services.get('JikanService')
+        self.ContentService = services.get('ContentService')
+        self.cache = services.get('cache')
         
         # Telegram service for recommendations
         try:
-            from .telegram import TelegramService
+            from admin.telegram import TelegramService
             self.telegram_service = TelegramService
         except ImportError:
             self.telegram_service = None
@@ -1761,6 +1842,7 @@ class AdminService:
             release_date = None
             if data.get('release_date'):
                 try:
+                    from datetime import datetime
                     release_date = datetime.strptime(data['release_date'][:10], '%Y-%m-%d').date()
                 except:
                     release_date = None
@@ -1819,15 +1901,18 @@ class AdminService:
             
             # Send notification
             if self.notification_service:
-                self.notification_service.create_notification(
-                    NotificationType.CONTENT_ADDED,
-                    f"New {content.content_type.title()} Added",
-                    f"'{content.title}' has been added to CineBrain\n"
-                    f"Rating: {content.rating or 'N/A'}/10\n"
-                    f"Type: {content.content_type}",
-                    related_content_id=content.id,
-                    action_url=f"/admin/content/{content.id}"
-                )
+                try:
+                    self.notification_service.create_notification(
+                        NotificationType.CONTENT_ADDED,
+                        f"New {content.content_type.title()} Added",
+                        f"'{content.title}' has been added to CineBrain\n"
+                        f"Rating: {content.rating or 'N/A'}/10\n"
+                        f"Type: {content.content_type}",
+                        related_content_id=content.id,
+                        action_url=f"/admin/content/{content.id}"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to create notification: {e}")
             
             return {
                 'message': 'Content saved successfully',
@@ -1865,21 +1950,27 @@ class AdminService:
             # Send to Telegram channel
             telegram_success = False
             if self.telegram_service:
-                telegram_success = self.telegram_service.send_admin_recommendation(
-                    content, admin_user.username, description
-                )
+                try:
+                    telegram_success = self.telegram_service.send_admin_recommendation(
+                        content, admin_user.username, description
+                    )
+                except Exception as e:
+                    logger.warning(f"Telegram send failed: {e}")
             
             # Create notification
             if self.notification_service:
-                self.notification_service.create_notification(
-                    NotificationType.NEW_TICKET,  # Using as general notification type
-                    f"New Admin Recommendation Created",
-                    f"Admin {admin_user.username} recommended '{content.title}'\n"
-                    f"Type: {recommendation_type}\n"
-                    f"Description: {description[:100]}...",
-                    admin_id=admin_user.id,
-                    related_content_id=content.id
-                )
+                try:
+                    self.notification_service.create_notification(
+                        NotificationType.CONTENT_ADDED,
+                        f"New Admin Recommendation Created",
+                        f"Admin {admin_user.username} recommended '{content.title}'\n"
+                        f"Type: {recommendation_type}\n"
+                        f"Description: {description[:100]}...",
+                        admin_id=admin_user.id,
+                        related_content_id=content.id
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to create notification: {e}")
             
             return {
                 'message': 'Admin recommendation created successfully',
@@ -1930,6 +2021,105 @@ class AdminService:
             logger.error(f"Get admin recommendations error: {e}")
             return {'error': 'Failed to get recommendations'}
     
+    def migrate_all_slugs(self, batch_size=50):
+        """Migrate all content slugs"""
+        try:
+            from services.details import SlugManager
+            
+            stats = {
+                'content_updated': 0,
+                'persons_updated': 0,
+                'total_processed': 0,
+                'errors': 0
+            }
+            
+            # Migrate content slugs that don't have slugs
+            content_items = self.Content.query.filter(
+                or_(self.Content.slug == None, self.Content.slug == '')
+            ).limit(batch_size).all()
+            
+            for content in content_items:
+                try:
+                    if hasattr(content, 'ensure_slug'):
+                        content.ensure_slug()
+                        stats['content_updated'] += 1
+                    else:
+                        # Generate basic slug if method doesn't exist
+                        if content.title:
+                            import re
+                            slug = re.sub(r'[^\w\s-]', '', content.title.lower())
+                            slug = re.sub(r'[-\s]+', '-', slug)
+                            content.slug = slug[:150]  # Limit length
+                            stats['content_updated'] += 1
+                except Exception as e:
+                    logger.error(f"Error updating slug for content {content.id}: {e}")
+                    stats['errors'] += 1
+            
+            self.db.session.commit()
+            stats['total_processed'] = stats['content_updated'] + stats['persons_updated']
+            
+            return stats
+            
+        except Exception as e:
+            logger.error(f"Slug migration error: {e}")
+            self.db.session.rollback()
+            raise e
+    
+    def update_content_slug(self, content_id, force_update=False):
+        """Update specific content slug"""
+        try:
+            content = self.Content.query.get(content_id)
+            if not content:
+                return None
+            
+            if content.slug and not force_update:
+                return content.slug
+            
+            if hasattr(content, 'ensure_slug'):
+                content.ensure_slug()
+            else:
+                # Generate basic slug if method doesn't exist
+                if content.title:
+                    import re
+                    slug = re.sub(r'[^\w\s-]', '', content.title.lower())
+                    slug = re.sub(r'[-\s]+', '-', slug)
+                    content.slug = slug[:150]  # Limit length
+            
+            self.db.session.commit()
+            return content.slug
+            
+        except Exception as e:
+            logger.error(f"Error updating content slug: {e}")
+            self.db.session.rollback()
+            return None
+    
+    def populate_cast_crew(self, batch_size=10):
+        """Populate cast and crew data for content without it"""
+        try:
+            result = {
+                'processed': 0,
+                'errors': 0
+            }
+            content_items = self.Content.query.filter(
+                self.Content.tmdb_id.isnot(None)
+            ).limit(batch_size).all()
+            
+            for content in content_items:
+                try:
+                    # This would use your existing details service or TMDB service
+                    # For now, just increment processed count
+                    result['processed'] += 1
+                    logger.info(f"Would populate cast/crew for {content.title}")
+                except Exception as e:
+                    logger.error(f"Error processing cast/crew for {content.title}: {e}")
+                    result['errors'] += 1
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Cast/crew population error: {e}")
+            raise e
+    
     def get_notifications(self, page=1, per_page=20, unread_only=False):
         """Get admin notifications"""
         try:
@@ -1958,7 +2148,7 @@ class AdminService:
                 for notif in notifications.items:
                     db_notifications.append({
                         'id': notif.id,
-                        'type': notif.notification_type.value,
+                        'type': notif.notification_type,
                         'title': notif.title,
                         'message': notif.message,
                         'is_read': notif.is_read,

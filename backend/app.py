@@ -1,3 +1,5 @@
+# backend/app.py
+
 from typing import Optional
 from flask import Flask, request, jsonify, session, render_template
 from flask_sqlalchemy import SQLAlchemy
@@ -897,8 +899,20 @@ try:
         services['email_service'] = email_service
     
     # Initialize modular admin
-    init_admin(app, db, models, services)
+    admin_models = init_admin(app, db, models, services)
     app.register_blueprint(admin_bp)
+    
+    # Store admin notification service for monitoring
+    if 'admin_notification_service' not in services:
+        try:
+            from admin.service import AdminNotificationService
+            admin_notification_service = AdminNotificationService(app, db, models, services)
+            services['admin_notification_service'] = admin_notification_service
+            app.admin_notification_service = admin_notification_service
+            logger.info("✅ Admin notification service stored for monitoring")
+        except Exception as e:
+            logger.error(f"❌ Failed to create admin notification service: {e}")
+    
     logger.info("✅ CineBrain modular admin service initialized successfully")
 except Exception as e:
     logger.error(f"❌ Failed to initialize CineBrain modular admin service: {e}")
@@ -997,13 +1011,22 @@ def setup_support_monitoring():
                         overdue_tickets = SupportTicket.query.filter(
                             SupportTicket.sla_deadline < datetime.utcnow(),
                             SupportTicket.sla_breached == False,
-                            SupportTicket.status.in_(['open', 'in_progress'])
+                            SupportTicket.status.in_(['open', 'in_progress'])  # Use string values
                         ).all()
                         
                         for ticket in overdue_tickets:
                             ticket.sla_breached = True
                             try:
                                 logger.warning(f"SLA breached for ticket #{ticket.ticket_number}")
+                                
+                                # Use new admin notification service
+                                admin_notification_service = services.get('admin_notification_service')
+                                if admin_notification_service:
+                                    try:
+                                        admin_notification_service.notify_sla_breach(ticket)
+                                    except Exception as e:
+                                        logger.error(f"CineBrain error sending SLA breach notification: {e}")
+                                        
                             except Exception as e:
                                 logger.error(f"CineBrain error handling SLA breach notification: {e}")
                         
@@ -1013,7 +1036,7 @@ def setup_support_monitoring():
                         
                         # Check for urgent tickets without response
                         urgent_tickets = SupportTicket.query.filter(
-                            SupportTicket.priority == 'urgent',
+                            SupportTicket.priority == 'urgent',  # Use string value
                             SupportTicket.first_response_at.is_(None),
                             SupportTicket.created_at < datetime.utcnow() - timedelta(hours=1)
                         ).all()
@@ -1021,6 +1044,15 @@ def setup_support_monitoring():
                         for ticket in urgent_tickets:
                             try:
                                 logger.warning(f"Urgent ticket #{ticket.ticket_number} needs attention")
+                                
+                                # Notify admin
+                                admin_notification_service = services.get('admin_notification_service')
+                                if admin_notification_service:
+                                    try:
+                                        admin_notification_service.notify_new_ticket(ticket)
+                                    except Exception as e:
+                                        logger.error(f"CineBrain error sending urgent ticket notification: {e}")
+                                        
                             except Exception as e:
                                 logger.error(f"CineBrain error handling urgent ticket notification: {e}")
                         
