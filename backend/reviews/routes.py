@@ -46,7 +46,7 @@ def require_admin():
 # CONTENT REVIEW ROUTES
 # ============================================================================
 
-@reviews_bp.route('/details/<slug>/reviews', methods=['GET'])
+@reviews_bp.route('/api/details/<slug>/reviews', methods=['GET'])
 def get_content_reviews_route(slug):
     """Get reviews for content"""
     try:
@@ -64,7 +64,7 @@ def get_content_reviews_route(slug):
         logger.error(f"Error in get_content_reviews_route: {e}")
         return jsonify({'success': False, 'error': 'Failed to get reviews'}), 500
 
-@reviews_bp.route('/details/<slug>/reviews', methods=['POST'])
+@reviews_bp.route('/api/details/<slug>/reviews', methods=['POST'])
 def submit_review_route(slug):
     """Submit a review"""
     try:
@@ -86,7 +86,7 @@ def submit_review_route(slug):
         logger.error(f"Error in submit_review_route: {e}")
         return jsonify({'success': False, 'error': 'Failed to submit review'}), 500
 
-@reviews_bp.route('/details/<slug>/rating', methods=['POST'])
+@reviews_bp.route('/api/details/<slug>/rating', methods=['POST'])
 def add_rating_route(slug):
     """Add a quick rating (without review text)"""
     try:
@@ -109,7 +109,7 @@ def add_rating_route(slug):
         logger.error(f"Error in add_rating_route: {e}")
         return jsonify({'success': False, 'error': 'Failed to add rating'}), 500
 
-@reviews_bp.route('/details/<slug>/rating', methods=['GET'])
+@reviews_bp.route('/api/details/<slug>/rating', methods=['GET'])
 def get_user_rating_route(slug):
     """Get user's rating for content"""
     try:
@@ -131,7 +131,7 @@ def get_user_rating_route(slug):
 # REVIEW MANAGEMENT ROUTES
 # ============================================================================
 
-@reviews_bp.route('/reviews/<int:review_id>', methods=['PUT'])
+@reviews_bp.route('/api/reviews/<int:review_id>', methods=['PUT'])
 def update_review_route(review_id):
     """Update a review"""
     try:
@@ -153,7 +153,7 @@ def update_review_route(review_id):
         logger.error(f"Error in update_review_route: {e}")
         return jsonify({'success': False, 'error': 'Failed to update review'}), 500
 
-@reviews_bp.route('/reviews/<int:review_id>', methods=['DELETE'])
+@reviews_bp.route('/api/reviews/<int:review_id>', methods=['DELETE'])
 def delete_review_route(review_id):
     """Delete a review"""
     try:
@@ -171,7 +171,7 @@ def delete_review_route(review_id):
         logger.error(f"Error in delete_review_route: {e}")
         return jsonify({'success': False, 'error': 'Failed to delete review'}), 500
 
-@reviews_bp.route('/reviews/<int:review_id>/helpful', methods=['POST'])
+@reviews_bp.route('/api/reviews/<int:review_id>/helpful', methods=['POST'])
 def vote_helpful_route(review_id):
     """Vote on review helpfulness"""
     try:
@@ -192,7 +192,7 @@ def vote_helpful_route(review_id):
         logger.error(f"Error in vote_helpful_route: {e}")
         return jsonify({'success': False, 'error': 'Failed to vote on review'}), 500
 
-@reviews_bp.route('/reviews/<int:review_id>/flag', methods=['POST'])
+@reviews_bp.route('/api/reviews/<int:review_id>/flag', methods=['POST'])
 def flag_review_route(review_id):
     """Flag a review for moderation"""
     try:
@@ -217,7 +217,7 @@ def flag_review_route(review_id):
 # USER REVIEW ROUTES
 # ============================================================================
 
-@reviews_bp.route('/user/reviews', methods=['GET'])
+@reviews_bp.route('/api/user/reviews', methods=['GET'])
 def get_user_reviews_route():
     """Get user's reviews"""
     try:
@@ -239,7 +239,7 @@ def get_user_reviews_route():
         logger.error(f"Error in get_user_reviews_route: {e}")
         return jsonify({'success': False, 'error': 'Failed to get user reviews'}), 500
 
-@reviews_bp.route('/user/ratings', methods=['GET'])
+@reviews_bp.route('/api/user/ratings', methods=['GET'])
 def get_user_ratings_route():
     """Get user's ratings (from user module for compatibility)"""
     try:
@@ -292,7 +292,7 @@ def get_user_ratings_route():
 # ADMIN MODERATION ROUTES
 # ============================================================================
 
-@reviews_bp.route('/admin/reviews', methods=['GET'])
+@reviews_bp.route('/api/admin/reviews', methods=['GET'])
 def get_admin_reviews_route():
     """Get reviews for admin moderation"""
     try:
@@ -315,7 +315,7 @@ def get_admin_reviews_route():
         logger.error(f"Error in get_admin_reviews_route: {e}")
         return jsonify({'success': False, 'error': 'Failed to get admin reviews'}), 500
 
-@reviews_bp.route('/admin/reviews/<int:review_id>/moderate', methods=['POST'])
+@reviews_bp.route('/api/admin/reviews/<int:review_id>/moderate', methods=['POST'])
 def moderate_review_route(review_id):
     """Moderate a review"""
     try:
@@ -340,7 +340,7 @@ def moderate_review_route(review_id):
         logger.error(f"Error in moderate_review_route: {e}")
         return jsonify({'success': False, 'error': 'Failed to moderate review'}), 500
 
-@reviews_bp.route('/admin/reviews/bulk-moderate', methods=['POST'])
+@reviews_bp.route('/api/admin/reviews/bulk-moderate', methods=['POST'])
 def bulk_moderate_reviews_route():
     """Bulk moderate reviews"""
     try:
@@ -368,7 +368,7 @@ def bulk_moderate_reviews_route():
         logger.error(f"Error in bulk_moderate_reviews_route: {e}")
         return jsonify({'success': False, 'error': 'Failed to bulk moderate reviews'}), 500
 
-@reviews_bp.route('/admin/reviews/flagged', methods=['GET'])
+@reviews_bp.route('/api/admin/reviews/flagged', methods=['GET'])
 def get_flagged_reviews_route():
     """Get flagged reviews for admin review"""
     try:
@@ -393,7 +393,7 @@ def get_flagged_reviews_route():
 # ANALYTICS ROUTES
 # ============================================================================
 
-@reviews_bp.route('/admin/reviews/stats', methods=['GET'])
+@reviews_bp.route('/api/admin/reviews/stats', methods=['GET'])
 def get_review_stats_route():
     """Get comprehensive review statistics"""
     try:
@@ -413,7 +413,7 @@ def get_review_stats_route():
         logger.error(f"Error in get_review_stats_route: {e}")
         return jsonify({'success': False, 'error': 'Failed to get review stats'}), 500
 
-@reviews_bp.route('/admin/reviews/top-reviewers', methods=['GET'])
+@reviews_bp.route('/api/admin/reviews/top-reviewers', methods=['GET'])
 def get_top_reviewers_route():
     """Get top reviewers"""
     try:
@@ -436,7 +436,7 @@ def get_top_reviewers_route():
         logger.error(f"Error in get_top_reviewers_route: {e}")
         return jsonify({'success': False, 'error': 'Failed to get top reviewers'}), 500
 
-@reviews_bp.route('/details/<slug>/reviews/trends', methods=['GET'])
+@reviews_bp.route('/api/details/<slug>/reviews/trends', methods=['GET'])
 def get_content_rating_trends_route(slug):
     """Get rating trends for content"""
     try:
@@ -458,7 +458,7 @@ def get_content_rating_trends_route(slug):
         logger.error(f"Error in get_content_rating_trends_route: {e}")
         return jsonify({'success': False, 'error': 'Failed to get rating trends'}), 500
 
-@reviews_bp.route('/details/<slug>/reviews/sentiment', methods=['GET'])
+@reviews_bp.route('/api/details/<slug>/reviews/sentiment', methods=['GET'])
 def get_content_sentiment_route(slug):
     """Get sentiment analysis for content reviews"""
     try:
@@ -482,7 +482,7 @@ def get_content_sentiment_route(slug):
 # HEALTH CHECK ROUTE
 # ============================================================================
 
-@reviews_bp.route('/reviews/health', methods=['GET'])
+@reviews_bp.route('/api/reviews/health', methods=['GET'])
 def reviews_health():
     """Health check for reviews system"""
     try:
