@@ -343,7 +343,7 @@ class Review(db.Model):
         db.UniqueConstraint('content_id', 'user_id'),
     )
 
-# Support System Models
+# Support System Models - Fixed to use string columns instead of enums
 class SupportCategory(db.Model):
     __tablename__ = 'support_categories'
     
@@ -810,6 +810,7 @@ details_service = None
 content_service = None
 cinebrain_new_releases_service = None
 email_service = None
+admin_notification_service = None
 
 try:
     with app.app_context():
@@ -892,7 +893,7 @@ except Exception as e:
     logger.error(f"❌ Failed to initialize CineBrain Support System: {e}")
     logger.error(f"Support initialization error traceback: {traceback.format_exc()}")
 
-# Initialize the modular admin system
+# Initialize the modular admin system with fixed initialization
 try:
     # Ensure email service is available for admin
     if email_service:
@@ -997,7 +998,7 @@ except Exception as e:
     logger.error(f"❌ Failed to initialize CineBrain operations service: {e}")
 
 def setup_support_monitoring():
-    """Enhanced support monitoring for the new modular system"""
+    """Enhanced support monitoring for the new modular system - Fixed for enum issues"""
     def support_monitor():
         while True:
             try:
@@ -1007,26 +1008,48 @@ def setup_support_monitoring():
                 
                 with app.app_context():
                     try:
-                        # Use string comparisons instead of enum comparisons
-                        overdue_tickets = SupportTicket.query.filter(
-                            SupportTicket.sla_deadline < datetime.utcnow(),
-                            SupportTicket.sla_breached == False,
-                            SupportTicket.status.in_(['open', 'in_progress'])  # Use string values
-                        ).all()
+                        # Build the query using SQLAlchemy text to avoid enum conversion issues
+                        overdue_query = text("""
+                            SELECT * FROM support_tickets 
+                            WHERE sla_deadline < :current_time 
+                            AND sla_breached = false 
+                            AND status::text IN ('open', 'in_progress')
+                        """)
                         
-                        for ticket in overdue_tickets:
-                            ticket.sla_breached = True
+                        result = db.session.execute(
+                            overdue_query,
+                            {'current_time': datetime.utcnow()}
+                        )
+                        
+                        overdue_tickets = result.fetchall()
+                        
+                        for ticket_row in overdue_tickets:
+                            # Update using direct SQL to avoid enum issues
+                            update_query = text("""
+                                UPDATE support_tickets 
+                                SET sla_breached = true 
+                                WHERE id = :ticket_id
+                            """)
+                            db.session.execute(
+                                update_query,
+                                {'ticket_id': ticket_row.id}
+                            )
+                            
+                            logger.warning(f"SLA breached for ticket #{ticket_row.ticket_number}")
+                            
+                            # Try to send notification if admin service is available
                             try:
-                                logger.warning(f"SLA breached for ticket #{ticket.ticket_number}")
-                                
-                                # Use new admin notification service
-                                admin_notification_service = services.get('admin_notification_service')
                                 if admin_notification_service:
-                                    try:
-                                        admin_notification_service.notify_sla_breach(ticket)
-                                    except Exception as e:
-                                        logger.error(f"CineBrain error sending SLA breach notification: {e}")
-                                        
+                                    # Create a simple object to pass to notification
+                                    class TicketObj:
+                                        def __init__(self, row):
+                                            self.id = row.id
+                                            self.ticket_number = row.ticket_number
+                                            self.created_at = row.created_at
+                                            self.sla_deadline = row.sla_deadline
+                                            self.priority = row.priority
+                                    
+                                    admin_notification_service.notify_sla_breach(TicketObj(ticket_row))
                             except Exception as e:
                                 logger.error(f"CineBrain error handling SLA breach notification: {e}")
                         
@@ -1034,27 +1057,23 @@ def setup_support_monitoring():
                             db.session.commit()
                             logger.info(f"Marked {len(overdue_tickets)} tickets as SLA breached")
                         
-                        # Check for urgent tickets without response
-                        urgent_tickets = SupportTicket.query.filter(
-                            SupportTicket.priority == 'urgent',  # Use string value
-                            SupportTicket.first_response_at.is_(None),
-                            SupportTicket.created_at < datetime.utcnow() - timedelta(hours=1)
-                        ).all()
+                        # Check for urgent tickets without response using text query
+                        urgent_query = text("""
+                            SELECT * FROM support_tickets 
+                            WHERE priority::text = 'urgent' 
+                            AND first_response_at IS NULL 
+                            AND created_at < :hour_ago
+                        """)
                         
-                        for ticket in urgent_tickets:
-                            try:
-                                logger.warning(f"Urgent ticket #{ticket.ticket_number} needs attention")
-                                
-                                # Notify admin
-                                admin_notification_service = services.get('admin_notification_service')
-                                if admin_notification_service:
-                                    try:
-                                        admin_notification_service.notify_new_ticket(ticket)
-                                    except Exception as e:
-                                        logger.error(f"CineBrain error sending urgent ticket notification: {e}")
-                                        
-                            except Exception as e:
-                                logger.error(f"CineBrain error handling urgent ticket notification: {e}")
+                        urgent_result = db.session.execute(
+                            urgent_query,
+                            {'hour_ago': datetime.utcnow() - timedelta(hours=1)}
+                        )
+                        
+                        urgent_tickets = urgent_result.fetchall()
+                        
+                        for ticket_row in urgent_tickets:
+                            logger.warning(f"Urgent ticket #{ticket_row.ticket_number} needs attention")
                         
                         # Check for critical unresolved issues
                         critical_issues = IssueReport.query.filter(
@@ -1064,10 +1083,7 @@ def setup_support_monitoring():
                         ).all()
                         
                         for issue in critical_issues:
-                            try:
-                                logger.warning(f"Critical issue {issue.issue_id} needs attention")
-                            except Exception as e:
-                                logger.error(f"CineBrain error handling critical issue notification: {e}")
+                            logger.warning(f"Critical issue {issue.issue_id} needs attention")
                         
                     except Exception as e:
                         logger.error(f"CineBrain support monitoring inner error: {e}")
