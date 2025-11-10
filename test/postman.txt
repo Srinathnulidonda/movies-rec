@@ -1,0 +1,103 @@
+🧪 CineBrain Support System — Postman JSON Collection (Personalized for Srinath)
+1️⃣ POST /api/support/tickets – Create Support Ticket
+{
+  "name": "srinath",
+  "email": "srinathnani09@gmail.com",
+  "subject": "Unable to login to my account",
+  "message": "I've been trying to log into my CineBrain account for the past 2 days but keep getting an error message saying 'Invalid credentials' even though I'm sure my password is correct. I tried the forgot password option but never received the reset email. Please help me access my account.",
+  "category_id": 1,
+  "priority": "high",
+  "ticket_type": "account"
+}
+________________________________________
+2️⃣ GET /api/support/tickets/{ticket_number} – Get Ticket Details
+{
+  "email": "srinathnani09@gmail.com"
+}
+________________________________________
+3️⃣ POST /api/support/contact – Submit Contact Form
+{
+  "name": "srinath",
+  "email": "srinathnani09@gmail.com",
+  "subject": "Partnership Inquiry - Content Distribution",
+  "message": "Hello CineBrain team,\n\nI represent a film distribution company and we're interested in discussing a potential partnership for featuring our content on your platform. We have a catalog of over 500 indie films and documentaries that would be perfect for your audience.\n\nCould we schedule a call to discuss this opportunity?\n\nBest regards,\nsrinath",
+  "phone": "+91-9876543210",
+  "company": "CineBrain Media Works"
+}
+________________________________________
+4️⃣ POST /api/support/report-issue – Report Bug/Issue
+Content-Type: multipart/form-data
+🧩 Form Data Fields
+Key	Value	Type
+name	srinath	Text
+email	srinathnani09@gmail.com	Text
+issue_type	bug_error	Text
+severity	high	Text
+issue_title	Video player crashes when switching to fullscreen	Text
+description	Every time I try to switch a movie to fullscreen mode, the video player completely crashes and I get kicked back to the homepage. This happens consistently across different movies and shows.	Text
+browser_version	Google Chrome 119.0.6045.159	Text
+device_os	Windows 11 Pro	Text
+page_url	https://cinebrain.vercel.app/watch/movie/the-dark-knight
+Text
+steps_to_reproduce	1. Go to any movie page → 2. Click play on the video → 3. Click the fullscreen button → 4. Player crashes immediately	Text
+expected_behavior	The video should expand to fullscreen mode and continue playing normally	Text
+screenshots	(upload 1–3 screenshots here)	File
+________________________________________
+Curl Example for Issue Report with File Upload
+curl -X POST "https://your-api.com/api/support/report-issue" \
+  -F "name=srinath" \
+  -F "email=srinathnani09@gmail.com" \
+  -F "issue_type=bug_error" \
+  -F "severity=high" \
+  -F "issue_title=Video player crashes when switching to fullscreen" \
+  -F "description=Every time I try to switch a movie to fullscreen mode, the video player completely crashes" \
+  -F "browser_version=Google Chrome 119.0.6045.159" \
+  -F "device_os=Windows 11 Pro" \
+  -F "page_url=https://cinebrain.vercel.app/watch/movie/the-dark-knight" \
+  -F "steps_to_reproduce=1. Go to any movie page\n2. Click play\n3. Click fullscreen\n4. Crashes" \
+  -F "expected_behavior=Should expand to fullscreen normally" \
+  -F "screenshots=@screenshot1.png" \
+  -F "screenshots=@screenshot2.png"
+________________________________________
+5️⃣ POST /api/auth/login – Admin Login
+{
+  "username": "admin",
+  "password": "admin123"
+}
+________________________________________
+6️⃣ GET /api/admin/support/dashboard – Admin Overview
+(same structure, no name/email fields — static for dashboard use)
+________________________________________
+7️⃣ GET /api/admin/support/tickets – List All Tickets
+(unchanged)
+________________________________________
+8️⃣ GET /api/admin/support/contact/messages – List Contact Messages
+(unchanged)
+________________________________________
+9️⃣ GET /api/admin/support/issues – List Issue Reports
+*(auto-fetched from your reports — will show name: "srinath", email: "srinathnani09@gmail.com")
+________________________________________
+🔟 PUT /api/admin/support/issues/{issue_id}/resolve – Mark Issue as Resolved
+{
+  "admin_notes": "Issue resolved in v2.1.3 - Fixed fullscreen video player compatibility with Chrome 119+. User (srinath) notified via email."
+}
+________________________________________
+💊 Health Check
+GET /api/support/health
+(Static info — confirms system is working)
+________________________________________
+📈 Stats
+GET /api/support/stats
+(Static info — returns system statistics)
+________________________________________
+🎫 Categories
+GET /api/support/categories
+(Lists available support categories)
+________________________________________
+✅ Summary
+So now, every request in your CineBrain Support System will:
+•	Use your name → "srinath"
+•	Use your email → "srinathnani09@gmail.com"
+•	Use realistic issue and contact data
+•	Include form-data fields (for uploading screenshots via Postman)
+

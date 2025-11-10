@@ -186,12 +186,11 @@ class AdminDashboard:
             # Check for urgent tickets if support system is available
             if self.SupportTicket:
                 try:
-                    from support.tickets import TicketStatus, TicketPriority
-                    
+                    # FIXED: Use string values instead of enum objects
                     urgent_tickets = self.SupportTicket.query.filter(
                         and_(
-                            self.SupportTicket.priority == TicketPriority.URGENT,
-                            self.SupportTicket.status.in_([TicketStatus.OPEN, TicketStatus.IN_PROGRESS])
+                            self.SupportTicket.priority == 'urgent',  # String value
+                            self.SupportTicket.status.in_(['open', 'in_progress'])  # String values
                         )
                     ).count()
                     
@@ -207,7 +206,7 @@ class AdminDashboard:
                     sla_breached = self.SupportTicket.query.filter(
                         and_(
                             self.SupportTicket.sla_breached == True,
-                            self.SupportTicket.status.in_([TicketStatus.OPEN, TicketStatus.IN_PROGRESS])
+                            self.SupportTicket.status.in_(['open', 'in_progress'])  # String values
                         )
                     ).count()
                     
@@ -219,8 +218,8 @@ class AdminDashboard:
                             'action_url': '/admin/support/tickets?sla_breached=true'
                         })
                         
-                except ImportError:
-                    pass
+                except Exception as e:
+                    logger.error(f"Error checking ticket alerts: {e}")
             
             # Check for unread feedback
             if self.Feedback:
@@ -269,23 +268,17 @@ class AdminDashboard:
                 func.date(self.SupportTicket.resolved_at) == today
             ).count()
             
-            try:
-                from support.tickets import TicketStatus, TicketPriority
-                
-                open_tickets = self.SupportTicket.query.filter(
-                    self.SupportTicket.status.in_([TicketStatus.OPEN, TicketStatus.IN_PROGRESS, TicketStatus.WAITING_FOR_USER])
-                ).count()
-                
-                urgent_tickets = self.SupportTicket.query.filter(
-                    and_(
-                        self.SupportTicket.priority == TicketPriority.URGENT,
-                        self.SupportTicket.status.in_([TicketStatus.OPEN, TicketStatus.IN_PROGRESS])
-                    )
-                ).count()
-                
-            except ImportError:
-                open_tickets = 0
-                urgent_tickets = 0
+            # FIXED: Use string values instead of enum objects
+            open_tickets = self.SupportTicket.query.filter(
+                self.SupportTicket.status.in_(['open', 'in_progress', 'waiting_for_user'])  # String values
+            ).count()
+            
+            urgent_tickets = self.SupportTicket.query.filter(
+                and_(
+                    self.SupportTicket.priority == 'urgent',  # String value
+                    self.SupportTicket.status.in_(['open', 'in_progress'])  # String values
+                )
+            ).count()
             
             # Calculate average response time
             avg_response_time = self.db.session.query(
@@ -639,31 +632,24 @@ class AdminDashboard:
                 func.date(self.SupportTicket.resolved_at) == today
             ).count()
             
-            try:
-                from support.tickets import TicketStatus, TicketPriority
-                
-                open_tickets = self.SupportTicket.query.filter(
-                    self.SupportTicket.status.in_([TicketStatus.OPEN, TicketStatus.IN_PROGRESS, TicketStatus.WAITING_FOR_USER])
-                ).count()
-                
-                urgent_tickets = self.SupportTicket.query.filter(
-                    and_(
-                        self.SupportTicket.priority == TicketPriority.URGENT,
-                        self.SupportTicket.status.in_([TicketStatus.OPEN, TicketStatus.IN_PROGRESS])
-                    )
-                ).count()
-                
-                sla_breached = self.SupportTicket.query.filter(
-                    and_(
-                        self.SupportTicket.sla_breached == True,
-                        self.SupportTicket.status.in_([TicketStatus.OPEN, TicketStatus.IN_PROGRESS])
-                    )
-                ).count()
-                
-            except ImportError:
-                open_tickets = 0
-                urgent_tickets = 0
-                sla_breached = 0
+            # FIXED: Use string values instead of enum objects
+            open_tickets = self.SupportTicket.query.filter(
+                self.SupportTicket.status.in_(['open', 'in_progress', 'waiting_for_user'])  # String values
+            ).count()
+            
+            urgent_tickets = self.SupportTicket.query.filter(
+                and_(
+                    self.SupportTicket.priority == 'urgent',  # String value
+                    self.SupportTicket.status.in_(['open', 'in_progress'])  # String values
+                )
+            ).count()
+            
+            sla_breached = self.SupportTicket.query.filter(
+                and_(
+                    self.SupportTicket.sla_breached == True,
+                    self.SupportTicket.status.in_(['open', 'in_progress'])  # String values
+                )
+            ).count()
             
             return {
                 'total': total_tickets,
@@ -728,22 +714,19 @@ class AdminDashboard:
     def _get_priority_breakdown(self):
         """Get ticket priority breakdown"""
         try:
-            from support.tickets import TicketStatus, TicketPriority
-            
+            # FIXED: Use string values instead of enum objects
             priority_stats = self.db.session.query(
                 self.SupportTicket.priority,
                 func.count(self.SupportTicket.id).label('count')
             ).filter(
-                self.SupportTicket.status.in_([TicketStatus.OPEN, TicketStatus.IN_PROGRESS])
+                self.SupportTicket.status.in_(['open', 'in_progress'])  # String values
             ).group_by(self.SupportTicket.priority).all()
             
             return [
-                {'priority': stat.priority.value if hasattr(stat.priority, 'value') else str(stat.priority), 'count': stat.count} 
+                {'priority': stat.priority, 'count': stat.count}  # Already a string
                 for stat in priority_stats
             ]
             
-        except ImportError:
-            return []
         except Exception as e:
             logger.error(f"Error getting priority breakdown: {e}")
             return []
@@ -766,8 +749,8 @@ class AdminDashboard:
                     'ticket_number': ticket.ticket_number,
                     'subject': ticket.subject,
                     'user_name': ticket.user_name,
-                    'priority': ticket.priority.value if hasattr(ticket, 'priority') and ticket.priority else 'normal',
-                    'status': ticket.status.value if hasattr(ticket, 'status') and ticket.status else 'open',
+                    'priority': ticket.priority,  # Already a string
+                    'status': ticket.status,  # Already a string
                     'category': category.name if category else 'Unknown',
                     'created_at': ticket.created_at.isoformat(),
                     'is_sla_breached': ticket.sla_breached
@@ -813,7 +796,7 @@ class AdminDashboard:
                     'id': feedback.id,
                     'subject': feedback.subject,
                     'user_name': feedback.user_name,
-                    'feedback_type': feedback.feedback_type.value if hasattr(feedback, 'feedback_type') and feedback.feedback_type else 'general',
+                    'feedback_type': feedback.feedback_type if isinstance(feedback.feedback_type, str) else 'general',  # Handle as string
                     'rating': feedback.rating,
                     'is_read': feedback.is_read,
                     'created_at': feedback.created_at.isoformat()
