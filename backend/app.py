@@ -30,7 +30,7 @@ from services.upcoming import UpcomingContentService, ContentType, LanguagePrior
 import asyncio
 from auth.routes import auth_bp
 from services.admin import admin_bp, init_admin
-from services.support import support_bp, init_support
+from support import support_bp, init_support
 from services.critics_choice import critics_choice_bp, init_critics_choice_service
 from services.algorithms import (
     RecommendationOrchestrator,
@@ -51,10 +51,14 @@ from recommendation import recommendation_bp, init_recommendation_routes
 from personalized import init_personalized_system, personalized_bp
 from system.routes import system_bp, init_system_routes
 from operations.routes import operations_bp, init_operations_routes
+from reviews import init_reviews_service
 import re
 import click
 import traceback
 from dotenv import load_dotenv
+import cloudinary
+import cloudinary.uploader
+
 load_dotenv()
 
 app = Flask(__name__)
@@ -99,6 +103,14 @@ if not TMDB_API_KEY:
     raise ValueError("TMDB_API_KEY environment variable is required")
 if not YOUTUBE_API_KEY:
     raise ValueError("YOUTUBE_API_KEY environment variable is required")
+
+# Configure Cloudinary for support system file uploads
+cloudinary.config(
+    cloud_name=os.environ.get('CLOUDINARY_CLOUD_NAME'),
+    api_key=os.environ.get('CLOUDINARY_API_KEY'),
+    api_secret=os.environ.get('CLOUDINARY_API_SECRET'),
+    secure=True
+)
 
 app.config['TMDB_API_KEY'] = TMDB_API_KEY
 app.config['YOUTUBE_API_KEY'] = YOUTUBE_API_KEY
@@ -328,6 +340,129 @@ class Review(db.Model):
     __table_args__ = (
         db.UniqueConstraint('content_id', 'user_id'),
     )
+
+# Support System Models
+class SupportCategory(db.Model):
+    __tablename__ = 'support_categories'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False, unique=True)
+    description = db.Column(db.Text)
+    icon = db.Column(db.String(50))
+    sort_order = db.Column(db.Integer, default=0)
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    tickets = db.relationship('SupportTicket', backref='category', lazy='dynamic')
+
+class SupportTicket(db.Model):
+    __tablename__ = 'support_tickets'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    ticket_number = db.Column(db.String(20), unique=True, nullable=False)
+    subject = db.Column(db.String(255), nullable=False)
+    description = db.Column(db.Text, nullable=False)
+    
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    user_email = db.Column(db.String(255), nullable=False)
+    user_name = db.Column(db.String(255), nullable=False)
+    
+    category_id = db.Column(db.Integer, db.ForeignKey('support_categories.id'), nullable=False)
+    ticket_type = db.Column(db.String(20), nullable=False)
+    priority = db.Column(db.String(10), default='normal')
+    status = db.Column(db.String(20), default='open')
+    
+    browser_info = db.Column(db.Text)
+    device_info = db.Column(db.Text)
+    ip_address = db.Column(db.String(45))
+    user_agent = db.Column(db.Text)
+    page_url = db.Column(db.String(500))
+    
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    first_response_at = db.Column(db.DateTime)
+    resolved_at = db.Column(db.DateTime)
+    closed_at = db.Column(db.DateTime)
+    sla_deadline = db.Column(db.DateTime)
+    sla_breached = db.Column(db.Boolean, default=False)
+    
+    assigned_to = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    
+    activities = db.relationship('TicketActivity', backref='ticket', lazy='dynamic', cascade='all, delete-orphan')
+
+class TicketActivity(db.Model):
+    __tablename__ = 'ticket_activities'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    ticket_id = db.Column(db.Integer, db.ForeignKey('support_tickets.id'), nullable=False)
+    
+    action = db.Column(db.String(100), nullable=False)
+    description = db.Column(db.Text)
+    old_value = db.Column(db.Text)
+    new_value = db.Column(db.Text)
+    
+    actor_type = db.Column(db.String(20), nullable=False)
+    actor_id = db.Column(db.Integer, nullable=True)
+    actor_name = db.Column(db.String(255))
+    
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+class ContactMessage(db.Model):
+    __tablename__ = 'contact_messages'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(255), nullable=False)
+    email = db.Column(db.String(255), nullable=False)
+    subject = db.Column(db.String(255), nullable=False)
+    message = db.Column(db.Text, nullable=False)
+    
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    phone = db.Column(db.String(20))
+    company = db.Column(db.String(255))
+    
+    ip_address = db.Column(db.String(45))
+    user_agent = db.Column(db.Text)
+    page_url = db.Column(db.String(500))
+    
+    is_read = db.Column(db.Boolean, default=False)
+    admin_notes = db.Column(db.Text)
+    
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+class IssueReport(db.Model):
+    __tablename__ = 'issue_reports'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    issue_id = db.Column(db.String(100), unique=True, nullable=False)
+    
+    name = db.Column(db.String(255), nullable=False)
+    email = db.Column(db.String(255), nullable=False)
+    issue_type = db.Column(db.String(50), nullable=False)  # bug_error, feature_request, etc.
+    severity = db.Column(db.String(20), nullable=False)  # low, normal, high, critical
+    issue_title = db.Column(db.String(255), nullable=False)
+    description = db.Column(db.Text, nullable=False)
+    
+    # Additional details
+    browser_version = db.Column(db.String(255))
+    device_os = db.Column(db.String(255))
+    page_url_reported = db.Column(db.String(500))
+    steps_to_reproduce = db.Column(db.Text)
+    expected_behavior = db.Column(db.Text)
+    
+    # Screenshots/files stored as JSON
+    screenshots = db.Column(db.JSON)
+    
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    ticket_id = db.Column(db.Integer, db.ForeignKey('support_tickets.id'), nullable=True)
+    
+    ip_address = db.Column(db.String(45))
+    user_agent = db.Column(db.Text)
+    page_url = db.Column(db.String(500))
+    
+    is_resolved = db.Column(db.Boolean, default=False)
+    admin_notes = db.Column(db.Text)
+    
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    resolved_at = db.Column(db.DateTime)
 
 def get_session_id():
     if 'cinebrain_session_id' not in session:
@@ -661,7 +796,12 @@ models = {
     'Review': Review,
     'Person': Person,
     'ContentPerson': ContentPerson,
-    'AnonymousInteraction': AnonymousInteraction
+    'AnonymousInteraction': AnonymousInteraction,
+    'SupportCategory': SupportCategory,
+    'SupportTicket': SupportTicket,
+    'TicketActivity': TicketActivity,
+    'ContactMessage': ContactMessage,
+    'IssueReport': IssueReport
 }
 
 details_service = None
@@ -707,12 +847,27 @@ try:
 except Exception as e:
     logger.error(f"Failed to initialize CineBrain new releases service: {e}")
 
+# Initialize the new modular support system
 try:
-    init_support(app, db, models, services)
+    support_models = init_support(app, db, models, services)
     app.register_blueprint(support_bp)
-    logger.info("CineBrain support service initialized successfully")
+    if support_models:
+        logger.info("✅ CineBrain Modular Support System initialized successfully")
+        logger.info("   - Ticket Management: Active")
+        logger.info("   - Contact Forms: Active") 
+        logger.info("   - Issue Reporting: Active with Cloudinary")
+        logger.info("   - Email Notifications: Brevo Integration")
+        logger.info("   - Admin Dashboard: Integrated")
+        logger.info("   - File Uploads: Cloudinary Storage")
+        
+        # Update models dict with support models
+        models.update(support_models)
+        services['support_models'] = support_models
+    else:
+        logger.warning("⚠️ CineBrain Support System failed to initialize")
 except Exception as e:
-    logger.error(f"Failed to initialize CineBrain support service: {e}")
+    logger.error(f"❌ Failed to initialize CineBrain Support System: {e}")
+    logger.error(f"Support initialization error traceback: {traceback.format_exc()}")
 
 # Replace the existing personalized initialization block with the new advanced system
 try:
@@ -748,7 +903,7 @@ try:
     
     init_auth(app, db, User)
     app.register_blueprint(auth_bp)
-    logger.info("✅ CineBrain authentication service with Resend email initialized successfully")
+    logger.info("✅ CineBrain authentication service with Brevo email initialized successfully")
 except Exception as e:
     logger.error(f"❌ Failed to initialize CineBrain authentication service: {e}")
 
@@ -812,6 +967,7 @@ except Exception as e:
     logger.error(f"❌ Failed to initialize CineBrain operations service: {e}")
 
 def setup_support_monitoring():
+    """Enhanced support monitoring for the new modular system"""
     def support_monitor():
         while True:
             try:
@@ -822,43 +978,60 @@ def setup_support_monitoring():
                 with app.app_context():
                     try:
                         from services.admin import AdminNotificationService
-                        from services.support import TicketStatus, TicketPriority
                         
-                        if 'SupportTicket' in models and models['SupportTicket']:
-                            SupportTicket = models['SupportTicket']
-                            overdue_tickets = db.session.query(SupportTicket).filter(
-                                SupportTicket.sla_deadline < datetime.utcnow(),
-                                SupportTicket.sla_breached == False,
-                                SupportTicket.status.in_([TicketStatus.OPEN, TicketStatus.IN_PROGRESS])
-                            ).all()
-                            
-                            for ticket in overdue_tickets:
-                                ticket.sla_breached = True
-                                AdminNotificationService.notify_sla_breach(ticket)
-                            
-                            if overdue_tickets:
-                                db.session.commit()
+                        # Check for SLA breaches in tickets
+                        overdue_tickets = SupportTicket.query.filter(
+                            SupportTicket.sla_deadline < datetime.utcnow(),
+                            SupportTicket.sla_breached == False,
+                            SupportTicket.status.in_(['open', 'in_progress'])
+                        ).all()
                         
-                        if 'SupportTicket' in models and models['SupportTicket']:
-                            SupportTicket = models['SupportTicket']
-                            urgent_tickets = db.session.query(SupportTicket).filter(
-                                SupportTicket.priority == TicketPriority.URGENT,
-                                SupportTicket.first_response_at.is_(None),
-                                SupportTicket.created_at < datetime.utcnow() - timedelta(hours=1)
-                            ).all()
-                            
-                            for ticket in urgent_tickets:
-                                AdminNotificationService.create_notification(
-                                    'urgent_ticket',
-                                    f"CineBrain Urgent Ticket Needs Attention",
-                                    f"Ticket #{ticket.ticket_number} has been open for over 1 hour without response",
-                                    related_ticket_id=ticket.id,
-                                    is_urgent=True,
-                                    action_required=True
-                                )
+                        for ticket in overdue_tickets:
+                            ticket.sla_breached = True
+                            AdminNotificationService.notify_sla_breach(ticket)
+                        
+                        if overdue_tickets:
+                            db.session.commit()
+                            logger.info(f"Marked {len(overdue_tickets)} tickets as SLA breached")
+                        
+                        # Check for urgent tickets without response
+                        urgent_tickets = SupportTicket.query.filter(
+                            SupportTicket.priority == 'urgent',
+                            SupportTicket.first_response_at.is_(None),
+                            SupportTicket.created_at < datetime.utcnow() - timedelta(hours=1)
+                        ).all()
+                        
+                        for ticket in urgent_tickets:
+                            AdminNotificationService.create_notification(
+                                'urgent_ticket',
+                                f"CineBrain Urgent Ticket Needs Attention",
+                                f"Ticket #{ticket.ticket_number} has been open for over 1 hour without response",
+                                related_ticket_id=ticket.id,
+                                is_urgent=True,
+                                action_required=True
+                            )
+                        
+                        # Check for critical unresolved issues
+                        critical_issues = IssueReport.query.filter(
+                            IssueReport.severity == 'critical',
+                            IssueReport.is_resolved == False,
+                            IssueReport.created_at < datetime.utcnow() - timedelta(hours=2)
+                        ).all()
+                        
+                        for issue in critical_issues:
+                            AdminNotificationService.create_notification(
+                                'critical_issue',
+                                f"Critical Issue Unresolved",
+                                f"Critical issue {issue.issue_id} has been unresolved for over 2 hours",
+                                related_issue_id=issue.id,
+                                is_urgent=True,
+                                action_required=True
+                            )
+                        
                     except Exception as e:
                         logger.error(f"CineBrain support monitoring inner error: {e}")
                 
+                # Sleep for 5 minutes
                 time.sleep(300)
                 
             except Exception as e:
@@ -867,53 +1040,7 @@ def setup_support_monitoring():
     
     monitor_thread = threading.Thread(target=support_monitor, daemon=True)
     monitor_thread.start()
-    logger.info("CineBrain support monitoring thread started")
-
-def on_new_support_ticket(ticket):
-    try:
-        from services.admin import AdminNotificationService
-        AdminNotificationService.notify_new_ticket(ticket)
-    except Exception as e:
-        logger.error(f"CineBrain error handling new ticket notification: {e}")
-
-def on_new_feedback(feedback):
-    try:
-        from services.admin import AdminNotificationService
-        AdminNotificationService.notify_feedback_received(feedback)
-    except Exception as e:
-        logger.error(f"CineBrain error handling new feedback notification: {e}")
-
-@app.route('/api/webhooks/support/ticket-created', methods=['POST'])
-def webhook_ticket_created():
-    try:
-        data = request.get_json()
-        ticket_id = data.get('ticket_id')
-        
-        if ticket_id and 'SupportTicket' in globals():
-            ticket = globals()['SupportTicket'].query.get(ticket_id)
-            if ticket:
-                on_new_support_ticket(ticket)
-        
-        return jsonify({'success': True, 'cinebrain_service': 'support_webhook'}), 200
-    except Exception as e:
-        logger.error(f"CineBrain webhook error: {e}")
-        return jsonify({'error': 'CineBrain webhook processing failed'}), 500
-
-@app.route('/api/webhooks/support/feedback-created', methods=['POST'])
-def webhook_feedback_created():
-    try:
-        data = request.get_json()
-        feedback_id = data.get('feedback_id')
-        
-        if feedback_id and 'Feedback' in globals():
-            feedback = globals()['Feedback'].query.get(feedback_id)
-            if feedback:
-                on_new_feedback(feedback)
-        
-        return jsonify({'success': True, 'cinebrain_service': 'support_webhook'}), 200
-    except Exception as e:
-        logger.error(f"CineBrain feedback webhook error: {e}")
-        return jsonify({'error': 'CineBrain webhook processing failed'}), 500
+    logger.info("CineBrain enhanced support monitoring thread started")
 
 @app.route('/api/details/<slug>', methods=['GET'])
 def get_content_details_by_slug(slug):
@@ -1579,8 +1706,14 @@ create_tables()
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
-    print("=== Running CineBrain Flask with Advanced Personalized Recommendation System & Comprehensive Operations ===")
+    print("=== Running CineBrain Flask with Modular Support System & Advanced Features ===")
     print("Features:")
+    print("  ✅ Modular Support System")
+    print("  ✅ Ticket Management with SLA Tracking")
+    print("  ✅ Contact Forms with Admin Notifications") 
+    print("  ✅ Issue Reporting with Cloudinary File Uploads")
+    print("  ✅ Brevo Email Integration")
+    print("  ✅ Advanced Admin Dashboard")
     print("  ✅ Cinematic DNA Analysis")
     print("  ✅ Advanced Behavioral Analysis") 
     print("  ✅ Preference Embedding Engine")
@@ -1591,14 +1724,12 @@ if __name__ == '__main__':
     print("  ✅ Performance Analytics")
     print("  ✅ Automated Cache Refresh System")
     print("  ✅ Background Operations Management")
-    print("  ✅ Resend Email Service Integration")
-    print("  ✅ Modular Authentication System")
     print("  ✅ Advanced Reviews & Rating System")
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('FLASK_ENV') == 'development'
     app.run(host='0.0.0.0', port=port, debug=debug)
 else:
-    print("=== CineBrain Flask app with Advanced Systems ===")
+    print("=== CineBrain Flask app with Modular Support System ===")
     print(f"App name: {app.name}")
     print(f"Python version: 3.13.4")
     print(f"CineBrain brand: CineBrain Entertainment Platform")
@@ -1609,13 +1740,14 @@ else:
     print(f"CineBrain reviews system status: {'Integrated' if 'review_service' in services else 'Failed to initialize'}")
     print(f"CineBrain new releases service status: {'Integrated' if cinebrain_new_releases_service else 'Failed to initialize'}")
     print(f"CineBrain critics choice service status: {'Integrated' if 'critics_choice_service' in services else 'Failed to initialize'}")
-    print(f"CineBrain support service status: {'Integrated' if 'support_bp' in app.blueprints else 'Not integrated'}")
-    print(f"CineBrain auth service status: {'Integrated with Resend' if 'auth' in app.blueprints else 'Not integrated'}")
+    print(f"CineBrain modular support status: {'Integrated' if 'support_models' in services else 'Failed to initialize'}")
+    print(f"CineBrain auth service status: {'Integrated with Brevo' if 'auth' in app.blueprints else 'Not integrated'}")
     print(f"CineBrain user service status: {'Integrated' if 'user_bp' in app.blueprints else 'Not integrated'}")
     print(f"CineBrain recommendation service status: {'Integrated' if 'recommendations' in app.blueprints else 'Not integrated'}")
     print(f"CineBrain system monitoring service status: {'Integrated' if 'system_bp' in app.blueprints else 'Not integrated'}")
     print(f"CineBrain operations service status: {'Integrated' if 'operations_bp' in app.blueprints else 'Not integrated'}")
     print(f"   Personalized System: {'Active' if 'profile_analyzer' in services else 'Not Initialized'}")
+    print(f"   Cloudinary Integration: {'Configured' if os.environ.get('CLOUDINARY_CLOUD_NAME') else 'Not Configured'}")
     
     print("\n=== CineBrain Advanced Features ===")
     print("✅ Modular recommendation architecture")
@@ -1637,9 +1769,15 @@ else:
     print("✅ Real-time Metrics & Database Statistics")
     print("✅ Automated Cache Refresh with UptimeRobot Support")
     print("✅ Background Operations & Maintenance Tasks")
-    print("✅ Resend Email Service with Professional Templates")
+    print("✅ Brevo Email Service with Professional Templates")
     print("✅ Modular Authentication System")
     print("✅ Advanced Reviews & Rating System with Moderation")
+    print("✅ Complete Modular Support System")
+    print("✅ Ticket Management with SLA Tracking")
+    print("✅ Contact Forms with Rate Limiting")
+    print("✅ Issue Reporting with Cloudinary File Uploads")
+    print("✅ Admin Dashboard Integration")
+    print("✅ Email Automation for All Support Activities")
     
     print(f"\n=== CineBrain Registered Routes ===")
     for rule in app.url_map.iter_rules():
