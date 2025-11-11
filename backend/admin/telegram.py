@@ -1,5 +1,10 @@
 # admin/telegram.py
 
+"""
+CineBrain Telegram Integration
+Premium cinematic messaging for intelligent movie discovery
+"""
+
 import os
 import json
 import logging
@@ -22,7 +27,7 @@ TELEGRAM_ADMIN_CHAT_ID = os.environ.get('TELEGRAM_ADMIN_CHAT_ID')
 
 # Visual Constants
 DIVIDER = "━━━━━━━━━━━━━━━━━━━"
-CINEBRAIN_FOOTER = "🎞&nbsp;Recommended&nbsp;with&nbsp;💙&nbsp;by&nbsp;<b>CineBrain</b>"
+CINEBRAIN_FOOTER = "<b><i>🎥 Recommended by CineBrain</i></b>"
 
 # Initialize bot
 bot = None
@@ -122,13 +127,11 @@ class TelegramTemplates:
 <b>Genre:</b> {genres}
 {DIVIDER}
 📖 <b>Synopsis</b>
-
-<i>"{synopsis}"</i>
-
+<blockquote>{synopsis}</blockquote>
 {DIVIDER}
-🍿 Smart recommendations • Upcoming updates • Latest updates • New releases • Trending updates — visit <a href="https://cinebrain.vercel.app/">CineBrain</a>
+<i>🍿 Smart recommendations • Upcoming updates • Latest updates • New releases • Trending updates — visit <a href="https://cinebrain.vercel.app/">CineBrain</a></i>
 
-<i>{CINEBRAIN_FOOTER}</i>"""
+{CINEBRAIN_FOOTER}"""
         
         return message
     
@@ -162,12 +165,12 @@ class TelegramTemplates:
 {DIVIDER}
 📖 <b>Synopsis</b>
 
-<i>"{synopsis}"</i>
+<blockquote>{synopsis}</blockquote>
 
 {DIVIDER}
-🍿 Smart recommendations • Upcoming updates • Latest updates • New releases • Trending updates — visit <a href="https://cinebrain.vercel.app/">CineBrain</a>
+<i>🍿 Smart recommendations • Upcoming updates • Latest updates • New releases • Trending updates — visit <a href="https://cinebrain.vercel.app/">CineBrain</a></i>
 
-<i>{CINEBRAIN_FOOTER}</i>"""
+{CINEBRAIN_FOOTER}"""
         
         return message
     
@@ -214,12 +217,12 @@ class TelegramTemplates:
 {DIVIDER}
 📖 <b>Synopsis</b>
 
-<i>"{synopsis}"</i>
+<blockquote>{synopsis}</blockquote>
 
 {DIVIDER}
-🍿 Smart recommendations • Upcoming updates • Latest updates • New releases • Trending updates — visit <a href="https://cinebrain.vercel.app/">CineBrain</a>
+<i>🍿 Smart recommendations • Upcoming updates • Latest updates • New releases • Trending updates — visit <a href="https://cinebrain.vercel.app/">CineBrain</a></i>
 
-<i>{CINEBRAIN_FOOTER}</i>"""
+{CINEBRAIN_FOOTER}"""
         
         return message
 
@@ -431,7 +434,7 @@ def init_telegram_service(app, db, models, services) -> Optional[Dict[str, Any]]
             logger.info("✅ CineBrain Telegram service initialized successfully")
             logger.info("   ├─ Minimalist cinematic templates: ✓")
             logger.info("   ├─ Mobile-optimized layouts: ✓")
-            logger.info("   ├─ Non-breaking footer: ✓")
+            logger.info("   ├─ Blockquote formatting: ✓")
             logger.info("   ├─ Content recommendations: ✓")
             logger.info("   └─ Admin notifications: ✓")
         else:
