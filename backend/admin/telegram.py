@@ -40,6 +40,28 @@ else:
     logger.warning("TELEGRAM_BOT_TOKEN not set - Telegram notifications disabled")
 
 
+def cinebrain_tracking_url(slug: str, campaign: str, content: Optional[str] = None) -> str:
+    """
+    Generate CineBrain URL with UTM tracking parameters for Google Analytics
+    
+    @param slug: Content slug for the detail page
+    @param campaign: Campaign name (e.g., "movie_recommendation", "anime_recommendation")
+    @param content: Optional content identifier for more detailed tracking
+    @return: Full URL with tracking parameters
+    """
+    base = f"https://cinebrain.vercel.app/explore/details.html?{slug}"
+    utm = {
+        "utm_source": "telegram",
+        "utm_medium": "bot",
+        "utm_campaign": campaign,
+    }
+    if content:
+        utm["utm_content"] = content
+
+    params = "&".join([f"{k}={v}" for k, v in utm.items()])
+    return f"{base}&{params}"
+
+
 class TelegramTemplates:
     """
     Premium cinematic templates for CineBrain's Telegram channel
@@ -94,7 +116,10 @@ class TelegramTemplates:
     
     @staticmethod
     def get_cinebrain_url(slug: str) -> str:
-        """Generate CineBrain detail page URL"""
+        """
+        Generate CineBrain detail page URL
+        @deprecated Use cinebrain_tracking_url() for tracked URLs
+        """
         return f"https://cinebrain.vercel.app/explore/details.html?{slug}"
     
     @staticmethod
@@ -267,12 +292,20 @@ class TelegramService:
             # Create inline keyboard with two buttons
             keyboard = types.InlineKeyboardMarkup(row_width=2)
             
-            detail_url = TelegramTemplates.get_cinebrain_url(content.slug)
+            # Generate tracking URLs with appropriate campaign names
+            campaign_type = f"{content.content_type}_recommendation"
+            content_identifier = content.slug.replace('-', '_')
+            
+            detail_url = cinebrain_tracking_url(
+                content.slug, 
+                campaign_type, 
+                content_identifier
+            )
             
             # Two action buttons
             explore_btn = types.InlineKeyboardButton(
                 text="Explore More",
-                url="https://cinebrain.vercel.app/"
+                url=f"https://cinebrain.vercel.app/?utm_source=telegram&utm_medium=bot&utm_campaign={campaign_type}&utm_content=explore_more"
             )
             details_btn = types.InlineKeyboardButton(
                 text="Full Details",
@@ -428,7 +461,7 @@ def init_telegram_service(app, db, models, services) -> Optional[Dict[str, Any]]
             logger.info("✅ CineBrain Telegram service initialized successfully")
             logger.info("   ├─ Minimalist cinematic templates: ✓")
             logger.info("   ├─ Mobile-optimized layouts: ✓")
-            logger.info("   ├─ Blockquote formatting: ✓")
+            logger.info("   ├─ Google Analytics tracking: ✓")
             logger.info("   ├─ Content recommendations: ✓")
             logger.info("   └─ Admin notifications: ✓")
         else:
@@ -438,7 +471,8 @@ def init_telegram_service(app, db, models, services) -> Optional[Dict[str, Any]]
         return {
             'telegram_service': TelegramService,
             'telegram_admin_service': TelegramAdminService,
-            'telegram_templates': TelegramTemplates
+            'telegram_templates': TelegramTemplates,
+            'cinebrain_tracking_url': cinebrain_tracking_url
         }
         
     except Exception as e:
@@ -451,5 +485,6 @@ __all__ = [
     'TelegramTemplates',
     'TelegramService',
     'TelegramAdminService',
+    'cinebrain_tracking_url',
     'init_telegram_service'
 ]
