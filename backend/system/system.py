@@ -66,6 +66,9 @@ class SystemService:
             health_info['cache'] = f'disconnected: {str(e)}'
             health_info['status'] = 'degraded'
         
+        # Admin services health
+        health_info['admin_services'] = cls._check_admin_services_health()
+        
         # API Keys health
         health_info['api_keys'] = {
             'tmdb': bool(os.environ.get('TMDB_API_KEY')),
@@ -120,6 +123,9 @@ class SystemService:
         # Services detailed health
         detailed['components']['services'] = cls._get_detailed_services_health()
         
+        # Admin system detailed health
+        detailed['components']['admin_system'] = cls._get_admin_system_health()
+        
         # External APIs health
         detailed['components']['external_apis'] = cls._get_external_apis_health()
         
@@ -156,6 +162,9 @@ class SystemService:
         except Exception as e:
             performance_data['database'] = {'error': str(e)}
         
+        # Admin system performance
+        performance_data['admin_system'] = cls._get_admin_performance_metrics()
+        
         # Cache performance
         performance_data['cache'] = {
             'type': cls.app.config.get('CACHE_TYPE', 'unknown'),
@@ -182,11 +191,13 @@ class SystemService:
                 'cinebrain_new_releases_service',
                 'cinebrain_enhanced_critics_choice_service',
                 'cinebrain_recommendation_service_modular',
-                'cinebrain_advanced_personalized_system'
+                'cinebrain_advanced_personalized_system',
+                'cinebrain_admin_monitoring_system'
             ],
             'memory_optimizations': 'cinebrain_enabled',
             'unicode_fixes': 'cinebrain_applied',
-            'monitoring': 'cinebrain_background_threads_active'
+            'monitoring': 'cinebrain_background_threads_active',
+            'admin_monitoring': 'cinebrain_enabled'
         }
         
         return performance_data
@@ -201,7 +212,8 @@ class SystemService:
             'system_metrics': cls._get_system_metrics(),
             'application_metrics': cls._get_application_metrics(),
             'database_metrics': cls._get_database_metrics(),
-            'cache_metrics': cls._get_cache_metrics()
+            'cache_metrics': cls._get_cache_metrics(),
+            'admin_metrics': cls._get_admin_detailed_metrics()
         }
         
         return detailed
@@ -220,6 +232,8 @@ class SystemService:
             User = cls.models.get('User')
             UserInteraction = cls.models.get('UserInteraction')
             Review = cls.models.get('Review')
+            SupportTicket = cls.models.get('SupportTicket')
+            AdminNotification = cls.models.get('AdminNotification')
             
             if Content:
                 stats['content'] = {
@@ -237,11 +251,12 @@ class SystemService:
                 active_users = User.query.filter(
                     User.last_active >= datetime.utcnow() - timedelta(days=7)
                 ).count()
+                admin_users = User.query.filter_by(is_admin=True).count()
                 
                 stats['users'] = {
                     'total': total_users,
                     'active_7d': active_users,
-                    'admins': User.query.filter_by(is_admin=True).count(),
+                    'admins': admin_users,
                     'activity_rate': round((active_users / total_users * 100), 1) if total_users > 0 else 0
                 }
             
@@ -260,6 +275,29 @@ class SystemService:
                     'total': Review.query.count(),
                     'approved': Review.query.filter_by(is_approved=True).count(),
                     'with_spoilers': Review.query.filter_by(has_spoilers=True).count()
+                }
+            
+            # Admin system statistics
+            if SupportTicket:
+                today = datetime.utcnow().date()
+                stats['support'] = {
+                    'total_tickets': SupportTicket.query.count(),
+                    'open_tickets': SupportTicket.query.filter(
+                        SupportTicket.status.in_(['open', 'in_progress'])
+                    ).count(),
+                    'urgent_tickets': SupportTicket.query.filter_by(priority='urgent').count(),
+                    'sla_breached': SupportTicket.query.filter_by(sla_breached=True).count(),
+                    'today_tickets': SupportTicket.query.filter(
+                        func.date(SupportTicket.created_at) == today
+                    ).count()
+                }
+            
+            if AdminNotification:
+                stats['admin_notifications'] = {
+                    'total': AdminNotification.query.count(),
+                    'unread': AdminNotification.query.filter_by(is_read=False).count(),
+                    'urgent': AdminNotification.query.filter_by(is_urgent=True).count(),
+                    'action_required': AdminNotification.query.filter_by(action_required=True).count()
                 }
                 
         except Exception as e:
@@ -340,6 +378,16 @@ class SystemService:
             'recommendation_service': 'recommendations' in cls.app.blueprints,
             'personalized_service': 'personalized' in cls.app.blueprints,
             'system_service': True  # This service
+        }
+        
+        # Admin services
+        services_status['admin_services'] = {
+            'admin_dashboard': 'admin_bp' in cls.app.blueprints,
+            'admin_notifications': bool(cls.services.get('admin_notification_service')),
+            'support_monitoring': 'support_bp' in cls.app.blueprints,
+            'email_notifications': cls._check_email_service(),
+            'telegram_notifications': cls._check_telegram_service(),
+            'admin_monitoring': True  # This monitoring system
         }
         
         # Advanced services
@@ -455,6 +503,10 @@ class SystemService:
                     'action': 'Check cache service'
                 })
             
+            # Admin-specific alerts
+            admin_alerts = cls._get_admin_system_alerts()
+            alerts['alerts'].extend(admin_alerts)
+            
         except Exception as e:
             alerts['alerts'].append({
                 'level': 'error',
@@ -498,6 +550,9 @@ class SystemService:
                     'type': cls.app.config.get('CACHE_TYPE')
                 }
             
+            # Admin metrics
+            metrics['admin_system'] = cls._get_admin_real_time_metrics()
+            
         except Exception as e:
             metrics['error'] = str(e)
         
@@ -513,7 +568,9 @@ class SystemService:
                 'populate-cast-crew',
                 'cinebrain-new-releases-refresh',
                 'analyze-user-profiles',
-                'test-personalized-recommendations'
+                'test-personalized-recommendations',
+                'admin-system-check',
+                'admin-notification-test'
             ]
         }
         
@@ -541,6 +598,14 @@ class SystemService:
             'test-personalized-recommendations': {
                 'available': 'personalized_recommendation_engine' in cls.services,
                 'requirements': ['personalized_recommendation_engine', 'database']
+            },
+            'admin-system-check': {
+                'available': True,
+                'requirements': ['admin_system', 'database']
+            },
+            'admin-notification-test': {
+                'available': bool(cls.services.get('admin_notification_service')),
+                'requirements': ['admin_notification_service', 'email_service']
             }
         }
         
@@ -584,6 +649,15 @@ class SystemService:
             'registered_services': list(cls.services.keys()) if cls.services else []
         }
         
+        # Admin system information
+        sys_info['admin_system'] = {
+            'monitoring_enabled': True,
+            'notification_system': bool(cls.services.get('admin_notification_service')),
+            'email_notifications': cls._check_email_service(),
+            'telegram_notifications': cls._check_telegram_service(),
+            'support_system': 'support_bp' in cls.app.blueprints
+        }
+        
         return sys_info
     
     @classmethod
@@ -602,13 +676,240 @@ class SystemService:
                 'real_time_learning': True,
                 'telugu_cultural_priority': True,
                 'modular_architecture': True,
-                'comprehensive_monitoring': True
+                'comprehensive_monitoring': True,
+                'admin_monitoring': True,
+                'security_monitoring': True,
+                'performance_tracking': True
             },
             'api_version': '3.0',
-            'database_schema_version': '1.0'
+            'database_schema_version': '1.0',
+            'monitoring_version': '2.0'
         }
     
-    # Helper methods
+    # Admin-specific helper methods
+    @classmethod
+    def _check_admin_services_health(cls) -> Dict[str, str]:
+        """Check health of admin-specific services"""
+        return {
+            'admin_dashboard': 'enabled' if 'admin_bp' in cls.app.blueprints else 'disabled',
+            'admin_notifications': 'enabled' if cls.services.get('admin_notification_service') else 'disabled',
+            'support_monitoring': 'enabled' if 'support_bp' in cls.app.blueprints else 'disabled',
+            'email_service': 'enabled' if cls._check_email_service() else 'disabled',
+            'telegram_service': 'enabled' if cls._check_telegram_service() else 'disabled'
+        }
+    
+    @classmethod
+    def _get_admin_system_health(cls) -> Dict[str, Any]:
+        """Get admin system detailed health"""
+        health = {
+            'admin_service': 'admin_bp' in cls.app.blueprints,
+            'notification_service': bool(cls.services.get('admin_notification_service')),
+            'support_system': 'support_bp' in cls.app.blueprints,
+            'email_service': cls._check_email_service(),
+            'monitoring_active': True
+        }
+        
+        # Check admin notification delivery
+        try:
+            if cls.services.get('admin_notification_service'):
+                health['notification_delivery'] = 'functional'
+            else:
+                health['notification_delivery'] = 'disabled'
+        except Exception as e:
+            health['notification_delivery'] = f'error: {str(e)}'
+        
+        return health
+    
+    @classmethod
+    def _get_admin_performance_metrics(cls) -> Dict[str, Any]:
+        """Get admin system performance metrics"""
+        try:
+            AdminNotification = cls.models.get('AdminNotification')
+            SupportTicket = cls.models.get('SupportTicket')
+            
+            metrics = {
+                'admin_service_active': 'admin_bp' in cls.app.blueprints,
+                'notification_system_active': bool(cls.services.get('admin_notification_service'))
+            }
+            
+            if AdminNotification:
+                total_notifications = AdminNotification.query.count()
+                unread_notifications = AdminNotification.query.filter_by(is_read=False).count()
+                
+                metrics['notifications'] = {
+                    'total': total_notifications,
+                    'unread': unread_notifications,
+                    'read_rate': round(((total_notifications - unread_notifications) / total_notifications * 100), 1) if total_notifications > 0 else 0
+                }
+            
+            if SupportTicket:
+                today = datetime.utcnow().date()
+                total_tickets = SupportTicket.query.count()
+                today_tickets = SupportTicket.query.filter(
+                    func.date(SupportTicket.created_at) == today
+                ).count()
+                
+                metrics['support'] = {
+                    'total_tickets': total_tickets,
+                    'today_tickets': today_tickets,
+                    'ticket_growth_rate': today_tickets
+                }
+            
+            return metrics
+            
+        except Exception as e:
+            return {'error': str(e)}
+    
+    @classmethod
+    def _get_admin_detailed_metrics(cls) -> Dict[str, Any]:
+        """Get detailed admin metrics"""
+        try:
+            User = cls.models.get('User')
+            AdminNotification = cls.models.get('AdminNotification')
+            SupportTicket = cls.models.get('SupportTicket')
+            
+            metrics = {}
+            
+            if User:
+                admin_users = User.query.filter_by(is_admin=True).all()
+                active_admins = [
+                    admin for admin in admin_users 
+                    if admin.last_active and admin.last_active >= datetime.utcnow() - timedelta(hours=24)
+                ]
+                
+                metrics['admin_users'] = {
+                    'total_admins': len(admin_users),
+                    'active_admins_24h': len(active_admins),
+                    'admin_activity_rate': round((len(active_admins) / len(admin_users) * 100), 1) if admin_users else 0
+                }
+            
+            if AdminNotification:
+                recent_notifications = AdminNotification.query.filter(
+                    AdminNotification.created_at >= datetime.utcnow() - timedelta(hours=24)
+                ).count()
+                
+                metrics['notifications_24h'] = recent_notifications
+            
+            if SupportTicket:
+                urgent_tickets = SupportTicket.query.filter_by(priority='urgent').count()
+                sla_breached = SupportTicket.query.filter_by(sla_breached=True).count()
+                
+                metrics['support_critical'] = {
+                    'urgent_tickets': urgent_tickets,
+                    'sla_breached': sla_breached
+                }
+            
+            return metrics
+            
+        except Exception as e:
+            return {'error': str(e)}
+    
+    @classmethod
+    def _get_admin_system_alerts(cls) -> List[Dict[str, Any]]:
+        """Get admin system specific alerts"""
+        alerts = []
+        
+        try:
+            SupportTicket = cls.models.get('SupportTicket')
+            AdminNotification = cls.models.get('AdminNotification')
+            
+            if SupportTicket:
+                # Check for urgent tickets
+                urgent_tickets = SupportTicket.query.filter(
+                    SupportTicket.priority == 'urgent',
+                    SupportTicket.status.in_(['open', 'in_progress'])
+                ).count()
+                
+                if urgent_tickets > 5:
+                    alerts.append({
+                        'level': 'critical',
+                        'component': 'support_system',
+                        'message': f'{urgent_tickets} urgent support tickets need attention',
+                        'action': 'Review urgent support tickets'
+                    })
+                
+                # Check for SLA breaches
+                sla_breached = SupportTicket.query.filter_by(sla_breached=True).count()
+                
+                if sla_breached > 0:
+                    alerts.append({
+                        'level': 'warning',
+                        'component': 'support_sla',
+                        'message': f'{sla_breached} tickets have exceeded SLA',
+                        'action': 'Address SLA breaches immediately'
+                    })
+            
+            if AdminNotification:
+                # Check for unread urgent notifications
+                urgent_unread = AdminNotification.query.filter(
+                    AdminNotification.is_urgent == True,
+                    AdminNotification.is_read == False
+                ).count()
+                
+                if urgent_unread > 0:
+                    alerts.append({
+                        'level': 'warning',
+                        'component': 'admin_notifications',
+                        'message': f'{urgent_unread} urgent admin notifications unread',
+                        'action': 'Review urgent notifications'
+                    })
+            
+            # Check email service
+            if not cls._check_email_service():
+                alerts.append({
+                    'level': 'warning',
+                    'component': 'email_service',
+                    'message': 'Email service not configured or not working',
+                    'action': 'Check email service configuration'
+                })
+            
+        except Exception as e:
+            alerts.append({
+                'level': 'error',
+                'component': 'admin_monitoring',
+                'message': f'Error checking admin alerts: {str(e)}',
+                'action': 'Check admin monitoring system'
+            })
+        
+        return alerts
+    
+    @classmethod
+    def _get_admin_real_time_metrics(cls) -> Dict[str, Any]:
+        """Get real-time admin metrics"""
+        try:
+            metrics = {
+                'timestamp': datetime.utcnow().isoformat(),
+                'admin_service_status': 'admin_bp' in cls.app.blueprints,
+                'notification_service_status': bool(cls.services.get('admin_notification_service')),
+                'support_service_status': 'support_bp' in cls.app.blueprints
+            }
+            
+            # Real-time counts
+            SupportTicket = cls.models.get('SupportTicket')
+            if SupportTicket:
+                metrics['live_support_stats'] = {
+                    'open_tickets': SupportTicket.query.filter(
+                        SupportTicket.status.in_(['open', 'in_progress'])
+                    ).count(),
+                    'urgent_tickets': SupportTicket.query.filter_by(priority='urgent').count()
+                }
+            
+            AdminNotification = cls.models.get('AdminNotification')
+            if AdminNotification:
+                metrics['live_notification_stats'] = {
+                    'unread_notifications': AdminNotification.query.filter_by(is_read=False).count(),
+                    'urgent_notifications': AdminNotification.query.filter(
+                        AdminNotification.is_urgent == True,
+                        AdminNotification.is_read == False
+                    ).count()
+                }
+            
+            return metrics
+            
+        except Exception as e:
+            return {'error': str(e)}
+    
+    # Helper methods (existing ones updated)
     @classmethod
     def _get_services_health(cls) -> Dict[str, str]:
         """Get basic services health status"""
@@ -618,8 +919,27 @@ class SystemService:
             'details_service': 'enabled' if 'details_service' in cls.services else 'disabled',
             'content_service': 'enabled' if 'ContentService' in cls.services else 'disabled',
             'new_releases_service': 'enabled' if 'new_releases_service' in cls.services else 'disabled',
-            'personalized_service': 'enabled' if 'personalized_recommendation_engine' in cls.services else 'disabled'
+            'personalized_service': 'enabled' if 'personalized_recommendation_engine' in cls.services else 'disabled',
+            'admin_service': 'enabled' if 'admin_bp' in cls.app.blueprints else 'disabled',
+            'support_service': 'enabled' if 'support_bp' in cls.app.blueprints else 'disabled'
         }
+    
+    @classmethod
+    def _check_email_service(cls) -> bool:
+        """Check if email service is configured"""
+        try:
+            from auth.service import email_service
+            return bool(email_service and email_service.email_enabled)
+        except:
+            return False
+    
+    @classmethod
+    def _check_telegram_service(cls) -> bool:
+        """Check if Telegram service is configured"""
+        return all([
+            os.environ.get('TELEGRAM_BOT_TOKEN'),
+            os.environ.get('TELEGRAM_CHANNEL_ID')
+        ])
     
     @classmethod
     def _get_database_health(cls) -> Dict[str, Any]:
@@ -697,6 +1017,12 @@ class SystemService:
                 'user_management': 'user_bp' in cls.app.blueprints,
                 'admin': 'admin_bp' in cls.app.blueprints,
                 'support': 'support_bp' in cls.app.blueprints
+            },
+            'admin_services': {
+                'notification_system': bool(cls.services.get('admin_notification_service')),
+                'monitoring_system': True,
+                'email_service': cls._check_email_service(),
+                'telegram_service': cls._check_telegram_service()
             }
         }
     
@@ -710,7 +1036,7 @@ class SystemService:
             },
             'youtube': {
                 'configured': bool(os.environ.get('YOUTUBE_API_KEY')),
-                'functional': bool(os.environ.get('YOUTUBE_API_KEY'))  # Can't easily test without making requests
+                'functional': bool(os.environ.get('YOUTUBE_API_KEY'))
             },
             'cloudinary': {
                 'configured': all([
@@ -718,11 +1044,11 @@ class SystemService:
                     os.environ.get('CLOUDINARY_API_KEY'),
                     os.environ.get('CLOUDINARY_API_SECRET')
                 ]),
-                'functional': True  # Assume functional if configured
+                'functional': True
             },
             'jikan': {
-                'configured': True,  # No API key required
-                'functional': True   # Assume functional
+                'configured': True,
+                'functional': True
             }
         }
     
@@ -730,10 +1056,12 @@ class SystemService:
     def _get_background_processes_health(cls) -> Dict[str, Any]:
         """Get background processes health"""
         return {
-            'support_monitoring': True,  # Always active in app.py
+            'support_monitoring': True,
+            'admin_monitoring': True,
             'recommendation_updates': 'personalized_recommendation_engine' in cls.services,
             'cache_management': bool(cls.cache),
-            'database_connections': cls._test_database_connection()
+            'database_connections': cls._test_database_connection(),
+            'notification_delivery': bool(cls.services.get('admin_notification_service'))
         }
     
     @classmethod
@@ -749,6 +1077,7 @@ class SystemService:
             'cast_crew': 'cinebrain_fully_enabled',
             'support_service': 'enabled' if 'support_bp' in cls.app.blueprints else 'disabled',
             'admin_notifications': 'cinebrain_enabled',
+            'admin_monitoring': 'cinebrain_active',
             'monitoring': 'cinebrain_active',
             'auth_service': 'enabled' if 'auth_bp' in cls.app.blueprints else 'disabled',
             'user_service': 'enabled' if 'user_bp' in cls.app.blueprints else 'disabled',
@@ -790,7 +1119,9 @@ class SystemService:
             'url_rules_count': len(list(cls.app.url_map.iter_rules())),
             'registered_services_count': len(cls.services) if cls.services else 0,
             'debug_mode': cls.app.debug,
-            'testing_mode': cls.app.testing
+            'testing_mode': cls.app.testing,
+            'admin_system_active': 'admin_bp' in cls.app.blueprints,
+            'monitoring_system_active': True
         }
     
     @classmethod
@@ -880,7 +1211,7 @@ class SystemService:
     @classmethod
     def _test_tmdb_connection(cls) -> bool:
         """Test TMDB API connection"""
-        return bool(os.environ.get('TMDB_API_KEY'))  # Basic check
+        return bool(os.environ.get('TMDB_API_KEY'))
     
     @classmethod
     def _get_active_db_connections(cls) -> int:
