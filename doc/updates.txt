@@ -1,0 +1,12 @@
+if there is no content or anything it should be the height of Search Controls div and when user search it should be expand and show the Search Results
+
+
+
+
+
+reduce the gap between the topbar and main div
+
+make this more mobile responsive the sizes of the text, icons, elements, div, contanores should be auto ajustable according to the size of the mobiles
+
+the Main Content Tabs containor should be small and auto abjustable when the content is shown
+in the Search Content Tab Search Controls, search-filters, searchType and search-actions should be in single line or same line
