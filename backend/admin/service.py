@@ -149,25 +149,33 @@ class AdminNotificationService:
                           action_required: bool = False, action_url: str = None,
                           metadata: dict = None):
         try:
+            notification = None
             if not self.AdminNotification:
                 logger.warning("AdminNotification model not available, skipping database notification")
             else:
-                notification = self.AdminNotification(
-                    notification_type=notification_type,
-                    title=title,
-                    message=message,
-                    admin_id=admin_id,
-                    related_ticket_id=related_ticket_id,
-                    related_content_id=related_content_id,
-                    is_urgent=is_urgent,
-                    action_required=action_required,
-                    action_url=action_url,
-                    notification_metadata=metadata or {}
-                )
-                
-                self.db.session.add(notification)
-                self.db.session.commit()
-                logger.info(f"✅ Database notification created: {title}")
+                try:
+                    notification = self.AdminNotification(
+                        notification_type=notification_type,
+                        title=title,
+                        message=message,
+                        admin_id=admin_id,
+                        related_ticket_id=related_ticket_id,
+                        related_content_id=related_content_id,
+                        is_urgent=is_urgent,
+                        action_required=action_required,
+                        action_url=action_url,
+                        notification_metadata=metadata or {}
+                    )
+                    
+                    self.db.session.add(notification)
+                    self.db.session.commit()
+                    logger.info(f"✅ Database notification created: {title}")
+                except Exception as e:
+                    logger.error(f"Database notification creation failed: {e}")
+                    try:
+                        self.db.session.rollback()
+                    except:
+                        pass
             
             if self.email_service and self.email_service.is_configured:
                 try:
@@ -187,7 +195,7 @@ class AdminNotificationService:
             if self.redis_client:
                 try:
                     notification_data = {
-                        'id': notification.id if self.AdminNotification else f"temp_{int(datetime.utcnow().timestamp())}",
+                        'id': notification.id if notification else f"temp_{int(datetime.utcnow().timestamp())}",
                         'type': notification_type,
                         'title': title,
                         'message': message,
@@ -204,12 +212,14 @@ class AdminNotificationService:
                     logger.error(f"Redis notification error: {e}")
             
             logger.info(f"✅ Admin notification created successfully (EMAIL ONLY): {title}")
-            return notification if self.AdminNotification else True
+            return notification if notification else True
             
         except Exception as e:
             logger.error(f"❌ Error creating admin notification: {e}")
-            if self.db:
+            try:
                 self.db.session.rollback()
+            except:
+                pass
             return None
     
     def notify_new_ticket(self, ticket):
@@ -479,7 +489,10 @@ class AdminService:
             }
             
         except Exception as e:
-            self.db.session.rollback()
+            try:
+                self.db.session.rollback()
+            except:
+                pass
             logger.error(f"Error saving content: {e}")
             raise e
     
@@ -554,7 +567,10 @@ class AdminService:
             }
             
         except Exception as e:
-            self.db.session.rollback()
+            try:
+                self.db.session.rollback()
+            except:
+                pass
             logger.error(f"Create recommendation from external content error: {e}")
             raise e
     
@@ -611,11 +627,15 @@ class AdminService:
             }
             
         except Exception as e:
-            self.db.session.rollback()
+            try:
+                self.db.session.rollback()
+            except:
+                pass
             logger.error(f"Admin recommendation error: {e}")
             raise e
     
     def get_recommendations(self, page=1, per_page=20, filter_type='all', status=None):
+        """Get admin recommendations with safe handling of updated_at column"""
         try:
             query = self.AdminRecommendation.query
             
@@ -634,27 +654,36 @@ class AdminService:
             
             result = []
             for rec in admin_recs.items:
-                content = self.Content.query.get(rec.content_id)
-                admin = self.User.query.get(rec.admin_id)
-                
-                if content and admin:
-                    result.append({
-                        'id': rec.id,
-                        'recommendation_type': rec.recommendation_type,
-                        'description': rec.description,
-                        'is_active': rec.is_active,
-                        'created_at': rec.created_at.isoformat(),
-                        'updated_at': rec.updated_at.isoformat() if hasattr(rec, 'updated_at') and rec.updated_at else None,
-                        'admin_name': admin.username,
-                        'content': {
-                            'id': content.id,
-                            'title': content.title,
-                            'content_type': content.content_type,
-                            'rating': content.rating,
-                            'release_date': content.release_date.isoformat() if content.release_date else None,
-                            'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path
-                        }
-                    })
+                try:
+                    content = self.Content.query.get(rec.content_id)
+                    admin = self.User.query.get(rec.admin_id)
+                    
+                    if content and admin:
+                        # Safe access to updated_at field
+                        updated_at = getattr(rec, 'updated_at', None)
+                        if updated_at is None:
+                            updated_at = rec.created_at
+                        
+                        result.append({
+                            'id': rec.id,
+                            'recommendation_type': rec.recommendation_type,
+                            'description': rec.description,
+                            'is_active': rec.is_active,
+                            'created_at': rec.created_at.isoformat(),
+                            'updated_at': updated_at.isoformat(),  # Safe access
+                            'admin_name': admin.username,
+                            'content': {
+                                'id': content.id,
+                                'title': content.title,
+                                'content_type': content.content_type,
+                                'rating': content.rating,
+                                'release_date': content.release_date.isoformat() if content.release_date else None,
+                                'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path
+                            }
+                        })
+                except Exception as e:
+                    logger.error(f"Error processing recommendation {rec.id}: {e}")
+                    continue
             
             logger.info(f"✅ Retrieved {len(result)} admin recommendations")
             return {
@@ -669,6 +698,10 @@ class AdminService:
             
         except Exception as e:
             logger.error(f"Get admin recommendations error: {e}")
+            try:
+                self.db.session.rollback()
+            except:
+                pass
             return {'error': 'Failed to get recommendations'}
     
     def get_recommendation_details(self, recommendation_id):
@@ -683,13 +716,18 @@ class AdminService:
             if not content or not admin:
                 return None
             
+            # Safe access to updated_at field
+            updated_at = getattr(recommendation, 'updated_at', None)
+            if updated_at is None:
+                updated_at = recommendation.created_at
+            
             return {
                 'id': recommendation.id,
                 'recommendation_type': recommendation.recommendation_type,
                 'description': recommendation.description,
                 'is_active': recommendation.is_active,
                 'created_at': recommendation.created_at.isoformat(),
-                'updated_at': recommendation.updated_at.isoformat() if hasattr(recommendation, 'updated_at') and recommendation.updated_at else None,
+                'updated_at': updated_at.isoformat(),  # Safe access
                 'admin_name': admin.username,
                 'admin_id': admin.id,
                 'content': {
@@ -720,6 +758,7 @@ class AdminService:
             if 'is_active' in data:
                 recommendation.is_active = data['is_active']
             
+            # Safe update of updated_at field
             if hasattr(recommendation, 'updated_at'):
                 recommendation.updated_at = datetime.utcnow()
             
@@ -747,7 +786,10 @@ class AdminService:
             }
             
         except Exception as e:
-            self.db.session.rollback()
+            try:
+                self.db.session.rollback()
+            except:
+                pass
             logger.error(f"Update recommendation error: {e}")
             raise e
     
@@ -782,7 +824,10 @@ class AdminService:
             }
             
         except Exception as e:
-            self.db.session.rollback()
+            try:
+                self.db.session.rollback()
+            except:
+                pass
             logger.error(f"Delete recommendation error: {e}")
             raise e
     
@@ -797,6 +842,7 @@ class AdminService:
                 return {'error': 'Associated content not found'}
             
             recommendation.is_active = True
+            # Safe update of updated_at field
             if hasattr(recommendation, 'updated_at'):
                 recommendation.updated_at = datetime.utcnow()
             
@@ -836,7 +882,10 @@ class AdminService:
             }
             
         except Exception as e:
-            self.db.session.rollback()
+            try:
+                self.db.session.rollback()
+            except:
+                pass
             logger.error(f"Publish recommendation error: {e}")
             raise e
     
@@ -926,7 +975,10 @@ class AdminService:
             
         except Exception as e:
             logger.error(f"Slug migration error: {e}")
-            self.db.session.rollback()
+            try:
+                self.db.session.rollback()
+            except:
+                pass
             raise e
     
     def update_content_slug(self, content_id, force_update=False):
@@ -953,7 +1005,10 @@ class AdminService:
             
         except Exception as e:
             logger.error(f"Error updating content slug: {e}")
-            self.db.session.rollback()
+            try:
+                self.db.session.rollback()
+            except:
+                pass
             return None
     
     def populate_cast_crew(self, batch_size=10):
@@ -1042,6 +1097,10 @@ class AdminService:
                     
                 except Exception as e:
                     logger.error(f"Database notification retrieval error: {e}")
+                    try:
+                        self.db.session.rollback()
+                    except:
+                        pass
             
             return {
                 'recent_notifications': recent_notifications,
@@ -1074,7 +1133,10 @@ class AdminService:
             
         except Exception as e:
             logger.error(f"Mark all notifications read error: {e}")
-            self.db.session.rollback()
+            try:
+                self.db.session.rollback()
+            except:
+                pass
             return {'error': 'Failed to mark all notifications as read'}
     
     def clear_cache(self, cache_type='all'):
@@ -1158,7 +1220,10 @@ class AdminService:
             
         except Exception as e:
             logger.error(f"Create canned response error: {e}")
-            self.db.session.rollback()
+            try:
+                self.db.session.rollback()
+            except:
+                pass
             return {'error': 'Failed to create canned response'}
 
 def init_admin_service(app, db, models, services):

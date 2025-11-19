@@ -179,18 +179,17 @@ class AdminDashboard:
         ]
     
     def _get_alerts(self):
-        """Get system alerts and notifications"""
+        """Get system alerts and notifications with improved error handling"""
         alerts = []
         
         try:
             # Check for urgent tickets if support system is available
             if self.SupportTicket:
                 try:
-                    # FIXED: Use string values instead of enum objects
                     urgent_tickets = self.SupportTicket.query.filter(
                         and_(
-                            self.SupportTicket.priority == 'urgent',  # String value
-                            self.SupportTicket.status.in_(['open', 'in_progress'])  # String values
+                            self.SupportTicket.priority == 'urgent',
+                            self.SupportTicket.status.in_(['open', 'in_progress'])
                         )
                     ).count()
                     
@@ -202,11 +201,19 @@ class AdminDashboard:
                             'action_url': '/admin/support/tickets?priority=urgent'
                         })
                     
-                    # Check for SLA breaches
+                except Exception as e:
+                    logger.error(f"Error checking urgent tickets: {e}")
+                    try:
+                        self.db.session.rollback()
+                    except Exception:
+                        pass
+                
+                try:
+                    # Check for SLA breaches - separate transaction
                     sla_breached = self.SupportTicket.query.filter(
                         and_(
                             self.SupportTicket.sla_breached == True,
-                            self.SupportTicket.status.in_(['open', 'in_progress'])  # String values
+                            self.SupportTicket.status.in_(['open', 'in_progress'])
                         )
                     ).count()
                     
@@ -219,28 +226,42 @@ class AdminDashboard:
                         })
                         
                 except Exception as e:
-                    logger.error(f"Error checking ticket alerts: {e}")
+                    logger.error(f"Error checking SLA breaches: {e}")
+                    try:
+                        self.db.session.rollback()
+                    except Exception:
+                        pass
             
             # Check for unread feedback
             if self.Feedback:
-                unread_feedback = self.Feedback.query.filter_by(is_read=False).count()
-                if unread_feedback > 5:
-                    alerts.append({
-                        'type': 'info',
-                        'title': f'{unread_feedback} Unread Feedback',
-                        'message': f'{unread_feedback} feedback messages are waiting for review',
-                        'action_url': '/admin/support/feedback?unread_only=true'
-                    })
+                try:
+                    unread_feedback = self.Feedback.query.filter_by(is_read=False).count()
+                    if unread_feedback > 5:
+                        alerts.append({
+                            'type': 'info',
+                            'title': f'{unread_feedback} Unread Feedback',
+                            'message': f'{unread_feedback} feedback messages are waiting for review',
+                            'action_url': '/admin/support/feedback?unread_only=true'
+                        })
+                except Exception as e:
+                    logger.error(f"Error checking feedback: {e}")
+                    try:
+                        self.db.session.rollback()
+                    except Exception:
+                        pass
             
             # Check system health
-            if not self._check_external_apis():
-                alerts.append({
-                    'type': 'error',
-                    'title': 'External API Issues',
-                    'message': 'Some external APIs are not responding properly',
-                    'action_url': '/admin/system-health'
-                })
-            
+            try:
+                if not self._check_external_apis():
+                    alerts.append({
+                        'type': 'error',
+                        'title': 'External API Issues',
+                        'message': 'Some external APIs are not responding properly',
+                        'action_url': '/admin/system-health'
+                    })
+            except Exception as e:
+                logger.error(f"Error checking external APIs: {e}")
+        
         except Exception as e:
             logger.error(f"Error getting alerts: {e}")
             alerts.append({
@@ -567,12 +588,11 @@ class AdminDashboard:
             # Support system health
             if self.SupportTicket:
                 try:
-                    from support.tickets import TicketStatus
                     health_data['components']['support_system'] = {
                         'status': 'healthy',
                         'total_tickets': self.SupportTicket.query.count(),
                         'open_tickets': self.SupportTicket.query.filter(
-                            self.SupportTicket.status.in_([TicketStatus.OPEN, TicketStatus.IN_PROGRESS])
+                            self.SupportTicket.status.in_(['open', 'in_progress'])
                         ).count(),
                         'total_feedback': self.Feedback.query.count() if self.Feedback else 0
                     }
