@@ -21,6 +21,7 @@ User = None
 Content = None
 UserInteraction = None
 AdminRecommendation = None
+AdminEmailPreferences = None
 cache = None
 
 def get_user_from_token():
@@ -453,6 +454,119 @@ def get_content_management(current_user):
         logger.error(f"Content management error: {e}")
         return jsonify({'error': 'Failed to get content'}), 500
 
+# Email Preferences Routes (NEW)
+@admin_bp.route('/api/admin/email-preferences', methods=['GET'])
+@require_admin
+def get_email_preferences(current_user):
+    """Get admin email preferences"""
+    try:
+        if not AdminEmailPreferences:
+            return jsonify({'error': 'Email preferences not available'}), 503
+        
+        preferences = AdminEmailPreferences.query.filter_by(admin_id=current_user.id).first()
+        if not preferences:
+            # Create default preferences
+            preferences = AdminEmailPreferences(admin_id=current_user.id)
+            db.session.add(preferences)
+            db.session.commit()
+        
+        return jsonify({
+            'preferences': {
+                'critical_alerts': {
+                    'urgent_tickets': preferences.urgent_tickets,
+                    'sla_breaches': preferences.sla_breaches,
+                    'system_alerts': preferences.system_alerts
+                },
+                'content_management': {
+                    'content_added': preferences.content_added,
+                    'recommendation_created': preferences.recommendation_created,
+                    'recommendation_updated': preferences.recommendation_updated,
+                    'recommendation_deleted': preferences.recommendation_deleted,
+                    'recommendation_published': preferences.recommendation_published
+                },
+                'user_activity': {
+                    'user_feedback': preferences.user_feedback,
+                    'regular_tickets': preferences.regular_tickets
+                },
+                'system_operations': {
+                    'cache_operations': preferences.cache_operations,
+                    'bulk_operations': preferences.bulk_operations,
+                    'slug_updates': preferences.slug_updates
+                }
+            },
+            'updated_at': preferences.updated_at.isoformat()
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Get email preferences error: {e}")
+        return jsonify({'error': 'Failed to get email preferences'}), 500
+
+@admin_bp.route('/api/admin/email-preferences', methods=['PUT'])
+@require_admin
+def update_email_preferences(current_user):
+    """Update admin email preferences"""
+    try:
+        if not AdminEmailPreferences:
+            return jsonify({'error': 'Email preferences not available'}), 503
+        
+        data = request.get_json()
+        if not data or 'preferences' not in data:
+            return jsonify({'error': 'Invalid request data'}), 400
+        
+        preferences = AdminEmailPreferences.query.filter_by(admin_id=current_user.id).first()
+        if not preferences:
+            preferences = AdminEmailPreferences(admin_id=current_user.id)
+            db.session.add(preferences)
+        
+        prefs = data['preferences']
+        
+        # Update critical alerts
+        if 'critical_alerts' in prefs:
+            critical = prefs['critical_alerts']
+            preferences.urgent_tickets = critical.get('urgent_tickets', preferences.urgent_tickets)
+            preferences.sla_breaches = critical.get('sla_breaches', preferences.sla_breaches)
+            preferences.system_alerts = critical.get('system_alerts', preferences.system_alerts)
+        
+        # Update content management
+        if 'content_management' in prefs:
+            content = prefs['content_management']
+            preferences.content_added = content.get('content_added', preferences.content_added)
+            preferences.recommendation_created = content.get('recommendation_created', preferences.recommendation_created)
+            preferences.recommendation_updated = content.get('recommendation_updated', preferences.recommendation_updated)
+            preferences.recommendation_deleted = content.get('recommendation_deleted', preferences.recommendation_deleted)
+            preferences.recommendation_published = content.get('recommendation_published', preferences.recommendation_published)
+        
+        # Update user activity
+        if 'user_activity' in prefs:
+            user = prefs['user_activity']
+            preferences.user_feedback = user.get('user_feedback', preferences.user_feedback)
+            preferences.regular_tickets = user.get('regular_tickets', preferences.regular_tickets)
+        
+        # Update system operations
+        if 'system_operations' in prefs:
+            system = prefs['system_operations']
+            preferences.cache_operations = system.get('cache_operations', preferences.cache_operations)
+            preferences.bulk_operations = system.get('bulk_operations', preferences.bulk_operations)
+            preferences.slug_updates = system.get('slug_updates', preferences.slug_updates)
+        
+        preferences.updated_at = datetime.utcnow()
+        db.session.commit()
+        
+        logger.info(f"✅ Email preferences updated for admin {current_user.username}")
+        return jsonify({
+            'success': True,
+            'message': 'Email preferences updated successfully',
+            'updated_at': preferences.updated_at.isoformat()
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Update email preferences error: {e}")
+        try:
+            db.session.rollback()
+        except:
+            pass
+        return jsonify({'error': 'Failed to update email preferences'}), 500
+
 # Notification Routes
 @admin_bp.route('/api/admin/notifications', methods=['GET'])
 @require_admin
@@ -625,7 +739,8 @@ def get_services_status(current_user):
             'dashboard_service': 'available' if dashboard_service else 'unavailable',
             'telegram_service': 'available' if telegram_service else 'unavailable',
             'database': 'connected' if db else 'disconnected',
-            'cache': 'available' if cache else 'unavailable'
+            'cache': 'available' if cache else 'unavailable',
+            'email_preferences': 'available' if AdminEmailPreferences else 'unavailable'
         }
         
         return jsonify({
@@ -675,7 +790,7 @@ def after_request(response):
 def init_admin_routes(flask_app, database, models, services):
     """Initialize admin routes with dependencies"""
     global admin_service, dashboard_service, telegram_service
-    global app, db, User, Content, UserInteraction, AdminRecommendation, cache
+    global app, db, User, Content, UserInteraction, AdminRecommendation, AdminEmailPreferences, cache
     
     app = flask_app
     db = database
@@ -683,6 +798,7 @@ def init_admin_routes(flask_app, database, models, services):
     Content = models.get('Content')
     UserInteraction = models.get('UserInteraction')
     AdminRecommendation = models.get('AdminRecommendation')
+    AdminEmailPreferences = models.get('AdminEmailPreferences')  # NEW
     cache = services.get('cache')
     
     # Initialize individual services
@@ -699,6 +815,7 @@ def init_admin_routes(flask_app, database, models, services):
         logger.info(f"   - Admin service: {'✓' if admin_service else '✗'}")
         logger.info(f"   - Dashboard service: {'✓' if dashboard_service else '✗'}")
         logger.info(f"   - Telegram service: {'✓' if telegram_service else '✗'}")
+        logger.info(f"   - Email preferences: {'✓' if AdminEmailPreferences else '✗'}")
         
     except Exception as e:
         logger.error(f"❌ Failed to initialize admin routes: {e}")
