@@ -10,3 +10,20 @@ make this more mobile responsive the sizes of the text, icons, elements, div, co
 
 the Main Content Tabs containor should be small and auto abjustable when the content is shown
 in the Search Content Tab Search Controls, search-filters, searchType and search-actions should be in single line or same line
+
+
+
+
+add this for all the templates if it is movie there should be movie name: 
+if it is anime there should be anime name: 
+if it is tv-shows/series there should be tv-shows/series name: 
+
+
+provide me the complete updated file
+
+
+add this template for the telegram recommendations 
+make this templates similar to my above standared template
+
+the admin can change the template according in the frontend while posting the recommendations 
+

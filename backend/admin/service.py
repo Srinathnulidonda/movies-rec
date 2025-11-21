@@ -626,7 +626,8 @@ class AdminService:
             logger.error(f"Error saving content: {e}")
             raise e
     
-    def create_recommendation_from_external_content(self, admin_user, content_data, recommendation_type, description, status='draft', publish_to_telegram=False):
+    def create_recommendation_from_external_content(self, admin_user, content_data, recommendation_type, description, status='draft', publish_to_telegram=False, template_type='auto', template_params=None):
+        """Enhanced method with template support"""
         try:
             content = None
             
@@ -663,10 +664,11 @@ class AdminService:
             if publish_to_telegram and status == 'active':
                 if self.telegram_service:
                     try:
+                        template_params = template_params or {}
                         telegram_sent = self.telegram_service.send_admin_recommendation(
-                            content, admin_user.username, description
+                            content, admin_user.username, description, template_type, template_params
                         )
-                        logger.info(f"✅ Telegram recommendation sent: {content.title}")
+                        logger.info(f"✅ Telegram recommendation sent with {template_type} template: {content.title}")
                     except Exception as e:
                         logger.warning(f"Telegram send failed: {e}")
             
@@ -678,23 +680,29 @@ class AdminService:
                         f"Admin {admin_user.username} created a recommendation for '{content.title}'\n"
                         f"Type: {recommendation_type}\n"
                         f"Status: {status}\n"
+                        f"Template: {template_type}\n"
                         f"Description: {description[:100]}...",
                         admin_id=admin_user.id,
                         related_content_id=content.id,
                         action_url=f"/admin/recommendations/{admin_rec.id}",
+                        metadata={
+                            'template_type': template_type,
+                            'template_params': template_params
+                        },
                         alert_type='recommendation_created'
                     )
                 except Exception as e:
                     logger.warning(f"Failed to create recommendation notification: {e}")
             
-            logger.info(f"✅ Recommendation created from external content: {content.title} by {admin_user.username}")
+            logger.info(f"✅ Recommendation created from external content with {template_type} template: {content.title} by {admin_user.username}")
             return {
                 'success': True,
                 'message': f'Recommendation {"published" if status == "active" else "saved as upcoming"}',
                 'telegram_sent': telegram_sent,
                 'recommendation_id': admin_rec.id,
                 'content_id': content.id,
-                'status': status
+                'status': status,
+                'template_type': template_type
             }
             
         except Exception as e:
@@ -705,7 +713,8 @@ class AdminService:
             logger.error(f"Create recommendation from external content error: {e}")
             raise e
     
-    def create_recommendation(self, admin_user, content_id, recommendation_type, description):
+    def create_recommendation(self, admin_user, content_id, recommendation_type, description, template_type='auto', template_params=None):
+        """Enhanced method with template support"""
         try:
             content = self.Content.query.get(content_id)
             if not content:
@@ -728,10 +737,11 @@ class AdminService:
             telegram_success = False
             if self.telegram_service:
                 try:
+                    template_params = template_params or {}
                     telegram_success = self.telegram_service.send_admin_recommendation(
-                        content, admin_user.username, description
+                        content, admin_user.username, description, template_type, template_params
                     )
-                    logger.info(f"✅ Telegram recommendation sent: {content.title}")
+                    logger.info(f"✅ Telegram recommendation sent with {template_type} template: {content.title}")
                 except Exception as e:
                     logger.warning(f"Telegram send failed: {e}")
             
@@ -742,20 +752,26 @@ class AdminService:
                         f"New Admin Recommendation Created",
                         f"Admin {admin_user.username} recommended '{content.title}'\n"
                         f"Type: {recommendation_type}\n"
+                        f"Template: {template_type}\n"
                         f"Description: {description[:100]}...",
                         admin_id=admin_user.id,
                         related_content_id=content.id,
                         action_url=f"/admin/recommendations/{admin_rec.id}",
+                        metadata={
+                            'template_type': template_type,
+                            'template_params': template_params
+                        },
                         alert_type='recommendation_created'
                     )
                 except Exception as e:
                     logger.warning(f"Failed to create recommendation notification: {e}")
             
-            logger.info(f"✅ Admin recommendation created: {content.title} by {admin_user.username}")
+            logger.info(f"✅ Admin recommendation created with {template_type} template: {content.title} by {admin_user.username}")
             return {
                 'message': 'Admin recommendation created successfully',
                 'telegram_sent': telegram_success,
-                'recommendation_id': admin_rec.id
+                'recommendation_id': admin_rec.id,
+                'template_type': template_type
             }
             
         except Exception as e:
@@ -965,7 +981,8 @@ class AdminService:
             logger.error(f"Delete recommendation error: {e}")
             raise e
     
-    def publish_recommendation(self, admin_user, recommendation_id):
+    def publish_recommendation(self, admin_user, recommendation_id, template_type='auto', template_params=None):
+        """Enhanced method with template support"""
         try:
             recommendation = self.AdminRecommendation.query.get(recommendation_id)
             if not recommendation:
@@ -985,10 +1002,11 @@ class AdminService:
             telegram_sent = False
             if self.telegram_service:
                 try:
+                    template_params = template_params or {}
                     telegram_sent = self.telegram_service.send_admin_recommendation(
-                        content, admin_user.username, recommendation.description
+                        content, admin_user.username, recommendation.description, template_type, template_params
                     )
-                    logger.info(f"✅ Telegram recommendation sent: {content.title}")
+                    logger.info(f"✅ Telegram recommendation sent with {template_type} template: {content.title}")
                 except Exception as e:
                     logger.warning(f"Telegram send failed: {e}")
             
@@ -999,21 +1017,27 @@ class AdminService:
                         f"Recommendation Published",
                         f"Admin {admin_user.username} published recommendation for '{content.title}'\n"
                         f"Type: {recommendation.recommendation_type}\n"
+                        f"Template: {template_type}\n"
                         f"Telegram sent: {'Yes' if telegram_sent else 'No'}",
                         admin_id=admin_user.id,
                         related_content_id=content.id,
                         action_url=f"/admin/recommendations/{recommendation.id}",
+                        metadata={
+                            'template_type': template_type,
+                            'template_params': template_params
+                        },
                         alert_type='recommendation_published'
                     )
                 except Exception as e:
                     logger.warning(f"Failed to create publish notification: {e}")
             
-            logger.info(f"✅ Recommendation published: {content.title} by {admin_user.username}")
+            logger.info(f"✅ Recommendation published with {template_type} template: {content.title} by {admin_user.username}")
             return {
                 'success': True,
                 'message': 'Recommendation published successfully',
                 'telegram_sent': telegram_sent,
-                'recommendation_id': recommendation.id
+                'recommendation_id': recommendation.id,
+                'template_type': template_type
             }
             
         except Exception as e:
@@ -1024,7 +1048,8 @@ class AdminService:
             logger.error(f"Publish recommendation error: {e}")
             raise e
     
-    def send_recommendation_to_telegram(self, admin_user, recommendation_id):
+    def send_recommendation_to_telegram(self, admin_user, recommendation_id, template_type='auto', template_params=None):
+        """Enhanced method with template support"""
         try:
             recommendation = self.AdminRecommendation.query.get(recommendation_id)
             if not recommendation:
@@ -1037,10 +1062,11 @@ class AdminService:
             telegram_sent = False
             if self.telegram_service:
                 try:
+                    template_params = template_params or {}
                     telegram_sent = self.telegram_service.send_admin_recommendation(
-                        content, admin_user.username, recommendation.description
+                        content, admin_user.username, recommendation.description, template_type, template_params
                     )
-                    logger.info(f"✅ Telegram recommendation sent: {content.title}")
+                    logger.info(f"✅ Telegram recommendation sent with {template_type} template: {content.title}")
                 except Exception as e:
                     logger.warning(f"Telegram send failed: {e}")
                     return {'error': f'Failed to send to Telegram: {str(e)}'}
@@ -1052,25 +1078,75 @@ class AdminService:
                     self.notification_service.create_notification(
                         NotificationType.CONTENT_ADDED,
                         f"Recommendation Sent to Telegram",
-                        f"Admin {admin_user.username} sent recommendation for '{content.title}' to Telegram",
+                        f"Admin {admin_user.username} sent recommendation for '{content.title}' to Telegram\n"
+                        f"Template: {template_type}",
                         admin_id=admin_user.id,
                         related_content_id=content.id,
                         action_url=f"/admin/recommendations/{recommendation.id}",
+                        metadata={
+                            'template_type': template_type,
+                            'template_params': template_params
+                        },
                         alert_type='recommendation_published'
                     )
                 except Exception as e:
                     logger.warning(f"Failed to create send notification: {e}")
             
-            logger.info(f"✅ Recommendation sent to Telegram: {content.title} by {admin_user.username}")
+            logger.info(f"✅ Recommendation sent to Telegram with {template_type} template: {content.title} by {admin_user.username}")
             return {
                 'success': True,
                 'message': 'Recommendation sent to Telegram successfully',
-                'telegram_sent': telegram_sent
+                'telegram_sent': telegram_sent,
+                'template_type': template_type
             }
             
         except Exception as e:
             logger.error(f"Send recommendation to Telegram error: {e}")
             raise e
+    
+    def send_custom_telegram_message(self, admin_user, template_type, template_params):
+        """Send custom Telegram message (for lists, etc.)"""
+        try:
+            if not self.telegram_service:
+                return {'error': 'Telegram service not configured'}
+            
+            if template_type == 'top_list':
+                # Handle list template without content object
+                telegram_sent = self.telegram_service.send_admin_recommendation(
+                    None, admin_user.username, '', template_type, template_params
+                )
+            else:
+                return {'error': 'Invalid template type for custom message'}
+            
+            if self.notification_service:
+                try:
+                    self.notification_service.create_notification(
+                        NotificationType.CONTENT_ADDED,
+                        f"Custom {template_type.replace('_', ' ').title()} Sent",
+                        f"Admin {admin_user.username} sent custom {template_type} message to Telegram\n"
+                        f"Title: {template_params.get('list_title', 'Custom List')}",
+                        admin_id=admin_user.id,
+                        action_url="/admin/telegram/templates",
+                        metadata={
+                            'template_type': template_type,
+                            'template_params': template_params
+                        },
+                        alert_type='recommendation_published'
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to create custom message notification: {e}")
+            
+            logger.info(f"✅ Custom {template_type} message sent by {admin_user.username}")
+            return {
+                'success': True,
+                'message': f'Custom {template_type.replace("_", " ").title()} sent successfully',
+                'telegram_sent': telegram_sent,
+                'template_type': template_type
+            }
+            
+        except Exception as e:
+            logger.error(f"Send custom telegram message error: {e}")
+            return {'error': 'Failed to send custom message'}
     
     def migrate_all_slugs(self, batch_size=50):
         try:
