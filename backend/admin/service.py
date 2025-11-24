@@ -478,41 +478,45 @@ class AdminService:
                 tmdb_results = self.TMDBService.search_content(query, page=page)
                 if tmdb_results:
                     for item in tmdb_results.get('results', []):
-                        results.append({
-                            'id': item['id'],
-                            'title': item.get('title') or item.get('name'),
+                        # FIX: Add safe data extraction with defaults
+                        content_item = {
+                            'id': item.get('id'),
+                            'title': item.get('title') or item.get('name') or 'Unknown Title',
                             'content_type': 'movie' if 'title' in item else 'tv',
                             'release_date': item.get('release_date') or item.get('first_air_date'),
                             'poster_path': f"https://image.tmdb.org/t/p/w300{item['poster_path']}" if item.get('poster_path') else None,
-                            'overview': item.get('overview'),
-                            'rating': item.get('vote_average'),
-                            'vote_average': item.get('vote_average'),
-                            'vote_count': item.get('vote_count'),
-                            'popularity': item.get('popularity'),
+                            'overview': item.get('overview') or '',
+                            'rating': item.get('vote_average') or 0,
+                            'vote_average': item.get('vote_average') or 0,
+                            'vote_count': item.get('vote_count') or 0,
+                            'popularity': item.get('popularity') or 0,
                             'genre_ids': item.get('genre_ids', []),
-                            'original_language': item.get('original_language'),
+                            'original_language': item.get('original_language') or 'en',
                             'backdrop_path': item.get('backdrop_path'),
                             'source': 'tmdb'
-                        })
+                        }
+                        results.append(content_item)
             
             elif source == 'anime':
                 anime_results = self.JikanService.search_anime(query, page=page)
                 if anime_results:
                     for anime in anime_results.get('data', []):
-                        results.append({
-                            'id': anime['mal_id'],
-                            'title': anime.get('title'),
+                        # FIX: Add safe data extraction with defaults
+                        content_item = {
+                            'id': anime.get('mal_id'),
+                            'title': anime.get('title') or 'Unknown Title',
                             'content_type': 'anime',
-                            'release_date': anime.get('aired', {}).get('from'),
-                            'poster_path': anime.get('images', {}).get('jpg', {}).get('image_url'),
-                            'overview': anime.get('synopsis'),
-                            'rating': anime.get('score'),
-                            'vote_average': anime.get('score'),
-                            'vote_count': anime.get('scored_by'),
-                            'popularity': anime.get('popularity'),
-                            'genres': [genre.get('name') for genre in anime.get('genres', [])],
+                            'release_date': anime.get('aired', {}).get('from') if anime.get('aired') else None,
+                            'poster_path': anime.get('images', {}).get('jpg', {}).get('image_url') if anime.get('images') else None,
+                            'overview': anime.get('synopsis') or '',
+                            'rating': anime.get('score') or 0,
+                            'vote_average': anime.get('score') or 0,
+                            'vote_count': anime.get('scored_by') or 0,
+                            'popularity': anime.get('popularity') or 0,
+                            'genres': [genre.get('name', 'Unknown') for genre in anime.get('genres', [])],
                             'source': 'anime'
-                        })
+                        }
+                        results.append(content_item)
             
             logger.info(f"✅ External content search completed: {len(results)} results for '{query}'")
             return results
@@ -524,6 +528,11 @@ class AdminService:
     def save_external_content(self, data):
         try:
             existing_content = None
+            
+            # FIX: Better data validation
+            if not data or not data.get('id'):
+                logger.error("Invalid content data: missing ID")
+                return {'error': 'Invalid content data: missing ID'}
             
             if data.get('source') == 'anime' and data.get('id'):
                 mal_id = int(data['id']) if isinstance(data['id'], str) and data['id'].isdigit() else data['id']
@@ -564,19 +573,22 @@ class AdminService:
                 logger.warning(f"YouTube trailer lookup failed for '{data.get('title')}': {e}")
                 youtube_trailer_id = None
             
+            # FIX: Add better data validation and defaults
+            content_title = data.get('title') or data.get('name') or 'Unknown Title'
+            
             if data.get('source') == 'anime':
                 mal_id = int(data['id']) if isinstance(data['id'], str) and data['id'].isdigit() else data['id']
                 content = self.Content(
                     mal_id=mal_id,
-                    title=data.get('title'),
-                    original_title=data.get('original_title'),
+                    title=content_title,
+                    original_title=data.get('original_title') or content_title,
                     content_type='anime',
                     genres=json.dumps(data.get('genres', [])),
                     anime_genres=json.dumps(data.get('anime_genres', [])),
                     languages=json.dumps(['japanese']),
                     release_date=release_date,
-                    rating=data.get('rating'),
-                    overview=data.get('overview'),
+                    rating=data.get('rating') or 0,
+                    overview=data.get('overview') or '',
                     poster_path=data.get('poster_path'),
                     youtube_trailer_id=youtube_trailer_id
                 )
@@ -584,17 +596,17 @@ class AdminService:
                 tmdb_id = int(data['id']) if isinstance(data['id'], str) and data['id'].isdigit() else data['id']
                 content = self.Content(
                     tmdb_id=tmdb_id,
-                    title=data.get('title'),
-                    original_title=data.get('original_title'),
+                    title=content_title,
+                    original_title=data.get('original_title') or content_title,
                     content_type=data.get('content_type', 'movie'),
                     genres=json.dumps(data.get('genres', [])),
                     languages=json.dumps(data.get('languages', ['en'])),
                     release_date=release_date,
                     runtime=data.get('runtime'),
-                    rating=data.get('rating'),
-                    vote_count=data.get('vote_count'),
-                    popularity=data.get('popularity'),
-                    overview=data.get('overview'),
+                    rating=data.get('rating') or data.get('vote_average') or 0,
+                    vote_count=data.get('vote_count') or 0,
+                    popularity=data.get('popularity') or 0,
+                    overview=data.get('overview') or '',
                     poster_path=data.get('poster_path'),
                     backdrop_path=data.get('backdrop_path'),
                     youtube_trailer_id=youtube_trailer_id
@@ -651,9 +663,14 @@ class AdminService:
             raise e
     
     def create_recommendation_from_external_content(self, admin_user, content_data, recommendation_type, description, status='draft', publish_to_telegram=False, template_type='auto', template_params=None):
-        """Enhanced method with template support"""
+        """Enhanced method with template support and better validation"""
         try:
             content = None
+            
+            # FIX: Better content validation
+            if not content_data or not content_data.get('id'):
+                logger.error("Invalid content data for recommendation creation")
+                return {'error': 'Invalid content data'}
             
             if content_data.get('source') == 'anime' and content_data.get('id'):
                 mal_id = content_data['id']
@@ -671,7 +688,12 @@ class AdminService:
                 content = self.Content.query.get(content_id)
             
             if not content:
+                logger.error("Failed to create or find content for recommendation")
                 return {'error': 'Failed to create content'}
+            
+            # FIX: Add defaults for missing fields
+            recommendation_type = recommendation_type or 'general'
+            description = description or f"Recommended: {content.title}"
             
             admin_rec = self.AdminRecommendation(
                 content_id=content.id,
@@ -738,7 +760,7 @@ class AdminService:
             raise e
     
     def create_recommendation(self, admin_user, content_id, recommendation_type, description, template_type='auto', template_params=None):
-        """Enhanced method with template support"""
+        """Enhanced method with template support and better validation"""
         try:
             content = self.Content.query.get(content_id)
             if not content:
@@ -747,6 +769,10 @@ class AdminService:
             if not content:
                 logger.warning(f"Content not found for ID: {content_id}")
                 return {'error': 'Content not found. Please save content first.'}
+            
+            # FIX: Add defaults for missing fields
+            recommendation_type = recommendation_type or 'general'
+            description = description or f"Recommended: {content.title}"
             
             admin_rec = self.AdminRecommendation(
                 content_id=content.id,
@@ -807,7 +833,7 @@ class AdminService:
             raise e
     
     def get_recommendations(self, page=1, per_page=20, filter_type='all', status=None):
-        """Get admin recommendations with safe handling of updated_at column"""
+        """Get admin recommendations with comprehensive error handling and defaults"""
         try:
             query = self.AdminRecommendation.query
             
@@ -836,23 +862,27 @@ class AdminService:
                         if updated_at is None:
                             updated_at = rec.created_at
                         
-                        result.append({
+                        # FIX: Ensure all required fields have defaults
+                        recommendation_data = {
                             'id': rec.id,
-                            'recommendation_type': rec.recommendation_type,
-                            'description': rec.description,
-                            'is_active': rec.is_active,
+                            'recommendation_type': rec.recommendation_type or 'general',  # Add default
+                            'description': rec.description or '',  # Add default
+                            'is_active': rec.is_active if rec.is_active is not None else False,  # Add default
                             'created_at': rec.created_at.isoformat(),
-                            'updated_at': updated_at.isoformat(),  # Safe access
-                            'admin_name': admin.username,
+                            'updated_at': updated_at.isoformat(),
+                            'admin_name': admin.username or 'Unknown Admin',  # Add default
+                            'admin_id': admin.id,
                             'content': {
                                 'id': content.id,
-                                'title': content.title,
-                                'content_type': content.content_type,
-                                'rating': content.rating,
+                                'title': content.title or 'Unknown Title',  # Add default
+                                'content_type': content.content_type or 'movie',  # Add default
+                                'rating': content.rating or 0,  # Add default
                                 'release_date': content.release_date.isoformat() if content.release_date else None,
-                                'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path
+                                'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
+                                'overview': content.overview or ''  # Add default
                             }
-                        })
+                        }
+                        result.append(recommendation_data)
                 except Exception as e:
                     logger.error(f"Error processing recommendation {rec.id}: {e}")
                     continue
@@ -874,18 +904,30 @@ class AdminService:
                 self.db.session.rollback()
             except:
                 pass
-            return {'error': 'Failed to get recommendations'}
+            return {
+                'recommendations': [],
+                'total': 0,
+                'pages': 0,
+                'current_page': page,
+                'per_page': per_page,
+                'has_prev': False,
+                'has_next': False,
+                'error': 'Failed to get recommendations'
+            }
     
     def get_recommendation_details(self, recommendation_id):
+        """Get recommendation details with better error handling"""
         try:
             recommendation = self.AdminRecommendation.query.get(recommendation_id)
             if not recommendation:
+                logger.warning(f"Recommendation not found: {recommendation_id}")
                 return None
             
             content = self.Content.query.get(recommendation.content_id)
             admin = self.User.query.get(recommendation.admin_id)
             
             if not content or not admin:
+                logger.warning(f"Missing content or admin for recommendation {recommendation_id}")
                 return None
             
             # Safe access to updated_at field
@@ -893,23 +935,24 @@ class AdminService:
             if updated_at is None:
                 updated_at = recommendation.created_at
             
+            # FIX: Add defaults for all fields
             return {
                 'id': recommendation.id,
-                'recommendation_type': recommendation.recommendation_type,
-                'description': recommendation.description,
-                'is_active': recommendation.is_active,
+                'recommendation_type': recommendation.recommendation_type or 'general',
+                'description': recommendation.description or '',
+                'is_active': recommendation.is_active if recommendation.is_active is not None else False,
                 'created_at': recommendation.created_at.isoformat(),
-                'updated_at': updated_at.isoformat(),  # Safe access
-                'admin_name': admin.username,
+                'updated_at': updated_at.isoformat(),
+                'admin_name': admin.username or 'Unknown Admin',
                 'admin_id': admin.id,
                 'content': {
                     'id': content.id,
-                    'title': content.title,
-                    'content_type': content.content_type,
-                    'rating': content.rating,
+                    'title': content.title or 'Unknown Title',
+                    'content_type': content.content_type or 'movie',
+                    'rating': content.rating or 0,
                     'release_date': content.release_date.isoformat() if content.release_date else None,
                     'poster_path': f"https://image.tmdb.org/t/p/w500{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
-                    'overview': content.overview
+                    'overview': content.overview or ''
                 }
             }
             
@@ -921,14 +964,16 @@ class AdminService:
         try:
             recommendation = self.AdminRecommendation.query.get(recommendation_id)
             if not recommendation:
+                logger.warning(f"Recommendation not found for update: {recommendation_id}")
                 return None
             
+            # FIX: Safe updates with validation
             if 'recommendation_type' in data:
-                recommendation.recommendation_type = data['recommendation_type']
+                recommendation.recommendation_type = data['recommendation_type'] or 'general'
             if 'description' in data:
-                recommendation.description = data['description']
+                recommendation.description = data['description'] or ''
             if 'is_active' in data:
-                recommendation.is_active = data['is_active']
+                recommendation.is_active = data['is_active'] if data['is_active'] is not None else False
             
             # Safe update of updated_at field
             if hasattr(recommendation, 'updated_at'):
@@ -939,10 +984,11 @@ class AdminService:
             if self.notification_service:
                 try:
                     content = self.Content.query.get(recommendation.content_id)
+                    content_title = content.title if content else 'Unknown'
                     self.notification_service.create_notification(
                         NotificationType.CONTENT_ADDED,
                         f"Recommendation Updated",
-                        f"Admin {admin_user.username} updated recommendation for '{content.title if content else 'Unknown'}'",
+                        f"Admin {admin_user.username} updated recommendation for '{content_title}'",
                         admin_id=admin_user.id,
                         related_content_id=recommendation.content_id,
                         action_url=f"/admin/recommendations/{recommendation.id}",
@@ -970,6 +1016,7 @@ class AdminService:
         try:
             recommendation = self.AdminRecommendation.query.get(recommendation_id)
             if not recommendation:
+                logger.warning(f"Recommendation not found for deletion: {recommendation_id}")
                 return None
             
             content = self.Content.query.get(recommendation.content_id)
@@ -1006,14 +1053,16 @@ class AdminService:
             raise e
     
     def publish_recommendation(self, admin_user, recommendation_id, template_type='auto', template_params=None):
-        """Enhanced method with template support"""
+        """Enhanced method with template support and better validation"""
         try:
             recommendation = self.AdminRecommendation.query.get(recommendation_id)
             if not recommendation:
+                logger.warning(f"Recommendation not found for publish: {recommendation_id}")
                 return None
             
             content = self.Content.query.get(recommendation.content_id)
             if not content:
+                logger.error(f"Associated content not found for recommendation: {recommendation_id}")
                 return {'error': 'Associated content not found'}
             
             recommendation.is_active = True
@@ -1077,10 +1126,12 @@ class AdminService:
         try:
             recommendation = self.AdminRecommendation.query.get(recommendation_id)
             if not recommendation:
+                logger.warning(f"Recommendation not found for Telegram send: {recommendation_id}")
                 return None
             
             content = self.Content.query.get(recommendation.content_id)
             if not content:
+                logger.error(f"Associated content not found for recommendation: {recommendation_id}")
                 return {'error': 'Associated content not found'}
             
             telegram_sent = False
@@ -1133,6 +1184,10 @@ class AdminService:
         try:
             if not self.telegram_service:
                 return {'error': 'Telegram service not configured'}
+            
+            # FIX: Validate template params
+            if not template_params:
+                return {'error': 'Template parameters are required'}
             
             if template_type == 'top_list':
                 # Handle list template without content object
@@ -1235,6 +1290,7 @@ class AdminService:
         try:
             content = self.Content.query.get(content_id)
             if not content:
+                logger.warning(f"Content not found for slug update: {content_id}")
                 return None
             
             if content.slug and not force_update:
