@@ -663,7 +663,7 @@ class AdminService:
             raise e
     
     def create_recommendation_from_external_content(self, admin_user, content_data, recommendation_type, description, status='draft', publish_to_telegram=False, template_type='auto', template_params=None):
-        """Enhanced method with proper template field saving"""
+        """Enhanced method with template support and better validation"""
         try:
             content = None
             
@@ -694,8 +694,7 @@ class AdminService:
             # FIX: Add defaults for missing fields
             recommendation_type = recommendation_type or 'general'
             description = description or f"Recommended: {content.title}"
-            template_params = template_params or {}
-
+            
             admin_rec = self.AdminRecommendation(
                 content_id=content.id,
                 admin_id=admin_user.id,
@@ -704,35 +703,9 @@ class AdminService:
                 is_active=(status == 'active')
             )
             
-            # NEW: Save template type and data
-            if hasattr(admin_rec, 'template_type'):
-                admin_rec.template_type = template_type
-            if hasattr(admin_rec, 'template_data'):
-                admin_rec.template_data = template_params
-            
-            # NEW: Save individual template fields to dedicated columns
-            if hasattr(admin_rec, 'hook_text') and template_params.get('hook'):
-                admin_rec.hook_text = template_params.get('hook', '')[:500] if template_params.get('hook') else None
-            if hasattr(admin_rec, 'if_you_like') and template_params.get('if_you_like'):
-                admin_rec.if_you_like = template_params.get('if_you_like', '')[:500] if template_params.get('if_you_like') else None
-            if hasattr(admin_rec, 'custom_overview') and template_params.get('overview'):
-                admin_rec.custom_overview = template_params.get('overview', '')[:1000] if template_params.get('overview') else None
-            if hasattr(admin_rec, 'emotion_hook') and template_params.get('emotion_hook'):
-                admin_rec.emotion_hook = template_params.get('emotion_hook', '')[:200] if template_params.get('emotion_hook') else None
-            if hasattr(admin_rec, 'scene_caption') and template_params.get('caption'):
-                admin_rec.scene_caption = template_params.get('caption', '')[:200] if template_params.get('caption') else None
-            if hasattr(admin_rec, 'list_title') and template_params.get('list_title'):
-                admin_rec.list_title = template_params.get('list_title', '')[:200] if template_params.get('list_title') else None
-            if hasattr(admin_rec, 'list_items') and template_params.get('items'):
-                admin_rec.list_items = template_params.get('items', []) if template_params.get('items') else None
-            
-            # Set timestamp for template editing tracking
-            if hasattr(admin_rec, 'last_template_edit'):
-                admin_rec.last_template_edit = datetime.utcnow()
-            
             self.db.session.add(admin_rec)
             self.db.session.commit()
-
+            
             telegram_sent = False
             if publish_to_telegram and status == 'active':
                 if self.telegram_service:
@@ -767,11 +740,10 @@ class AdminService:
                 except Exception as e:
                     logger.warning(f"Failed to create recommendation notification: {e}")
             
-            logger.info(f"✅ Recommendation created with template fields saved: {content.title} by {admin_user.username}")
+            logger.info(f"✅ Recommendation created from external content with {template_type} template: {content.title} by {admin_user.username}")
             return {
                 'success': True,
-                'message': f'Recommendation {"published" if status == "active" else "saved as draft"}',
-                'template_fields_saved': len(template_params),
+                'message': f'Recommendation {"published" if status == "active" else "saved as upcoming"}',
                 'telegram_sent': telegram_sent,
                 'recommendation_id': admin_rec.id,
                 'content_id': content.id,
@@ -944,48 +916,26 @@ class AdminService:
             }
     
     def get_recommendation_details(self, recommendation_id):
-        """Get recommendation details with enhanced template field data"""
+        """Get recommendation details with better error handling"""
         try:
             recommendation = self.AdminRecommendation.query.get(recommendation_id)
             if not recommendation:
                 logger.warning(f"Recommendation not found: {recommendation_id}")
                 return None
-
+            
             content = self.Content.query.get(recommendation.content_id)
             admin = self.User.query.get(recommendation.admin_id)
-
+            
             if not content or not admin:
                 logger.warning(f"Missing content or admin for recommendation {recommendation_id}")
                 return None
-
+            
             # Safe access to updated_at field
             updated_at = getattr(recommendation, 'updated_at', None)
             if updated_at is None:
                 updated_at = recommendation.created_at
-
-            # NEW: Collect template field data from database columns
-            template_fields = {}
             
-            # Add individual template fields if they exist
-            if hasattr(recommendation, 'hook_text') and recommendation.hook_text:
-                template_fields['hook'] = recommendation.hook_text
-            if hasattr(recommendation, 'if_you_like') and recommendation.if_you_like:
-                template_fields['if_you_like'] = recommendation.if_you_like
-            if hasattr(recommendation, 'custom_overview') and recommendation.custom_overview:
-                template_fields['overview'] = recommendation.custom_overview
-            if hasattr(recommendation, 'emotion_hook') and recommendation.emotion_hook:
-                template_fields['emotion_hook'] = recommendation.emotion_hook
-            if hasattr(recommendation, 'scene_caption') and recommendation.scene_caption:
-                template_fields['caption'] = recommendation.scene_caption
-            if hasattr(recommendation, 'list_title') and recommendation.list_title:
-                template_fields['list_title'] = recommendation.list_title
-            if hasattr(recommendation, 'list_items') and recommendation.list_items:
-                template_fields['items'] = recommendation.list_items
-
-            # Merge with template_data JSON if available
-            if hasattr(recommendation, 'template_data') and recommendation.template_data:
-                template_fields.update(recommendation.template_data)
-
+            # FIX: Add defaults for all fields
             return {
                 'id': recommendation.id,
                 'recommendation_type': recommendation.recommendation_type or 'general',
@@ -995,16 +945,6 @@ class AdminService:
                 'updated_at': updated_at.isoformat(),
                 'admin_name': admin.username or 'Unknown Admin',
                 'admin_id': admin.id,
-                
-                # NEW: Enhanced template data
-                'template_type': getattr(recommendation, 'template_type', None),
-                'template_fields': template_fields,
-                'template_data': {
-                    'selected_template': getattr(recommendation, 'template_type', None),
-                    'template_fields': template_fields,
-                    'last_edited': getattr(recommendation, 'last_template_edit', recommendation.updated_at).isoformat() if hasattr(recommendation, 'last_template_edit') else updated_at.isoformat()
-                },
-                
                 'content': {
                     'id': content.id,
                     'title': content.title or 'Unknown Title',
@@ -1021,13 +961,12 @@ class AdminService:
             return None
     
     def update_recommendation(self, admin_user, recommendation_id, data):
-        """Enhanced update with template field saving"""
         try:
             recommendation = self.AdminRecommendation.query.get(recommendation_id)
             if not recommendation:
                 logger.warning(f"Recommendation not found for update: {recommendation_id}")
                 return None
-
+            
             # FIX: Safe updates with validation
             if 'recommendation_type' in data:
                 recommendation.recommendation_type = data['recommendation_type'] or 'general'
@@ -1035,47 +974,13 @@ class AdminService:
                 recommendation.description = data['description'] or ''
             if 'is_active' in data:
                 recommendation.is_active = data['is_active'] if data['is_active'] is not None else False
-
-            # NEW: Update template data if provided
-            if 'template_data' in data and data['template_data']:
-                template_data = data['template_data']
-                
-                # Update template_type and template_data JSON
-                if 'selected_template' in template_data:
-                    if hasattr(recommendation, 'template_type'):
-                        recommendation.template_type = template_data['selected_template']
-                if 'template_fields' in template_data:
-                    if hasattr(recommendation, 'template_data'):
-                        recommendation.template_data = template_data['template_fields']
-                    
-                    # Update individual template field columns
-                    template_fields = template_data['template_fields']
-                    
-                    if 'hook' in template_fields and hasattr(recommendation, 'hook_text'):
-                        recommendation.hook_text = template_fields['hook'][:500] if template_fields['hook'] else None
-                    if 'if_you_like' in template_fields and hasattr(recommendation, 'if_you_like'):
-                        recommendation.if_you_like = template_fields['if_you_like'][:500] if template_fields['if_you_like'] else None
-                    if 'overview' in template_fields and hasattr(recommendation, 'custom_overview'):
-                        recommendation.custom_overview = template_fields['overview'][:1000] if template_fields['overview'] else None
-                    if 'emotion_hook' in template_fields and hasattr(recommendation, 'emotion_hook'):
-                        recommendation.emotion_hook = template_fields['emotion_hook'][:200] if template_fields['emotion_hook'] else None
-                    if 'caption' in template_fields and hasattr(recommendation, 'scene_caption'):
-                        recommendation.scene_caption = template_fields['caption'][:200] if template_fields['caption'] else None
-                    if 'list_title' in template_fields and hasattr(recommendation, 'list_title'):
-                        recommendation.list_title = template_fields['list_title'][:200] if template_fields['list_title'] else None
-                    if 'items' in template_fields and hasattr(recommendation, 'list_items'):
-                        recommendation.list_items = template_fields['items'] if template_fields['items'] else None
-                    
-                    # Update last template edit timestamp
-                    if hasattr(recommendation, 'last_template_edit'):
-                        recommendation.last_template_edit = datetime.utcnow()
-
+            
             # Safe update of updated_at field
             if hasattr(recommendation, 'updated_at'):
                 recommendation.updated_at = datetime.utcnow()
-
+            
             self.db.session.commit()
-
+            
             if self.notification_service:
                 try:
                     content = self.Content.query.get(recommendation.content_id)
@@ -1083,7 +988,7 @@ class AdminService:
                     self.notification_service.create_notification(
                         NotificationType.CONTENT_ADDED,
                         f"Recommendation Updated",
-                        f"Admin {admin_user.username} updated recommendation for '{content_title}'\nTemplate fields updated: {len(data.get('template_data', {}).get('template_fields', {}))} fields",
+                        f"Admin {admin_user.username} updated recommendation for '{content_title}'",
                         admin_id=admin_user.id,
                         related_content_id=recommendation.content_id,
                         action_url=f"/admin/recommendations/{recommendation.id}",
@@ -1091,13 +996,12 @@ class AdminService:
                     )
                 except Exception as e:
                     logger.warning(f"Failed to create update notification: {e}")
-
-            logger.info(f"✅ Recommendation updated with template fields: {recommendation.id} by {admin_user.username}")
+            
+            logger.info(f"✅ Recommendation updated: {recommendation.id} by {admin_user.username}")
             return {
                 'success': True,
                 'message': 'Recommendation updated successfully',
-                'recommendation_id': recommendation.id,
-                'template_fields_updated': len(data.get('template_data', {}).get('template_fields', {}))
+                'recommendation_id': recommendation.id
             }
             
         except Exception as e:
