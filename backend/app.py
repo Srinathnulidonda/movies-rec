@@ -296,7 +296,21 @@ class AdminRecommendation(db.Model):
     description = db.Column(db.Text)
     is_active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)  
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # NEW: Template-specific fields
+    template_type = db.Column(db.String(50))  # mind_bending, hidden_gem, etc.
+    template_data = db.Column(db.JSON)  # Full template data object
+    hook_text = db.Column(db.Text)  # For hidden_gem template
+    if_you_like = db.Column(db.String(500))  # For multiple templates
+    custom_overview = db.Column(db.Text)  # For mind_bending, anime_gem
+    emotion_hook = db.Column(db.String(200))  # For anime_gem
+    scene_caption = db.Column(db.String(200))  # For scene_clip
+    list_title = db.Column(db.String(200))  # For top_list
+    list_items = db.Column(db.JSON)  # For top_list items array
+    telegram_sent = db.Column(db.Boolean, default=False)
+    telegram_sent_at = db.Column(db.DateTime)
+    last_template_edit = db.Column(db.DateTime)  
 
 class AnonymousInteraction(db.Model):
     id = db.Column(db.Integer, primary_key=True)

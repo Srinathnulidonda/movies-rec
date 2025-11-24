@@ -28,7 +28,6 @@ __version__ = '3.0.0'
 
 
 
-
 2. # admin/dashboard.py
 
 from datetime import datetime, timedelta
@@ -911,7 +910,6 @@ class AdminDashboard:
 def init_dashboard_service(app, db, models, services):
     """Initialize dashboard service"""
     return AdminDashboard(app, db, models, services)
-
 
 
 
