@@ -85,17 +85,28 @@ def record_interaction(current_user):
         # Handle removal interactions
         if data['interaction_type'] in ['remove_watchlist', 'remove_favorite']:
             interaction_type = 'watchlist' if data['interaction_type'] == 'remove_watchlist' else 'favorite'
+            
+            # FIX: First check with actual_content_id, then try original
             interaction = UserInteraction.query.filter_by(
                 user_id=current_user.id,
-                content_id=actual_content_id,  # FIX: Use actual_content_id
+                content_id=actual_content_id,
                 interaction_type=interaction_type
             ).first()
+            
+            # If not found with actual ID, try finding by TMDB ID mapping
+            if not interaction and original_content_id != actual_content_id:
+                # Try with original ID in case it wasn't mapped
+                interaction = UserInteraction.query.filter_by(
+                    user_id=current_user.id,
+                    content_id=original_content_id,
+                    interaction_type=interaction_type
+                ).first()
             
             if interaction:
                 db.session.delete(interaction)
                 db.session.commit()
                 
-                # Update recommendation systems with actual content ID
+                # Update recommendation systems
                 update_results = []
                 
                 if profile_analyzer:
@@ -103,7 +114,7 @@ def record_interaction(current_user):
                         success = profile_analyzer.update_profile_realtime(
                             current_user.id,
                             {
-                                'content_id': actual_content_id,  # FIX: Use actual_content_id
+                                'content_id': interaction.content_id,  # Use the actual ID from database
                                 'interaction_type': data['interaction_type'],
                                 'metadata': data.get('metadata', {})
                             }
@@ -113,14 +124,13 @@ def record_interaction(current_user):
                     except Exception as e:
                         logger.warning(f"Failed to update CineBrain advanced profile for removal: {e}")
                 
-                # Update legacy system
                 if recommendation_engine:
                     try:
                         if hasattr(recommendation_engine, 'update_user_preferences_realtime'):
                             recommendation_engine.update_user_preferences_realtime(
                                 current_user.id,
                                 {
-                                    'content_id': actual_content_id,  # FIX: Use actual_content_id
+                                    'content_id': interaction.content_id,  # Use the actual ID from database
                                     'interaction_type': data['interaction_type'],
                                     'metadata': data.get('metadata', {})
                                 }
@@ -130,7 +140,7 @@ def record_interaction(current_user):
                             recommendation_engine.update_user_profile(
                                 current_user.id,
                                 {
-                                    'content_id': actual_content_id,  # FIX: Use actual_content_id
+                                    'content_id': interaction.content_id,  # Use the actual ID from database
                                     'interaction_type': data['interaction_type'],
                                     'metadata': data.get('metadata', {})
                                 }
@@ -144,14 +154,20 @@ def record_interaction(current_user):
                     'success': True,
                     'message': message,
                     'real_time_updates': update_results,
-                    'actual_content_id': actual_content_id  # FIX: Return actual ID
+                    'actual_content_id': interaction.content_id,
+                    'removed_id': interaction.content_id
                 }), 200
             else:
+                # FIX: Return success even if not found in interactions (it was already removed from favorites)
                 item_type = "watchlist" if interaction_type == "watchlist" else "favorites"
+                logger.info(f"CineBrain: No interaction found for removal, but continuing (content_id: {actual_content_id})")
+                
                 return jsonify({
-                    'success': False,
-                    'message': f'Content not in CineBrain {item_type}'
-                }), 404
+                    'success': True,
+                    'message': f'Item removed from CineBrain {item_type}',
+                    'note': 'Interaction record not found but operation completed',
+                    'actual_content_id': actual_content_id
+                }), 200
         
         # Check for existing interaction
         if data['interaction_type'] in ['watchlist', 'favorite']:
