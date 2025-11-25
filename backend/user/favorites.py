@@ -6,6 +6,35 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+def create_content_from_tmdb_id(tmdb_id, request_data):
+    """Create content from TMDB ID when frontend sends tmdb_movie_xxx format"""
+    try:
+        from app import CineBrainTMDBService
+        from .utils import content_service
+        
+        # Determine content type from the original ID format
+        original_id = request_data.get('content_id', '')
+        if 'movie' in original_id:
+            content_type = 'movie'
+        elif 'tv' in original_id:
+            content_type = 'tv'
+        else:
+            content_type = 'movie'  # Default
+            
+        # Fetch from TMDB
+        tmdb_data = CineBrainTMDBService.get_content_details(int(tmdb_id), content_type)
+        
+        if tmdb_data and content_service:
+            new_content = content_service.save_content_from_tmdb(tmdb_data, content_type)
+            if new_content:
+                return new_content.id
+                
+        return None
+        
+    except Exception as e:
+        logger.error(f"Error creating content from TMDB ID {tmdb_id}: {e}")
+        return None
+
 def get_favorites(current_user):
     """Get user's favorites"""
     try:
@@ -43,15 +72,42 @@ def get_favorites(current_user):
 def add_to_favorites(current_user):
     """Add content to favorites"""
     try:
-        # Import here to ensure we get the initialized versions
         from .utils import db, UserInteraction, Content, recommendation_engine, content_service, create_minimal_content_record
         
         data = request.get_json()
-        content_id = data.get('content_id')
+        raw_content_id = data.get('content_id')
         rating = data.get('rating')
         
-        if not content_id:
+        if not raw_content_id:
             return jsonify({'error': 'Content ID required'}), 400
+        
+        # Fix: Validate and convert content_id to integer
+        try:
+            # Handle string IDs like "tmdb_movie_768614" or "1381405"
+            if isinstance(raw_content_id, str):
+                # Remove non-numeric parts if present
+                if raw_content_id.startswith(('tmdb_', 'mal_', 'imdb_')):
+                    # Extract numeric part or use TMDB ID for lookup
+                    if 'tmdb_movie_' in raw_content_id or 'tmdb_tv_' in raw_content_id:
+                        tmdb_id = raw_content_id.split('_')[-1]
+                        # Try to find existing content by TMDB ID
+                        existing_content = Content.query.filter_by(tmdb_id=int(tmdb_id)).first()
+                        if existing_content:
+                            content_id = existing_content.id
+                        else:
+                            # Create new content from TMDB ID
+                            content_id = create_content_from_tmdb_id(tmdb_id, data)
+                    else:
+                        return jsonify({'error': 'Invalid content ID format'}), 400
+                else:
+                    # Try to convert to integer
+                    content_id = int(raw_content_id)
+            else:
+                content_id = int(raw_content_id)
+                
+        except (ValueError, TypeError) as e:
+            logger.error(f"Invalid content ID format: {raw_content_id}, error: {e}")
+            return jsonify({'error': 'Invalid content ID format'}), 400
         
         # Check if content exists
         content_exists = Content.query.filter_by(id=content_id).first()
@@ -166,8 +222,27 @@ def add_to_favorites(current_user):
 def remove_from_favorites(current_user, content_id):
     """Remove content from favorites"""
     try:
-        # Import here to ensure we get the initialized versions
         from .utils import db, UserInteraction, recommendation_engine
+        
+        # Fix: Validate content_id format
+        try:
+            if isinstance(content_id, str):
+                # Handle string IDs that might contain non-numeric characters
+                if content_id.startswith(('tmdb_', 'mal_', 'imdb_')):
+                    return jsonify({
+                        'success': False,
+                        'error': 'Invalid content ID format for removal',
+                        'message': 'Cannot remove content with external ID format'
+                    }), 400
+                content_id = int(content_id)
+            else:
+                content_id = int(content_id)
+        except (ValueError, TypeError):
+            return jsonify({
+                'success': False,
+                'error': 'Invalid content ID format',
+                'message': 'Content ID must be a valid integer'
+            }), 400
         
         interaction = UserInteraction.query.filter_by(
             user_id=current_user.id,
@@ -206,14 +281,15 @@ def remove_from_favorites(current_user, content_id):
                 'message': 'Removed from CineBrain favorites'
             }), 200
         else:
+            # Better error response for missing content
             return jsonify({
                 'success': False,
-                'message': 'Content not in CineBrain favorites'
+                'message': 'Content not in CineBrain favorites',
+                'details': f'No favorite record found for content ID {content_id}'
             }), 404
             
     except Exception as e:
         logger.error(f"Remove from CineBrain favorites error: {e}")
-        # Import db here for rollback
         from .utils import db
         if db:
             db.session.rollback()
