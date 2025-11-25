@@ -53,8 +53,6 @@ def init_user_module(flask_app, database, models, services):
     except Exception as e:
         logger.warning(f"Could not connect to any CineBrain recommendation engine: {e}")
         recommendation_engine = None
-    
-    logger.info("✅ CineBrain user module initialized successfully")
 
 def require_auth(f):
     """Authentication decorator for user routes"""
@@ -62,55 +60,34 @@ def require_auth(f):
     def decorated_function(*args, **kwargs):
         if request.method == 'OPTIONS':
             return '', 200
+            
+        token = request.headers.get('Authorization')
+        if not token:
+            return jsonify({'error': 'No CineBrain token provided'}), 401
         
         try:
-            auth_header = request.headers.get('Authorization')
-            if not auth_header:
-                logger.warning("CineBrain: No authorization header provided")
-                return jsonify({'error': 'No CineBrain token provided'}), 401
-            
-            if not auth_header.startswith('Bearer '):
-                logger.warning("CineBrain: Invalid authorization header format")
-                return jsonify({'error': 'Invalid CineBrain authorization format'}), 401
-            
-            token = auth_header.replace('Bearer ', '', 1)
-            
-            try:
-                payload = jwt.decode(token, app.secret_key, algorithms=['HS256'])
-                user_id = payload.get('user_id')
-                
-                if not user_id:
-                    logger.warning("CineBrain: Token missing user_id")
-                    return jsonify({'error': 'Invalid CineBrain token payload'}), 401
-                
-                current_user = User.query.get(user_id)
-                if not current_user:
-                    logger.warning(f"CineBrain: User {user_id} not found")
-                    return jsonify({'error': 'CineBrain user not found'}), 401
-                
-                # Update last active
-                current_user.last_active = datetime.utcnow()
-                try:
-                    db.session.commit()
-                except Exception as e:
-                    logger.warning(f"Failed to update CineBrain user last_active: {e}")
-                    db.session.rollback()
-                
-                logger.debug(f"CineBrain: Authenticated user {current_user.id} ({current_user.username})")
-                
-                return f(current_user, *args, **kwargs)
-                
-            except jwt.ExpiredSignatureError:
-                logger.warning("CineBrain: Token expired")
-                return jsonify({'error': 'CineBrain token expired'}), 401
-            except jwt.InvalidTokenError as e:
-                logger.warning(f"CineBrain: Invalid token - {e}")
+            token = token.replace('Bearer ', '')
+            data = jwt.decode(token, app.secret_key, algorithms=['HS256'])
+            current_user = User.query.get(data['user_id'])
+            if not current_user:
                 return jsonify({'error': 'Invalid CineBrain token'}), 401
+            
+            current_user.last_active = datetime.utcnow()
+            try:
+                db.session.commit()
+            except Exception as e:
+                logger.warning(f"Failed to update CineBrain user last_active: {e}")
+                db.session.rollback()
                 
+        except jwt.ExpiredSignatureError:
+            return jsonify({'error': 'CineBrain token expired'}), 401
+        except jwt.InvalidTokenError:
+            return jsonify({'error': 'Invalid CineBrain token'}), 401
         except Exception as e:
             logger.error(f"CineBrain authentication error: {e}")
             return jsonify({'error': 'CineBrain authentication failed'}), 401
-    
+        
+        return f(current_user, *args, **kwargs)
     return decorated_function
 
 def get_enhanced_user_stats(user_id):
@@ -291,4 +268,4 @@ def add_cors_headers(response):
 # Export functions
 __all__ = ['require_auth', 'get_enhanced_user_stats', 'get_basic_user_stats', 
            'create_minimal_content_record', 'format_content_for_response',
-           'add_cors_headers', 'get_cinematic_dna_summary', 'init_user_module']
+           'add_cors_headers', 'get_cinematic_dna_summary']
