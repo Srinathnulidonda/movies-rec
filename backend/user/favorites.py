@@ -6,6 +6,27 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+def get_actual_content_id(content_id):
+    """Get the actual database content ID, handling TMDB ID mapping"""
+    try:
+        from .utils import Content
+        
+        # First try the ID as-is
+        content = Content.query.filter_by(id=content_id).first()
+        if content:
+            return content_id
+        
+        # If not found, try as TMDB ID
+        content_by_tmdb = Content.query.filter_by(tmdb_id=content_id).first()
+        if content_by_tmdb:
+            logger.info(f"CineBrain: Mapped TMDB ID {content_id} to database ID {content_by_tmdb.id}")
+            return content_by_tmdb.id
+        
+        return None
+    except Exception as e:
+        logger.error(f"Error mapping content ID {content_id}: {e}")
+        return None
+
 def create_content_from_tmdb_id(tmdb_id, request_data):
     """Create content from TMDB ID when frontend sends tmdb_movie_xxx format"""
     try:
@@ -222,9 +243,9 @@ def add_to_favorites(current_user):
 def remove_from_favorites(current_user, content_id):
     """Remove content from favorites"""
     try:
-        from .utils import db, UserInteraction, recommendation_engine
+        from .utils import db, UserInteraction, Content, recommendation_engine
         
-        # Fix: Validate content_id format
+        # FIX: Use helper function for ID mapping
         try:
             if isinstance(content_id, str):
                 # Handle string IDs that might contain non-numeric characters
@@ -244,9 +265,21 @@ def remove_from_favorites(current_user, content_id):
                 'message': 'Content ID must be a valid integer'
             }), 400
         
+        # FIX: Use helper function to get actual content ID
+        actual_content_id = get_actual_content_id(content_id)
+        
+        if not actual_content_id:
+            logger.warning(f"CineBrain: No content found for ID {content_id}")
+            return jsonify({
+                'success': False,
+                'message': 'Content not found in CineBrain database',
+                'details': f'No content record found for ID {content_id}'
+            }), 404
+        
+        # Try to find the favorite interaction
         interaction = UserInteraction.query.filter_by(
             user_id=current_user.id,
-            content_id=content_id,
+            content_id=actual_content_id,
             interaction_type='favorite'
         ).first()
         
@@ -256,12 +289,11 @@ def remove_from_favorites(current_user, content_id):
             
             if recommendation_engine:
                 try:
-                    # Check which method is available
                     if hasattr(recommendation_engine, 'update_user_preferences_realtime'):
                         recommendation_engine.update_user_preferences_realtime(
                             current_user.id,
                             {
-                                'content_id': content_id,
+                                'content_id': actual_content_id,  # Use mapped ID
                                 'interaction_type': 'remove_favorite'
                             }
                         )
@@ -269,7 +301,7 @@ def remove_from_favorites(current_user, content_id):
                         recommendation_engine.update_user_profile(
                             current_user.id,
                             {
-                                'content_id': content_id,
+                                'content_id': actual_content_id,  # Use mapped ID
                                 'interaction_type': 'remove_favorite'
                             }
                         )
@@ -278,14 +310,17 @@ def remove_from_favorites(current_user, content_id):
             
             return jsonify({
                 'success': True,
-                'message': 'Removed from CineBrain favorites'
+                'message': 'Removed from CineBrain favorites',
+                'actual_content_id': actual_content_id  # Return the actual ID used
             }), 200
         else:
             # Better error response for missing content
+            logger.warning(f"CineBrain: No favorite found for content ID {content_id} (mapped to {actual_content_id})")
             return jsonify({
                 'success': False,
                 'message': 'Content not in CineBrain favorites',
-                'details': f'No favorite record found for content ID {content_id}'
+                'details': f'No favorite record found for content ID {content_id}',
+                'searched_id': actual_content_id
             }), 404
             
     except Exception as e:
@@ -298,19 +333,30 @@ def remove_from_favorites(current_user, content_id):
 def check_favorite_status(current_user, content_id):
     """Check if content is in favorites"""
     try:
-        # Import here to ensure we get the initialized versions
         from .utils import UserInteraction
+        
+        # FIX: Use helper function for ID mapping
+        actual_content_id = get_actual_content_id(content_id)
+        
+        if not actual_content_id:
+            return jsonify({
+                'in_favorites': False,
+                'favorited_at': None,
+                'user_rating': None,
+                'error': 'Content not found'
+            }), 200
         
         interaction = UserInteraction.query.filter_by(
             user_id=current_user.id,
-            content_id=content_id,
+            content_id=actual_content_id,
             interaction_type='favorite'
         ).first()
         
         return jsonify({
             'in_favorites': interaction is not None,
             'favorited_at': interaction.timestamp.isoformat() if interaction else None,
-            'user_rating': interaction.rating if interaction else None
+            'user_rating': interaction.rating if interaction else None,
+            'actual_content_id': actual_content_id
         }), 200
         
     except Exception as e:
