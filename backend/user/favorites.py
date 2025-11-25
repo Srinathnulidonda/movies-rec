@@ -44,7 +44,7 @@ def add_to_favorites(current_user):
     """Add content to favorites"""
     try:
         # Import here to ensure we get the initialized versions
-        from .utils import db, UserInteraction, Content, recommendation_engine
+        from .utils import db, UserInteraction, Content, recommendation_engine, content_service, create_minimal_content_record
         
         data = request.get_json()
         content_id = data.get('content_id')
@@ -56,7 +56,43 @@ def add_to_favorites(current_user):
         # Check if content exists
         content_exists = Content.query.filter_by(id=content_id).first()
         if not content_exists:
-            return jsonify({'error': 'Content not found in database'}), 404
+            logger.warning(f"Content {content_id} not found, attempting to create from request data")
+            
+            # Try to create content from metadata if provided
+            content_metadata = data.get('metadata', {})
+            content_info = content_metadata.get('content_info')
+            
+            if content_info:
+                # First try to fetch from TMDB if we have tmdb_id
+                if content_service and content_info.get('tmdb_id'):
+                    try:
+                        from app import CineBrainTMDBService
+                        content_type = content_info.get('content_type', 'movie')
+                        tmdb_data = CineBrainTMDBService.get_content_details(
+                            content_info['tmdb_id'], 
+                            content_type
+                        )
+                        if tmdb_data:
+                            content_exists = content_service.save_content_from_tmdb(tmdb_data, content_type)
+                            if content_exists:
+                                # Update the ID to match what was saved
+                                content_id = content_exists.id
+                                logger.info(f"Created content from TMDB with new ID {content_id}")
+                    except Exception as e:
+                        logger.warning(f"Failed to fetch from TMDB: {e}")
+                
+                # If TMDB fetch failed or no tmdb_id, create minimal record
+                if not content_exists:
+                    content_exists = create_minimal_content_record(content_id, content_info)
+                    if content_exists:
+                        content_id = content_exists.id
+            
+            if not content_exists:
+                logger.error(f"Failed to create content record for ID {content_id}")
+                return jsonify({
+                    'error': 'Content not available',
+                    'message': 'Unable to add this content to favorites at this time'
+                }), 400
         
         # Check if already in favorites
         existing = UserInteraction.query.filter_by(
@@ -73,7 +109,8 @@ def add_to_favorites(current_user):
             
             return jsonify({
                 'success': True,
-                'message': 'Already in CineBrain favorites'
+                'message': 'Already in CineBrain favorites',
+                'content_id': content_id
             }), 200
         
         # Add to favorites
@@ -114,7 +151,8 @@ def add_to_favorites(current_user):
         
         return jsonify({
             'success': True,
-            'message': 'Added to CineBrain favorites'
+            'message': 'Added to CineBrain favorites',
+            'content_id': content_id
         }), 201
         
     except Exception as e:
