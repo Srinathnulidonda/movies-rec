@@ -34,25 +34,188 @@ class AdminDashboard:
         self.JikanService = services.get('JikanService')
     
     def get_overview(self):
-        """Get admin dashboard overview"""
+        """Get admin dashboard overview with support integration"""
         try:
             overview_data = {
                 'timestamp': datetime.utcnow().isoformat(),
                 'general_stats': self._get_general_stats(),
                 'recent_activity': self._get_recent_activity(),
                 'quick_actions': self._get_quick_actions(),
-                'alerts': self._get_alerts()
+                'alerts': self._get_alerts(),
+                'support_dashboard': self._get_support_dashboard_data()  # Add this line
             }
             
-            # Add support stats if available
-            if self.SupportTicket:
-                overview_data['support_overview'] = self._get_support_overview()
+            # Add support stats to general stats
+            if overview_data['support_dashboard']['stats']:
+                overview_data['general_stats']['support_stats'] = overview_data['support_dashboard']['stats']
             
             return overview_data
             
         except Exception as e:
             logger.error(f"Error getting dashboard overview: {e}")
             return {'error': 'Failed to load dashboard overview'}
+    
+    def _get_support_dashboard_data(self):
+        """Get comprehensive support dashboard data"""
+        try:
+            support_data = {
+                'recent_tickets': [],
+                'unread_contacts': [],
+                'critical_issues': [],
+                'stats': {
+                    'total_tickets': 0,
+                    'open_tickets': 0,
+                    'urgent_tickets': 0,
+                    'unread_contacts': 0,
+                    'critical_issues': 0
+                }
+            }
+            
+            # Recent tickets (last 10)
+            if self.SupportTicket:
+                try:
+                    recent_tickets = self.SupportTicket.query.order_by(
+                        self.SupportTicket.created_at.desc()
+                    ).limit(10).all()
+                    
+                    for ticket in recent_tickets:
+                        try:
+                            category = None
+                            if self.SupportCategory and ticket.category_id:
+                                category = self.SupportCategory.query.get(ticket.category_id)
+                            
+                            support_data['recent_tickets'].append({
+                                'id': ticket.id,
+                                'ticket_number': ticket.ticket_number,
+                                'subject': ticket.subject,
+                                'status': ticket.status,
+                                'priority': ticket.priority,
+                                'user_name': ticket.user_name,
+                                'user_email': ticket.user_email,
+                                'category': {
+                                    'name': category.name if category else 'General',
+                                    'icon': category.icon if category else '❓'
+                                },
+                                'created_at': ticket.created_at.isoformat(),
+                                'sla_breached': ticket.sla_breached,
+                                'is_new': (datetime.utcnow() - ticket.created_at).total_seconds() < 3600  # New if created in last hour
+                            })
+                        except Exception as e:
+                            logger.error(f"Error processing ticket {ticket.id}: {e}")
+                            continue
+                    
+                    # Get ticket stats
+                    support_data['stats']['total_tickets'] = self.SupportTicket.query.count()
+                    support_data['stats']['open_tickets'] = self.SupportTicket.query.filter(
+                        self.SupportTicket.status.in_(['open', 'in_progress'])
+                    ).count()
+                    support_data['stats']['urgent_tickets'] = self.SupportTicket.query.filter(
+                        and_(
+                            self.SupportTicket.priority == 'urgent',
+                            self.SupportTicket.status.in_(['open', 'in_progress'])
+                        )
+                    ).count()
+                    
+                except Exception as e:
+                    logger.error(f"Error getting ticket data: {e}")
+            
+            # Recent unread contact messages (last 5)
+            if self.ContactMessage:
+                try:
+                    unread_contacts = self.ContactMessage.query.filter_by(
+                        is_read=False
+                    ).order_by(self.ContactMessage.created_at.desc()).limit(5).all()
+                    
+                    for contact in unread_contacts:
+                        try:
+                            # Detect business inquiries
+                            is_business = any([
+                                contact.company,
+                                'partnership' in contact.subject.lower() if contact.subject else False,
+                                'business' in contact.subject.lower() if contact.subject else False,
+                                'collaborate' in contact.message.lower() if contact.message else False
+                            ])
+                            
+                            support_data['unread_contacts'].append({
+                                'id': contact.id,
+                                'name': contact.name,
+                                'email': contact.email,
+                                'subject': contact.subject,
+                                'company': contact.company,
+                                'is_business_inquiry': is_business,
+                                'created_at': contact.created_at.isoformat(),
+                                'is_new': (datetime.utcnow() - contact.created_at).total_seconds() < 1800  # New if created in last 30 minutes
+                            })
+                        except Exception as e:
+                            logger.error(f"Error processing contact {contact.id}: {e}")
+                            continue
+                    
+                    support_data['stats']['unread_contacts'] = len(unread_contacts)
+                    
+                except Exception as e:
+                    logger.error(f"Error getting contact data: {e}")
+            
+            # Critical/High severity issues (last 5)
+            if self.IssueReport:
+                try:
+                    critical_issues = self.IssueReport.query.filter(
+                        and_(
+                            self.IssueReport.severity.in_(['critical', 'high']),
+                            self.IssueReport.is_resolved == False
+                        )
+                    ).order_by(self.IssueReport.created_at.desc()).limit(5).all()
+                    
+                    for issue in critical_issues:
+                        try:
+                            support_data['critical_issues'].append({
+                                'id': issue.id,
+                                'issue_id': issue.issue_id,
+                                'issue_title': issue.issue_title,
+                                'name': issue.name,
+                                'email': issue.email,
+                                'severity': issue.severity,
+                                'issue_type': issue.issue_type,
+                                'screenshots_count': len(issue.screenshots) if issue.screenshots else 0,
+                                'ticket_number': None,  # We'll get this if linked
+                                'created_at': issue.created_at.isoformat(),
+                                'is_new': (datetime.utcnow() - issue.created_at).total_seconds() < 1800  # New if created in last 30 minutes
+                            })
+                            
+                            # Get linked ticket number if exists
+                            if issue.ticket_id and self.SupportTicket:
+                                try:
+                                    linked_ticket = self.SupportTicket.query.get(issue.ticket_id)
+                                    if linked_ticket:
+                                        support_data['critical_issues'][-1]['ticket_number'] = linked_ticket.ticket_number
+                                except Exception:
+                                    pass
+                                    
+                        except Exception as e:
+                            logger.error(f"Error processing issue {issue.id}: {e}")
+                            continue
+                    
+                    support_data['stats']['critical_issues'] = len(critical_issues)
+                    
+                except Exception as e:
+                    logger.error(f"Error getting issue data: {e}")
+            
+            return support_data
+            
+        except Exception as e:
+            logger.error(f"Error getting support dashboard data: {e}")
+            return {
+                'recent_tickets': [],
+                'unread_contacts': [],
+                'critical_issues': [],
+                'stats': {
+                    'total_tickets': 0,
+                    'open_tickets': 0,
+                    'urgent_tickets': 0,
+                    'unread_contacts': 0,
+                    'critical_issues': 0
+                },
+                'error': 'Failed to load support data'
+            }
     
     def _get_general_stats(self):
         """Get general system statistics"""
