@@ -1,7 +1,7 @@
 # admin/routes.py
 
 from flask import Blueprint, request, jsonify
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import logging
 import jwt
@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 admin_bp = Blueprint('admin', __name__)
 
-# Global services - will be initialized by init_admin_routes
+# Global services - initialized by init_admin_routes
 admin_service = None
 dashboard_service = None
 telegram_service = None
@@ -52,11 +52,114 @@ def require_admin(f):
         return f(user, *args, **kwargs)
     return decorated_function
 
-# Content Management Routes
+# =============================================================================
+# REAL-TIME MONITORING ENDPOINTS (4 Main Endpoints)
+# =============================================================================
+
+@admin_bp.route('/api/system-monitoring', methods=['GET'])
+@require_admin
+def get_system_monitoring(current_user):
+    """Real-time system monitoring - /api/system-monitoring/"""
+    try:
+        if not dashboard_service:
+            return jsonify({'error': 'Dashboard service not available'}), 503
+
+        monitoring_data = dashboard_service.get_system_monitoring()
+        
+        return jsonify({
+            'success': True,
+            'data': monitoring_data,
+            'timestamp': datetime.utcnow().isoformat(),
+            'refresh_interval': 30
+        }), 200
+
+    except Exception as e:
+        logger.error(f"System monitoring error: {e}")
+        return jsonify({
+            'success': False,
+            'error': 'Failed to get system monitoring data'
+        }), 500
+
+@admin_bp.route('/api/overview', methods=['GET'])
+@require_admin
+def get_overview_stats(current_user):
+    """Real-time overview statistics - /api/overview/"""
+    try:
+        if not dashboard_service:
+            return jsonify({'error': 'Dashboard service not available'}), 503
+
+        overview_data = dashboard_service.get_overview_stats()
+        
+        return jsonify({
+            'success': True,
+            'data': overview_data,
+            'timestamp': datetime.utcnow().isoformat(),
+            'refresh_interval': 60
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Overview stats error: {e}")
+        return jsonify({
+            'success': False,
+            'error': 'Failed to get overview statistics'
+        }), 500
+
+@admin_bp.route('/api/service-status', methods=['GET'])
+@require_admin
+def get_service_status(current_user):
+    """Real-time service status - /api/service-status/"""
+    try:
+        if not dashboard_service:
+            return jsonify({'error': 'Dashboard service not available'}), 503
+
+        service_status = dashboard_service.get_service_status()
+        
+        return jsonify({
+            'success': True,
+            'data': service_status,
+            'timestamp': datetime.utcnow().isoformat(),
+            'refresh_interval': 15
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Service status error: {e}")
+        return jsonify({
+            'success': False,
+            'error': 'Failed to get service status'
+        }), 500
+
+@admin_bp.route('/api/admin-activity', methods=['GET'])
+@require_admin
+def get_admin_activity(current_user):
+    """Real-time admin activity - /api/admin-activity/"""
+    try:
+        if not dashboard_service:
+            return jsonify({'error': 'Dashboard service not available'}), 503
+
+        admin_activity = dashboard_service.get_admin_activity()
+        
+        return jsonify({
+            'success': True,
+            'data': admin_activity,
+            'timestamp': datetime.utcnow().isoformat(),
+            'refresh_interval': 45
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Admin activity error: {e}")
+        return jsonify({
+            'success': False,
+            'error': 'Failed to get admin activity data'
+        }), 500
+
+# =============================================================================
+# CONTENT MANAGEMENT ROUTES
+# =============================================================================
+
 @admin_bp.route('/api/admin/search', methods=['GET'])
 @require_admin
 def admin_search(current_user):
-    """Search for content in external APIs"""
+    """Search external content from TMDB/Jikan"""
     try:
         query = request.args.get('query', '')
         source = request.args.get('source', 'tmdb')
@@ -95,7 +198,57 @@ def save_external_content(current_user):
         logger.error(f"Save content error: {e}")
         return jsonify({'error': 'Failed to process content'}), 500
 
-# Admin Recommendations Routes
+@admin_bp.route('/api/admin/content/manage', methods=['GET'])
+@require_admin
+def get_content_management(current_user):
+    """Get content management data"""
+    try:
+        page = int(request.args.get('page', 1))
+        per_page = int(request.args.get('per_page', 20))
+        content_type = request.args.get('type', 'all')
+        search = request.args.get('search', '')
+        
+        if not dashboard_service:
+            return jsonify({'error': 'Dashboard service not available'}), 503
+        
+        content_data = dashboard_service.get_content_management(
+            page, per_page, content_type, search
+        )
+        return jsonify(content_data), 200
+        
+    except Exception as e:
+        logger.error(f"Content management error: {e}")
+        return jsonify({'error': 'Failed to get content'}), 500
+
+@admin_bp.route('/api/admin/content/<int:content_id>/slug', methods=['PUT'])
+@require_admin
+def update_content_slug(current_user, content_id):
+    """Update content slug"""
+    try:
+        if not admin_service:
+            return jsonify({'error': 'Admin service not available'}), 503
+        
+        data = request.get_json() or {}
+        force_update = data.get('force_update', False)
+        result = admin_service.update_content_slug(content_id, force_update)
+        
+        if result:
+            return jsonify({
+                'success': True,
+                'new_slug': result,
+                'service': 'slug_update'
+            }), 200
+        else:
+            return jsonify({'error': 'Content not found or update failed'}), 404
+            
+    except Exception as e:
+        logger.error(f"Error updating content slug: {e}")
+        return jsonify({'error': 'Failed to update slug'}), 500
+
+# =============================================================================
+# RECOMMENDATION MANAGEMENT ROUTES
+# =============================================================================
+
 @admin_bp.route('/api/admin/recommendations', methods=['POST'])
 @require_admin
 def create_admin_recommendation(current_user):
@@ -109,13 +262,10 @@ def create_admin_recommendation(current_user):
         if not admin_service:
             return jsonify({'error': 'Admin service not available'}), 503
         
-        # Extract template parameters
         template_type = data.get('template_type', 'auto')
         template_params = data.get('template_params', {})
         
-        # Handle both content_data and content_id formats
         if 'content_data' in data:
-            # New format: save content first, then create recommendation
             result = admin_service.create_recommendation_from_external_content(
                 current_user, 
                 data['content_data'],
@@ -127,7 +277,6 @@ def create_admin_recommendation(current_user):
                 template_params
             )
         else:
-            # Legacy format: content already exists
             required_fields = ['content_id', 'recommendation_type', 'description']
             if not all(field in data for field in required_fields):
                 return jsonify({'error': 'Missing required fields'}), 400
@@ -150,12 +299,12 @@ def create_admin_recommendation(current_user):
 @admin_bp.route('/api/admin/recommendations', methods=['GET'])
 @require_admin
 def get_admin_recommendations(current_user):
-    """Get admin recommendations with better error handling"""
+    """Get admin recommendations list"""
     try:
         page = int(request.args.get('page', 1))
         per_page = int(request.args.get('per_page', 20))
         filter_type = request.args.get('filter', 'all')
-        status = request.args.get('status')  # 'draft', 'active', etc.
+        status = request.args.get('status')
         
         if not admin_service:
             return jsonify({'error': 'Admin service not available'}), 503
@@ -174,7 +323,7 @@ def get_admin_recommendations(current_user):
 @admin_bp.route('/api/admin/recommendations/<int:recommendation_id>', methods=['GET'])
 @require_admin
 def get_recommendation_details(current_user, recommendation_id):
-    """Get specific recommendation details"""
+    """Get recommendation details"""
     try:
         if not admin_service:
             return jsonify({'error': 'Admin service not available'}), 503
@@ -192,7 +341,7 @@ def get_recommendation_details(current_user, recommendation_id):
 @admin_bp.route('/api/admin/recommendations/<int:recommendation_id>', methods=['PUT'])
 @require_admin
 def update_recommendation(current_user, recommendation_id):
-    """Update existing recommendation"""
+    """Update recommendation"""
     try:
         data = request.get_json()
         
@@ -233,7 +382,7 @@ def delete_recommendation(current_user, recommendation_id):
 @admin_bp.route('/api/admin/recommendations/<int:recommendation_id>/publish', methods=['POST'])
 @require_admin
 def publish_recommendation(current_user, recommendation_id):
-    """Publish upcoming recommendation with template support"""
+    """Publish recommendation"""
     try:
         data = request.get_json() or {}
         template_type = data.get('template_type', 'auto')
@@ -255,7 +404,7 @@ def publish_recommendation(current_user, recommendation_id):
 @admin_bp.route('/api/admin/recommendations/<int:recommendation_id>/send', methods=['POST'])
 @require_admin
 def send_recommendation_to_telegram(current_user, recommendation_id):
-    """Send recommendation to Telegram with template support"""
+    """Send recommendation to Telegram"""
     try:
         data = request.get_json() or {}
         template_type = data.get('template_type', 'auto')
@@ -274,85 +423,10 @@ def send_recommendation_to_telegram(current_user, recommendation_id):
         logger.error(f"Send to Telegram error: {e}")
         return jsonify({'error': 'Failed to send to Telegram'}), 500
 
-# Template Management Routes
-@admin_bp.route('/api/admin/telegram/templates', methods=['GET'])
-@require_admin
-def get_telegram_templates(current_user):
-    """Get available Telegram templates"""
-    try:
-        from admin.telegram import TelegramTemplates
-        templates = TelegramTemplates.get_available_templates()
-        return jsonify({
-            'templates': templates,
-            'default': 'auto'
-        }), 200
-    except Exception as e:
-        logger.error(f"Get templates error: {e}")
-        return jsonify({'error': 'Failed to get templates'}), 500
-
-@admin_bp.route('/api/admin/telegram/templates/prompts', methods=['GET'])
-@require_admin
-def get_telegram_template_prompts(current_user):
-    """Get template prompts and field specifications for content generation"""
-    try:
-        from admin.telegram import TelegramTemplates
-        
-        template_type = request.args.get('template')
-        
-        if template_type:
-            # Get specific template info
-            prompts = TelegramTemplates.get_template_prompts()
-            fields = TelegramTemplates.get_template_fields(template_type)
-            
-            if template_type in prompts:
-                return jsonify({
-                    'template': template_type,
-                    'prompt_info': prompts[template_type],
-                    'field_specs': fields
-                }), 200
-            else:
-                return jsonify({'error': 'Template not found'}), 404
-        else:
-            # Get all template prompts
-            return jsonify({
-                'prompts': TelegramTemplates.get_template_prompts(),
-                'available_templates': TelegramTemplates.get_available_templates()
-            }), 200
-            
-    except Exception as e:
-        logger.error(f"Get template prompts error: {e}")
-        return jsonify({'error': 'Failed to get template prompts'}), 500
-
-@admin_bp.route('/api/admin/telegram/custom-message', methods=['POST'])
-@require_admin
-def send_custom_telegram_message(current_user):
-    """Send custom Telegram message (for lists, etc.)"""
-    try:
-        data = request.get_json()
-        
-        if not data:
-            return jsonify({'error': 'No data provided'}), 400
-        
-        template_type = data.get('template_type')
-        template_params = data.get('template_params', {})
-        
-        if not template_type:
-            return jsonify({'error': 'Template type required'}), 400
-        
-        if not admin_service:
-            return jsonify({'error': 'Admin service not available'}), 503
-        
-        result = admin_service.send_custom_telegram_message(current_user, template_type, template_params)
-        return jsonify(result), 200
-        
-    except Exception as e:
-        logger.error(f"Send custom message error: {e}")
-        return jsonify({'error': 'Failed to send custom message'}), 500
-
 @admin_bp.route('/api/admin/recommendations/create-with-template', methods=['POST'])
 @require_admin
 def create_recommendation_with_template(current_user):
-    """Create recommendation with specific template and custom fields"""
+    """Create recommendation with specific template"""
     try:
         data = request.get_json()
         
@@ -362,11 +436,9 @@ def create_recommendation_with_template(current_user):
         if not admin_service:
             return jsonify({'error': 'Admin service not available'}), 503
         
-        # Extract template info
         template_type = data.get('template_type', 'auto')
         template_params = data.get('template_params', {})
         
-        # Handle content creation
         if 'content_data' in data:
             result = admin_service.create_recommendation_from_external_content(
                 current_user, 
@@ -411,35 +483,136 @@ def send_recommendation_with_template(current_user, recommendation_id):
         logger.error(f"Send with template error: {e}")
         return jsonify({'error': 'Failed to send with custom template'}), 500
 
-# Dashboard and Analytics Routes
+# =============================================================================
+# TELEGRAM INTEGRATION ROUTES
+# =============================================================================
+
+@admin_bp.route('/api/admin/telegram/templates', methods=['GET'])
+@require_admin
+def get_telegram_templates(current_user):
+    """Get available Telegram templates"""
+    try:
+        from admin.telegram import TelegramTemplates
+        templates = TelegramTemplates.get_available_templates()
+        return jsonify({
+            'templates': templates,
+            'default': 'auto'
+        }), 200
+    except Exception as e:
+        logger.error(f"Get templates error: {e}")
+        return jsonify({'error': 'Failed to get templates'}), 500
+
+@admin_bp.route('/api/admin/telegram/templates/prompts', methods=['GET'])
+@require_admin
+def get_telegram_template_prompts(current_user):
+    """Get template prompts for AI generation"""
+    try:
+        from admin.telegram import TelegramTemplates
+        
+        template_type = request.args.get('template')
+        
+        if template_type:
+            prompts = TelegramTemplates.get_template_prompts()
+            fields = TelegramTemplates.get_template_fields(template_type)
+            
+            if template_type in prompts:
+                return jsonify({
+                    'template': template_type,
+                    'prompt_info': prompts[template_type],
+                    'field_specs': fields
+                }), 200
+            else:
+                return jsonify({'error': 'Template not found'}), 404
+        else:
+            return jsonify({
+                'prompts': TelegramTemplates.get_template_prompts(),
+                'available_templates': TelegramTemplates.get_available_templates()
+            }), 200
+            
+    except Exception as e:
+        logger.error(f"Get template prompts error: {e}")
+        return jsonify({'error': 'Failed to get template prompts'}), 500
+
+@admin_bp.route('/api/admin/telegram/custom-message', methods=['POST'])
+@require_admin
+def send_custom_telegram_message(current_user):
+    """Send custom Telegram message"""
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+        
+        template_type = data.get('template_type')
+        template_params = data.get('template_params', {})
+        
+        if not template_type:
+            return jsonify({'error': 'Template type required'}), 400
+        
+        if not admin_service:
+            return jsonify({'error': 'Admin service not available'}), 503
+        
+        result = admin_service.send_custom_telegram_message(current_user, template_type, template_params)
+        return jsonify(result), 200
+        
+    except Exception as e:
+        logger.error(f"Send custom message error: {e}")
+        return jsonify({'error': 'Failed to send custom message'}), 500
+
+# =============================================================================
+# DASHBOARD ROUTES
+# =============================================================================
+
 @admin_bp.route('/api/admin/dashboard', methods=['GET'])
 @require_admin
 def get_admin_dashboard(current_user):
-    """Get admin dashboard data with support integration"""
+    """Get comprehensive admin dashboard"""
     try:
         if not dashboard_service:
             return jsonify({'error': 'Dashboard service not available'}), 503
         
-        dashboard_data = dashboard_service.get_overview()
-        return jsonify(dashboard_data), 200
+        include_support = request.args.get('include_support', 'true').lower() == 'true'
         
+        dashboard_data = dashboard_service.get_overview()
+        
+        if include_support:
+            try:
+                since = request.args.get('since')
+                real_time_support = dashboard_service.get_real_time_support_data(since)
+                dashboard_data['real_time_support'] = real_time_support
+                
+                summary_stats = dashboard_service.get_support_summary_stats()
+                dashboard_data['support_summary'] = summary_stats
+                
+            except Exception as e:
+                logger.warning(f"Failed to get real-time support data: {e}")
+                dashboard_data['real_time_support'] = {'error': str(e)}
+
+        return jsonify({
+            'success': True,
+            'dashboard': dashboard_data,
+            'timestamp': datetime.utcnow().isoformat()
+        }), 200
+
     except Exception as e:
-        logger.error(f"Dashboard error: {e}")
+        logger.error(f"Enhanced dashboard error: {e}")
         try:
             db.session.rollback()
         except:
             pass
-        return jsonify({'error': 'Failed to load dashboard'}), 500
+        return jsonify({
+            'success': False,
+            'error': 'Failed to load dashboard'
+        }), 500
 
 @admin_bp.route('/api/admin/dashboard/stats', methods=['GET'])
 @require_admin
 def get_dashboard_stats(current_user):
-    """Get dashboard statistics - separate endpoint for stats"""
+    """Get basic dashboard statistics"""
     try:
         if not dashboard_service:
             return jsonify({'error': 'Dashboard service not available'}), 503
         
-        # Get basic stats only to avoid complex queries
         stats = {}
         
         try:
@@ -475,7 +648,7 @@ def get_dashboard_stats(current_user):
 @admin_bp.route('/api/admin/analytics', methods=['GET'])
 @require_admin
 def get_analytics(current_user):
-    """Get detailed analytics"""
+    """Get comprehensive analytics data"""
     try:
         if not dashboard_service:
             return jsonify({'error': 'Dashboard service not available'}), 503
@@ -506,92 +679,111 @@ def get_system_health(current_user):
             'timestamp': datetime.utcnow().isoformat()
         }), 500
 
-# Support Management Routes
-@admin_bp.route('/api/admin/support/dashboard', methods=['GET'])
-@require_admin
-def get_support_dashboard(current_user):
-    """Get support dashboard data"""
-    try:
-        if not dashboard_service:
-            return jsonify({'error': 'Dashboard service not available'}), 503
-        
-        support_data = dashboard_service.get_support_dashboard()
-        return jsonify(support_data), 200
-        
-    except Exception as e:
-        logger.error(f"Support dashboard error: {e}")
-        return jsonify({'error': 'Failed to load support dashboard'}), 500
+# =============================================================================
+# SUPPORT INTEGRATION ROUTES
+# =============================================================================
 
-@admin_bp.route('/api/admin/support/live-updates', methods=['GET'])
+@admin_bp.route('/api/admin/support/real-time', methods=['GET'])
 @require_admin
-def get_support_live_updates(current_user):
-    """Get live support updates for dashboard refresh - NEW ROUTE"""
+def get_real_time_support_data(current_user):
+    """Get real-time support data"""
     try:
         if not dashboard_service:
             return jsonify({'error': 'Dashboard service not available'}), 503
+
+        since = request.args.get('since')
+        include_stats = request.args.get('include_stats', 'true').lower() == 'true'
+
+        real_time_data = dashboard_service.get_real_time_support_data(since)
         
-        # Get timestamp from last check (optional)
-        since = request.args.get('since')  # ISO timestamp
-        
-        support_data = dashboard_service._get_support_dashboard_data()
-        
-        # If 'since' timestamp provided, filter for newer items
-        if since:
-            try:
-                from datetime import datetime
-                since_dt = datetime.fromisoformat(since.replace('Z', '+00:00'))
-                
-                # Filter recent items
-                support_data['recent_tickets'] = [
-                    ticket for ticket in support_data['recent_tickets']
-                    if datetime.fromisoformat(ticket['created_at'].replace('Z', '+00:00')) > since_dt
-                ]
-                
-                support_data['unread_contacts'] = [
-                    contact for contact in support_data['unread_contacts']
-                    if datetime.fromisoformat(contact['created_at'].replace('Z', '+00:00')) > since_dt
-                ]
-                
-                support_data['critical_issues'] = [
-                    issue for issue in support_data['critical_issues']
-                    if datetime.fromisoformat(issue['created_at'].replace('Z', '+00:00')) > since_dt
-                ]
-                
-            except Exception as e:
-                logger.warning(f"Error filtering by timestamp: {e}")
-        
-        # Add notification counts for quick reference
-        support_data['notification_counts'] = {
-            'new_tickets': len([t for t in support_data['recent_tickets'] if t.get('is_new')]),
-            'new_contacts': len([c for c in support_data['unread_contacts'] if c.get('is_new')]),
-            'new_issues': len([i for i in support_data['critical_issues'] if i.get('is_new')]),
-            'total_new': 0
-        }
-        
-        support_data['notification_counts']['total_new'] = (
-            support_data['notification_counts']['new_tickets'] +
-            support_data['notification_counts']['new_contacts'] +
-            support_data['notification_counts']['new_issues']
-        )
+        if include_stats:
+            summary_stats = dashboard_service.get_support_summary_stats()
+            real_time_data['summary_stats'] = summary_stats
+
+        return jsonify({
+            'success': True,
+            'data': real_time_data,
+            'server_time': datetime.utcnow().isoformat(),
+            'has_new_items': real_time_data['new_items_count'] > 0
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Real-time support data error: {e}")
+        return jsonify({
+            'success': False,
+            'error': 'Failed to get real-time support data',
+            'server_time': datetime.utcnow().isoformat()
+        }), 500
+
+@admin_bp.route('/api/admin/support/summary-stats', methods=['GET'])
+@require_admin  
+def get_support_summary_stats(current_user):
+    """Get support summary statistics"""
+    try:
+        if not dashboard_service:
+            return jsonify({'error': 'Dashboard service not available'}), 503
+
+        stats = dashboard_service.get_support_summary_stats()
         
         return jsonify({
             'success': True,
-            'support_data': support_data,
-            'timestamp': datetime.utcnow().isoformat(),
-            'has_new_items': support_data['notification_counts']['total_new'] > 0
+            'stats': stats,
+            'timestamp': datetime.utcnow().isoformat()
         }), 200
-        
+
     except Exception as e:
-        logger.error(f"Support live updates error: {e}")
-        return jsonify({'error': 'Failed to get support updates'}), 500
+        logger.error(f"Support summary stats error: {e}")
+        return jsonify({
+            'success': False,
+            'error': 'Failed to get support summary statistics'
+        }), 500
+
+@admin_bp.route('/api/admin/support/alerts', methods=['GET'])
+@require_admin
+def get_support_alerts(current_user):
+    """Get support alerts"""
+    try:
+        if not dashboard_service:
+            return jsonify({'error': 'Dashboard service not available'}), 503
+
+        since = (datetime.utcnow() - timedelta(hours=4)).isoformat()
+        real_time_data = dashboard_service.get_real_time_support_data(since)
+        
+        alerts = real_time_data.get('urgent_alerts', [])
+        
+        try:
+            health_data = dashboard_service.get_system_health()
+            if health_data.get('status') != 'healthy':
+                alerts.append({
+                    'type': 'system_health',
+                    'message': 'System health issues detected',
+                    'url': '/admin/system-health',
+                    'created_at': datetime.utcnow().isoformat()
+                })
+        except Exception as e:
+            logger.warning(f"Health check failed: {e}")
+
+        return jsonify({
+            'success': True,
+            'alerts': alerts[:10],
+            'alert_count': len(alerts),
+            'timestamp': datetime.utcnow().isoformat()
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Support alerts error: {e}")
+        return jsonify({
+            'success': False,
+            'error': 'Failed to get support alerts'
+        }), 500
 
 @admin_bp.route('/api/admin/support/mark-seen', methods=['POST'])
 @require_admin
 def mark_support_items_seen(current_user):
-    """Mark support items as seen by admin - NEW ROUTE"""
+    """Mark support items as seen by admin"""
     try:
         data = request.get_json()
-        item_type = data.get('type')  # 'ticket', 'contact', 'issue'
+        item_type = data.get('type')
         item_ids = data.get('ids', [])
         
         if not item_type or not item_ids:
@@ -601,7 +793,6 @@ def mark_support_items_seen(current_user):
         current_time = datetime.utcnow()
         
         if item_type == 'contact' and ContactMessage:
-            # Mark contact messages as read and admin viewed
             for contact_id in item_ids:
                 try:
                     contact = ContactMessage.query.get(contact_id)
@@ -616,7 +807,6 @@ def mark_support_items_seen(current_user):
                     continue
         
         elif item_type == 'issue' and IssueReport:
-            # Mark issue reports as admin viewed
             for issue_id in item_ids:
                 try:
                     issue = IssueReport.query.get(issue_id)
@@ -630,7 +820,6 @@ def mark_support_items_seen(current_user):
                     continue
         
         elif item_type == 'ticket' and SupportTicket:
-            # Mark tickets as admin viewed
             for ticket_id in item_ids:
                 try:
                     ticket = SupportTicket.query.get(ticket_id)
@@ -640,7 +829,6 @@ def mark_support_items_seen(current_user):
                         ticket.admin_viewed_by = current_user.id
                         marked_count += 1
                         
-                        # Add activity log
                         if TicketActivity:
                             activity = TicketActivity(
                                 ticket_id=ticket.id,
@@ -673,60 +861,13 @@ def mark_support_items_seen(current_user):
             pass
         return jsonify({'error': 'Failed to mark items as seen'}), 500
 
-@admin_bp.route('/api/admin/support/tickets', methods=['GET'])
-@require_admin
-def get_support_tickets(current_user):
-    """Get support tickets list"""
-    try:
-        page = int(request.args.get('page', 1))
-        per_page = min(int(request.args.get('per_page', 20)), 100)
-        status = request.args.get('status')
-        priority = request.args.get('priority')
-        category_id = request.args.get('category_id', type=int)
-        search = request.args.get('search', '').strip()
-        
-        if not dashboard_service:
-            return jsonify({'error': 'Dashboard service not available'}), 503
-        
-        tickets_data = dashboard_service.get_support_tickets(
-            page, per_page, status, priority, category_id, search
-        )
-        return jsonify(tickets_data), 200
-        
-    except Exception as e:
-        logger.error(f"Get support tickets error: {e}")
-        return jsonify({'error': 'Failed to get support tickets'}), 500
-
-@admin_bp.route('/api/admin/support/feedback', methods=['GET'])
-@require_admin
-def get_feedback_list(current_user):
-    """Get feedback list"""
-    try:
-        page = int(request.args.get('page', 1))
-        per_page = min(int(request.args.get('per_page', 20)), 100)
-        feedback_type = request.args.get('type')
-        is_read = request.args.get('is_read')
-        search = request.args.get('search', '').strip()
-        
-        if not dashboard_service:
-            return jsonify({'error': 'Dashboard service not available'}), 503
-        
-        feedback_data = dashboard_service.get_feedback_list(
-            page, per_page, feedback_type, is_read, search
-        )
-        return jsonify(feedback_data), 200
-        
-    except Exception as e:
-        logger.error(f"Get feedback list error: {e}")
-        return jsonify({'error': 'Failed to get feedback list'}), 500
-
 @admin_bp.route('/api/admin/support/ticket/<int:ticket_id>/quick-update', methods=['POST'])
 @require_admin
 def quick_update_ticket(current_user, ticket_id):
-    """Quick update ticket status from dashboard - NEW ROUTE"""
+    """Quick update ticket status/priority"""
     try:
         data = request.get_json()
-        action = data.get('action')  # 'assign', 'priority', 'status'
+        action = data.get('action')
         value = data.get('value')
         
         if not action or not value:
@@ -759,7 +900,6 @@ def quick_update_ticket(current_user, ticket_id):
                 ticket.assigned_to = None
                 value = None
             else:
-                # Assume it's a user ID
                 try:
                     user_id = int(value)
                     user = User.query.get(user_id)
@@ -771,7 +911,6 @@ def quick_update_ticket(current_user, ticket_id):
                 except ValueError:
                     return jsonify({'error': 'Invalid user ID'}), 400
         
-        # Add activity log
         if TicketActivity:
             activity = TicketActivity(
                 ticket_id=ticket.id,
@@ -811,7 +950,7 @@ def quick_update_ticket(current_user, ticket_id):
 @admin_bp.route('/api/admin/support/contact/<int:contact_id>/quick-reply', methods=['POST'])
 @require_admin
 def quick_reply_contact(current_user, contact_id):
-    """Quick reply to contact message - NEW ROUTE"""
+    """Quick reply to contact message"""
     try:
         data = request.get_json()
         reply_message = data.get('message')
@@ -824,13 +963,11 @@ def quick_reply_contact(current_user, contact_id):
         
         contact = ContactMessage.query.get_or_404(contact_id)
         
-        # Mark as read and viewed
         contact.is_read = True
         contact.admin_viewed = True
         contact.admin_viewed_at = datetime.utcnow()
         contact.admin_viewed_by = current_user.id
         
-        # Send reply email
         try:
             from auth.service import email_service
             from auth.support_mail_templates import get_support_template
@@ -876,7 +1013,10 @@ def quick_reply_contact(current_user, contact_id):
             pass
         return jsonify({'error': 'Failed to send reply'}), 500
 
-# User Management Routes
+# =============================================================================
+# USER MANAGEMENT ROUTES
+# =============================================================================
+
 @admin_bp.route('/api/admin/users', methods=['GET'])
 @require_admin
 def get_users_management(current_user):
@@ -896,30 +1036,10 @@ def get_users_management(current_user):
         logger.error(f"Users management error: {e}")
         return jsonify({'error': 'Failed to get users'}), 500
 
-# Content Management Routes
-@admin_bp.route('/api/admin/content/manage', methods=['GET'])
-@require_admin
-def get_content_management(current_user):
-    """Get content management data"""
-    try:
-        page = int(request.args.get('page', 1))
-        per_page = int(request.args.get('per_page', 20))
-        content_type = request.args.get('type', 'all')
-        search = request.args.get('search', '')
-        
-        if not dashboard_service:
-            return jsonify({'error': 'Dashboard service not available'}), 503
-        
-        content_data = dashboard_service.get_content_management(
-            page, per_page, content_type, search
-        )
-        return jsonify(content_data), 200
-        
-    except Exception as e:
-        logger.error(f"Content management error: {e}")
-        return jsonify({'error': 'Failed to get content'}), 500
+# =============================================================================
+# EMAIL PREFERENCES ROUTES
+# =============================================================================
 
-# Email Preferences Routes
 @admin_bp.route('/api/admin/email-preferences', methods=['GET'])
 @require_admin
 def get_email_preferences(current_user):
@@ -930,7 +1050,6 @@ def get_email_preferences(current_user):
         
         preferences = AdminEmailPreferences.query.filter_by(admin_id=current_user.id).first()
         if not preferences:
-            # Create default preferences
             preferences = AdminEmailPreferences(admin_id=current_user.id)
             db.session.add(preferences)
             db.session.commit()
@@ -985,14 +1104,12 @@ def update_email_preferences(current_user):
         
         prefs = data['preferences']
         
-        # Update critical alerts
         if 'critical_alerts' in prefs:
             critical = prefs['critical_alerts']
             preferences.urgent_tickets = critical.get('urgent_tickets', preferences.urgent_tickets)
             preferences.sla_breaches = critical.get('sla_breaches', preferences.sla_breaches)
             preferences.system_alerts = critical.get('system_alerts', preferences.system_alerts)
         
-        # Update content management
         if 'content_management' in prefs:
             content = prefs['content_management']
             preferences.content_added = content.get('content_added', preferences.content_added)
@@ -1001,13 +1118,11 @@ def update_email_preferences(current_user):
             preferences.recommendation_deleted = content.get('recommendation_deleted', preferences.recommendation_deleted)
             preferences.recommendation_published = content.get('recommendation_published', preferences.recommendation_published)
         
-        # Update user activity
         if 'user_activity' in prefs:
             user = prefs['user_activity']
             preferences.user_feedback = user.get('user_feedback', preferences.user_feedback)
             preferences.regular_tickets = user.get('regular_tickets', preferences.regular_tickets)
         
-        # Update system operations
         if 'system_operations' in prefs:
             system = prefs['system_operations']
             preferences.cache_operations = system.get('cache_operations', preferences.cache_operations)
@@ -1032,7 +1147,10 @@ def update_email_preferences(current_user):
             pass
         return jsonify({'error': 'Failed to update email preferences'}), 500
 
-# Notification Routes
+# =============================================================================
+# NOTIFICATIONS ROUTES
+# =============================================================================
+
 @admin_bp.route('/api/admin/notifications', methods=['GET'])
 @require_admin
 def get_admin_notifications(current_user):
@@ -1067,11 +1185,14 @@ def mark_all_notifications_read(current_user):
         logger.error(f"Mark all notifications read error: {e}")
         return jsonify({'error': 'Failed to mark all notifications as read'}), 500
 
-# Cache Management Routes
+# =============================================================================
+# CACHE MANAGEMENT ROUTES
+# =============================================================================
+
 @admin_bp.route('/api/admin/cache/clear', methods=['POST'])
 @require_admin
 def clear_cache(current_user):
-    """Clear application cache"""
+    """Clear cache"""
     try:
         cache_type = request.args.get('type', 'all')
         
@@ -1100,7 +1221,10 @@ def get_cache_stats(current_user):
         logger.error(f"Cache stats error: {e}")
         return jsonify({'error': 'Failed to get cache stats'}), 500
 
-# Slug Management Routes
+# =============================================================================
+# SYSTEM OPERATIONS ROUTES
+# =============================================================================
+
 @admin_bp.route('/api/admin/slugs/migrate', methods=['POST'])
 @require_admin
 def migrate_all_slugs(current_user):
@@ -1117,37 +1241,12 @@ def migrate_all_slugs(current_user):
         return jsonify({
             'success': True,
             'migration_stats': result,
-            'cinebrain_service': 'slug_migration'
+            'service': 'slug_migration'
         }), 200
         
     except Exception as e:
         logger.error(f"Error migrating slugs: {e}")
         return jsonify({'error': 'Failed to migrate slugs'}), 500
-
-@admin_bp.route('/api/admin/content/<int:content_id>/slug', methods=['PUT'])
-@require_admin
-def update_content_slug(current_user, content_id):
-    """Update content slug"""
-    try:
-        if not admin_service:
-            return jsonify({'error': 'Admin service not available'}), 503
-        
-        data = request.get_json() or {}
-        force_update = data.get('force_update', False)
-        result = admin_service.update_content_slug(content_id, force_update)
-        
-        if result:
-            return jsonify({
-                'success': True,
-                'new_slug': result,
-                'cinebrain_service': 'slug_update'
-            }), 200
-        else:
-            return jsonify({'error': 'Content not found or update failed'}), 404
-            
-    except Exception as e:
-        logger.error(f"Error updating content slug: {e}")
-        return jsonify({'error': 'Failed to update slug'}), 500
 
 @admin_bp.route('/api/admin/populate-cast-crew', methods=['POST'])
 @require_admin
@@ -1166,17 +1265,20 @@ def populate_all_cast_crew(current_user):
             'processed': result.get('processed', 0),
             'errors': result.get('errors', 0),
             'message': f"Successfully populated cast/crew for {result.get('processed', 0)} content items",
-            'cinebrain_service': 'cast_crew_population'
+            'service': 'cast_crew_population'
         }), 200
         
     except Exception as e:
         logger.error(f"Error in bulk cast/crew population: {e}")
         return jsonify({'error': 'Failed to populate cast/crew'}), 500
 
-# Health Check Routes
+# =============================================================================
+# UTILITY ROUTES
+# =============================================================================
+
 @admin_bp.route('/api/admin/health', methods=['GET'])
 def admin_health_check():
-    """Simple health check for admin service"""
+    """Admin service health check"""
     return jsonify({
         'status': 'healthy',
         'service': 'CineBrain Admin',
@@ -1186,18 +1288,17 @@ def admin_health_check():
 
 @admin_bp.route('/api/admin/ping', methods=['GET'])
 def admin_ping():
-    """Simple ping endpoint"""
+    """Admin service ping"""
     return jsonify({
         'message': 'pong',
         'service': 'admin',
         'timestamp': datetime.utcnow().isoformat()
     }), 200
 
-# Service Status Routes
 @admin_bp.route('/api/admin/services/status', methods=['GET'])
 @require_admin
 def get_services_status(current_user):
-    """Get status of all admin services"""
+    """Get services status"""
     try:
         status = {
             'admin_service': 'available' if admin_service else 'unavailable',
@@ -1222,20 +1323,24 @@ def get_services_status(current_user):
         logger.error(f"Services status error: {e}")
         return jsonify({'error': 'Failed to get services status'}), 500
 
-# Error Handlers
+# =============================================================================
+# ERROR HANDLERS
+# =============================================================================
+
 @admin_bp.errorhandler(404)
 def not_found(error):
+    """404 error handler"""
     return jsonify({'error': 'Admin endpoint not found'}), 404
 
 @admin_bp.errorhandler(500)
 def internal_error(error):
+    """500 error handler"""
     try:
         db.session.rollback()
     except:
         pass
     return jsonify({'error': 'Internal server error in admin service'}), 500
 
-# CORS Headers
 @admin_bp.after_request
 def after_request(response):
     """Add CORS headers"""
@@ -1254,7 +1359,10 @@ def after_request(response):
     
     return response
 
-# Initialization Function
+# =============================================================================
+# INITIALIZATION FUNCTION
+# =============================================================================
+
 def init_admin_routes(flask_app, database, models, services):
     """Initialize admin routes with dependencies"""
     global admin_service, dashboard_service, telegram_service
@@ -1269,7 +1377,6 @@ def init_admin_routes(flask_app, database, models, services):
     AdminRecommendation = models.get('AdminRecommendation')
     AdminEmailPreferences = models.get('AdminEmailPreferences')
     
-    # Support models
     SupportTicket = models.get('SupportTicket')
     ContactMessage = models.get('ContactMessage')
     IssueReport = models.get('IssueReport')
@@ -1278,7 +1385,6 @@ def init_admin_routes(flask_app, database, models, services):
     
     cache = services.get('cache')
     
-    # Initialize individual services
     try:
         from .service import init_admin_service
         from .dashboard import init_dashboard_service
@@ -1294,7 +1400,10 @@ def init_admin_routes(flask_app, database, models, services):
         logger.info(f"   - Telegram service: {'✓' if telegram_service else '✗'}")
         logger.info(f"   - Email preferences: {'✓' if AdminEmailPreferences else '✗'}")
         logger.info(f"   - Support integration: {'✓' if SupportTicket and ContactMessage and IssueReport else '✗'}")
-        logger.info(f"   - Template system: {'✓'}")
+        logger.info(f"   - 4 Real-time monitoring endpoints: ✓")
+        logger.info(f"   - Content management: ✓")
+        logger.info(f"   - Recommendation system: ✓")
+        logger.info(f"   - Telegram integration: ✓")
         
     except Exception as e:
         logger.error(f"❌ Failed to initialize admin routes: {e}")

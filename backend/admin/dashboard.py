@@ -1,14 +1,15 @@
 # admin/dashboard.py
 
 from datetime import datetime, timedelta
-from sqlalchemy import func, desc, and_, or_
+from sqlalchemy import func, desc, and_, or_, text
 from collections import defaultdict
 import json
 import logging
 import os
+import psutil
+import time
 
 logger = logging.getLogger(__name__)
-
 class AdminDashboard:
     def __init__(self, app, db, models, services):
         self.app = app
@@ -18,7 +19,6 @@ class AdminDashboard:
         self.UserInteraction = models['UserInteraction']
         self.AdminRecommendation = models['AdminRecommendation']
         
-        # Support models (optional)
         self.SupportTicket = models.get('SupportTicket')
         self.SupportCategory = models.get('SupportCategory')
         self.TicketActivity = models.get('TicketActivity')
@@ -29,12 +29,363 @@ class AdminDashboard:
         self.cache = services.get('cache')
         self.redis_client = services.get('redis_client')
         
-        # Service references
         self.TMDBService = services.get('TMDBService')
         self.JikanService = services.get('JikanService')
-    
+
+    # =============================================================================
+    # MAIN DASHBOARD ENDPOINTS (4 endpoints as requested)
+    # =============================================================================
+
+    def get_system_monitoring(self):
+        """Real-time system monitoring data - /api/system-monitoring/"""
+        try:
+            return {
+                'database': self._get_database_status(),
+                'cache': self._get_cache_status(),
+                'external_apis': self._get_external_apis_status(),
+                'performance': self._get_performance_metrics()
+            }
+        except Exception as e:
+            logger.error(f"Error getting system monitoring: {e}")
+            return {
+                'database': {'status': 'error', 'response': 0, 'connections': 0},
+                'cache': {'type': 'unknown', 'hit_rate': 0, 'memory': 'unknown'},
+                'external_apis': {'tmdb': False, 'youtube': False, 'cloudinary': False},
+                'performance': {'cpu': 'N/A', 'memory': 'N/A', 'disk': 'N/A'}
+            }
+
+    def get_overview_stats(self):
+        """Real-time overview statistics - /api/overview/"""
+        try:
+            total_users = self.User.query.count() if self.User else 0
+            total_content = self.Content.query.count() if self.Content else 0
+            
+            # Active users (last 24 hours)
+            yesterday = datetime.utcnow() - timedelta(hours=24)
+            active_users = 0
+            if self.User:
+                active_users = self.User.query.filter(
+                    self.User.last_active >= yesterday
+                ).count()
+            
+            # Support tickets
+            support_tickets = 0
+            tickets_handled = 0
+            if self.SupportTicket:
+                support_tickets = self.SupportTicket.query.count()
+                tickets_handled = self.SupportTicket.query.filter(
+                    self.SupportTicket.status.in_(['resolved', 'closed'])
+                ).count()
+            
+            # Interactions
+            total_interactions = self.UserInteraction.query.count() if self.UserInteraction else 0
+            
+            # Active recommendations
+            active_recommendations = 0
+            if self.AdminRecommendation:
+                active_recommendations = self.AdminRecommendation.query.filter_by(is_active=True).count()
+            
+            return {
+                'total_users': total_users,
+                'total_content': total_content,
+                'active_users': active_users,
+                'support_tickets': support_tickets,
+                'tickets_handled': tickets_handled,
+                'interactions': total_interactions,
+                'recommendations': active_recommendations
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting overview stats: {e}")
+            return {
+                'total_users': 0,
+                'total_content': 0,
+                'active_users': 0,
+                'support_tickets': 0,
+                'tickets_handled': 0,
+                'interactions': 0,
+                'recommendations': 0
+            }
+
+    def get_service_status(self):
+        """Real-time service status - /api/service-status/"""
+        try:
+            return {
+                'auth': self._check_service_health('auth'),
+                'admin': self._check_service_health('admin'),
+                'support': self._check_service_health('support'),
+                'content': self._check_service_health('content'),
+                'analytics': self._check_service_health('analytics'),
+                'cache': self._check_service_health('cache')
+            }
+        except Exception as e:
+            logger.error(f"Error getting service status: {e}")
+            return {
+                'auth': 'offline',
+                'admin': 'offline',
+                'support': 'offline',
+                'content': 'offline',
+                'analytics': 'offline',
+                'cache': 'offline'
+            }
+
+    def get_admin_activity(self):
+        """Real-time admin activity - /api/admin-activity/"""
+        try:
+            # Total admins
+            total_admins = self.User.query.filter_by(is_admin=True).count() if self.User else 0
+            
+            # Active admins (last hour)
+            last_hour = datetime.utcnow() - timedelta(hours=1)
+            active_admins = 0
+            if self.User:
+                active_admins = self.User.query.filter(
+                    and_(
+                        self.User.is_admin == True,
+                        self.User.last_active >= last_hour
+                    )
+                ).count()
+            
+            # Currently active (last 5 minutes)
+            last_5_min = datetime.utcnow() - timedelta(minutes=5)
+            currently_active = 0
+            if self.User:
+                currently_active = self.User.query.filter(
+                    and_(
+                        self.User.is_admin == True,
+                        self.User.last_active >= last_5_min
+                    )
+                ).count()
+            
+            # Active recommendations
+            active_recommendations = 0
+            if self.AdminRecommendation:
+                active_recommendations = self.AdminRecommendation.query.filter_by(is_active=True).count()
+            
+            # Calculate activity rate
+            activity_rate = 0
+            if total_admins > 0:
+                activity_rate = round((active_admins / total_admins) * 100, 1)
+            
+            return {
+                'active': currently_active,
+                'active_admins': active_admins,
+                'total_admins': total_admins,
+                'recommendations': active_recommendations,
+                'activity_rate': f"{activity_rate}%"
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting admin activity: {e}")
+            return {
+                'active': 0,
+                'active_admins': 0,
+                'total_admins': 0,
+                'recommendations': 0,
+                'activity_rate': '0%'
+            }
+
+    # =============================================================================
+    # HELPER METHODS FOR SYSTEM MONITORING
+    # =============================================================================
+
+    def _get_database_status(self):
+        """Monitor database status in real-time"""
+        try:
+            start_time = time.time()
+            
+            # Test database connection
+            result = self.db.session.execute(text("SELECT 1")).scalar()
+            
+            end_time = time.time()
+            response_time = int((end_time - start_time) * 1000)  # Convert to ms
+            
+            # Get connection count (PostgreSQL specific)
+            try:
+                connection_count = self.db.session.execute(
+                    text("SELECT count(*) FROM pg_stat_activity WHERE state = 'active'")
+                ).scalar()
+            except:
+                connection_count = 1  # Fallback
+            
+            status = "online" if result == 1 else "degraded"
+            
+            return {
+                'status': status,
+                'response': f"{response_time}ms",
+                'connections': connection_count
+            }
+            
+        except Exception as e:
+            logger.error(f"Database monitoring error: {e}")
+            return {
+                'status': 'offline',
+                'response': '0ms',
+                'connections': 0
+            }
+
+    def _get_cache_status(self):
+        """Monitor cache status in real-time"""
+        try:
+            cache_type = self.app.config.get('CACHE_TYPE', 'unknown')
+            
+            if cache_type == 'redis':
+                return self._get_redis_monitoring()
+            else:
+                return {
+                    'type': cache_type,
+                    'hit_rate': 'N/A',
+                    'memory': 'N/A'
+                }
+                
+        except Exception as e:
+            logger.error(f"Cache monitoring error: {e}")
+            return {
+                'type': 'unknown',
+                'hit_rate': '0%',
+                'memory': 'unknown'
+            }
+
+    def _get_redis_monitoring(self):
+        """Get Redis-specific monitoring data"""
+        try:
+            import redis
+            REDIS_URL = os.environ.get('REDIS_URL')
+            
+            if not REDIS_URL:
+                return {'type': 'redis', 'hit_rate': 'N/A', 'memory': 'not configured'}
+            
+            r = redis.from_url(REDIS_URL)
+            info = r.info()
+            
+            # Calculate hit rate
+            hits = info.get('keyspace_hits', 0)
+            misses = info.get('keyspace_misses', 0)
+            total = hits + misses
+            hit_rate = round((hits / total * 100), 2) if total > 0 else 0
+            
+            # Get memory usage
+            memory_used = info.get('used_memory_human', 'unknown')
+            
+            return {
+                'type': 'redis',
+                'hit_rate': f"{hit_rate}%",
+                'memory': memory_used
+            }
+            
+        except Exception as e:
+            logger.error(f"Redis monitoring error: {e}")
+            return {
+                'type': 'redis',
+                'hit_rate': 'error',
+                'memory': 'error'
+            }
+
+    def _get_external_apis_status(self):
+        """Check external API status in real-time"""
+        try:
+            tmdb_status = bool(os.environ.get('TMDB_API_KEY'))
+            youtube_status = bool(os.environ.get('YOUTUBE_API_KEY'))
+            cloudinary_status = all([
+                os.environ.get('CLOUDINARY_CLOUD_NAME'),
+                os.environ.get('CLOUDINARY_API_KEY'),
+                os.environ.get('CLOUDINARY_API_SECRET')
+            ])
+            
+            return {
+                'tmdb': tmdb_status,
+                'youtube': youtube_status,
+                'cloudinary': cloudinary_status
+            }
+            
+        except Exception as e:
+            logger.error(f"External APIs monitoring error: {e}")
+            return {
+                'tmdb': False,
+                'youtube': False,
+                'cloudinary': False
+            }
+
+    def _get_performance_metrics(self):
+        """Get real-time performance metrics"""
+        try:
+            # CPU usage
+            cpu_percent = psutil.cpu_percent(interval=1)
+            
+            # Memory usage
+            memory = psutil.virtual_memory()
+            memory_percent = memory.percent
+            
+            # Disk usage
+            disk = psutil.disk_usage('/')
+            disk_percent = round((disk.used / disk.total) * 100, 2)
+            
+            return {
+                'cpu': f"{cpu_percent}%",
+                'memory': f"{memory_percent}%",
+                'disk': f"{disk_percent}%"
+            }
+            
+        except Exception as e:
+            logger.error(f"Performance monitoring error: {e}")
+            return {
+                'cpu': 'N/A',
+                'memory': 'N/A',
+                'disk': 'N/A'
+            }
+
+    def _check_service_health(self, service_name):
+        """Check individual service health status"""
+        try:
+            if service_name == 'auth':
+                # Test if we can query users
+                self.User.query.limit(1).first()
+                return 'online'
+                
+            elif service_name == 'admin':
+                # Check if admin models are available
+                if self.AdminRecommendation:
+                    self.AdminRecommendation.query.limit(1).first()
+                    return 'online'
+                return 'degraded'
+                
+            elif service_name == 'support':
+                if self.SupportTicket:
+                    self.SupportTicket.query.limit(1).first()
+                    return 'online'
+                return 'offline'
+                
+            elif service_name == 'content':
+                self.Content.query.limit(1).first()
+                return 'online'
+                
+            elif service_name == 'analytics':
+                if self.UserInteraction:
+                    self.UserInteraction.query.limit(1).first()
+                    return 'online'
+                return 'degraded'
+                
+            elif service_name == 'cache':
+                if self.cache:
+                    # Test cache with a simple operation
+                    test_key = f'health_check_{int(time.time())}'
+                    self.cache.set(test_key, 'ok', timeout=1)
+                    if self.cache.get(test_key) == 'ok':
+                        return 'online'
+                return 'offline'
+                
+            return 'unknown'
+            
+        except Exception as e:
+            logger.error(f"Service health check error for {service_name}: {e}")
+            return 'offline'
+
+    # =============================================================================
+    # EXISTING DASHBOARD METHODS (KEPT FOR COMPATIBILITY)
+    # =============================================================================
+
     def get_overview(self):
-        """Get admin dashboard overview with support integration"""
+        """Main dashboard overview (legacy compatibility)"""
         try:
             overview_data = {
                 'timestamp': datetime.utcnow().isoformat(),
@@ -42,10 +393,9 @@ class AdminDashboard:
                 'recent_activity': self._get_recent_activity(),
                 'quick_actions': self._get_quick_actions(),
                 'alerts': self._get_alerts(),
-                'support_dashboard': self._get_support_dashboard_data()  # Add this line
+                'support_dashboard': self._get_support_dashboard_data()
             }
             
-            # Add support stats to general stats
             if overview_data['support_dashboard']['stats']:
                 overview_data['general_stats']['support_stats'] = overview_data['support_dashboard']['stats']
             
@@ -54,189 +404,281 @@ class AdminDashboard:
         except Exception as e:
             logger.error(f"Error getting dashboard overview: {e}")
             return {'error': 'Failed to load dashboard overview'}
-    
-    def _get_support_dashboard_data(self):
-        """Get comprehensive support dashboard data"""
+
+    def get_real_time_support_data(self, since_timestamp=None):
+        """Real-time support data for support dashboard"""
         try:
+            current_time = datetime.utcnow()
+            
+            since_dt = None
+            if since_timestamp:
+                try:
+                    since_dt = datetime.fromisoformat(since_timestamp.replace('Z', ''))
+                except Exception as e:
+                    logger.warning(f"Invalid timestamp format: {e}")
+                    since_dt = current_time - timedelta(hours=24)
+            else:
+                since_dt = current_time - timedelta(hours=24)
+
             support_data = {
+                'timestamp': current_time.isoformat(),
+                'since': since_dt.isoformat() if since_dt else None,
+                'new_items_count': 0,
                 'recent_tickets': [],
-                'unread_contacts': [],
-                'critical_issues': [],
+                'recent_contacts': [],
+                'recent_issues': [],
+                'urgent_alerts': [],
                 'stats': {
-                    'total_tickets': 0,
-                    'open_tickets': 0,
+                    'total_new': 0,
                     'urgent_tickets': 0,
                     'unread_contacts': 0,
-                    'critical_issues': 0
+                    'critical_issues': 0,
+                    'sla_breached': 0
                 }
             }
+
+            # Get support data if available
+            if self.SupportTicket:
+                support_data.update(self._get_support_tickets_data(since_dt, current_time))
             
-            # Recent tickets (last 10)
+            if self.ContactMessage:
+                support_data.update(self._get_contact_messages_data(since_dt, current_time))
+            
+            if self.IssueReport:
+                support_data.update(self._get_issue_reports_data(since_dt, current_time))
+
+            support_data['new_items_count'] = (
+                len(support_data['recent_tickets']) + 
+                len(support_data['recent_contacts']) + 
+                len(support_data['recent_issues'])
+            )
+            support_data['stats']['total_new'] = support_data['new_items_count']
+            support_data['urgent_alerts'].sort(key=lambda x: x['created_at'], reverse=True)
+
+            logger.info(f"✅ Real-time support data retrieved: {support_data['new_items_count']} new items")
+            return support_data
+
+        except Exception as e:
+            logger.error(f"Error getting real-time support data: {e}")
+            return {
+                'timestamp': datetime.utcnow().isoformat(),
+                'error': str(e),
+                'new_items_count': 0,
+                'recent_tickets': [],
+                'recent_contacts': [],
+                'recent_issues': [],
+                'urgent_alerts': [],
+                'stats': {
+                    'total_new': 0,
+                    'urgent_tickets': 0,
+                    'unread_contacts': 0,
+                    'critical_issues': 0,
+                    'sla_breached': 0
+                }
+            }
+
+    def get_support_summary_stats(self):
+        """Support summary statistics"""
+        try:
+            stats = {
+                'total_tickets': 0,
+                'open_tickets': 0,
+                'urgent_tickets': 0,
+                'sla_breached': 0,
+                'unread_contacts': 0,
+                'critical_issues': 0,
+                'today_created': 0,
+                'response_time_avg': 0,
+                'resolution_rate': 0
+            }
+
+            today = datetime.utcnow().date()
+
             if self.SupportTicket:
                 try:
-                    recent_tickets = self.SupportTicket.query.order_by(
-                        self.SupportTicket.created_at.desc()
-                    ).limit(10).all()
-                    
-                    for ticket in recent_tickets:
-                        try:
-                            category = None
-                            if self.SupportCategory and ticket.category_id:
-                                category = self.SupportCategory.query.get(ticket.category_id)
-                            
-                            support_data['recent_tickets'].append({
-                                'id': ticket.id,
-                                'ticket_number': ticket.ticket_number,
-                                'subject': ticket.subject,
-                                'status': ticket.status,
-                                'priority': ticket.priority,
-                                'user_name': ticket.user_name,
-                                'user_email': ticket.user_email,
-                                'category': {
-                                    'name': category.name if category else 'General',
-                                    'icon': category.icon if category else '❓'
-                                },
-                                'created_at': ticket.created_at.isoformat(),
-                                'sla_breached': ticket.sla_breached,
-                                'is_new': (datetime.utcnow() - ticket.created_at).total_seconds() < 3600  # New if created in last hour
-                            })
-                        except Exception as e:
-                            logger.error(f"Error processing ticket {ticket.id}: {e}")
-                            continue
-                    
-                    # Get ticket stats
-                    support_data['stats']['total_tickets'] = self.SupportTicket.query.count()
-                    support_data['stats']['open_tickets'] = self.SupportTicket.query.filter(
+                    stats['total_tickets'] = self.SupportTicket.query.count()
+                    stats['open_tickets'] = self.SupportTicket.query.filter(
                         self.SupportTicket.status.in_(['open', 'in_progress'])
                     ).count()
-                    support_data['stats']['urgent_tickets'] = self.SupportTicket.query.filter(
+                    stats['urgent_tickets'] = self.SupportTicket.query.filter(
                         and_(
                             self.SupportTicket.priority == 'urgent',
                             self.SupportTicket.status.in_(['open', 'in_progress'])
                         )
                     ).count()
+                    stats['sla_breached'] = self.SupportTicket.query.filter(
+                        and_(
+                            self.SupportTicket.sla_breached == True,
+                            self.SupportTicket.status.in_(['open', 'in_progress'])
+                        )
+                    ).count()
+                    stats['today_created'] = self.SupportTicket.query.filter(
+                        func.date(self.SupportTicket.created_at) == today
+                    ).count()
+
+                    avg_response = self.db.session.query(
+                        func.avg(
+                            func.extract('epoch', self.SupportTicket.first_response_at - self.SupportTicket.created_at) / 3600
+                        )
+                    ).filter(self.SupportTicket.first_response_at.isnot(None)).scalar()
                     
+                    stats['response_time_avg'] = round(avg_response or 0, 1)
+
+                    today_resolved = self.SupportTicket.query.filter(
+                        func.date(self.SupportTicket.resolved_at) == today
+                    ).count()
+                    stats['resolution_rate'] = round((today_resolved / max(stats['today_created'], 1)) * 100, 1)
+
                 except Exception as e:
-                    logger.error(f"Error getting ticket data: {e}")
-            
-            # Recent unread contact messages (last 5)
+                    logger.error(f"Error getting ticket stats: {e}")
+
             if self.ContactMessage:
                 try:
-                    unread_contacts = self.ContactMessage.query.filter_by(
-                        is_read=False
-                    ).order_by(self.ContactMessage.created_at.desc()).limit(5).all()
-                    
-                    for contact in unread_contacts:
-                        try:
-                            # Detect business inquiries
-                            is_business = any([
-                                contact.company,
-                                'partnership' in contact.subject.lower() if contact.subject else False,
-                                'business' in contact.subject.lower() if contact.subject else False,
-                                'collaborate' in contact.message.lower() if contact.message else False
-                            ])
-                            
-                            support_data['unread_contacts'].append({
-                                'id': contact.id,
-                                'name': contact.name,
-                                'email': contact.email,
-                                'subject': contact.subject,
-                                'company': contact.company,
-                                'is_business_inquiry': is_business,
-                                'created_at': contact.created_at.isoformat(),
-                                'is_new': (datetime.utcnow() - contact.created_at).total_seconds() < 1800  # New if created in last 30 minutes
-                            })
-                        except Exception as e:
-                            logger.error(f"Error processing contact {contact.id}: {e}")
-                            continue
-                    
-                    support_data['stats']['unread_contacts'] = len(unread_contacts)
-                    
+                    stats['unread_contacts'] = self.ContactMessage.query.filter_by(is_read=False).count()
                 except Exception as e:
-                    logger.error(f"Error getting contact data: {e}")
-            
-            # Critical/High severity issues (last 5)
+                    logger.error(f"Error getting contact stats: {e}")
+
             if self.IssueReport:
                 try:
-                    critical_issues = self.IssueReport.query.filter(
+                    stats['critical_issues'] = self.IssueReport.query.filter(
                         and_(
                             self.IssueReport.severity.in_(['critical', 'high']),
                             self.IssueReport.is_resolved == False
                         )
-                    ).order_by(self.IssueReport.created_at.desc()).limit(5).all()
-                    
-                    for issue in critical_issues:
-                        try:
-                            support_data['critical_issues'].append({
-                                'id': issue.id,
-                                'issue_id': issue.issue_id,
-                                'issue_title': issue.issue_title,
-                                'name': issue.name,
-                                'email': issue.email,
-                                'severity': issue.severity,
-                                'issue_type': issue.issue_type,
-                                'screenshots_count': len(issue.screenshots) if issue.screenshots else 0,
-                                'ticket_number': None,  # We'll get this if linked
-                                'created_at': issue.created_at.isoformat(),
-                                'is_new': (datetime.utcnow() - issue.created_at).total_seconds() < 1800  # New if created in last 30 minutes
-                            })
-                            
-                            # Get linked ticket number if exists
-                            if issue.ticket_id and self.SupportTicket:
-                                try:
-                                    linked_ticket = self.SupportTicket.query.get(issue.ticket_id)
-                                    if linked_ticket:
-                                        support_data['critical_issues'][-1]['ticket_number'] = linked_ticket.ticket_number
-                                except Exception:
-                                    pass
-                                    
-                        except Exception as e:
-                            logger.error(f"Error processing issue {issue.id}: {e}")
-                            continue
-                    
-                    support_data['stats']['critical_issues'] = len(critical_issues)
-                    
+                    ).count()
                 except Exception as e:
-                    logger.error(f"Error getting issue data: {e}")
+                    logger.error(f"Error getting issue stats: {e}")
+
+            return stats
+
+        except Exception as e:
+            logger.error(f"Error getting support summary stats: {e}")
+            return {
+                'total_tickets': 0,
+                'open_tickets': 0,
+                'urgent_tickets': 0,
+                'sla_breached': 0,
+                'unread_contacts': 0,
+                'critical_issues': 0,
+                'today_created': 0,
+                'response_time_avg': 0,
+                'resolution_rate': 0,
+                'error': str(e)
+            }
+
+    def get_analytics(self):
+        """Get comprehensive analytics data"""
+        try:
+            return {
+                'user_analytics': self._get_user_analytics(),
+                'content_analytics': self._get_content_analytics(),
+                'interaction_analytics': self._get_interaction_analytics(),
+                'timestamp': datetime.utcnow().isoformat()
+            }
+        except Exception as e:
+            logger.error(f"Error getting analytics: {e}")
+            return {'error': 'Failed to load analytics'}
+
+    def get_system_health(self):
+        """System health check"""
+        try:
+            health_data = {
+                'timestamp': datetime.utcnow().isoformat(),
+                'status': 'healthy',
+                'components': {},
+                'configuration': {
+                    'redis': 'configured' if os.environ.get('REDIS_URL') else 'not_configured',
+                    'database': 'configured',
+                    'cache': 'configured' if self.cache else 'not_configured'
+                }
+            }
             
-            return support_data
+            # Database component
+            try:
+                health_data['components']['database'] = {
+                    'status': 'healthy',
+                    'total_users': self.User.query.count() if self.User else 0,
+                    'total_content': self.Content.query.count() if self.Content else 0,
+                    'total_interactions': self.UserInteraction.query.count() if self.UserInteraction else 0
+                }
+            except Exception as e:
+                health_data['components']['database'] = {
+                    'status': 'unhealthy',
+                    'error': str(e)
+                }
+                health_data['status'] = 'degraded'
+            
+            # Cache component
+            try:
+                if self.cache:
+                    test_key = f'health_check_{int(time.time())}'
+                    self.cache.set(test_key, 'ok', timeout=10)
+                    if self.cache.get(test_key) == 'ok':
+                        health_data['components']['cache'] = {'status': 'healthy'}
+                    else:
+                        health_data['components']['cache'] = {'status': 'degraded'}
+                        health_data['status'] = 'degraded'
+                else:
+                    health_data['components']['cache'] = {'status': 'not_configured'}
+            except Exception as e:
+                health_data['components']['cache'] = {'status': 'unhealthy', 'error': str(e)}
+                health_data['status'] = 'degraded'
+            
+            # External APIs
+            health_data['components']['external_apis'] = self._get_external_apis_status()
+            
+            # Support system
+            if self.SupportTicket:
+                try:
+                    health_data['components']['support_system'] = {
+                        'status': 'healthy',
+                        'total_tickets': self.SupportTicket.query.count(),
+                        'open_tickets': self.SupportTicket.query.filter(
+                            self.SupportTicket.status.in_(['open', 'in_progress'])
+                        ).count(),
+                    }
+                except Exception as e:
+                    health_data['components']['support_system'] = {
+                        'status': 'error',
+                        'error': str(e)
+                    }
+                    health_data['status'] = 'degraded'
+            else:
+                health_data['components']['support_system'] = {
+                    'status': 'not_available'
+                }
+            
+            return health_data
             
         except Exception as e:
-            logger.error(f"Error getting support dashboard data: {e}")
+            logger.error(f"System health check error: {e}")
             return {
-                'recent_tickets': [],
-                'unread_contacts': [],
-                'critical_issues': [],
-                'stats': {
-                    'total_tickets': 0,
-                    'open_tickets': 0,
-                    'urgent_tickets': 0,
-                    'unread_contacts': 0,
-                    'critical_issues': 0
-                },
-                'error': 'Failed to load support data'
+                'status': 'unhealthy',
+                'error': str(e),
+                'timestamp': datetime.utcnow().isoformat()
             }
-    
+
+    # =============================================================================
+    # PRIVATE HELPER METHODS
+    # =============================================================================
+
     def _get_general_stats(self):
-        """Get general system statistics"""
+        """Get general platform statistics"""
         try:
             total_users = self.User.query.count()
             total_content = self.Content.query.count()
             total_interactions = self.UserInteraction.query.count()
             
-            # Active users in last 7 days
             week_ago = datetime.utcnow() - timedelta(days=7)
             active_users = self.User.query.filter(
                 self.User.last_active >= week_ago
             ).count()
             
-            # New users in last 30 days
             month_ago = datetime.utcnow() - timedelta(days=30)
             new_users = self.User.query.filter(
                 self.User.created_at >= month_ago
             ).count()
             
-            # Popular content types
             content_types = self.db.session.query(
                 self.Content.content_type,
                 func.count(self.Content.id).label('count')
@@ -257,21 +699,18 @@ class AdminDashboard:
         except Exception as e:
             logger.error(f"Error getting general stats: {e}")
             return {}
-    
+
     def _get_recent_activity(self):
-        """Get recent system activity"""
+        """Get recent platform activity"""
         try:
-            # Recent content added
             recent_content = self.Content.query.order_by(
                 self.Content.created_at.desc()
             ).limit(5).all()
             
-            # Recent user registrations
             recent_users = self.User.query.order_by(
                 self.User.created_at.desc()
             ).limit(5).all()
             
-            # Recent admin recommendations
             recent_recommendations = self.AdminRecommendation.query.filter_by(
                 is_active=True
             ).order_by(self.AdminRecommendation.created_at.desc()).limit(5).all()
@@ -311,9 +750,9 @@ class AdminDashboard:
         except Exception as e:
             logger.error(f"Error getting recent activity: {e}")
             return {}
-    
+
     def _get_quick_actions(self):
-        """Get quick actions for admin"""
+        """Get quick action items for dashboard"""
         return [
             {
                 'title': 'Add Content',
@@ -340,13 +779,12 @@ class AdminDashboard:
                 'icon': '🎧'
             }
         ]
-    
+
     def _get_alerts(self):
-        """Get system alerts and notifications with improved error handling"""
+        """Get system alerts and warnings"""
         alerts = []
         
         try:
-            # Check for urgent tickets if support system is available
             if self.SupportTicket:
                 try:
                     urgent_tickets = self.SupportTicket.query.filter(
@@ -364,15 +802,6 @@ class AdminDashboard:
                             'action_url': '/admin/support/tickets?priority=urgent'
                         })
                     
-                except Exception as e:
-                    logger.error(f"Error checking urgent tickets: {e}")
-                    try:
-                        self.db.session.rollback()
-                    except Exception:
-                        pass
-                
-                try:
-                    # Check for SLA breaches - separate transaction
                     sla_breached = self.SupportTicket.query.filter(
                         and_(
                             self.SupportTicket.sla_breached == True,
@@ -389,13 +818,12 @@ class AdminDashboard:
                         })
                         
                 except Exception as e:
-                    logger.error(f"Error checking SLA breaches: {e}")
+                    logger.error(f"Error checking support alerts: {e}")
                     try:
                         self.db.session.rollback()
                     except Exception:
                         pass
             
-            # Check for unread feedback
             if self.Feedback:
                 try:
                     unread_feedback = self.Feedback.query.filter_by(is_read=False).count()
@@ -412,18 +840,6 @@ class AdminDashboard:
                         self.db.session.rollback()
                     except Exception:
                         pass
-            
-            # Check system health
-            try:
-                if not self._check_external_apis():
-                    alerts.append({
-                        'type': 'error',
-                        'title': 'External API Issues',
-                        'message': 'Some external APIs are not responding properly',
-                        'action_url': '/admin/system-health'
-                    })
-            except Exception as e:
-                logger.error(f"Error checking external APIs: {e}")
         
         except Exception as e:
             logger.error(f"Error getting alerts: {e}")
@@ -435,81 +851,384 @@ class AdminDashboard:
             })
         
         return alerts
-    
-    def _get_support_overview(self):
-        """Get support system overview"""
+
+    def _get_support_dashboard_data(self):
+        """Get support dashboard data"""
         try:
-            if not self.SupportTicket:
-                return {'status': 'not_available'}
+            support_data = {
+                'recent_tickets': [],
+                'unread_contacts': [],
+                'critical_issues': [],
+                'stats': {
+                    'total_tickets': 0,
+                    'open_tickets': 0,
+                    'urgent_tickets': 0,
+                    'unread_contacts': 0,
+                    'critical_issues': 0
+                }
+            }
             
-            today = datetime.utcnow().date()
+            if self.SupportTicket:
+                try:
+                    recent_tickets = self.SupportTicket.query.order_by(
+                        self.SupportTicket.created_at.desc()
+                    ).limit(10).all()
+                    
+                    for ticket in recent_tickets:
+                        try:
+                            category = None
+                            if self.SupportCategory and ticket.category_id:
+                                category = self.SupportCategory.query.get(ticket.category_id)
+                            
+                            support_data['recent_tickets'].append({
+                                'id': ticket.id,
+                                'ticket_number': ticket.ticket_number,
+                                'subject': ticket.subject,
+                                'status': ticket.status,
+                                'priority': ticket.priority,
+                                'user_name': ticket.user_name,
+                                'user_email': ticket.user_email,
+                                'category': {
+                                    'name': category.name if category else 'General',
+                                    'icon': category.icon if category else '❓'
+                                },
+                                'created_at': ticket.created_at.isoformat(),
+                                'sla_breached': ticket.sla_breached,
+                                'is_new': (datetime.utcnow() - ticket.created_at).total_seconds() < 3600
+                            })
+                        except Exception as e:
+                            logger.error(f"Error processing ticket {ticket.id}: {e}")
+                            continue
+                    
+                    support_data['stats']['total_tickets'] = self.SupportTicket.query.count()
+                    support_data['stats']['open_tickets'] = self.SupportTicket.query.filter(
+                        self.SupportTicket.status.in_(['open', 'in_progress'])
+                    ).count()
+                    support_data['stats']['urgent_tickets'] = self.SupportTicket.query.filter(
+                        and_(
+                            self.SupportTicket.priority == 'urgent',
+                            self.SupportTicket.status.in_(['open', 'in_progress'])
+                        )
+                    ).count()
+                    
+                except Exception as e:
+                    logger.error(f"Error getting ticket data: {e}")
             
-            total_tickets = self.SupportTicket.query.count()
-            today_tickets = self.SupportTicket.query.filter(
-                func.date(self.SupportTicket.created_at) == today
-            ).count()
-            today_resolved = self.SupportTicket.query.filter(
-                func.date(self.SupportTicket.resolved_at) == today
-            ).count()
+            if self.ContactMessage:
+                try:
+                    unread_contacts = self.ContactMessage.query.filter_by(
+                        is_read=False
+                    ).order_by(self.ContactMessage.created_at.desc()).limit(5).all()
+                    
+                    for contact in unread_contacts:
+                        try:
+                            is_business = any([
+                                contact.company,
+                                'partnership' in contact.subject.lower() if contact.subject else False,
+                                'business' in contact.subject.lower() if contact.subject else False,
+                                'collaborate' in contact.message.lower() if contact.message else False
+                            ])
+                            
+                            support_data['unread_contacts'].append({
+                                'id': contact.id,
+                                'name': contact.name,
+                                'email': contact.email,
+                                'subject': contact.subject,
+                                'company': contact.company,
+                                'is_business_inquiry': is_business,
+                                'created_at': contact.created_at.isoformat(),
+                                'is_new': (datetime.utcnow() - contact.created_at).total_seconds() < 1800
+                            })
+                        except Exception as e:
+                            logger.error(f"Error processing contact {contact.id}: {e}")
+                            continue
+                    
+                    support_data['stats']['unread_contacts'] = len(unread_contacts)
+                    
+                except Exception as e:
+                    logger.error(f"Error getting contact data: {e}")
             
-            # FIXED: Use string values instead of enum objects
-            open_tickets = self.SupportTicket.query.filter(
-                self.SupportTicket.status.in_(['open', 'in_progress', 'waiting_for_user'])  # String values
-            ).count()
+            if self.IssueReport:
+                try:
+                    critical_issues = self.IssueReport.query.filter(
+                        and_(
+                            self.IssueReport.severity.in_(['critical', 'high']),
+                            self.IssueReport.is_resolved == False
+                        )
+                    ).order_by(self.IssueReport.created_at.desc()).limit(5).all()
+                    
+                    for issue in critical_issues:
+                        try:
+                            support_data['critical_issues'].append({
+                                'id': issue.id,
+                                'issue_id': issue.issue_id,
+                                'issue_title': issue.issue_title,
+                                'name': issue.name,
+                                'email': issue.email,
+                                'severity': issue.severity,
+                                'issue_type': issue.issue_type,
+                                'screenshots_count': len(issue.screenshots) if issue.screenshots else 0,
+                                'ticket_number': None,
+                                'created_at': issue.created_at.isoformat(),
+                                'is_new': (datetime.utcnow() - issue.created_at).total_seconds() < 1800
+                            })
+                            
+                            if issue.ticket_id and self.SupportTicket:
+                                try:
+                                    linked_ticket = self.SupportTicket.query.get(issue.ticket_id)
+                                    if linked_ticket:
+                                        support_data['critical_issues'][-1]['ticket_number'] = linked_ticket.ticket_number
+                                except Exception:
+                                    pass
+                                    
+                        except Exception as e:
+                            logger.error(f"Error processing issue {issue.id}: {e}")
+                            continue
+                    
+                    support_data['stats']['critical_issues'] = len(critical_issues)
+                    
+                except Exception as e:
+                    logger.error(f"Error getting issue data: {e}")
             
-            urgent_tickets = self.SupportTicket.query.filter(
+            return support_data
+            
+        except Exception as e:
+            logger.error(f"Error getting support dashboard data: {e}")
+            return {
+                'recent_tickets': [],
+                'unread_contacts': [],
+                'critical_issues': [],
+                'stats': {
+                    'total_tickets': 0,
+                    'open_tickets': 0,
+                    'urgent_tickets': 0,
+                    'unread_contacts': 0,
+                    'critical_issues': 0
+                },
+                'error': 'Failed to load support data'
+            }
+
+    def _get_support_tickets_data(self, since_dt, current_time):
+        """Get support tickets data for real-time monitoring"""
+        data = {'recent_tickets': [], 'urgent_alerts': []}
+        
+        try:
+            ticket_query = self.SupportTicket.query.filter(
+                self.SupportTicket.created_at >= since_dt
+            ).order_by(self.SupportTicket.created_at.desc())
+            
+            new_tickets = ticket_query.limit(10).all()
+            
+            for ticket in new_tickets:
+                try:
+                    category = None
+                    if self.SupportCategory and ticket.category_id:
+                        category = self.SupportCategory.query.get(ticket.category_id)
+                    
+                    ticket_age_minutes = (current_time - ticket.created_at).total_seconds() / 60
+                    is_very_new = ticket_age_minutes <= 30
+                    
+                    ticket_data = {
+                        'id': ticket.id,
+                        'ticket_number': ticket.ticket_number,
+                        'subject': ticket.subject[:100] + '...' if len(ticket.subject) > 100 else ticket.subject,
+                        'user_name': ticket.user_name,
+                        'user_email': ticket.user_email,
+                        'priority': ticket.priority,
+                        'status': ticket.status,
+                        'category': {
+                            'name': category.name if category else 'General',
+                            'icon': category.icon if category else '🎫'
+                        },
+                        'created_at': ticket.created_at.isoformat(),
+                        'age_minutes': int(ticket_age_minutes),
+                        'is_urgent': ticket.priority == 'urgent',
+                        'is_very_new': is_very_new,
+                        'sla_breached': ticket.sla_breached,
+                        'admin_viewed': getattr(ticket, 'admin_viewed', False)
+                    }
+                    
+                    data['recent_tickets'].append(ticket_data)
+                    
+                    if ticket.priority == 'urgent':
+                        data['urgent_alerts'].append({
+                            'type': 'urgent_ticket',
+                            'message': f"Urgent ticket #{ticket.ticket_number} from {ticket.user_name}",
+                            'url': f"/admin/support/tickets/{ticket.id}",
+                            'created_at': ticket.created_at.isoformat()
+                        })
+                    
+                except Exception as e:
+                    logger.error(f"Error processing ticket {ticket.id}: {e}")
+                    continue
+
+            # Update stats
+            data['stats'] = {
+                'urgent_tickets': self.SupportTicket.query.filter(
+                    and_(
+                        self.SupportTicket.priority == 'urgent',
+                        self.SupportTicket.status.in_(['open', 'in_progress'])
+                    )
+                ).count(),
+                'sla_breached': self.SupportTicket.query.filter(
+                    and_(
+                        self.SupportTicket.sla_breached == True,
+                        self.SupportTicket.status.in_(['open', 'in_progress'])
+                    )
+                ).count()
+            }
+
+        except Exception as e:
+            logger.error(f"Error getting ticket data: {e}")
+
+        return data
+
+    def _get_contact_messages_data(self, since_dt, current_time):
+        """Get contact messages data for real-time monitoring"""
+        data = {'recent_contacts': [], 'urgent_alerts': []}
+        
+        try:
+            contact_query = self.ContactMessage.query.filter(
+                or_(
+                    self.ContactMessage.created_at >= since_dt,
+                    self.ContactMessage.is_read == False
+                )
+            ).order_by(self.ContactMessage.created_at.desc())
+            
+            new_contacts = contact_query.limit(10).all()
+            
+            for contact in new_contacts:
+                try:
+                    contact_age_minutes = (current_time - contact.created_at).total_seconds() / 60
+                    is_very_new = contact_age_minutes <= 30
+                    
+                    is_business = any([
+                        contact.company,
+                        'partnership' in (contact.subject or '').lower(),
+                        'business' in (contact.subject or '').lower(),
+                        'collaborate' in (contact.message or '').lower()
+                    ])
+                    
+                    contact_data = {
+                        'id': contact.id,
+                        'name': contact.name,
+                        'email': contact.email,
+                        'subject': contact.subject[:100] + '...' if len(contact.subject or '') > 100 else (contact.subject or ''),
+                        'company': contact.company,
+                        'is_read': contact.is_read,
+                        'is_business_inquiry': is_business,
+                        'created_at': contact.created_at.isoformat(),
+                        'age_minutes': int(contact_age_minutes),
+                        'is_very_new': is_very_new,
+                        'admin_viewed': getattr(contact, 'admin_viewed', False),
+                        'priority': 'high' if is_business else 'normal'
+                    }
+                    
+                    data['recent_contacts'].append(contact_data)
+                    
+                    if is_business and not contact.is_read:
+                        data['urgent_alerts'].append({
+                            'type': 'business_inquiry',
+                            'message': f"Business inquiry from {contact.name} ({contact.company or contact.email})",
+                            'url': f"/admin/support/contact/{contact.id}",
+                            'created_at': contact.created_at.isoformat()
+                        })
+                        
+                except Exception as e:
+                    logger.error(f"Error processing contact {contact.id}: {e}")
+                    continue
+
+            # Update stats
+            data['stats'] = {
+                'unread_contacts': self.ContactMessage.query.filter_by(is_read=False).count()
+            }
+
+        except Exception as e:
+            logger.error(f"Error getting contact data: {e}")
+
+        return data
+
+    def _get_issue_reports_data(self, since_dt, current_time):
+        """Get issue reports data for real-time monitoring"""
+        data = {'recent_issues': [], 'urgent_alerts': []}
+        
+        try:
+            issue_query = self.IssueReport.query.filter(
                 and_(
-                    self.SupportTicket.priority == 'urgent',  # String value
-                    self.SupportTicket.status.in_(['open', 'in_progress'])  # String values
+                    self.IssueReport.created_at >= since_dt,
+                    self.IssueReport.severity.in_(['critical', 'high']),
+                    self.IssueReport.is_resolved == False
                 )
-            ).count()
+            ).order_by(self.IssueReport.created_at.desc())
             
-            # Calculate average response time
-            avg_response_time = self.db.session.query(
-                func.avg(
-                    func.extract('epoch', self.SupportTicket.first_response_at - self.SupportTicket.created_at) / 3600
-                )
-            ).filter(self.SupportTicket.first_response_at.isnot(None)).scalar() or 0
+            new_issues = issue_query.limit(10).all()
             
-            return {
-                'total_tickets': total_tickets,
-                'open_tickets': open_tickets,
-                'urgent_tickets': urgent_tickets,
-                'today_created': today_tickets,
-                'today_resolved': today_resolved,
-                'avg_response_time_hours': round(avg_response_time, 2),
-                'resolution_rate': round((today_resolved / max(today_tickets, 1)) * 100, 1)
+            for issue in new_issues:
+                try:
+                    issue_age_minutes = (current_time - issue.created_at).total_seconds() / 60
+                    is_very_new = issue_age_minutes <= 30
+                    
+                    issue_data = {
+                        'id': issue.id,
+                        'issue_id': issue.issue_id,
+                        'issue_title': issue.issue_title[:100] + '...' if len(issue.issue_title) > 100 else issue.issue_title,
+                        'name': issue.name,
+                        'email': issue.email,
+                        'severity': issue.severity,
+                        'issue_type': issue.issue_type,
+                        'screenshots_count': len(issue.screenshots) if issue.screenshots else 0,
+                        'ticket_number': None,
+                        'created_at': issue.created_at.isoformat(),
+                        'age_minutes': int(issue_age_minutes),
+                        'is_very_new': is_very_new,
+                        'admin_viewed': getattr(issue, 'admin_viewed', False)
+                    }
+                    
+                    if issue.ticket_id and self.SupportTicket:
+                        try:
+                            linked_ticket = self.SupportTicket.query.get(issue.ticket_id)
+                            if linked_ticket:
+                                issue_data['ticket_number'] = linked_ticket.ticket_number
+                        except Exception:
+                            pass
+                    
+                    data['recent_issues'].append(issue_data)
+                    
+                    if issue.severity == 'critical':
+                        data['urgent_alerts'].append({
+                            'type': 'critical_issue',
+                            'message': f"Critical issue: {issue.issue_title[:50]}... from {issue.name}",
+                            'url': f"/admin/support/issues/{issue.id}",
+                            'created_at': issue.created_at.isoformat()
+                        })
+                        
+                except Exception as e:
+                    logger.error(f"Error processing issue {issue.id}: {e}")
+                    continue
+
+            # Update stats
+            data['stats'] = {
+                'critical_issues': self.IssueReport.query.filter(
+                    and_(
+                        self.IssueReport.severity.in_(['critical', 'high']),
+                        self.IssueReport.is_resolved == False
+                    )
+                ).count()
             }
-            
+
         except Exception as e:
-            logger.error(f"Error getting support overview: {e}")
-            return {'status': 'error', 'message': str(e)}
-    
-    def get_analytics(self):
-        """Get detailed analytics data"""
-        try:
-            return {
-                'user_analytics': self._get_user_analytics(),
-                'content_analytics': self._get_content_analytics(),
-                'interaction_analytics': self._get_interaction_analytics(),
-                'performance_metrics': self._get_performance_metrics(),
-                'timestamp': datetime.utcnow().isoformat()
-            }
-            
-        except Exception as e:
-            logger.error(f"Error getting analytics: {e}")
-            return {'error': 'Failed to load analytics'}
-    
+            logger.error(f"Error getting issue data: {e}")
+
+        return data
+
     def _get_user_analytics(self):
-        """Get user-related analytics"""
+        """Get user analytics data"""
         try:
-            # User growth over time
             user_growth = self.db.session.query(
                 func.date(self.User.created_at).label('date'),
                 func.count(self.User.id).label('count')
             ).group_by(func.date(self.User.created_at)).order_by('date').limit(30).all()
             
-            # Active users trend
             active_users_trend = []
             for i in range(7):
                 date = datetime.utcnow().date() - timedelta(days=i)
@@ -536,11 +1255,10 @@ class AdminDashboard:
         except Exception as e:
             logger.error(f"Error getting user analytics: {e}")
             return {}
-    
+
     def _get_content_analytics(self):
-        """Get content-related analytics"""
+        """Get content analytics data"""
         try:
-            # Popular content
             popular_content = self.db.session.query(
                 self.Content.id, 
                 self.Content.title, 
@@ -549,7 +1267,6 @@ class AdminDashboard:
                 self.Content.id, self.Content.title
             ).order_by(desc('interaction_count')).limit(10).all()
             
-            # Genre popularity
             all_interactions = self.UserInteraction.query.join(self.Content).all()
             genre_counts = defaultdict(int)
             for interaction in all_interactions:
@@ -564,7 +1281,6 @@ class AdminDashboard:
             
             popular_genres = sorted(genre_counts.items(), key=lambda x: x[1], reverse=True)[:10]
             
-            # Content type distribution
             content_types = self.db.session.query(
                 self.Content.content_type,
                 func.count(self.Content.id).label('count')
@@ -589,17 +1305,15 @@ class AdminDashboard:
         except Exception as e:
             logger.error(f"Error getting content analytics: {e}")
             return {}
-    
+
     def _get_interaction_analytics(self):
-        """Get user interaction analytics"""
+        """Get interaction analytics data"""
         try:
-            # Interaction types breakdown
             interaction_types = self.db.session.query(
                 self.UserInteraction.interaction_type,
                 func.count(self.UserInteraction.id).label('count')
             ).group_by(self.UserInteraction.interaction_type).all()
             
-            # Daily interactions trend
             interaction_trend = []
             for i in range(7):
                 date = datetime.utcnow().date() - timedelta(days=i)
@@ -623,422 +1337,7 @@ class AdminDashboard:
         except Exception as e:
             logger.error(f"Error getting interaction analytics: {e}")
             return {}
-    
-    def _get_performance_metrics(self):
-        """Get system performance metrics"""
-        try:
-            # Cache statistics
-            cache_stats = self.get_cache_stats()
-            
-            # Database statistics
-            db_stats = {
-                'total_tables': len(self.db.metadata.tables),
-                'total_records': (
-                    self.User.query.count() +
-                    self.Content.query.count() +
-                    self.UserInteraction.query.count()
-                )
-            }
-            
-            if self.SupportTicket:
-                db_stats['total_records'] += self.SupportTicket.query.count()
-            
-            return {
-                'cache_stats': cache_stats,
-                'database_stats': db_stats,
-                'external_apis': self._get_api_status()
-            }
-            
-        except Exception as e:
-            logger.error(f"Error getting performance metrics: {e}")
-            return {}
-    
-    def _check_external_apis(self):
-        """Check if external APIs are working"""
-        try:
-            # This is a simple check - in production you might want more sophisticated testing
-            if self.TMDBService and self.JikanService:
-                return True
-            return False
-        except:
-            return False
-    
-    def _get_api_status(self):
-        """Get external API status"""
-        return {
-            'tmdb': 'configured' if self.TMDBService else 'not_configured',
-            'jikan': 'configured' if self.JikanService else 'not_configured'
-        }
-    
-    def get_cache_stats(self):
-        """Get cache statistics"""
-        try:
-            cache_info = {
-                'type': self.app.config.get('CACHE_TYPE', 'unknown'),
-                'default_timeout': self.app.config.get('CACHE_DEFAULT_TIMEOUT', 0),
-            }
-            
-            if self.app.config.get('CACHE_TYPE') == 'redis':
-                try:
-                    import redis
-                    REDIS_URL = self.app.config.get('CACHE_REDIS_URL')
-                    if REDIS_URL:
-                        r = redis.from_url(REDIS_URL)
-                        redis_info = r.info()
-                        cache_info['redis'] = {
-                            'used_memory': redis_info.get('used_memory_human', 'N/A'),
-                            'connected_clients': redis_info.get('connected_clients', 0),
-                            'total_commands_processed': redis_info.get('total_commands_processed', 0),
-                            'uptime_in_seconds': redis_info.get('uptime_in_seconds', 0)
-                        }
-                except:
-                    cache_info['redis'] = {'status': 'Unable to connect'}
-            
-            return cache_info
-            
-        except Exception as e:
-            logger.error(f"Error getting cache stats: {e}")
-            return {'error': str(e)}
-    
-    def get_system_health(self):
-        """Get comprehensive system health status"""
-        try:
-            health_data = {
-                'timestamp': datetime.utcnow().isoformat(),
-                'status': 'healthy',
-                'components': {},
-                'configuration': {
-                    'telegram_bot': 'configured' if os.environ.get('TELEGRAM_BOT_TOKEN') else 'not_configured',
-                    'telegram_channel': 'configured' if os.environ.get('TELEGRAM_CHANNEL_ID') else 'not_configured',
-                    'telegram_admin_chat': 'configured' if os.environ.get('TELEGRAM_ADMIN_CHAT_ID') else 'not_configured',
-                    'redis': 'configured' if os.environ.get('REDIS_URL') else 'not_configured'
-                }
-            }
-            
-            # Database health
-            try:
-                health_data['components']['database'] = {
-                    'status': 'healthy',
-                    'total_users': self.User.query.count(),
-                    'total_content': self.Content.query.count(),
-                    'total_interactions': self.UserInteraction.query.count()
-                }
-            except Exception as e:
-                health_data['components']['database'] = {
-                    'status': 'unhealthy',
-                    'error': str(e)
-                }
-                health_data['status'] = 'degraded'
-            
-            # Cache health
-            try:
-                if self.cache:
-                    self.cache.set('health_check', 'ok', timeout=10)
-                    if self.cache.get('health_check') == 'ok':
-                        health_data['components']['cache'] = {'status': 'healthy'}
-                    else:
-                        health_data['components']['cache'] = {'status': 'degraded'}
-                        health_data['status'] = 'degraded'
-                else:
-                    health_data['components']['cache'] = {'status': 'not_configured'}
-            except Exception as e:
-                health_data['components']['cache'] = {'status': 'unhealthy', 'error': str(e)}
-                health_data['status'] = 'degraded'
-            
-            # External APIs
-            health_data['components']['external_apis'] = self._get_api_status()
-            
-            # Support system health
-            if self.SupportTicket:
-                try:
-                    health_data['components']['support_system'] = {
-                        'status': 'healthy',
-                        'total_tickets': self.SupportTicket.query.count(),
-                        'open_tickets': self.SupportTicket.query.filter(
-                            self.SupportTicket.status.in_(['open', 'in_progress'])
-                        ).count(),
-                        'total_feedback': self.Feedback.query.count() if self.Feedback else 0
-                    }
-                except Exception as e:
-                    health_data['components']['support_system'] = {
-                        'status': 'error',
-                        'error': str(e)
-                    }
-                    health_data['status'] = 'degraded'
-            else:
-                health_data['components']['support_system'] = {
-                    'status': 'not_available'
-                }
-            
-            return health_data
-            
-        except Exception as e:
-            logger.error(f"System health check error: {e}")
-            return {
-                'status': 'unhealthy',
-                'error': str(e),
-                'timestamp': datetime.utcnow().isoformat()
-            }
-    
-    # Support-specific dashboard methods
-    def get_support_dashboard(self):
-        """Get comprehensive support dashboard data"""
-        try:
-            if not self.SupportTicket:
-                return {'error': 'Support system not available'}
-            
-            return {
-                'ticket_stats': self._get_ticket_stats(),
-                'metrics': self._get_support_metrics(),
-                'category_breakdown': self._get_category_breakdown(),
-                'priority_breakdown': self._get_priority_breakdown(),
-                'recent_tickets': self._get_recent_tickets(),
-                'feedback_stats': self._get_feedback_stats(),
-                'recent_feedback': self._get_recent_feedback(),
-                'timestamp': datetime.utcnow().isoformat()
-            }
-            
-        except Exception as e:
-            logger.error(f"Support dashboard error: {e}")
-            return {'error': 'Failed to load support dashboard'}
-    
-    def _get_ticket_stats(self):
-        """Get ticket statistics"""
-        try:
-            today = datetime.utcnow().date()
-            
-            total_tickets = self.SupportTicket.query.count()
-            today_tickets = self.SupportTicket.query.filter(
-                func.date(self.SupportTicket.created_at) == today
-            ).count()
-            today_resolved = self.SupportTicket.query.filter(
-                func.date(self.SupportTicket.resolved_at) == today
-            ).count()
-            
-            # FIXED: Use string values instead of enum objects
-            open_tickets = self.SupportTicket.query.filter(
-                self.SupportTicket.status.in_(['open', 'in_progress', 'waiting_for_user'])  # String values
-            ).count()
-            
-            urgent_tickets = self.SupportTicket.query.filter(
-                and_(
-                    self.SupportTicket.priority == 'urgent',  # String value
-                    self.SupportTicket.status.in_(['open', 'in_progress'])  # String values
-                )
-            ).count()
-            
-            sla_breached = self.SupportTicket.query.filter(
-                and_(
-                    self.SupportTicket.sla_breached == True,
-                    self.SupportTicket.status.in_(['open', 'in_progress'])  # String values
-                )
-            ).count()
-            
-            return {
-                'total': total_tickets,
-                'open': open_tickets,
-                'urgent': urgent_tickets,
-                'sla_breached': sla_breached,
-                'today_created': today_tickets,
-                'today_resolved': today_resolved
-            }
-            
-        except Exception as e:
-            logger.error(f"Error getting ticket stats: {e}")
-            return {}
-    
-    def _get_support_metrics(self):
-        """Get support performance metrics"""
-        try:
-            # Calculate average response time
-            avg_response_time = self.db.session.query(
-                func.avg(
-                    func.extract('epoch', self.SupportTicket.first_response_at - self.SupportTicket.created_at) / 3600
-                )
-            ).filter(self.SupportTicket.first_response_at.isnot(None)).scalar() or 0
-            
-            today_tickets = self.SupportTicket.query.filter(
-                func.date(self.SupportTicket.created_at) == datetime.utcnow().date()
-            ).count()
-            
-            today_resolved = self.SupportTicket.query.filter(
-                func.date(self.SupportTicket.resolved_at) == datetime.utcnow().date()
-            ).count()
-            
-            return {
-                'avg_response_time_hours': round(avg_response_time, 2),
-                'resolution_rate': round((today_resolved / max(today_tickets, 1)) * 100, 1)
-            }
-            
-        except Exception as e:
-            logger.error(f"Error getting support metrics: {e}")
-            return {}
-    
-    def _get_category_breakdown(self):
-        """Get ticket category breakdown"""
-        try:
-            if not self.SupportCategory:
-                return []
-            
-            category_stats = self.db.session.query(
-                self.SupportCategory.name,
-                func.count(self.SupportTicket.id).label('count')
-            ).join(self.SupportTicket).group_by(self.SupportCategory.name).all()
-            
-            return [
-                {'category': stat.name, 'count': stat.count} 
-                for stat in category_stats
-            ]
-            
-        except Exception as e:
-            logger.error(f"Error getting category breakdown: {e}")
-            return []
-    
-    def _get_priority_breakdown(self):
-        """Get ticket priority breakdown"""
-        try:
-            # FIXED: Use string values instead of enum objects
-            priority_stats = self.db.session.query(
-                self.SupportTicket.priority,
-                func.count(self.SupportTicket.id).label('count')
-            ).filter(
-                self.SupportTicket.status.in_(['open', 'in_progress'])  # String values
-            ).group_by(self.SupportTicket.priority).all()
-            
-            return [
-                {'priority': stat.priority, 'count': stat.count}  # Already a string
-                for stat in priority_stats
-            ]
-            
-        except Exception as e:
-            logger.error(f"Error getting priority breakdown: {e}")
-            return []
-    
-    def _get_recent_tickets(self):
-        """Get recent tickets for dashboard"""
-        try:
-            recent_tickets = self.SupportTicket.query.order_by(
-                self.SupportTicket.created_at.desc()
-            ).limit(10).all()
-            
-            tickets_data = []
-            for ticket in recent_tickets:
-                category = None
-                if self.SupportCategory and ticket.category_id:
-                    category = self.SupportCategory.query.get(ticket.category_id)
-                
-                tickets_data.append({
-                    'id': ticket.id,
-                    'ticket_number': ticket.ticket_number,
-                    'subject': ticket.subject,
-                    'user_name': ticket.user_name,
-                    'priority': ticket.priority,  # Already a string
-                    'status': ticket.status,  # Already a string
-                    'category': category.name if category else 'Unknown',
-                    'created_at': ticket.created_at.isoformat(),
-                    'is_sla_breached': ticket.sla_breached
-                })
-            
-            return tickets_data
-            
-        except Exception as e:
-            logger.error(f"Error getting recent tickets: {e}")
-            return []
-    
-    def _get_feedback_stats(self):
-        """Get feedback statistics"""
-        try:
-            if not self.Feedback:
-                return {'total': 0, 'unread': 0}
-            
-            total_feedback = self.Feedback.query.count()
-            unread_feedback = self.Feedback.query.filter_by(is_read=False).count()
-            
-            return {
-                'total': total_feedback,
-                'unread': unread_feedback
-            }
-            
-        except Exception as e:
-            logger.error(f"Error getting feedback stats: {e}")
-            return {'total': 0, 'unread': 0}
-    
-    def _get_recent_feedback(self):
-        """Get recent feedback for dashboard"""
-        try:
-            if not self.Feedback:
-                return []
-            
-            recent_feedback = self.Feedback.query.order_by(
-                self.Feedback.created_at.desc()
-            ).limit(5).all()
-            
-            feedback_data = []
-            for feedback in recent_feedback:
-                feedback_data.append({
-                    'id': feedback.id,
-                    'subject': feedback.subject,
-                    'user_name': feedback.user_name,
-                    'feedback_type': feedback.feedback_type if isinstance(feedback.feedback_type, str) else 'general',  # Handle as string
-                    'rating': feedback.rating,
-                    'is_read': feedback.is_read,
-                    'created_at': feedback.created_at.isoformat()
-                })
-            
-            return feedback_data
-            
-        except Exception as e:
-            logger.error(f"Error getting recent feedback: {e}")
-            return []
-    
-    # Additional dashboard methods for other admin functions
-    def get_support_tickets(self, page, per_page, status, priority, category_id, search):
-        """Get filtered support tickets"""
-        try:
-            if not self.SupportTicket:
-                return {'error': 'Support system not available'}
-            
-            # Implementation would go here - similar to the original function
-            # but moved to dashboard service for better organization
-            
-            return {'tickets': [], 'pagination': {}}
-            
-        except Exception as e:
-            logger.error(f"Error getting support tickets: {e}")
-            return {'error': 'Failed to get support tickets'}
-    
-    def get_feedback_list(self, page, per_page, feedback_type, is_read, search):
-        """Get filtered feedback list"""
-        try:
-            if not self.Feedback:
-                return {'error': 'Feedback system not available'}
-            
-            # Implementation would go here
-            return {'feedback': [], 'pagination': {}}
-            
-        except Exception as e:
-            logger.error(f"Error getting feedback list: {e}")
-            return {'error': 'Failed to get feedback list'}
-    
-    def get_users_management(self, page, per_page, search):
-        """Get users for management interface"""
-        try:
-            # Implementation would go here
-            return {'users': [], 'pagination': {}}
-            
-        except Exception as e:
-            logger.error(f"Error getting users management: {e}")
-            return {'error': 'Failed to get users'}
-    
-    def get_content_management(self, page, per_page, content_type, search):
-        """Get content for management interface"""
-        try:
-            # Implementation would go here
-            return {'content': [], 'pagination': {}}
-            
-        except Exception as e:
-            logger.error(f"Error getting content management: {e}")
-            return {'error': 'Failed to get content'}
+
 
 def init_dashboard_service(app, db, models, services):
     """Initialize dashboard service"""
