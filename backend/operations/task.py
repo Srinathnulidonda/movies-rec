@@ -14,7 +14,7 @@ import psutil
 logger = logging.getLogger(__name__)
 
 class OperationsTasks:
-    """Handles all operations tasks for CineBrain with enhanced error handling and monitoring"""
+    """Handles all operations tasks for CineBrain"""
     
     def __init__(self, app, db, models, services):
         self.app = app
@@ -44,9 +44,7 @@ class OperationsTasks:
             'average_refresh_duration': 0,
             'total_refresh_time': 0,
             'successful_refreshes': 0,
-            'failed_refreshes': 0,
-            'service_health_checks': 0,
-            'service_restarts': 0
+            'failed_refreshes': 0
         }
     
     # ============================================================================
@@ -526,8 +524,8 @@ class OperationsTasks:
                 'type': self.app.config.get('CACHE_TYPE')
             }
             
-            # Services health with enhanced new releases monitoring
-            services_health = {
+            # Services health
+            health['components']['services'] = {
                 'tmdb': 'TMDBService' in self.services,
                 'jikan': 'JikanService' in self.services,
                 'content': 'ContentService' in self.services,
@@ -535,20 +533,6 @@ class OperationsTasks:
                 'critics_choice': 'critics_choice_service' in self.services,
                 'personalized': 'personalized_recommendation_engine' in self.services
             }
-            
-            # Enhanced new releases service monitoring
-            if self.services.get('new_releases_service'):
-                try:
-                    nr_service = self.services['new_releases_service']
-                    bg_status = nr_service.get_background_status()
-                    services_health['new_releases_background'] = bg_status.get('background_active', False)
-                    services_health['new_releases_healthy'] = bg_status.get('service_healthy', False)
-                except Exception as e:
-                    logger.warning(f"Error checking new releases service status: {e}")
-                    services_health['new_releases_background'] = False
-                    services_health['new_releases_healthy'] = False
-            
-            health['components']['services'] = services_health
             
             # System resources
             health['components']['system'] = self._get_system_health()
@@ -582,25 +566,10 @@ class OperationsTasks:
             'database_analytics': self._get_database_analytics()
         }
         
-        # Enhanced service analytics
-        try:
-            if self.services.get('new_releases_service'):
-                nr_service = self.services['new_releases_service']
-                nr_stats = nr_service.get_stats()
-                analytics['new_releases_analytics'] = {
-                    'service_health': nr_stats.get('service_health'),
-                    'background_active': nr_stats.get('background_service', {}).get('background_active'),
-                    'cache_age_minutes': nr_stats.get('cache_age_minutes'),
-                    'total_items': nr_stats.get('total_items'),
-                    'telugu_content': nr_stats.get('telugu_content')
-                }
-        except Exception as e:
-            logger.warning(f"Error getting new releases analytics: {e}")
-        
         return analytics
     
     def get_comprehensive_status(self) -> Dict[str, Any]:
-        """Get comprehensive system status with enhanced service monitoring"""
+        """Get comprehensive system status"""
         status = {
             'timestamp': datetime.utcnow().isoformat(),
             'cache_system': {},
@@ -617,8 +586,8 @@ class OperationsTasks:
                 'functional': self._test_cache_connection() if self.cache else False
             }
             
-            # Enhanced services status with new releases monitoring
-            services_status = {
+            # Services status
+            status['services'] = {
                 'tmdb': 'TMDBService' in self.services,
                 'jikan': 'JikanService' in self.services,
                 'content': 'ContentService' in self.services,
@@ -626,22 +595,6 @@ class OperationsTasks:
                 'critics_choice': 'critics_choice_service' in self.services,
                 'personalized': 'personalized_recommendation_engine' in self.services
             }
-            
-            # Detailed new releases service status
-            if self.services.get('new_releases_service'):
-                try:
-                    nr_service = self.services['new_releases_service']
-                    bg_status = nr_service.get_background_status()
-                    services_status['new_releases_details'] = {
-                        'background_active': bg_status.get('background_active', False),
-                        'service_healthy': bg_status.get('service_healthy', False),
-                        'retry_count': bg_status.get('retry_count', 0),
-                        'cache_age_minutes': bg_status.get('cache_age_minutes')
-                    }
-                except Exception as e:
-                    services_status['new_releases_details'] = {'error': str(e)}
-            
-            status['services'] = services_status
             
             # Database status
             with self.app.app_context():
@@ -693,7 +646,219 @@ class OperationsTasks:
         return results
 
     # ============================================================================
-    # 🔥 ENHANCED CACHE REFRESH METHODS
+    # 🔥 NEW COMPREHENSIVE CACHE REFRESH HELPERS
+    # ============================================================================
+    
+    def _refresh_all_genre_samples(self, force: bool = False) -> Dict[str, Any]:
+        """Refresh ALL popular genres"""
+        try:
+            genres = [
+                'action', 'comedy', 'drama', 'thriller', 'horror', 
+                'romance', 'sci-fi', 'adventure', 'animation', 'crime'
+            ]
+            refreshed = 0
+            
+            for genre in genres:
+                try:
+                    cache_key = f'cinebrain:genre:{genre}'
+                    
+                    if not force and self.cache and self.cache.get(cache_key):
+                        continue
+                    
+                    if 'TMDBService' in self.services:
+                        genre_ids = {
+                            'action': 28, 'comedy': 35, 'drama': 18, 'thriller': 53,
+                            'horror': 27, 'romance': 10749, 'sci-fi': 878, 
+                            'adventure': 12, 'animation': 16, 'crime': 80
+                        }
+                        genre_id = genre_ids.get(genre)
+                        
+                        if genre_id:
+                            genre_data = self.services['TMDBService'].get_by_genre(genre_id, 'movie')
+                            if genre_data and self.cache:
+                                self.cache.set(cache_key, genre_data, timeout=self.TIMEOUTS['genre'])
+                                refreshed += 1
+                except Exception as e:
+                    logger.warning(f"Error refreshing genre {genre}: {e}")
+            
+            return {'success': True, 'action': 'refreshed', 'genres_refreshed': refreshed}
+            
+        except Exception as e:
+            logger.error(f"All genre samples refresh error: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def _refresh_admin_recommendations_cache(self, force: bool = False) -> Dict[str, Any]:
+        """Refresh admin recommendations cache"""
+        try:
+            # 🔥 FIX: Add Flask app context
+            with self.app.app_context():
+                cache_key = 'cinebrain:admin_recommendations'
+                
+                if not force and self.cache and self.cache.get(cache_key):
+                    return {'success': True, 'action': 'already_cached', 'cache_key': cache_key}
+                
+                AdminRecommendation = self.models.get('AdminRecommendation')
+                Content = self.models.get('Content')
+                
+                if AdminRecommendation and Content:
+                    admin_recs = AdminRecommendation.query.filter_by(is_active=True).limit(20).all()
+                    
+                    admin_data = []
+                    for rec in admin_recs:
+                        content = Content.query.get(rec.content_id)
+                        if content:
+                            admin_data.append({
+                                'id': content.id,
+                                'title': content.title,
+                                'description': rec.description,
+                                'recommendation_type': rec.recommendation_type,
+                                'slug': content.slug,
+                                'content_type': content.content_type,
+                                'rating': content.rating,
+                                'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path
+                            })
+                    
+                    if self.cache:
+                        self.cache.set(cache_key, admin_data, timeout=self.TIMEOUTS['admin_recs'])
+                        return {'success': True, 'action': 'refreshed', 'items': len(admin_data)}
+                
+                return {'success': True, 'action': 'no_recommendations', 'items': 0}
+                
+        except Exception as e:
+            logger.error(f"Admin recommendations cache refresh error: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def _refresh_content_details_samples(self, force: bool = False) -> Dict[str, Any]:
+        """Refresh content details cache for popular items"""
+        try:
+            # 🔥 FIX: Add Flask app context
+            with self.app.app_context():
+                if self.models.get('Content'):
+                    popular_content = self.models['Content'].query.filter(
+                        self.models['Content'].rating >= 7.0
+                    ).order_by(self.models['Content'].popularity.desc()).limit(20).all()
+                    
+                    refreshed = 0
+                    for content in popular_content:
+                        cache_key = f'cinebrain:details:{content.slug or content.id}'
+                        
+                        if not force and self.cache and self.cache.get(cache_key):
+                            continue
+                        
+                        # Create comprehensive details cache
+                        try:
+                            genres = json.loads(content.genres or '[]')
+                        except (json.JSONDecodeError, TypeError):
+                            genres = []
+                        
+                        details_data = {
+                            'id': content.id,
+                            'slug': content.slug,
+                            'title': content.title,
+                            'original_title': content.original_title,
+                            'content_type': content.content_type,
+                            'genres': genres,
+                            'rating': content.rating,
+                            'vote_count': content.vote_count,
+                            'overview': content.overview,
+                            'release_date': content.release_date.isoformat() if content.release_date else None,
+                            'runtime': content.runtime,
+                            'poster_path': f"https://image.tmdb.org/t/p/w500{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
+                            'backdrop_path': f"https://image.tmdb.org/t/p/w1280{content.backdrop_path}" if content.backdrop_path and not content.backdrop_path.startswith('http') else content.backdrop_path,
+                            'youtube_trailer': f"https://www.youtube.com/watch?v={content.youtube_trailer_id}" if content.youtube_trailer_id else None,
+                            'is_trending': content.is_trending,
+                            'is_new_release': content.is_new_release,
+                            'is_critics_choice': content.is_critics_choice,
+                            'cached_at': datetime.utcnow().isoformat()
+                        }
+                        
+                        if self.cache:
+                            self.cache.set(cache_key, details_data, timeout=self.TIMEOUTS['details'])
+                            refreshed += 1
+                    
+                    return {'success': True, 'action': 'refreshed', 'items_refreshed': refreshed}
+                
+                return {'success': False, 'error': 'Content model not available'}
+                
+        except Exception as e:
+            logger.error(f"Content details samples refresh error: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def _system_warmup_comprehensive(self) -> Dict[str, Any]:
+        """Comprehensive system warmup"""
+        try:
+            results = {}
+            
+            # Test all critical systems
+            results['database'] = self._test_database_connection()
+            results['cache'] = self._test_cache_connection()
+            
+            # Warm up services
+            services_status = {}
+            for service_name in ['TMDBService', 'JikanService', 'ContentService', 'new_releases_service', 'critics_choice_service', 'personalized_recommendation_engine']:
+                services_status[service_name] = service_name in self.services
+            
+            results['services_status'] = services_status
+            
+            # Check critical models
+            try:
+                with self.app.app_context():
+                    if self.models.get('Content'):
+                        try:
+                            content_count = self.models['Content'].query.count()
+                            results['content_available'] = content_count > 0
+                            results['content_count'] = content_count
+                            
+                            # Check content with different flags
+                            trending_count = self.models['Content'].query.filter_by(is_trending=True).count()
+                            new_releases_count = self.models['Content'].query.filter_by(is_new_release=True).count()
+                            critics_choice_count = self.models['Content'].query.filter_by(is_critics_choice=True).count()
+                            
+                            results['content_breakdown'] = {
+                                'trending': trending_count,
+                                'new_releases': new_releases_count,
+                                'critics_choice': critics_choice_count
+                            }
+                        except Exception as e:
+                            results['content_error'] = str(e)
+                    
+                    if self.models.get('User'):
+                        try:
+                            user_count = self.models['User'].query.count()
+                            results['users_available'] = user_count > 0
+                            results['user_count'] = user_count
+                            
+                            # Check active users
+                            cutoff_date = datetime.utcnow() - timedelta(days=7)
+                            active_users = self.models['User'].query.filter(
+                                self.models['User'].last_active >= cutoff_date
+                            ).count()
+                            results['active_users_7d'] = active_users
+                        except Exception as e:
+                            results['users_error'] = str(e)
+            except Exception as e:
+                results['database_context_error'] = str(e)
+            
+            # System health
+            results['system_metrics'] = self._get_basic_system_metrics()
+            
+            # Cache warmup
+            if self.cache:
+                self.cache.set('cinebrain_comprehensive_warmup', {
+                    'timestamp': datetime.utcnow().isoformat(),
+                    'status': 'warmed_up',
+                    'services_checked': len(services_status),
+                    'models_checked': len([m for m in self.models.keys() if self.models[m]])
+                }, timeout=600)
+            
+            return {'success': True, 'systems_checked': results}
+            
+        except Exception as e:
+            logger.error(f"Comprehensive system warmup error: {e}")
+            return {'success': False, 'error': str(e)}
+
+    # ============================================================================
+    # 🔧 EXISTING CACHE REFRESH HELPERS
     # ============================================================================
     
     def _refresh_trending_cache(self, force: bool = False) -> Dict[str, Any]:
@@ -759,7 +924,7 @@ class OperationsTasks:
             return {'success': False, 'error': str(e)}
     
     def _refresh_new_releases_cache(self, force: bool = False) -> Dict[str, Any]:
-        """Enhanced new releases cache refresh with service health monitoring"""
+        """Refresh new releases cache"""
         try:
             cache_key = 'cinebrain:new_releases'
             
@@ -769,60 +934,11 @@ class OperationsTasks:
             # Use existing new releases service
             new_releases_service = self.services.get('new_releases_service')
             if new_releases_service:
-                # ✅ Enhanced service health monitoring
-                try:
-                    bg_status = new_releases_service.get_background_status()
-                    self.performance_metrics['service_health_checks'] += 1
-                    
-                    service_healthy = bg_status.get('service_healthy', True)
-                    background_active = bg_status.get('background_active', False)
-                    
-                    # Restart service if unhealthy or inactive
-                    if not service_healthy or not background_active:
-                        logger.warning(f"CineBrain: New releases service unhealthy (healthy: {service_healthy}, active: {background_active}), attempting restart...")
-                        restart_success = new_releases_service.restart_background_service()
-                        self.performance_metrics['service_restarts'] += 1
-                        
-                        if restart_success:
-                            logger.info("CineBrain: Successfully restarted new releases service")
-                            # Wait a moment for the service to stabilize
-                            time.sleep(2)
-                        else:
-                            logger.warning("CineBrain: Failed to restart new releases service")
-                    
-                except Exception as restart_error:
-                    logger.error(f"CineBrain: Error during service health check/restart: {restart_error}")
-                
-                # Get new releases data
                 releases_data = new_releases_service.get_new_releases(force_refresh=force)
                 
                 if releases_data and self.cache:
                     self.cache.set(cache_key, releases_data, timeout=self.TIMEOUTS['new_releases'])
-                    
-                    # Get final service status for reporting
-                    try:
-                        final_status = new_releases_service.get_background_status()
-                        
-                        return {
-                            'success': True, 
-                            'action': 'refreshed', 
-                            'categories': len(releases_data.get('all_content', {})),
-                            'items': releases_data.get('metadata', {}).get('total_items', 0),
-                            'service_health': 'healthy' if final_status.get('service_healthy') else 'degraded',
-                            'background_active': final_status.get('background_active', False),
-                            'cache_age_minutes': final_status.get('cache_age_minutes'),
-                            'telugu_items': releases_data.get('metadata', {}).get('telugu_focus', False)
-                        }
-                    except Exception as status_error:
-                        logger.warning(f"Error getting final service status: {status_error}")
-                        return {
-                            'success': True, 
-                            'action': 'refreshed', 
-                            'categories': len(releases_data.get('all_content', {})),
-                            'items': releases_data.get('metadata', {}).get('total_items', 0)
-                        }
-                else:
-                    return {'success': False, 'error': 'No data returned from new releases service'}
+                    return {'success': True, 'action': 'refreshed', 'categories': len(releases_data)}
             
             return {'success': False, 'error': 'New Releases service not available'}
             
@@ -897,142 +1013,10 @@ class OperationsTasks:
             logger.error(f"Discover cache refresh error: {e}")
             return {'success': False, 'error': str(e)}
     
-    def _refresh_all_genre_samples(self, force: bool = False) -> Dict[str, Any]:
-        """Refresh ALL popular genres"""
-        try:
-            genres = [
-                'action', 'comedy', 'drama', 'thriller', 'horror', 
-                'romance', 'sci-fi', 'adventure', 'animation', 'crime'
-            ]
-            refreshed = 0
-            
-            for genre in genres:
-                try:
-                    cache_key = f'cinebrain:genre:{genre}'
-                    
-                    if not force and self.cache and self.cache.get(cache_key):
-                        continue
-                    
-                    if 'TMDBService' in self.services:
-                        genre_ids = {
-                            'action': 28, 'comedy': 35, 'drama': 18, 'thriller': 53,
-                            'horror': 27, 'romance': 10749, 'sci-fi': 878, 
-                            'adventure': 12, 'animation': 16, 'crime': 80
-                        }
-                        genre_id = genre_ids.get(genre)
-                        
-                        if genre_id:
-                            genre_data = self.services['TMDBService'].get_by_genre(genre_id, 'movie')
-                            if genre_data and self.cache:
-                                self.cache.set(cache_key, genre_data, timeout=self.TIMEOUTS['genre'])
-                                refreshed += 1
-                except Exception as e:
-                    logger.warning(f"Error refreshing genre {genre}: {e}")
-            
-            return {'success': True, 'action': 'refreshed', 'genres_refreshed': refreshed}
-            
-        except Exception as e:
-            logger.error(f"All genre samples refresh error: {e}")
-            return {'success': False, 'error': str(e)}
-    
-    def _refresh_admin_recommendations_cache(self, force: bool = False) -> Dict[str, Any]:
-        """Refresh admin recommendations cache"""
-        try:
-            with self.app.app_context():
-                cache_key = 'cinebrain:admin_recommendations'
-                
-                if not force and self.cache and self.cache.get(cache_key):
-                    return {'success': True, 'action': 'already_cached', 'cache_key': cache_key}
-                
-                AdminRecommendation = self.models.get('AdminRecommendation')
-                Content = self.models.get('Content')
-                
-                if AdminRecommendation and Content:
-                    admin_recs = AdminRecommendation.query.filter_by(is_active=True).limit(20).all()
-                    
-                    admin_data = []
-                    for rec in admin_recs:
-                        content = Content.query.get(rec.content_id)
-                        if content:
-                            admin_data.append({
-                                'id': content.id,
-                                'title': content.title,
-                                'description': rec.description,
-                                'recommendation_type': rec.recommendation_type,
-                                'slug': content.slug,
-                                'content_type': content.content_type,
-                                'rating': content.rating,
-                                'poster_path': f"https://image.tmdb.org/t/p/w300{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path
-                            })
-                    
-                    if self.cache:
-                        self.cache.set(cache_key, admin_data, timeout=self.TIMEOUTS['admin_recs'])
-                        return {'success': True, 'action': 'refreshed', 'items': len(admin_data)}
-                
-                return {'success': True, 'action': 'no_recommendations', 'items': 0}
-                
-        except Exception as e:
-            logger.error(f"Admin recommendations cache refresh error: {e}")
-            return {'success': False, 'error': str(e)}
-    
-    def _refresh_content_details_samples(self, force: bool = False) -> Dict[str, Any]:
-        """Refresh content details cache for popular items"""
-        try:
-            with self.app.app_context():
-                if self.models.get('Content'):
-                    popular_content = self.models['Content'].query.filter(
-                        self.models['Content'].rating >= 7.0
-                    ).order_by(self.models['Content'].popularity.desc()).limit(20).all()
-                    
-                    refreshed = 0
-                    for content in popular_content:
-                        cache_key = f'cinebrain:details:{content.slug or content.id}'
-                        
-                        if not force and self.cache and self.cache.get(cache_key):
-                            continue
-                        
-                        # Create comprehensive details cache
-                        try:
-                            genres = json.loads(content.genres or '[]')
-                        except (json.JSONDecodeError, TypeError):
-                            genres = []
-                        
-                        details_data = {
-                            'id': content.id,
-                            'slug': content.slug,
-                            'title': content.title,
-                            'original_title': content.original_title,
-                            'content_type': content.content_type,
-                            'genres': genres,
-                            'rating': content.rating,
-                            'vote_count': content.vote_count,
-                            'overview': content.overview,
-                            'release_date': content.release_date.isoformat() if content.release_date else None,
-                            'runtime': content.runtime,
-                            'poster_path': f"https://image.tmdb.org/t/p/w500{content.poster_path}" if content.poster_path and not content.poster_path.startswith('http') else content.poster_path,
-                            'backdrop_path': f"https://image.tmdb.org/t/p/w1280{content.backdrop_path}" if content.backdrop_path and not content.backdrop_path.startswith('http') else content.backdrop_path,
-                            'youtube_trailer': f"https://www.youtube.com/watch?v={content.youtube_trailer_id}" if content.youtube_trailer_id else None,
-                            'is_trending': content.is_trending,
-                            'is_new_release': content.is_new_release,
-                            'is_critics_choice': content.is_critics_choice,
-                            'cached_at': datetime.utcnow().isoformat()
-                        }
-                        
-                        if self.cache:
-                            self.cache.set(cache_key, details_data, timeout=self.TIMEOUTS['details'])
-                            refreshed += 1
-                    
-                    return {'success': True, 'action': 'refreshed', 'items_refreshed': refreshed}
-                
-                return {'success': False, 'error': 'Content model not available'}
-                
-        except Exception as e:
-            logger.error(f"Content details samples refresh error: {e}")
-            return {'success': False, 'error': str(e)}
-    
     def _refresh_similar_samples(self, force: bool = False) -> Dict[str, Any]:
         """Refresh similar content samples for popular items"""
         try:
+            # 🔥 FIX: Add Flask app context
             with self.app.app_context():
                 # Get a few popular content IDs to cache similar content for
                 if self.models.get('Content'):
@@ -1142,6 +1126,7 @@ class OperationsTasks:
     def _get_active_users(self, limit: int = 50) -> List:
         """Get list of active users for personalized cache refresh"""
         try:
+            # 🔥 FIX: Add Flask app context
             with self.app.app_context():
                 if self.models.get('User'):
                     # Get users active in the last 7 days
@@ -1158,92 +1143,6 @@ class OperationsTasks:
             logger.error(f"Error getting active users: {e}")
             return []
     
-    def _system_warmup_comprehensive(self) -> Dict[str, Any]:
-        """Comprehensive system warmup"""
-        try:
-            results = {}
-            
-            # Test all critical systems
-            results['database'] = self._test_database_connection()
-            results['cache'] = self._test_cache_connection()
-            
-            # Warm up services
-            services_status = {}
-            for service_name in ['TMDBService', 'JikanService', 'ContentService', 'new_releases_service', 'critics_choice_service', 'personalized_recommendation_engine']:
-                services_status[service_name] = service_name in self.services
-            
-            results['services_status'] = services_status
-            
-            # Check critical models
-            try:
-                with self.app.app_context():
-                    if self.models.get('Content'):
-                        try:
-                            content_count = self.models['Content'].query.count()
-                            results['content_available'] = content_count > 0
-                            results['content_count'] = content_count
-                            
-                            # Check content with different flags
-                            trending_count = self.models['Content'].query.filter_by(is_trending=True).count()
-                            new_releases_count = self.models['Content'].query.filter_by(is_new_release=True).count()
-                            critics_choice_count = self.models['Content'].query.filter_by(is_critics_choice=True).count()
-                            
-                            results['content_breakdown'] = {
-                                'trending': trending_count,
-                                'new_releases': new_releases_count,
-                                'critics_choice': critics_choice_count
-                            }
-                        except Exception as e:
-                            results['content_error'] = str(e)
-                    
-                    if self.models.get('User'):
-                        try:
-                            user_count = self.models['User'].query.count()
-                            results['users_available'] = user_count > 0
-                            results['user_count'] = user_count
-                            
-                            # Check active users
-                            cutoff_date = datetime.utcnow() - timedelta(days=7)
-                            active_users = self.models['User'].query.filter(
-                                self.models['User'].last_active >= cutoff_date
-                            ).count()
-                            results['active_users_7d'] = active_users
-                        except Exception as e:
-                            results['users_error'] = str(e)
-            except Exception as e:
-                results['database_context_error'] = str(e)
-            
-            # System health
-            results['system_metrics'] = self._get_basic_system_metrics()
-            
-            # Enhanced new releases service check
-            if self.services.get('new_releases_service'):
-                try:
-                    nr_service = self.services['new_releases_service']
-                    nr_status = nr_service.get_background_status()
-                    results['new_releases_service'] = {
-                        'background_active': nr_status.get('background_active', False),
-                        'service_healthy': nr_status.get('service_healthy', False),
-                        'cache_age_minutes': nr_status.get('cache_age_minutes')
-                    }
-                except Exception as e:
-                    results['new_releases_service'] = {'error': str(e)}
-            
-            # Cache warmup
-            if self.cache:
-                self.cache.set('cinebrain_comprehensive_warmup', {
-                    'timestamp': datetime.utcnow().isoformat(),
-                    'status': 'warmed_up',
-                    'services_checked': len(services_status),
-                    'models_checked': len([m for m in self.models.keys() if self.models[m]])
-                }, timeout=600)
-            
-            return {'success': True, 'systems_checked': results}
-            
-        except Exception as e:
-            logger.error(f"Comprehensive system warmup error: {e}")
-            return {'success': False, 'error': str(e)}
-
     def _system_warmup_minimal(self) -> Dict[str, Any]:
         """Minimal system warmup operations"""
         try:
@@ -1424,9 +1323,7 @@ class OperationsTasks:
                 'total_cache_refreshes': self.performance_metrics['cache_refreshes'],
                 'average_refresh_time': self.performance_metrics['average_refresh_duration'],
                 'successful_refreshes': self.performance_metrics['successful_refreshes'],
-                'failed_refreshes': self.performance_metrics['failed_refreshes'],
-                'service_health_checks': self.performance_metrics['service_health_checks'],
-                'service_restarts': self.performance_metrics['service_restarts']
+                'failed_refreshes': self.performance_metrics['failed_refreshes']
             }
             
             results['success'] = True
