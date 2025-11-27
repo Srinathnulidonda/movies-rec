@@ -1028,6 +1028,23 @@ class AdminDashboard:
                     ticket_age_minutes = (current_time - ticket.created_at).total_seconds() / 60
                     is_very_new = ticket_age_minutes <= 30
                     
+                    # ENHANCED: More detailed timestamp formatting
+                    reported_at = ticket.created_at
+                    reported_date = reported_at.strftime('%Y-%m-%d')
+                    reported_time = reported_at.strftime('%H:%M:%S UTC')
+                    reported_full = reported_at.strftime('%Y-%m-%d %H:%M:%S UTC')
+                    time_ago = self._format_time_ago(ticket_age_minutes)
+                    
+                    # NEW: Add relative time description
+                    if ticket_age_minutes < 1:
+                        urgency_status = "JUST NOW"
+                    elif ticket_age_minutes < 5:
+                        urgency_status = "VERY RECENT"
+                    elif ticket_age_minutes < 30:
+                        urgency_status = "RECENT"
+                    else:
+                        urgency_status = "NEW"
+                    
                     ticket_data = {
                         'id': ticket.id,
                         'ticket_number': ticket.ticket_number,
@@ -1040,7 +1057,22 @@ class AdminDashboard:
                             'name': category.name if category else 'General',
                             'icon': category.icon if category else '🎫'
                         },
+                        
+                        # ENHANCED: Comprehensive timestamp data
                         'created_at': ticket.created_at.isoformat(),
+                        'reported_at': {
+                            'full_timestamp': reported_full,
+                            'date': reported_date,
+                            'time': reported_time,
+                            'time_ago': time_ago,
+                            'urgency_status': urgency_status,
+                            'age_minutes': int(ticket_age_minutes),
+                            'is_very_new': is_very_new
+                        },
+                        
+                        # Legacy fields for backward compatibility
+                        'submitted_time': reported_full,
+                        'time_ago': time_ago,
                         'age_minutes': int(ticket_age_minutes),
                         'is_urgent': ticket.priority == 'urgent',
                         'is_very_new': is_very_new,
@@ -1054,6 +1086,14 @@ class AdminDashboard:
                         data['urgent_alerts'].append({
                             'type': 'urgent_ticket',
                             'message': f"Urgent ticket #{ticket.ticket_number} from {ticket.user_name}",
+                            'reported_at': {
+                                'full_timestamp': reported_full,
+                                'time_ago': time_ago,
+                                'urgency_status': urgency_status
+                            },
+                            # Legacy fields
+                            'submitted_time': reported_full,
+                            'time_ago': time_ago,
                             'url': f"/admin/support/tickets/{ticket.id}",
                             'created_at': ticket.created_at.isoformat()
                         })
@@ -1102,6 +1142,23 @@ class AdminDashboard:
                     contact_age_minutes = (current_time - contact.created_at).total_seconds() / 60
                     is_very_new = contact_age_minutes <= 30
                     
+                    # ENHANCED: More detailed timestamp formatting
+                    reported_at = contact.created_at
+                    reported_date = reported_at.strftime('%Y-%m-%d')
+                    reported_time = reported_at.strftime('%H:%M:%S UTC')
+                    reported_full = reported_at.strftime('%Y-%m-%d %H:%M:%S UTC')
+                    time_ago = self._format_time_ago(contact_age_minutes)
+                    
+                    # NEW: Add relative time description
+                    if contact_age_minutes < 1:
+                        urgency_status = "JUST NOW"
+                    elif contact_age_minutes < 5:
+                        urgency_status = "VERY RECENT"
+                    elif contact_age_minutes < 30:
+                        urgency_status = "RECENT"
+                    else:
+                        urgency_status = "NEW"
+                    
                     is_business = any([
                         contact.company,
                         'partnership' in (contact.subject or '').lower(),
@@ -1117,7 +1174,22 @@ class AdminDashboard:
                         'company': contact.company,
                         'is_read': contact.is_read,
                         'is_business_inquiry': is_business,
+                        
+                        # ENHANCED: Comprehensive timestamp data
                         'created_at': contact.created_at.isoformat(),
+                        'reported_at': {
+                            'full_timestamp': reported_full,
+                            'date': reported_date,
+                            'time': reported_time,
+                            'time_ago': time_ago,
+                            'urgency_status': urgency_status,
+                            'age_minutes': int(contact_age_minutes),
+                            'is_very_new': is_very_new
+                        },
+                        
+                        # Legacy fields for backward compatibility
+                        'submitted_time': reported_full,
+                        'time_ago': time_ago,
                         'age_minutes': int(contact_age_minutes),
                         'is_very_new': is_very_new,
                         'admin_viewed': getattr(contact, 'admin_viewed', False),
@@ -1130,6 +1202,14 @@ class AdminDashboard:
                         data['urgent_alerts'].append({
                             'type': 'business_inquiry',
                             'message': f"Business inquiry from {contact.name} ({contact.company or contact.email})",
+                            'reported_at': {
+                                'full_timestamp': reported_full,
+                                'time_ago': time_ago,
+                                'urgency_status': urgency_status
+                            },
+                            # Legacy fields
+                            'submitted_time': reported_full,
+                            'time_ago': time_ago,
                             'url': f"/admin/support/contact/{contact.id}",
                             'created_at': contact.created_at.isoformat()
                         })
@@ -1168,6 +1248,29 @@ class AdminDashboard:
                     issue_age_minutes = (current_time - issue.created_at).total_seconds() / 60
                     is_very_new = issue_age_minutes <= 30
                     
+                    # ENHANCED: More detailed timestamp formatting
+                    reported_at = issue.created_at
+                    reported_date = reported_at.strftime('%Y-%m-%d')
+                    reported_time = reported_at.strftime('%H:%M:%S UTC')
+                    reported_full = reported_at.strftime('%Y-%m-%d %H:%M:%S UTC')
+                    time_ago = self._format_time_ago(issue_age_minutes)
+                    
+                    # NEW: Add relative time description based on severity
+                    if issue.severity == 'critical':
+                        if issue_age_minutes < 1:
+                            urgency_status = "CRITICAL - JUST NOW"
+                        elif issue_age_minutes < 5:
+                            urgency_status = "CRITICAL - IMMEDIATE"
+                        else:
+                            urgency_status = "CRITICAL"
+                    else:  # high severity
+                        if issue_age_minutes < 1:
+                            urgency_status = "HIGH - JUST NOW"
+                        elif issue_age_minutes < 5:
+                            urgency_status = "HIGH - VERY RECENT"
+                        else:
+                            urgency_status = "HIGH PRIORITY"
+                    
                     issue_data = {
                         'id': issue.id,
                         'issue_id': issue.issue_id,
@@ -1178,7 +1281,22 @@ class AdminDashboard:
                         'issue_type': issue.issue_type,
                         'screenshots_count': len(issue.screenshots) if issue.screenshots else 0,
                         'ticket_number': None,
+                        
+                        # ENHANCED: Comprehensive timestamp data
                         'created_at': issue.created_at.isoformat(),
+                        'reported_at': {
+                            'full_timestamp': reported_full,
+                            'date': reported_date,
+                            'time': reported_time,
+                            'time_ago': time_ago,
+                            'urgency_status': urgency_status,
+                            'age_minutes': int(issue_age_minutes),
+                            'is_very_new': is_very_new
+                        },
+                        
+                        # Legacy fields for backward compatibility
+                        'submitted_time': reported_full,
+                        'time_ago': time_ago,
                         'age_minutes': int(issue_age_minutes),
                         'is_very_new': is_very_new,
                         'admin_viewed': getattr(issue, 'admin_viewed', False)
@@ -1198,6 +1316,14 @@ class AdminDashboard:
                         data['urgent_alerts'].append({
                             'type': 'critical_issue',
                             'message': f"Critical issue: {issue.issue_title[:50]}... from {issue.name}",
+                            'reported_at': {
+                                'full_timestamp': reported_full,
+                                'time_ago': time_ago,
+                                'urgency_status': urgency_status
+                            },
+                            # Legacy fields
+                            'submitted_time': reported_full,
+                            'time_ago': time_ago,
                             'url': f"/admin/support/issues/{issue.id}",
                             'created_at': issue.created_at.isoformat()
                         })
@@ -1220,6 +1346,22 @@ class AdminDashboard:
             logger.error(f"Error getting issue data: {e}")
 
         return data
+
+    def _format_time_ago(self, minutes: float) -> str:
+        """Format time ago in human readable format"""
+        try:
+            if minutes < 1:
+                return "Just now"
+            elif minutes < 60:
+                return f"{int(minutes)}m ago"
+            elif minutes < 1440:  # 24 hours
+                hours = int(minutes / 60)
+                return f"{hours}h ago"
+            else:
+                days = int(minutes / 1440)
+                return f"{days}d ago"
+        except:
+            return "Unknown"
 
     def _get_user_analytics(self):
         """Get user analytics data"""

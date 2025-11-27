@@ -222,6 +222,10 @@ class IssueReportService:
             self.db.session.add(issue_report)
             self.db.session.flush()
             
+            # Get the timestamp for response
+            submitted_at = issue_report.created_at
+            formatted_time = submitted_at.strftime('%Y-%m-%d at %H:%M UTC')
+            
             # Create corresponding support ticket
             ticket_number = self._generate_ticket_number()
             
@@ -237,28 +241,29 @@ class IssueReportService:
             
             # Create detailed description for ticket
             detailed_description = f"""
-ISSUE REPORT DETAILS:
+    ISSUE REPORT DETAILS:
 
-🐛 Issue Type: {data['issue_type'].replace('_', ' ').title()}
-⚡ Severity: {data['severity'].title()}
+    🐛 Issue Type: {data['issue_type'].replace('_', ' ').title()}
+    ⚡ Severity: {data['severity'].title()}
+    📅 Reported: {formatted_time}
 
-📝 Description:
-{data['description']}
+    📝 Description:
+    {data['description']}
 
-🔄 Steps to Reproduce:
-{data['steps_to_reproduce'] or 'Not provided'}
+    🔄 Steps to Reproduce:
+    {data['steps_to_reproduce'] or 'Not provided'}
 
-✅ Expected Behavior:
-{data['expected_behavior'] or 'Not provided'}
+    ✅ Expected Behavior:
+    {data['expected_behavior'] or 'Not provided'}
 
-🌐 Technical Details:
-• Browser: {data['browser_version'] or 'Not provided'}
-• Device/OS: {data['device_os'] or 'Not provided'}
-• Page URL: {data['page_url'] or 'Not provided'}
-• User Agent: {request_info['user_agent']}
-• IP Address: {request_info['ip_address']}
+    🌐 Technical Details:
+    • Browser: {data['browser_version'] or 'Not provided'}
+    • Device/OS: {data['device_os'] or 'Not provided'}
+    • Page URL: {data['page_url'] or 'Not provided'}
+    • User Agent: {request_info['user_agent']}
+    • IP Address: {request_info['ip_address']}
 
-📎 Screenshots: {len(uploaded_files)} file(s) attached
+    📎 Screenshots: {len(uploaded_files)} file(s) attached
             """.strip()
             
             # Create support ticket
@@ -283,11 +288,11 @@ ISSUE REPORT DETAILS:
             # Link issue report to ticket
             issue_report.ticket_id = ticket.id
             
-            # Add activity log
+            # Add activity log with timestamp
             activity = self.TicketActivity(
                 ticket_id=ticket.id,
                 action='created',
-                description=f'Issue report submitted by {data["name"]} - {data["issue_type"]} ({data["severity"]} severity)',
+                description=f'Issue report submitted by {data["name"]} at {formatted_time} - {data["issue_type"]} ({data["severity"]} severity)',
                 actor_type='user',
                 actor_id=user.id if user else None,
                 actor_name=data['name']
@@ -300,20 +305,34 @@ ISSUE REPORT DETAILS:
             self._send_user_confirmation(issue_report, ticket, data)
             self._send_admin_notification(issue_report, ticket, data)
             
-            logger.info(f"✅ Issue report {issue_id} submitted by {data['email']}")
+            logger.info(f"✅ Issue report {issue_id} submitted by {data['email']} at {formatted_time}")
             
             return jsonify({
                 'success': True,
                 'message': 'Issue report submitted successfully. Thank you for helping us improve CineBrain!',
                 'issue_id': issue_id,
                 'ticket_number': ticket_number,
-                'files_uploaded': len(uploaded_files)
+                'submitted_at': submitted_at.isoformat(),
+                'submitted_time': formatted_time,
+                'files_uploaded': len(uploaded_files),
+                'severity': data['severity'],
+                'estimated_response_time': self._get_estimated_response_time(priority)
             }), 201
             
         except Exception as e:
             self.db.session.rollback()
             logger.error(f"❌ Error processing issue report: {e}")
             return jsonify({'error': 'Failed to submit issue report. Please try again.'}), 500
+
+    def _get_estimated_response_time(self, priority: str) -> str:
+        """Get estimated response time based on priority"""
+        response_times = {
+            'urgent': '4 hours',
+            'high': '24 hours', 
+            'normal': '48 hours',
+            'low': '72 hours'
+        }
+        return response_times.get(priority, '48 hours')
     
     def _generate_ticket_number(self):
         """Generate unique ticket number"""

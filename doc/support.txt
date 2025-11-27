@@ -830,7 +830,7 @@ def init_issue_service(app, db, models, services):
 
 
 
-4. # support/routes.py
+4.# support/routes.py
 
 from flask import Blueprint, request, jsonify
 from datetime import datetime
@@ -1678,9 +1678,8 @@ def init_support_routes(flask_app, database, models, services):
         
     except Exception as e:
         logger.error(f"❌ Failed to initialize support routes: {e}")
-        raise e
-
-
+        raise e 
+    
 
 5. # support/tickets.py
 
@@ -2130,7 +2129,7 @@ class TicketService:
                     <li><strong>Subject:</strong> {ticket.subject}</li>
                     <li><strong>From:</strong> {data['name']} ({data['email']})</li>
                     <li><strong>Category:</strong> {category.name if category else 'General'}</li>
-                    <li><strong>Priority:</strong> <span style="color: {'#ef4444' if ticket.priority == 'urgent' else '#281e0dff' if ticket.priority == 'high' else '#3b82f6'}; font-weight: bold;">{ticket.priority.upper()}</span></li>
+                    <li><strong>Priority:</strong> <span style="color: {'#ef4444' if ticket.priority == 'urgent' else '#f59e0b' if ticket.priority == 'high' else '#3b82f6'}; font-weight: bold;">{ticket.priority.upper()}</span></li>
                     <li><strong>Type:</strong> {ticket.ticket_type.replace('_', ' ').title()}</li>
                     <li><strong>Status:</strong> {ticket.status.upper()}</li>
                 </ul>
@@ -2170,4 +2169,3 @@ class TicketService:
 
 def init_ticket_service(app, db, models, services):
     """Initialize ticket service"""
-    return TicketService(app, db, models, services)

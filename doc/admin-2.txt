@@ -1,5 +1,3 @@
-memorize my remaining admin folder files
-
 4. # admin/service.py
 
 import os
@@ -665,7 +663,7 @@ class AdminService:
             raise e
     
     def create_recommendation_from_external_content(self, admin_user, content_data, recommendation_type, description, status='draft', publish_to_telegram=False, template_type='auto', template_params=None):
-        """Enhanced method with template support and better validation"""
+        """Enhanced method with proper template field saving"""
         try:
             content = None
             
@@ -696,7 +694,8 @@ class AdminService:
             # FIX: Add defaults for missing fields
             recommendation_type = recommendation_type or 'general'
             description = description or f"Recommended: {content.title}"
-            
+            template_params = template_params or {}
+
             admin_rec = self.AdminRecommendation(
                 content_id=content.id,
                 admin_id=admin_user.id,
@@ -705,9 +704,35 @@ class AdminService:
                 is_active=(status == 'active')
             )
             
+            # NEW: Save template type and data
+            if hasattr(admin_rec, 'template_type'):
+                admin_rec.template_type = template_type
+            if hasattr(admin_rec, 'template_data'):
+                admin_rec.template_data = template_params
+            
+            # NEW: Save individual template fields to dedicated columns
+            if hasattr(admin_rec, 'hook_text') and template_params.get('hook'):
+                admin_rec.hook_text = template_params.get('hook', '')[:500] if template_params.get('hook') else None
+            if hasattr(admin_rec, 'if_you_like') and template_params.get('if_you_like'):
+                admin_rec.if_you_like = template_params.get('if_you_like', '')[:500] if template_params.get('if_you_like') else None
+            if hasattr(admin_rec, 'custom_overview') and template_params.get('overview'):
+                admin_rec.custom_overview = template_params.get('overview', '')[:1000] if template_params.get('overview') else None
+            if hasattr(admin_rec, 'emotion_hook') and template_params.get('emotion_hook'):
+                admin_rec.emotion_hook = template_params.get('emotion_hook', '')[:200] if template_params.get('emotion_hook') else None
+            if hasattr(admin_rec, 'scene_caption') and template_params.get('caption'):
+                admin_rec.scene_caption = template_params.get('caption', '')[:200] if template_params.get('caption') else None
+            if hasattr(admin_rec, 'list_title') and template_params.get('list_title'):
+                admin_rec.list_title = template_params.get('list_title', '')[:200] if template_params.get('list_title') else None
+            if hasattr(admin_rec, 'list_items') and template_params.get('items'):
+                admin_rec.list_items = template_params.get('items', []) if template_params.get('items') else None
+            
+            # Set timestamp for template editing tracking
+            if hasattr(admin_rec, 'last_template_edit'):
+                admin_rec.last_template_edit = datetime.utcnow()
+            
             self.db.session.add(admin_rec)
             self.db.session.commit()
-            
+
             telegram_sent = False
             if publish_to_telegram and status == 'active':
                 if self.telegram_service:
@@ -742,10 +767,11 @@ class AdminService:
                 except Exception as e:
                     logger.warning(f"Failed to create recommendation notification: {e}")
             
-            logger.info(f"✅ Recommendation created from external content with {template_type} template: {content.title} by {admin_user.username}")
+            logger.info(f"✅ Recommendation created with template fields saved: {content.title} by {admin_user.username}")
             return {
                 'success': True,
-                'message': f'Recommendation {"published" if status == "active" else "saved as upcoming"}',
+                'message': f'Recommendation {"published" if status == "active" else "saved as draft"}',
+                'template_fields_saved': len(template_params),
                 'telegram_sent': telegram_sent,
                 'recommendation_id': admin_rec.id,
                 'content_id': content.id,
@@ -918,26 +944,48 @@ class AdminService:
             }
     
     def get_recommendation_details(self, recommendation_id):
-        """Get recommendation details with better error handling"""
+        """Get recommendation details with enhanced template field data"""
         try:
             recommendation = self.AdminRecommendation.query.get(recommendation_id)
             if not recommendation:
                 logger.warning(f"Recommendation not found: {recommendation_id}")
                 return None
-            
+
             content = self.Content.query.get(recommendation.content_id)
             admin = self.User.query.get(recommendation.admin_id)
-            
+
             if not content or not admin:
                 logger.warning(f"Missing content or admin for recommendation {recommendation_id}")
                 return None
-            
+
             # Safe access to updated_at field
             updated_at = getattr(recommendation, 'updated_at', None)
             if updated_at is None:
                 updated_at = recommendation.created_at
+
+            # NEW: Collect template field data from database columns
+            template_fields = {}
             
-            # FIX: Add defaults for all fields
+            # Add individual template fields if they exist
+            if hasattr(recommendation, 'hook_text') and recommendation.hook_text:
+                template_fields['hook'] = recommendation.hook_text
+            if hasattr(recommendation, 'if_you_like') and recommendation.if_you_like:
+                template_fields['if_you_like'] = recommendation.if_you_like
+            if hasattr(recommendation, 'custom_overview') and recommendation.custom_overview:
+                template_fields['overview'] = recommendation.custom_overview
+            if hasattr(recommendation, 'emotion_hook') and recommendation.emotion_hook:
+                template_fields['emotion_hook'] = recommendation.emotion_hook
+            if hasattr(recommendation, 'scene_caption') and recommendation.scene_caption:
+                template_fields['caption'] = recommendation.scene_caption
+            if hasattr(recommendation, 'list_title') and recommendation.list_title:
+                template_fields['list_title'] = recommendation.list_title
+            if hasattr(recommendation, 'list_items') and recommendation.list_items:
+                template_fields['items'] = recommendation.list_items
+
+            # Merge with template_data JSON if available
+            if hasattr(recommendation, 'template_data') and recommendation.template_data:
+                template_fields.update(recommendation.template_data)
+
             return {
                 'id': recommendation.id,
                 'recommendation_type': recommendation.recommendation_type or 'general',
@@ -947,6 +995,16 @@ class AdminService:
                 'updated_at': updated_at.isoformat(),
                 'admin_name': admin.username or 'Unknown Admin',
                 'admin_id': admin.id,
+                
+                # NEW: Enhanced template data
+                'template_type': getattr(recommendation, 'template_type', None),
+                'template_fields': template_fields,
+                'template_data': {
+                    'selected_template': getattr(recommendation, 'template_type', None),
+                    'template_fields': template_fields,
+                    'last_edited': getattr(recommendation, 'last_template_edit', recommendation.updated_at).isoformat() if hasattr(recommendation, 'last_template_edit') else updated_at.isoformat()
+                },
+                
                 'content': {
                     'id': content.id,
                     'title': content.title or 'Unknown Title',
@@ -963,12 +1021,13 @@ class AdminService:
             return None
     
     def update_recommendation(self, admin_user, recommendation_id, data):
+        """Enhanced update with template field saving"""
         try:
             recommendation = self.AdminRecommendation.query.get(recommendation_id)
             if not recommendation:
                 logger.warning(f"Recommendation not found for update: {recommendation_id}")
                 return None
-            
+
             # FIX: Safe updates with validation
             if 'recommendation_type' in data:
                 recommendation.recommendation_type = data['recommendation_type'] or 'general'
@@ -976,13 +1035,47 @@ class AdminService:
                 recommendation.description = data['description'] or ''
             if 'is_active' in data:
                 recommendation.is_active = data['is_active'] if data['is_active'] is not None else False
-            
+
+            # NEW: Update template data if provided
+            if 'template_data' in data and data['template_data']:
+                template_data = data['template_data']
+                
+                # Update template_type and template_data JSON
+                if 'selected_template' in template_data:
+                    if hasattr(recommendation, 'template_type'):
+                        recommendation.template_type = template_data['selected_template']
+                if 'template_fields' in template_data:
+                    if hasattr(recommendation, 'template_data'):
+                        recommendation.template_data = template_data['template_fields']
+                    
+                    # Update individual template field columns
+                    template_fields = template_data['template_fields']
+                    
+                    if 'hook' in template_fields and hasattr(recommendation, 'hook_text'):
+                        recommendation.hook_text = template_fields['hook'][:500] if template_fields['hook'] else None
+                    if 'if_you_like' in template_fields and hasattr(recommendation, 'if_you_like'):
+                        recommendation.if_you_like = template_fields['if_you_like'][:500] if template_fields['if_you_like'] else None
+                    if 'overview' in template_fields and hasattr(recommendation, 'custom_overview'):
+                        recommendation.custom_overview = template_fields['overview'][:1000] if template_fields['overview'] else None
+                    if 'emotion_hook' in template_fields and hasattr(recommendation, 'emotion_hook'):
+                        recommendation.emotion_hook = template_fields['emotion_hook'][:200] if template_fields['emotion_hook'] else None
+                    if 'caption' in template_fields and hasattr(recommendation, 'scene_caption'):
+                        recommendation.scene_caption = template_fields['caption'][:200] if template_fields['caption'] else None
+                    if 'list_title' in template_fields and hasattr(recommendation, 'list_title'):
+                        recommendation.list_title = template_fields['list_title'][:200] if template_fields['list_title'] else None
+                    if 'items' in template_fields and hasattr(recommendation, 'list_items'):
+                        recommendation.list_items = template_fields['items'] if template_fields['items'] else None
+                    
+                    # Update last template edit timestamp
+                    if hasattr(recommendation, 'last_template_edit'):
+                        recommendation.last_template_edit = datetime.utcnow()
+
             # Safe update of updated_at field
             if hasattr(recommendation, 'updated_at'):
                 recommendation.updated_at = datetime.utcnow()
-            
+
             self.db.session.commit()
-            
+
             if self.notification_service:
                 try:
                     content = self.Content.query.get(recommendation.content_id)
@@ -990,7 +1083,7 @@ class AdminService:
                     self.notification_service.create_notification(
                         NotificationType.CONTENT_ADDED,
                         f"Recommendation Updated",
-                        f"Admin {admin_user.username} updated recommendation for '{content_title}'",
+                        f"Admin {admin_user.username} updated recommendation for '{content_title}'\nTemplate fields updated: {len(data.get('template_data', {}).get('template_fields', {}))} fields",
                         admin_id=admin_user.id,
                         related_content_id=recommendation.content_id,
                         action_url=f"/admin/recommendations/{recommendation.id}",
@@ -998,12 +1091,13 @@ class AdminService:
                     )
                 except Exception as e:
                     logger.warning(f"Failed to create update notification: {e}")
-            
-            logger.info(f"✅ Recommendation updated: {recommendation.id} by {admin_user.username}")
+
+            logger.info(f"✅ Recommendation updated with template fields: {recommendation.id} by {admin_user.username}")
             return {
                 'success': True,
                 'message': 'Recommendation updated successfully',
-                'recommendation_id': recommendation.id
+                'recommendation_id': recommendation.id,
+                'template_fields_updated': len(data.get('template_data', {}).get('template_fields', {}))
             }
             
         except Exception as e:
@@ -1583,970 +1677,3 @@ def init_admin_service(app, db, models, services):
     except Exception as e:
         logger.error(f"❌ Failed to initialize admin service: {e}")
         return None
-
-
-
-5. # admin/telegram.py
-
-"""
-CineBrain Telegram Integration
-Premium cinematic messaging for intelligent movie discovery
-"""
-
-import os
-import json
-import logging
-import threading
-import time
-import telebot
-from datetime import datetime, timedelta
-from dotenv import load_dotenv
-from telebot import types
-from typing import Optional, List, Dict, Any
-
-load_dotenv()
-
-logger = logging.getLogger(__name__)
-
-# Telegram Configuration
-TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
-TELEGRAM_CHANNEL_ID = os.environ.get('TELEGRAM_CHANNEL_ID')
-TELEGRAM_ADMIN_CHAT_ID = os.environ.get('TELEGRAM_ADMIN_CHAT_ID')
-
-# Visual Constants
-DIVIDER = "━━━━━━━━━━━━━━━━━━━"
-CINEBRAIN_FOOTER = "<b><i>🎥 Recommended by CineBrain</i></b>"
-
-# Initialize bot
-bot = None
-if TELEGRAM_BOT_TOKEN:
-    try:
-        bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN, parse_mode='HTML')
-        logger.info("✅ Telegram bot initialized successfully")
-    except Exception as e:
-        logger.warning(f"Failed to initialize Telegram bot: {e}")
-        bot = None
-else:
-    logger.warning("TELEGRAM_BOT_TOKEN not set - Telegram notifications disabled")
-
-
-def cinebrain_tracking_url(slug: str, campaign: str, content: Optional[str] = None) -> str:
-    """
-    Generate CineBrain URL with UTM tracking parameters for Google Analytics
-    
-    @param slug: Content slug for the detail page
-    @param campaign: Campaign name (e.g., "movie_recommendation", "anime_recommendation")
-    @param content: Optional content identifier for more detailed tracking
-    @return: Full URL with tracking parameters
-    """
-    base = f"https://cinebrain.vercel.app/explore/details.html?{slug}"
-    utm = {
-        "utm_source": "telegram",
-        "utm_medium": "bot",
-        "utm_campaign": campaign,
-    }
-    if content:
-        utm["utm_content"] = content
-
-    params = "&".join([f"{k}={v}" for k, v in utm.items()])
-    return f"{base}&{params}"
-
-
-class TelegramTemplates:
-    """
-    Premium cinematic templates for CineBrain's Telegram channel
-    Every message is a mini movie poster in text form
-    """
-    
-    @staticmethod
-    def get_rating_display(rating: Optional[float]) -> str:
-        """Format rating display"""
-        if not rating:
-            return "N/A"
-        return f"{rating}/10"
-    
-    @staticmethod
-    def format_runtime(runtime: Optional[int]) -> Optional[str]:
-        """Format runtime into human-readable format"""
-        if not runtime:
-            return None
-        hours = runtime // 60
-        minutes = runtime % 60
-        if hours > 0:
-            return f"{hours}h {minutes}m"
-        return f"{minutes}m"
-    
-    @staticmethod
-    def format_genres(genres_list: Optional[List[str]], limit: int = 3) -> str:
-        """Format genres with bullet separator"""
-        if not genres_list:
-            return "Drama"
-        return " • ".join(genres_list[:limit])
-    
-    @staticmethod
-    def format_year(release_date: Any) -> str:
-        """Extract and format year from release date"""
-        if not release_date:
-            return ""
-        try:
-            if hasattr(release_date, 'year'):
-                return f" ({release_date.year})"
-            return f" ({str(release_date)[:4]})"
-        except:
-            return ""
-    
-    @staticmethod
-    def truncate_synopsis(text: Optional[str], limit: int = 150) -> str:
-        """Elegantly truncate synopsis at word boundary"""
-        if not text:
-            return "A cinematic experience awaits your discovery on CineBrain."
-        if len(text) <= limit:
-            return text
-        return text[:limit].rsplit(' ', 1)[0] + "..."
-    
-    @staticmethod
-    def get_content_type_prefix(content_type: str) -> str:
-        """Get content type prefix for templates"""
-        content_type_lower = content_type.lower()
-        
-        if content_type_lower == 'anime':
-            return "Anime:"
-        elif content_type_lower in ['tv', 'series', 'tv_show', 'tv-show']:
-            return "TV Show/Series:"
-        else:  # movie or any other type
-            return "Movie:"
-    
-    @staticmethod
-    def get_cinebrain_url(slug: str) -> str:
-        """
-        Generate CineBrain detail page URL
-        @deprecated Use cinebrain_tracking_url() for tracked URLs
-        """
-        return f"https://cinebrain.vercel.app/explore/details.html?{slug}"
-    
-    @staticmethod
-    def movie_recommendation_template(content: Any, admin_name: str, description: str, genres_list: Optional[List[str]] = None) -> str:
-        """
-        Premium movie recommendation with minimalist design
-        """
-        
-        # Parse genres if needed
-        if not genres_list and content.genres:
-            try:
-                genres_list = json.loads(content.genres)
-            except:
-                genres_list = []
-        
-        # Format components
-        content_prefix = TelegramTemplates.get_content_type_prefix(content.content_type)
-        year = TelegramTemplates.format_year(content.release_date)
-        rating = TelegramTemplates.get_rating_display(content.rating)
-        runtime = TelegramTemplates.format_runtime(content.runtime)
-        genres = TelegramTemplates.format_genres(genres_list)
-        synopsis = TelegramTemplates.truncate_synopsis(content.overview)
-        
-        # Build runtime display
-        runtime_str = f" | ⏱ {runtime}" if runtime else ""
-        
-        message = f"""<b>🎞️ {content_prefix} {content.title}{year}</b>
-<b>✨ Ratings:</b> {rating}{runtime_str}
-<b>🎭 Genre:</b> {genres}
-{DIVIDER}
-💬 <b>Synopsis</b>
-<blockquote><i>{synopsis}</i></blockquote>
-{DIVIDER}
-<i>🍿 Smart recommendations • Upcoming updates • Latest updates • New releases • Trending updates — visit <a href="https://cinebrain.vercel.app/">CineBrain</a></i>
-
-{CINEBRAIN_FOOTER}"""
-        
-        return message
-    
-    @staticmethod
-    def tv_show_recommendation_template(content: Any, admin_name: str, description: str, genres_list: Optional[List[str]] = None) -> str:
-        """
-        Premium TV series template with minimalist design
-        """
-        
-        # Parse genres if needed
-        if not genres_list and content.genres:
-            try:
-                genres_list = json.loads(content.genres)
-            except:
-                genres_list = []
-        
-        # Format components
-        content_prefix = TelegramTemplates.get_content_type_prefix(content.content_type)
-        year = TelegramTemplates.format_year(content.release_date)
-        rating = TelegramTemplates.get_rating_display(content.rating)
-        genres = TelegramTemplates.format_genres(genres_list)
-        synopsis = TelegramTemplates.truncate_synopsis(content.overview)
-        
-        # For TV shows, show seasons if available
-        runtime_str = ""
-        if hasattr(content, 'seasons') and content.seasons:
-            runtime_str = f" | ⏱ {content.seasons} Seasons"
-        
-        message = f"""<b>🎞️ {content_prefix} {content.title}{year}</b>
-<b>✨ Ratings:</b> {rating}{runtime_str}
-<b>🎭 Genre:</b> {genres}
-{DIVIDER}
-💬 <b>Synopsis</b>
-<blockquote><i>{synopsis}</i></blockquote>
-{DIVIDER}
-<i>🍿 Smart recommendations • Upcoming updates • Latest updates • New releases • Trending updates — visit <a href="https://cinebrain.vercel.app/">CineBrain</a></i>
-
-{CINEBRAIN_FOOTER}"""
-        
-        return message
-    
-    @staticmethod
-    def anime_recommendation_template(content: Any, admin_name: str, description: str, genres_list: Optional[List[str]] = None, anime_genres_list: Optional[List[str]] = None) -> str:
-        """
-        Premium anime template with minimalist design
-        """
-        
-        # Combine all genres
-        all_genres = []
-        if genres_list:
-            all_genres.extend(genres_list)
-        elif content.genres:
-            try:
-                all_genres.extend(json.loads(content.genres))
-            except:
-                pass
-        
-        if anime_genres_list:
-            all_genres.extend(anime_genres_list)
-        elif hasattr(content, 'anime_genres') and content.anime_genres:
-            try:
-                all_genres.extend(json.loads(content.anime_genres))
-            except:
-                pass
-        
-        # Format components
-        content_prefix = TelegramTemplates.get_content_type_prefix(content.content_type)
-        year = TelegramTemplates.format_year(content.release_date)
-        rating = TelegramTemplates.get_rating_display(content.rating)
-        genres = TelegramTemplates.format_genres(all_genres)
-        synopsis = TelegramTemplates.truncate_synopsis(content.overview)
-        
-        # For anime, show status if available
-        runtime_str = ""
-        if hasattr(content, 'status') and content.status:
-            runtime_str = f" | ⏱ {content.status}"
-        else:
-            runtime_str = " | ⏱ Ongoing"
-        
-        message = f"""<b>🎞️ {content_prefix} {content.title}{year}</b>
-<b>✨ Ratings:</b> {rating}{runtime_str}
-<b>🎭 Genre:</b> {genres}
-{DIVIDER}
-💬 <b>Synopsis</b>
-<blockquote><i>{synopsis}</i></blockquote>
-{DIVIDER}
-<i>🍿 Smart recommendations • Upcoming updates • Latest updates • New releases • Trending updates — visit <a href="https://cinebrain.vercel.app/">CineBrain</a></i>
-{CINEBRAIN_FOOTER}"""
-        
-        return message
-    
-    @staticmethod
-    def mind_bending_template(content: Any, admin_name: str, description: str, genres_list: Optional[List[str]] = None, overview: Optional[str] = None, if_you_like: Optional[str] = None) -> str:
-        """
-        🔥 Mind-bending movie template for confusing, reality-breaking, psychological, sci-fi, or twist movies
-        Use when: The movie is genius, underrated, brain-melting
-        
-        Fields: Title, Year, Genres, Rating, Runtime, Overview, If_you_like
-        """
-        # Parse genres if needed
-        if not genres_list and content.genres:
-            try:
-                genres_list = json.loads(content.genres)
-            except:
-                genres_list = []
-        
-        # Format components
-        content_prefix = TelegramTemplates.get_content_type_prefix(content.content_type)
-        year = TelegramTemplates.format_year(content.release_date)
-        rating = TelegramTemplates.get_rating_display(content.rating)
-        runtime = TelegramTemplates.format_runtime(content.runtime)
-        genres = TelegramTemplates.format_genres(genres_list, limit=3)
-        
-        # Use provided overview or fallback to content overview (2-3 sentences, mysterious)
-        overview_text = overview or TelegramTemplates.truncate_synopsis(content.overview, 200)
-        
-        # Runtime formatting for mind-bending template
-        runtime_str = f" • ⏱ {runtime}" if runtime else ""
-        
-        message = f"""🔥 <b>THIS MOVIE WILL MELT YOUR BRAIN</b>
-<b>{content_prefix} {content.title}{year}</b>
-<i>{genres} • ⭐ {rating}{runtime_str}</i>
-{DIVIDER}
-<b>Why this will break your reality:</b>
-<blockquote><i>{overview_text}</i></blockquote>
-• A concept that bends reality
-• A twist that rewrites the whole story
-{DIVIDER}"""
-        
-        # Add if_you_like section if provided (FIXED: proper line breaks)
-        if if_you_like:
-            message += f"\n<b>If you like:</b> {if_you_like}\n"
-        
-        message += f"""
-🔎 <i>More hidden gems — @cinebrain</i>
-<i>🧠 CineBrain — Hidden Gems • Mind-Bending Sci-Fi • Rare Anime</i>
-
-{CINEBRAIN_FOOTER}"""
-        
-        return message
-    
-    @staticmethod
-    def hidden_gem_template(content: Any, admin_name: str, description: str, genres_list: Optional[List[str]] = None, hook: Optional[str] = None, if_you_like: Optional[str] = None) -> str:
-        """
-        💎 Hidden gem template for underrated or lesser-known movies/series
-        Use when: Movies are not mainstream but excellent
-        
-        Fields: Title, Year, Genres, Rating, Hook/catch-line, If_you_like (optional)
-        """
-        # Parse genres if needed
-        if not genres_list and content.genres:
-            try:
-                genres_list = json.loads(content.genres)
-            except:
-                genres_list = []
-        
-        # Format components
-        content_prefix = TelegramTemplates.get_content_type_prefix(content.content_type)
-        year = TelegramTemplates.format_year(content.release_date)
-        rating = TelegramTemplates.get_rating_display(content.rating)
-        genres = TelegramTemplates.format_genres(genres_list, limit=3)
-        
-        # Hook: 1-2 lines, "why nobody talks about this" feel
-        hook_text = hook or "A beautifully crafted gem buried under the algorithm."
-        
-        message = f"""💎 <b>Hidden Gem — {content_prefix} {content.title}{year}</b>
-<i>{genres} • ⭐ {rating}</i>
-
-{hook_text}"""
-        
-        # Add optional if_you_like section (FIXED: proper formatting)
-        if if_you_like:
-            message += f"\n\n<b>If you like:</b> {if_you_like}"
-        
-        message += f"""
-
-🔎 <i>More hidden gems — @cinebrain</i>
-<i>🧠 CineBrain — Hidden Gems • Mind-Bending Sci-Fi • Rare Anime</i>
-
-{CINEBRAIN_FOOTER}"""
-        
-        return message
-    
-    @staticmethod
-    def anime_gem_template(content: Any, admin_name: str, description: str, genres_list: Optional[List[str]] = None, anime_genres_list: Optional[List[str]] = None, overview: Optional[str] = None, emotion_hook: Optional[str] = None) -> str:
-        """
-        🎐 Anime gem template for emotional, psychological, sci-fi, or plot-heavy anime
-        Use when: The anime has depth, philosophy, or a big emotional theme
-        
-        Fields: Title, Year, Genres, Status, Rating, Overview, Emotion_hook
-        """
-        # Combine all genres (2-4 combined genres)
-        all_genres = []
-        if genres_list:
-            all_genres.extend(genres_list)
-        elif content.genres:
-            try:
-                all_genres.extend(json.loads(content.genres))
-            except:
-                pass
-        
-        if anime_genres_list:
-            all_genres.extend(anime_genres_list)
-        elif hasattr(content, 'anime_genres') and content.anime_genres:
-            try:
-                all_genres.extend(json.loads(content.anime_genres))
-            except:
-                pass
-        
-        # Format components
-        content_prefix = TelegramTemplates.get_content_type_prefix(content.content_type)
-        year = TelegramTemplates.format_year(content.release_date)
-        rating = TelegramTemplates.get_rating_display(content.rating)
-        genres = TelegramTemplates.format_genres(all_genres, limit=4)
-        
-        # Status: Completed or Ongoing
-        status = "Completed"
-        if hasattr(content, 'status') and content.status:
-            status = content.status
-        elif hasattr(content, 'release_date') and content.release_date:
-            # Simple heuristic: if recent, probably ongoing
-            from datetime import datetime, timedelta
-            if content.release_date > datetime.now().date() - timedelta(days=365):
-                status = "Ongoing"
-        
-        # Overview: 2-3 lines, emotional and philosophical core, focus on themes not plot
-        overview_text = overview or TelegramTemplates.truncate_synopsis(content.overview, 180)
-        
-        # Emotion_hook: 1 strong emotional line
-        emotion_hook_text = emotion_hook or "A time-loop tragedy that hits harder the more you think about it."
-        
-        message = f"""🔥 <b>THIS ANIME WILL BLOW YOUR MIND</b>
-🎐 <b>Anime Gem — {content_prefix} {content.title}{year}</b>
-<i>{genres} • {status} • ⭐ {rating}</i>
-{DIVIDER}
-<b>Why this hits hard:</b>
-<blockquote><i>{overview_text}</i></blockquote>
-• {emotion_hook_text}
-{DIVIDER}
-🔎 <i>More rare anime — @cinebrain</i>
-<i>🧠 CineBrain — Hidden Gems • Mind-Bending Sci-Fi • Rare Anime</i>
-
-{CINEBRAIN_FOOTER}"""
-        
-        return message
-    
-    @staticmethod
-    def top_list_template(list_title: str, items: List[tuple], admin_name: str = "", description: str = "", poster_url: Optional[str] = None) -> str:
-        """
-        🧠 Top-list template for list-style posts (Top 5, Top 10)
-        Use when: You want a viral post full of mini recommendations
-        
-        Fields per item: Movie Title, Year, Hook (short, punchy)
-        Max: 5-10 items
-        List Title: catchy and niche-based
-        """
-        # Limit to 10 items MAX as specified
-        limited_items = items[:10]
-        
-        # Build numbered list with short, punchy hooks
-        body = "\n".join([
-            f"{i+1}. <b>{title}</b> ({year}) — {hook}"
-            for i, (title, year, hook) in enumerate(limited_items)
-        ])
-        
-        message = f"""🧠 <b>{list_title}</b>
-
-{body}
-{DIVIDER}
-📌 <i>Save this list — @cinebrain</i>
-<i>🧠 CineBrain — Hidden Gems • Mind-Bending Sci-Fi • Rare Anime</i>
-
-{CINEBRAIN_FOOTER}"""
-        
-        return message
-    
-    @staticmethod
-    def scene_clip_template(content: Any, admin_name: str, description: str, caption: str, genres_list: Optional[List[str]] = None) -> str:
-        """
-        🎥 Scene clip template for posting a clip/video from a movie or anime
-        Use when: You upload a 10-30 sec clip to Telegram
-        
-        Fields: Caption, Title, Year, Genres
-        Caption: punchy line creating curiosity
-        Keep minimal because video is main attraction
-        NO POSTER SUPPORT - video is the main media
-        """
-        # Parse genres if needed (2-3 genres that define the tone)
-        if not genres_list and content.genres:
-            try:
-                genres_list = json.loads(content.genres)
-            except:
-                genres_list = []
-        
-        # Format components
-        content_prefix = TelegramTemplates.get_content_type_prefix(content.content_type)
-        year = TelegramTemplates.format_year(content.release_date)
-        genres = TelegramTemplates.format_genres(genres_list, limit=3)
-        
-        # Caption: punchy line creating curiosity
-        caption_text = caption or "This scene will hook you instantly"
-        
-        message = f"""<b>{caption_text}</b>
-🎥 <b>{content_prefix} {content.title}{year}</b>
-<i>{genres}</i>
-{DIVIDER}
-⚡ Watch the clip above.
-If this hooks you, the full movie will blow your mind.
-
-🔎 <i>More scenes — @cinebrain</i>
-<i>🧠 CineBrain — Hidden Gems • Mind-Bending Sci-Fi • Rare Anime</i>
-
-{CINEBRAIN_FOOTER}"""
-        
-        return message
-    
-    @staticmethod
-    def get_template_prompts() -> Dict[str, Dict[str, str]]:
-        """
-        Get template prompts for AI content generation or admin guidance
-        """
-        return {
-            'mind_bending': {
-                'purpose': 'For movies that are confusing, reality-breaking, psychological, sci-fi, or have a big twist.',
-                'use_when': 'The movie is genius, underrated, brain-melting.',
-                'poster_support': True,
-                'prompt': '''Generate a mind-bending movie recommendation.
-Fill these fields with strong, intense, viral-quality text:
-• Title: The exact movie title
-• Year: The release year in brackets (example: (2013))
-• Genres: 2–3 genres (example: Sci-Fi • Thriller • Mystery)
-• Rating: IMDb or TMDB rating like 7.6/10
-• Runtime: Format inside (⏱ 1h 32m)
-• Overview: 2–3 sentences, mysterious, raise questions, never spoil twists
-• If_you_like: 2–4 similar brain-breaking movies (example: Inception, Dark, Predestination)
-Make the overview gripping, non-generic, focused on tension, confusion, and mystery.'''
-            },
-            'hidden_gem': {
-                'purpose': 'For underrated or lesser-known movies/series.',
-                'use_when': 'Movies are not mainstream but excellent.',
-                'poster_support': True,
-                'prompt': '''Generate a hidden gem recommendation.
-Fill these fields with sharp, concise descriptions:
-• Title: Movie title
-• Year: Release year in brackets
-• Genres: 2–3 max
-• Rating: IMDb or TMDB rating
-• Hook/catch-line: 1–2 lines, "why nobody talks about this" feel
-• If_you_like (optional): 2–3 movies with similar tone
-The hook must be extremely catchy. Avoid long explanations. Focus on uniqueness, vibe, style.'''
-            },
-            'anime_gem': {
-                'purpose': 'For emotional, psychological, sci-fi, or plot-heavy anime.',
-                'use_when': 'The anime has depth, philosophy, or a big emotional theme.',
-                'poster_support': True,
-                'prompt': '''Generate an anime gem recommendation.
-Fill these fields with emotional and engaging detail:
-• Title: Name of the anime
-• Year: Release year in brackets
-• Genres: 2–4 combined genres
-• Status: Completed or Ongoing
-• Rating: Anime rating (MyAnimeList / TMDB)
-• Overview: 2–3 lines, emotional and philosophical core, focus on themes not plot
-• Emotion_hook: 1 strong emotional line (example: "A time-loop tragedy that hits harder the more you think about it.")
-Make the tone emotional, powerful, and intense.'''
-            },
-            'top_list': {
-                'purpose': 'For list-style posts (Top 5, Top 10).',
-                'use_when': 'You want a viral post full of mini recommendations.',
-                'poster_support': True,
-                'prompt': '''Generate a top-list for CineBrain.
-Fill each item with:
-• Movie Title
-• Year  
-• Hook (example: "A mind-bending paradox that will fry your brain")
-Provide 5–10 items MAX. Hooks should be short, punchy, and scroll-stopping.
-Also provide:
-• List Title: Make it catchy and niche-based
-Examples: "Top 5 Mind-Bending Sci-Fi Gems", "Top 7 Psychological Thrillers You Missed"
-No long paragraphs. Just title + year + short hook.'''
-            },
-            'scene_clip': {
-                'purpose': 'For posting a clip/video from a movie or anime.',
-                'use_when': 'You upload a 10–30 sec clip to Telegram.',
-                'poster_support': False,
-                'prompt': '''Generate text for a scene-clip post.
-Fill these fields:
-• Caption: A punchy line creating curiosity (example: "This scene will hook you instantly")
-• Title: Movie or Anime title
-• Year: Release year in brackets
-• Genres: 2–3 genres that define the tone
-The tone must be exciting and suspenseful. Keep text minimal because video is main attraction.'''
-            }
-        }
-    
-    @staticmethod
-    def get_available_templates() -> Dict[str, str]:
-        """
-        Get list of available templates for frontend selection
-        """
-        return {
-            'standard_movie': 'Standard Movie Recommendation',
-            'standard_tv': 'Standard TV Show Recommendation', 
-            'standard_anime': 'Standard Anime Recommendation',
-            'mind_bending': '🔥 Mind-Bending Movie',
-            'hidden_gem': '💎 Hidden Gem',
-            'anime_gem': '🎐 Anime Gem',
-            'top_list': '🧠 Top List/Curation',
-            'scene_clip': '🎥 Scene Clip with Video'
-        }
-    
-    @staticmethod
-    def get_template_fields(template_type: str) -> Dict[str, Any]:
-        """
-        Get required fields for each template type
-        """
-        field_definitions = {
-            'mind_bending': {
-                'required': ['title', 'year', 'genres', 'rating', 'runtime', 'overview'],
-                'optional': ['if_you_like'],
-                'poster_support': True,
-                'field_specs': {
-                    'genres': '2-3 genres (Sci-Fi • Thriller • Mystery)',
-                    'overview': '2-3 sentences, mysterious, never spoil twists',
-                    'if_you_like': '2-4 similar brain-breaking movies'
-                }
-            },
-            'hidden_gem': {
-                'required': ['title', 'year', 'genres', 'rating', 'hook'],
-                'optional': ['if_you_like'],
-                'poster_support': True,
-                'field_specs': {
-                    'genres': '2-3 genres max',
-                    'hook': '1-2 lines, "why nobody talks about this" feel',
-                    'if_you_like': '2-3 movies with similar tone'
-                }
-            },
-            'anime_gem': {
-                'required': ['title', 'year', 'genres', 'status', 'rating', 'overview', 'emotion_hook'],
-                'optional': [],
-                'poster_support': True,
-                'field_specs': {
-                    'genres': '2-4 combined genres',
-                    'status': 'Completed or Ongoing',
-                    'overview': '2-3 lines, emotional/philosophical core, themes not plot',
-                    'emotion_hook': '1 strong emotional line'
-                }
-            },
-            'top_list': {
-                'required': ['list_title', 'items'],
-                'optional': ['poster_url'],
-                'poster_support': True,
-                'field_specs': {
-                    'list_title': 'Catchy and niche-based',
-                    'items': '5-10 items MAX, each with title, year, short punchy hook',
-                    'poster_url': 'Optional custom poster for the list'
-                }
-            },
-            'scene_clip': {
-                'required': ['caption', 'title', 'year', 'genres'],
-                'optional': [],
-                'poster_support': False,
-                'field_specs': {
-                    'caption': 'Punchy line creating curiosity',
-                    'genres': '2-3 genres that define the tone'
-                }
-            }
-        }
-        
-        return field_definitions.get(template_type, {})
-    
-    @staticmethod
-    def render_template(template_type: str, content: Any = None, admin_name: str = "", description: str = "", **kwargs) -> str:
-        """
-        Dynamic template renderer for frontend integration
-        
-        @param template_type: Template identifier
-        @param content: Content object
-        @param admin_name: Admin name
-        @param description: Description/hook text
-        @param kwargs: Additional template-specific parameters
-        """
-        template_map = {
-            'standard_movie': TelegramTemplates.movie_recommendation_template,
-            'standard_tv': TelegramTemplates.tv_show_recommendation_template,
-            'standard_anime': TelegramTemplates.anime_recommendation_template,
-            'mind_bending': TelegramTemplates.mind_bending_template,
-            'hidden_gem': TelegramTemplates.hidden_gem_template,
-            'anime_gem': TelegramTemplates.anime_gem_template,
-            'scene_clip': TelegramTemplates.scene_clip_template
-        }
-        
-        if template_type == 'top_list':
-            return TelegramTemplates.top_list_template(
-                kwargs.get('list_title', 'Curated List'),
-                kwargs.get('items', []),
-                admin_name,
-                description,
-                kwargs.get('poster_url')
-            )
-        
-        template_func = template_map.get(template_type)
-        if not template_func:
-            # Fallback to standard template based on content type
-            if content and content.content_type == 'anime':
-                template_func = TelegramTemplates.anime_recommendation_template
-            elif content and content.content_type in ['tv', 'series']:
-                template_func = TelegramTemplates.tv_show_recommendation_template
-            else:
-                template_func = TelegramTemplates.movie_recommendation_template
-        
-        return template_func(content, admin_name, description, **kwargs)
-
-
-class TelegramService:
-    """
-    Service for sending beautifully formatted Telegram notifications
-    Handles all public channel communications
-    """
-    
-    @staticmethod
-    def send_admin_recommendation(content: Any, admin_name: str, description: str, template_type: str = 'auto', template_params: Dict = None) -> bool:
-        """
-        Send admin-curated recommendation with selectable template
-        
-        @param content: Content object with movie/show details
-        @param admin_name: Name of the admin making recommendation
-        @param description: CineBrain Insight text
-        @param template_type: Template to use ('auto' for automatic selection)
-        @param template_params: Additional parameters for specific templates
-        @return: Success status
-        """
-        try:
-            if not bot or not TELEGRAM_CHANNEL_ID:
-                logger.warning("Telegram recommendation skipped - channel not configured")
-                return False
-            
-            template_params = template_params or {}
-            
-            # Auto-select template if not specified
-            if template_type == 'auto':
-                if content and content.content_type == 'anime':
-                    template_type = 'standard_anime'
-                elif content and content.content_type in ['tv', 'series']:
-                    template_type = 'standard_tv'
-                else:
-                    template_type = 'standard_movie'
-            
-            # Check if template supports posters
-            template_info = TelegramTemplates.get_template_fields(template_type)
-            poster_support = template_info.get('poster_support', True)
-            
-            # Special handling for list template (no content object needed)
-            if template_type == 'top_list':
-                message = TelegramTemplates.top_list_template(
-                    template_params.get('list_title', 'Curated List'),
-                    template_params.get('items', []),
-                    admin_name,
-                    description,
-                    template_params.get('poster_url')
-                )
-                poster_url = template_params.get('poster_url')
-            else:
-                # Render the selected template
-                message = TelegramTemplates.render_template(
-                    template_type, 
-                    content, 
-                    admin_name, 
-                    description,
-                    **template_params
-                )
-                
-                # Get poster URL from content only if template supports it
-                poster_url = None
-                if poster_support and content and content.poster_path:
-                    if content.poster_path.startswith('http'):
-                        poster_url = content.poster_path
-                    else:
-                        poster_url = f"https://image.tmdb.org/t/p/w500{content.poster_path}"
-            
-            # Create inline keyboard with buttons SIDE BY SIDE
-            keyboard = types.InlineKeyboardMarkup(row_width=2)
-            
-            buttons = []
-            
-            # Add Details button for content-based templates
-            if template_type != 'top_list' and content and hasattr(content, 'slug') and content.slug:
-                campaign_type = f"{content.content_type}_recommendation"
-                content_identifier = content.slug.replace('-', '_')
-                
-                detail_url = cinebrain_tracking_url(
-                    content.slug, 
-                    campaign_type, 
-                    content_identifier
-                )
-                
-                details_btn = types.InlineKeyboardButton(
-                    text="Full Details",
-                    url=detail_url
-                )
-                buttons.append(details_btn)
-            
-            # Always add explore button
-            explore_btn = types.InlineKeyboardButton(
-                text="Explore More",
-                url=f"https://cinebrain.vercel.app/?utm_source=telegram&utm_medium=bot&utm_campaign=recommendation&utm_content=explore_more"
-            )
-            buttons.append(explore_btn)
-            
-            # Add buttons in a single row (side by side)
-            if len(buttons) == 2:
-                keyboard.row(buttons[0], buttons[1])  # Side by side
-            elif len(buttons) == 1:
-                keyboard.add(buttons[0])  # Single button
-            
-            # Send message with or without poster based on template support
-            if poster_url and poster_support and template_type != 'scene_clip':
-                try:
-                    bot.send_photo(
-                        chat_id=TELEGRAM_CHANNEL_ID,
-                        photo=poster_url,
-                        caption=message,
-                        parse_mode='HTML',
-                        reply_markup=keyboard
-                    )
-                    logger.info(f"✅ {template_type} recommendation with poster sent: {content.title if content else 'List'}")
-                except Exception as e:
-                    logger.error(f"Photo send failed: {e}, sending text only")
-                    bot.send_message(
-                        chat_id=TELEGRAM_CHANNEL_ID,
-                        text=message,
-                        parse_mode='HTML',
-                        reply_markup=keyboard
-                    )
-                    logger.info(f"✅ {template_type} recommendation sent (text only): {content.title if content else 'List'}")
-            else:
-                bot.send_message(
-                    chat_id=TELEGRAM_CHANNEL_ID,
-                    text=message,
-                    parse_mode='HTML',
-                    reply_markup=keyboard
-                )
-                logger.info(f"✅ {template_type} recommendation sent: {content.title if content else 'List'}")
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ Telegram send error: {e}")
-            return False
-
-
-class TelegramAdminService:
-    """
-    Admin notification service for internal updates
-    Handles admin-only communications
-    """
-    
-    @staticmethod
-    def send_content_notification(content_title: str, admin_name: str, action_type: str = "added") -> bool:
-        """
-        Send admin action notification to admin chat
-        
-        @param content_title: Title of the content
-        @param admin_name: Admin who performed action
-        @param action_type: Type of action performed
-        @return: Success status
-        """
-        try:
-            if not bot or not TELEGRAM_ADMIN_CHAT_ID:
-                return False
-            
-            action_emoji = {
-                'added': '➕',
-                'updated': '✏️',
-                'deleted': '🗑️',
-                'recommended': '⭐'
-            }.get(action_type, '📝')
-            
-            message = f"""{action_emoji} <b>Admin Action</b>
-{DIVIDER}
-
-<b>Content:</b> {content_title}
-<b>Admin:</b> {admin_name}
-<b>Action:</b> {action_type.upper()}
-<b>Time:</b> {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}
-
-{DIVIDER}
-#AdminAction #CineBrain"""
-            
-            bot.send_message(
-                chat_id=TELEGRAM_ADMIN_CHAT_ID,
-                text=message,
-                parse_mode='HTML'
-            )
-            
-            logger.info(f"✅ Admin notification sent: {action_type} - {content_title}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ Admin notification error: {e}")
-            return False
-    
-    @staticmethod
-    def send_recommendation_stats(stats_data: Dict[str, Any]) -> bool:
-        """
-        Send recommendation statistics to admin chat
-        
-        @param stats_data: Dictionary containing stats
-        @return: Success status
-        """
-        try:
-            if not bot or not TELEGRAM_ADMIN_CHAT_ID:
-                return False
-            
-            message = f"""📊 <b>CineBrain Analytics</b>
-{DIVIDER}
-<b>📈 Recommendation Overview</b>
-• Total Recommendations: <b>{stats_data.get('total', 0):,}</b>
-• This Week: <b>{stats_data.get('this_week', 0):,}</b>
-• Top Admin: <b>{stats_data.get('top_admin', 'N/A')}</b>
-• Top Genre: <b>{stats_data.get('top_genre', 'N/A')}</b>
-
-<b>🎯 Engagement Metrics</b>
-• Total Views: <b>{stats_data.get('views', 0):,}</b>
-• Total Clicks: <b>{stats_data.get('clicks', 0):,}</b>
-• Click-Through Rate: <b>{stats_data.get('ctr', 0):.2f}%</b>
-• Avg. Engagement: <b>{stats_data.get('avg_engagement', 0):.1f}%</b>
-{DIVIDER}
-<i>Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}</i>
-
-#Analytics #CineBrain"""
-            
-            bot.send_message(
-                chat_id=TELEGRAM_ADMIN_CHAT_ID,
-                text=message,
-                parse_mode='HTML'
-            )
-            
-            logger.info("✅ Analytics stats sent to admin")
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ Stats notification error: {e}")
-            return False
-
-
-def init_telegram_service(app, db, models, services) -> Optional[Dict[str, Any]]:
-    """
-    Initialize Telegram service with all components
-    
-    @param app: Flask application instance
-    @param db: Database instance
-    @param models: Database models
-    @param services: Service dependencies
-    @return: Dictionary of initialized services or None
-    """
-    try:
-        if bot:
-            logger.info("✅ CineBrain Telegram service initialized successfully")
-            logger.info("   ├─ Content type prefixes: ✓")
-            logger.info("   ├─ Poster support (all except scene_clip): ✓")
-            logger.info("   ├─ 5 custom templates: ✓")
-            logger.info("   ├─ Fixed button layout (side by side): ✓")
-            logger.info("   ├─ Fixed divider formatting: ✓")
-            logger.info("   ├─ Mobile-optimized layouts: ✓")
-            logger.info("   ├─ Google Analytics tracking: ✓")
-            logger.info("   ├─ Content recommendations: ✓")
-            logger.info("   └─ Admin notifications: ✓")
-        else:
-            logger.warning("⚠️ Telegram bot not configured - service disabled")
-            logger.warning("   Set TELEGRAM_BOT_TOKEN to enable Telegram features")
-        
-        return {
-            'telegram_service': TelegramService,
-            'telegram_admin_service': TelegramAdminService,
-            'telegram_templates': TelegramTemplates,
-            'cinebrain_tracking_url': cinebrain_tracking_url
-        }
-        
-    except Exception as e:
-        logger.error(f"❌ Telegram initialization failed: {e}")
-        return None
-
-
-# Export public API
-__all__ = [
-    'TelegramTemplates',
-    'TelegramService', 
-    'TelegramAdminService',
-    'cinebrain_tracking_url',
-    'init_telegram_service'
-]

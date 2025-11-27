@@ -106,16 +106,23 @@ class ContactService:
             self.db.session.add(contact_message)
             self.db.session.commit()
             
+            # Get the timestamp for response
+            submitted_at = contact_message.created_at
+            formatted_time = submitted_at.strftime('%Y-%m-%d at %H:%M UTC')
+            
             # Send notifications
             self._send_user_confirmation(data)
             self._send_admin_notification_enhanced(contact_message, data)
             
-            logger.info(f"✅ Contact form submitted by {data['email']}")
+            logger.info(f"✅ Contact form submitted by {data['email']} at {formatted_time}")
             
             return jsonify({
                 'success': True,
                 'message': 'Thank you for your message! We will get back to you soon.',
-                'contact_id': contact_message.id
+                'contact_id': contact_message.id,
+                'submitted_at': submitted_at.isoformat(),
+                'submitted_time': formatted_time,
+                'reference_number': f"CB-CONTACT-{contact_message.id:06d}"
             }), 201
             
         except Exception as e:
