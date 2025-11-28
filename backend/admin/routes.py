@@ -1,11 +1,14 @@
 # admin/routes.py
 
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, Response
 from datetime import datetime, timedelta
 import json
 import logging
 import jwt
 from functools import wraps
+
+# Import the user service
+from .users import init_user_service
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +18,7 @@ admin_bp = Blueprint('admin', __name__)
 admin_service = None
 dashboard_service = None
 telegram_service = None
+user_service = None
 app = None
 db = None
 User = None
@@ -1019,22 +1023,213 @@ def quick_reply_contact(current_user, contact_id):
 
 @admin_bp.route('/api/admin/users', methods=['GET'])
 @require_admin
-def get_users_management(current_user):
-    """Get users management data"""
+def get_users_list(current_user):
+    """Get paginated, filtered, and sorted user list"""
     try:
+        if not user_service:
+            return jsonify({'error': 'User management service not available'}), 503
+        
+        # Get query parameters
         page = int(request.args.get('page', 1))
-        per_page = int(request.args.get('per_page', 20))
-        search = request.args.get('search', '')
+        per_page = int(request.args.get('per_page', 25))
+        sort_by = request.args.get('sort_by', 'created_at')
+        sort_direction = request.args.get('sort_direction', 'desc')
         
-        if not dashboard_service:
-            return jsonify({'error': 'Dashboard service not available'}), 503
+        # Get filters
+        filters = {
+            'status': request.args.get('status', ''),
+            'role': request.args.get('role', ''),
+            'registration': request.args.get('registration', ''),
+            'search': request.args.get('search', '')
+        }
         
-        users_data = dashboard_service.get_users_management(page, per_page, search)
-        return jsonify(users_data), 200
+        # Remove empty filters
+        filters = {k: v for k, v in filters.items() if v}
+        
+        result = user_service.get_users_list(
+            page=page,
+            per_page=per_page,
+            sort_by=sort_by,
+            sort_direction=sort_direction,
+            filters=filters
+        )
+        
+        return jsonify(result), 200 if result['success'] else 400
         
     except Exception as e:
-        logger.error(f"Users management error: {e}")
-        return jsonify({'error': 'Failed to get users'}), 500
+        logger.error(f"Get users list error: {e}")
+        return jsonify({'success': False, 'error': 'Failed to get users list'}), 500
+
+@admin_bp.route('/api/admin/users/statistics', methods=['GET'])
+@require_admin
+def get_user_statistics(current_user):
+    """Get comprehensive user statistics"""
+    try:
+        if not user_service:
+            return jsonify({'error': 'User management service not available'}), 503
+        
+        timeframe = request.args.get('timeframe', 'week')
+        result = user_service.get_user_statistics(timeframe)
+        
+        return jsonify(result), 200 if result['success'] else 400
+        
+    except Exception as e:
+        logger.error(f"Get user statistics error: {e}")
+        return jsonify({'success': False, 'error': 'Failed to get user statistics'}), 500
+
+@admin_bp.route('/api/admin/users/analytics', methods=['GET'])
+@require_admin
+def get_user_analytics(current_user):
+    """Get detailed user analytics with activity trends"""
+    try:
+        if not user_service:
+            return jsonify({'error': 'User management service not available'}), 503
+        
+        period = request.args.get('period', '30d')
+        result = user_service.get_user_analytics(period)
+        
+        return jsonify(result), 200 if result['success'] else 400
+        
+    except Exception as e:
+        logger.error(f"Get user analytics error: {e}")
+        return jsonify({'success': False, 'error': 'Failed to get user analytics'}), 500
+
+@admin_bp.route('/api/admin/users/<int:user_id>', methods=['GET'])
+@require_admin
+def get_user_details(current_user, user_id):
+    """Get comprehensive details for a specific user"""
+    try:
+        if not user_service:
+            return jsonify({'error': 'User management service not available'}), 503
+        
+        result = user_service.get_user_details(user_id)
+        
+        return jsonify(result), 200 if result['success'] else 404
+        
+    except Exception as e:
+        logger.error(f"Get user details error: {e}")
+        return jsonify({'success': False, 'error': 'Failed to get user details'}), 500
+
+@admin_bp.route('/api/admin/users/<int:user_id>', methods=['PUT'])
+@require_admin
+def update_user(current_user, user_id):
+    """Update user information"""
+    try:
+        if not user_service:
+            return jsonify({'error': 'User management service not available'}), 503
+        
+        data = request.get_json()
+        if not data:
+            return jsonify({'success': False, 'error': 'No data provided'}), 400
+        
+        result = user_service.update_user(user_id, current_user, data)
+        
+        return jsonify(result), 200 if result['success'] else 400
+        
+    except Exception as e:
+        logger.error(f"Update user error: {e}")
+        return jsonify({'success': False, 'error': 'Failed to update user'}), 500
+
+@admin_bp.route('/api/admin/users/<int:user_id>/status', methods=['PUT'])
+@require_admin
+def toggle_user_status(current_user, user_id):
+    """Toggle user status (suspend/activate)"""
+    try:
+        if not user_service:
+            return jsonify({'error': 'User management service not available'}), 503
+        
+        data = request.get_json()
+        action = data.get('action') if data else None
+        
+        if not action or action not in ['suspend', 'activate']:
+            return jsonify({'success': False, 'error': 'Invalid action'}), 400
+        
+        result = user_service.toggle_user_status(user_id, current_user, action)
+        
+        return jsonify(result), 200 if result['success'] else 400
+        
+    except Exception as e:
+        logger.error(f"Toggle user status error: {e}")
+        return jsonify({'success': False, 'error': 'Failed to toggle user status'}), 500
+
+@admin_bp.route('/api/admin/users/bulk', methods=['POST'])
+@require_admin
+def bulk_user_operation(current_user):
+    """Perform bulk operations on multiple users"""
+    try:
+        if not user_service:
+            return jsonify({'error': 'User management service not available'}), 503
+        
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({'success': False, 'error': 'No data provided'}), 400
+        
+        action = data.get('action')
+        user_ids = data.get('user_ids', [])
+        
+        if not action or action not in ['suspend', 'activate', 'delete']:
+            return jsonify({'success': False, 'error': 'Invalid action'}), 400
+        
+        if not user_ids or not isinstance(user_ids, list):
+            return jsonify({'success': False, 'error': 'Invalid user IDs'}), 400
+        
+        result = user_service.bulk_user_operation(current_user, action, user_ids)
+        
+        return jsonify(result), 200 if result['success'] else 400
+        
+    except Exception as e:
+        logger.error(f"Bulk user operation error: {e}")
+        return jsonify({'success': False, 'error': 'Failed to perform bulk operation'}), 500
+
+@admin_bp.route('/api/admin/users/export', methods=['GET'])
+@require_admin
+def export_users(current_user):
+    """Export users data in specified format"""
+    try:
+        if not user_service:
+            return jsonify({'error': 'User management service not available'}), 503
+        
+        # Get export parameters
+        format = request.args.get('format', 'csv')
+        
+        # Get filters
+        filters = {
+            'status': request.args.get('status', ''),
+            'role': request.args.get('role', ''),
+            'registration': request.args.get('registration', ''),
+            'search': request.args.get('search', '')
+        }
+        
+        # Remove empty filters
+        filters = {k: v for k, v in filters.items() if v}
+        
+        # Export data
+        file_data, filename, mimetype = user_service.export_users(filters, format)
+        
+        # Create response
+        if format == 'csv':
+            response = Response(
+                file_data.getvalue(),
+                mimetype=mimetype,
+                headers={
+                    'Content-Disposition': f'attachment; filename={filename}'
+                }
+            )
+        else:
+            response = Response(
+                file_data,
+                mimetype=mimetype,
+                headers={
+                    'Content-Disposition': f'attachment; filename={filename}'
+                }
+            )
+        
+        return response
+        
+    except Exception as e:
+        logger.error(f"Export users error: {e}")
+        return jsonify({'success': False, 'error': 'Failed to export users'}), 500
 
 # =============================================================================
 # EMAIL PREFERENCES ROUTES
@@ -1304,6 +1499,7 @@ def get_services_status(current_user):
             'admin_service': 'available' if admin_service else 'unavailable',
             'dashboard_service': 'available' if dashboard_service else 'unavailable',
             'telegram_service': 'available' if telegram_service else 'unavailable',
+            'user_service': 'available' if user_service else 'unavailable',
             'database': 'connected' if db else 'disconnected',
             'cache': 'available' if cache else 'unavailable',
             'email_preferences': 'available' if AdminEmailPreferences else 'unavailable',
@@ -1365,7 +1561,7 @@ def after_request(response):
 
 def init_admin_routes(flask_app, database, models, services):
     """Initialize admin routes with dependencies"""
-    global admin_service, dashboard_service, telegram_service
+    global admin_service, dashboard_service, telegram_service, user_service
     global app, db, User, Content, UserInteraction, AdminRecommendation, AdminEmailPreferences
     global SupportTicket, ContactMessage, IssueReport, SupportCategory, TicketActivity, cache
     
@@ -1394,10 +1590,19 @@ def init_admin_routes(flask_app, database, models, services):
         dashboard_service = init_dashboard_service(app, db, models, services)
         telegram_service = init_telegram_service(app, db, models, services)
         
+        # Initialize user management service
+        try:
+            user_service = init_user_service(app, db, models, services)
+            logger.info(f"   - User management service: {'✓' if user_service else '✗'}")
+        except Exception as e:
+            logger.error(f"Failed to initialize user management service: {e}")
+            user_service = None
+        
         logger.info("✅ Admin routes initialized successfully")
         logger.info(f"   - Admin service: {'✓' if admin_service else '✗'}")
         logger.info(f"   - Dashboard service: {'✓' if dashboard_service else '✗'}")
         logger.info(f"   - Telegram service: {'✓' if telegram_service else '✗'}")
+        logger.info(f"   - User management routes: ✓")
         logger.info(f"   - Email preferences: {'✓' if AdminEmailPreferences else '✗'}")
         logger.info(f"   - Support integration: {'✓' if SupportTicket and ContactMessage and IssueReport else '✗'}")
         logger.info(f"   - 4 Real-time monitoring endpoints: ✓")
