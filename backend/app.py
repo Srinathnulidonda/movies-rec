@@ -217,20 +217,39 @@ def auth_required(f):
     
     return decorated_function
 
-# Database Models - Enhanced with Admin Viewing Support
+# Database Models
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
     email = db.Column(db.String(120), unique=True, nullable=False)
     password_hash = db.Column(db.String(255), nullable=False)
     is_admin = db.Column(db.Boolean, default=False)
+    
+    # User preferences
     preferred_languages = db.Column(db.Text)
     preferred_genres = db.Column(db.Text)
     location = db.Column(db.String(100))
     avatar_url = db.Column(db.String(255))
+    
+    # Additional user info
+    full_name = db.Column(db.String(255))
+    
+    # User status fields
+    is_suspended = db.Column(db.Boolean, default=False)
+    is_banned = db.Column(db.Boolean, default=False)
+    is_deleted = db.Column(db.Boolean, default=False)
+    
+    # Timestamps
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     last_active = db.Column(db.DateTime, default=datetime.utcnow)
     
+    # Suspension tracking
+    suspended_at = db.Column(db.DateTime)
+    suspended_by = db.Column(db.Integer, db.ForeignKey('user.id'))
+    deleted_at = db.Column(db.DateTime)
+    deleted_by = db.Column(db.Integer, db.ForeignKey('user.id'))
+    
+    # Relationships
     reviews = db.relationship('Review', backref='user', lazy='dynamic')
 
 class Content(db.Model):
