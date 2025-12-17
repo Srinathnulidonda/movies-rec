@@ -329,7 +329,8 @@ class AdminRecommendation(db.Model):
     list_items = db.Column(db.JSON)
     telegram_sent = db.Column(db.Boolean, default=False)
     telegram_sent_at = db.Column(db.DateTime)
-    last_template_edit = db.Column(db.DateTime)  
+    last_template_edit = db.Column(db.DateTime)
+    hashtags = db.Column(db.String(500))
 
 class AnonymousInteraction(db.Model):
     id = db.Column(db.Integer, primary_key=True)
